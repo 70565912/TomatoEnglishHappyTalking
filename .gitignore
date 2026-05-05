@@ -1,0 +1,25 @@
+# Local secrets
+security/
+
+# Dart / Flutter generated files
+.dart_tool/
+**/.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub/
+**/.pub/
+
+# Build outputs
+build/
+**/build/
+release/
+
+# Platform-local files
+app/android/.gradle/
+app/android/local.properties
+app/windows/flutter/ephemeral/
+
+# IDE files
+.idea/
+.vscode/
+*.iml

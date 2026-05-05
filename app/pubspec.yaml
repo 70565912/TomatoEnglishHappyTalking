@@ -1,0 +1,80 @@
+name: tomato_english_happy_talking
+description: Tomato English Happy Talking - 英语学习 App（跟读模式 + AI聊天模式）
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 状态管理
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.3.5
+
+  # 路由导航
+  go_router: ^14.0.0
+
+  # 网络请求（调用云API）
+  dio: ^5.7.0
+
+  # 音频播放
+  just_audio: ^0.10.2
+
+  # 麦克风录音
+  record: ^6.2.0
+
+  # 本地数据库
+  sqflite: ^2.4.2
+  path: ^1.9.0
+
+  # 权限管理
+  permission_handler: ^11.3.1
+
+  # 虚拟形象动画
+  rive: ^0.14.6
+  lottie: ^3.2.0
+
+  # UI 动画与特效
+  flutter_animate: ^4.5.2
+
+  # 本地设置存储（API Key等配置）
+  shared_preferences: ^2.3.5
+  flutter_secure_storage: ^9.2.4
+  cryptography: ^2.7.0
+
+  # 音频波形可视化
+  audio_waveforms: ^1.3.0
+
+  # 工具
+  uuid: ^4.5.1
+  intl: ^0.20.2
+
+  # Desktop SQLite support (Windows / Linux / macOS)
+  sqflite_common_ffi: ^2.3.0
+
+  # 提供预编译的 sqlite3 原生库，避免从 GitHub 下载
+  sqlite3_flutter_libs: ^0.5.25
+
+  # 字体
+  google_fonts: ^6.2.1
+  just_audio_windows: ^0.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.13
+  riverpod_generator: ^2.4.3
+
+flutter:
+  uses-material-design: true
+  # Fonts are loaded via google_fonts package (no local font files needed)
+
+hooks:
+  user_defines:
+    sqlite3:
+      source: system
+      name_windows: winsqlite3
