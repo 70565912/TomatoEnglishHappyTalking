@@ -44,16 +44,14 @@ This document records the confirmed migration direction for replacing the curren
   - `TOMATO_VOLC_TTS_TOKEN`
   - `TOMATO_VOLC_ACCESS_KEY`
   - `TOMATO_VOLC_SECRET_KEY`
+- Unified Volcengine API Key:
+  - `TOMATO_VOLC_API_KEY`
 - Doubao TTS 2.0:
-  - `TOMATO_VOLC_TTS_API_KEY`
   - `TOMATO_VOLC_TTS_RESOURCE_ID`
   - `TOMATO_VOLC_TTS_SPEAKER_ID`
 - Realtime voice:
   - `TOMATO_VOLC_REALTIME_APP_ID`
-  - `TOMATO_VOLC_REALTIME_API_KEY`
-- BigASR:
-  - `TOMATO_VOLC_BIGASR_API_KEY`
-- Realtime / BigASR dedicated keys are optional in the current code path; if omitted, both services fall back to `TOMATO_VOLC_TTS_API_KEY`.
+- Legacy dedicated key fields (`TOMATO_VOLC_TTS_API_KEY`, `TOMATO_VOLC_REALTIME_API_KEY`, `TOMATO_VOLC_BIGASR_API_KEY`) are compatibility-only and are merged into `volc_api_key` when present.
 
 ### Runtime usage contract
 
@@ -65,7 +63,7 @@ This document records the confirmed migration direction for replacing the curren
 ### Recommended next-step refactor
 
 - Keep this bootstrap path as a local transitional solution.
-- For TTS 2.0 / realtime voice / BigASR, migrate service calls to API-key-based `AppConfig` getters instead of legacy token-based fields.
+- For TTS 2.0 / realtime voice / BigASR, service calls use the unified API-key-based `AppConfig.volcApiKey` getter instead of service-specific key fields.
 - Root PowerShell scripts now support `-DartDefine` passthrough for Windows debug, Android debug, and Android release workflows.
 - If a future local workflow needs less command-line exposure, consider adding a local-only bootstrap helper that writes secure storage without embedding long-lived secrets into a distributable build.
 
@@ -103,21 +101,24 @@ This document records the confirmed migration direction for replacing the curren
 ## Current Code Affected
 
 - `app/lib/services/tts_service.dart`
+- `app/lib/services/realtime_voice_service.dart`
+- `app/lib/services/streaming_asr_service.dart`
+- `app/lib/services/recognition_based_assessment_service.dart`
 - `app/lib/core/config/app_config.dart`
 - `app/lib/features/profile/profile_screen.dart`
+- `app/lib/features/web_shell/web_shell_screen.dart`
 - `app/lib/features/follow_read/providers/follow_read_provider.dart`
 - `app/lib/features/chat/providers/chat_provider.dart`
+- `web_ui/src/App.tsx`
+- `web_ui/src/bridge.ts`
 
-## Planned TTS Refactor
+## Completed TTS Refactor
 
 ### 1. Configuration model
 
-- Remove reliance on legacy TTS `App ID + Token` for the main synthesis flow.
-- Add secure storage fields for:
-  - TTS API Key
-  - TTS Resource Id
-  - default Speaker ID
-- Keep configuration user-editable in the settings page.
+- Main synthesis flow no longer relies on legacy TTS `App ID + Token`.
+- Runtime config uses a unified Volcengine API key plus TTS Resource Id and default Speaker ID.
+- Settings UI is read-only for secret status; keys are injected from encrypted local files or `--dart-define`, not typed into the app.
 
 ### 2. TTS service rewrite
 
@@ -135,8 +136,9 @@ This document records the confirmed migration direction for replacing the curren
 
 ### 4. UI impact
 
-- Update the profile/settings page labels from legacy `App ID / Token` terminology to `API Key / Resource ID / Speaker`.
-- Keep follow-read and chat playback flows unchanged at the provider level unless the new API requires richer options.
+- Profile/settings pages now show unified API key status, TTS resource id, current speaker, realtime app id, and BigASR mode.
+- Web UI obtains this status through the `settings.load` bridge command.
+- Follow-read and chat playback share playback visual states and replay/failure UI.
 
 ## Validation Plan
 
@@ -190,12 +192,12 @@ This document records the confirmed migration direction for replacing the curren
   - handle microphone streaming, partial ASR updates, assistant turn events, interruption, and streamed playback state
 - `app/lib/shared/` or `app/lib/features/chat/`
   - add typed models for realtime events such as ASR updates, response segments, session status, and playback chunks
-- `app/lib/services/ai_service.dart`
-  - keep only text-mode fallback responsibilities if still needed; do not keep it as the primary voice dialogue path
+- former `app/lib/services/ai_service.dart`
+  - removed from the current source tree; do not reintroduce it as the primary voice dialogue path
 - `app/lib/services/tts_service.dart`
-  - keep follow-read / non-chat playback responsibilities only once realtime voice owns chat audio output
+  - keep follow-read and assistant text playback responsibilities until server-streamed realtime audio is adopted
 
-### Phase 4: redesign follow-read evaluation if Azure is to be removed
+### Phase 4: redesign follow-read evaluation after Azure removal
 
 - **Status: Complete**
 - `RecognitionBasedAssessmentEngine` now provides recognition-driven scoring without Azure dependency.
@@ -252,16 +254,16 @@ This document records the confirmed migration direction for replacing the curren
   - **Overall**: average of accuracy, completeness, fluency
   - **Per-word scores**: 90 for matched, 40 for omitted words
 - `ScoringService` is now deprecated for follow-read use; `RecognitionBasedAssessmentEngine` is the primary follow-read assessment engine.
-- The legacy Azure-based `AzureSpeechAssessmentEngine` is kept for fallback/testing but no longer drives follow-read UI.
+- The legacy Azure assessment implementation has been removed. `ScoringService` is now only a compatibility model/mock stub for older tests and shared result types.
 
 ### Follow-Read Scoring Architecture
 
 - `app/lib/services/recognition_based_assessment_service.dart` implements the new engine.
 - Scoring logic uses Longest Common Subsequence (LCS) algorithm to match spoken words with reference text.
 - No external pronunciation assessment service is required; all scoring is heuristic and local-compute-based.
-- This allows follow-read to work offline (except for audio synthesis and recognition, which still require cloud TTS and BigASR services).
+- This makes the score calculation local-compute-based after BigASR recognition completes; audio synthesis and recognition still require cloud services.
 
-### Future architecture option: realtime voice model
+### Implemented architecture baseline: realtime voice model
 
 - Volcengine also provides a separate end-to-end realtime voice model API for voice-native chat.
 - That API officially supports:
@@ -270,19 +272,20 @@ This document records the confirmed migration direction for replacing the curren
   - server-side ASR + chat + TTS streaming
   - system prompt style control (`bot_name`, `system_role`, `speaking_style`) or `character_manifest`
   - external RAG / web-agent style extensions
-- This is not a drop-in replacement for the current Flutter architecture.
-- Adopting it would mean building a new WebSocket session-based voice chat stack with:
+- This is not a drop-in replacement for the old staged Flutter architecture.
+- The app now has a first implementation of the V3 binary WebSocket session flow in `RealtimeVoiceService`, using text query input and local TTS playback for assistant text.
+- A future fully voice-native version would still need:
   - streaming microphone upload
   - streaming audio playback
   - interruption handling
   - realtime session state and conversation sync
-- Conclusion: for the current app, do not treat realtime voice as a small TTS-side migration. Treat it as a separate chat architecture refactor that can be chosen when voice-native dialogue becomes the target product shape.
+- Conclusion: keep hardening the current text-query realtime baseline, and treat server-streamed audio chat as a later architecture step.
 
 ## Updated Direction Based On Latest Review
 
 - If the product goal is a truly voice-native AI conversation experience, the preferred direction is now:
-  - AI dialogue: migrate from the staged chat pipeline to the end-to-end realtime voice model
-  - follow-read scoring: keep the dedicated follow-read flow, but evaluate BigASR as a recognition-and-metadata engine rather than assuming it is a drop-in pronunciation scoring API
+  - AI dialogue: continue on the realtime voice model path instead of returning to Ark text completions
+  - follow-read scoring: keep the dedicated follow-read flow, with BigASR as a recognition-and-metadata engine rather than an Azure-equivalent pronunciation API
 
 ## Realtime Voice Model For Dialogue
 
@@ -299,7 +302,7 @@ This document records the confirmed migration direction for replacing the curren
   - TTS audio events
   - interruption events
   - context management events
-- For a conversational mode, this is a better product fit than continuing to manually glue `ScoringService`, `AiService`, and `TtsService` together.
+- For a conversational mode, this is a better product fit than returning to the former staged pipeline of separate STT, text LLM, and TTS services.
 
 ### Key documented capabilities
 
@@ -323,23 +326,21 @@ This document records the confirmed migration direction for replacing the curren
 
 - This is not an HTTP request-response API; it requires a persistent WebSocket session manager.
 - The client must handle binary protocol frames, session IDs, event routing, and streaming audio playback.
-- The current Flutter chat code would need a real rewrite, not a service swap.
+- The Flutter chat provider has already moved to a realtime text-query baseline; server-side audio streaming would still be a real rewrite, not a service swap.
 - Current documented client audio expectations are still streaming-oriented:
   - microphone input or file input forwarded in small audio packets
   - server-side VAD / session lifecycle handling
 - The app will need a dedicated realtime chat layer, likely replacing most of the current chat provider internals.
 
-### Concrete code impact if adopted
+### Concrete code impact already applied / still pending
 
-- `app/lib/services/ai_service.dart`
-  - can no longer remain the primary dialogue engine for voice chat mode
-  - text-completions mode may still be kept as a fallback or text-only mode
+- former `app/lib/services/ai_service.dart`
+  - no longer exists in the current source tree and must not be reintroduced as the primary chat engine
 - `app/lib/features/chat/providers/chat_provider.dart`
-  - should be redesigned around websocket session lifecycle instead of one-shot REST calls
-  - should consume streaming ASR / chat / TTS events rather than polling local state transitions only
+  - now calls `StreamingAsrService` for speech recognition and `RealtimeVoiceService` for dialogue text query
+  - still uses local playback state for AI reply TTS
 - `app/lib/services/tts_service.dart`
-  - is no longer the chat-mode playback source if realtime voice is adopted for dialogue
-  - can still remain for follow-read sentence playback and non-chat synthesis tasks
+  - remains the playback source for follow-read and assistant text replies until server-streamed audio is adopted
 
 ### Current recommendation
 
@@ -348,10 +349,10 @@ This document records the confirmed migration direction for replacing the curren
 
 ## Pronunciation Scoring Assessment
 
-### Current Azure capability in this app
+### Former Azure capability in this app
 
-- The current follow-read scoring depends on Azure Pronunciation Assessment.
-- The app currently consumes the following scoring outputs:
+- Before this migration, follow-read scoring depended on Azure Pronunciation Assessment.
+- The app still exposes a compatible `PronunciationResult` shape for UI continuity:
   - overall score
   - accuracy score
   - fluency score
@@ -406,24 +407,24 @@ This document records the confirmed migration direction for replacing the curren
   - no direct accuracy / fluency / completeness / prosody bundle
   - no direct omission / insertion / mispronunciation labeling against a reference sentence
 
-### Viable replacement path if self-built scoring is acceptable
+### Implemented replacement path with self-built scoring
 
-- If you accept a custom heuristic scoring system instead of Azure-equivalent pronunciation assessment, BigASR can still be used as the foundation.
-- A practical self-built scoring approach would likely be:
+- The current product accepts a custom heuristic scoring system instead of Azure-equivalent pronunciation assessment, so BigASR is used as the foundation.
+- The first self-built scoring implementation uses:
   - accuracy proxy: compare recognized text against the target sentence with alignment or edit-distance logic
   - completeness proxy: measure how much of the reference sentence was covered
   - fluency proxy: derive from pause patterns, segmentation, and speech-rate stability
   - volume / rhythm hints: derive from returned metadata where available
 - Prosody-like evaluation would still be limited compared with Azure's dedicated pronunciation assessment.
 
-### Current recommendation
+### Historical recommendation
 
-- If the requirement is strict parity with the current scoring UX in follow-read, BigASR alone is not enough.
-- If the requirement is to remove Azure and accept a new scoring model, then BigASR can be used to build:
+- If the requirement had been strict Azure parity, BigASR alone would not have been enough.
+- The current product direction accepted a custom recognition-based model, so BigASR is used to build:
   - text-match scoring
   - timing-based fluency heuristics
   - lightweight feedback on pace / pauses / coverage
-- In that case, the app should rename the feature conceptually from "Azure-style pronunciation assessment" to "recognition-based reading evaluation".
+- The feature should be treated conceptually as "recognition-based reading evaluation", not Azure-style pronunciation assessment.
 
 ### Current conclusion
 
@@ -432,7 +433,7 @@ This document records the confirmed migration direction for replacing the curren
   - follow-read playback: Doubao TTS 2.0
   - follow-read scoring: BigASR-driven `RecognitionBasedAssessmentEngine` (no Azure dependency)
 - The recognition-based scoring model computes accuracy, completeness, fluency, and prosody heuristics based on word-level matching via LCS algorithm.
-- This approach removes Azure dependency for follow-read and allows offline scoring (except TTS synthesis and speech recognition, which remain cloud services).
+- This approach removes Azure dependency for follow-read and keeps score computation local after cloud TTS / BigASR steps finish.
 - Future improvements can extend the scoring model to include timing-based metrics and prosody analysis as BigASR provides richer metadata.
 
 

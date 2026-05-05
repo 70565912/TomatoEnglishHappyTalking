@@ -65,11 +65,11 @@ class StreamingAsrService {
       throw const AsrException(AsrFailureType.emptyAudio, '录音为空，无法识别');
     }
 
-    final apiKey = await AppConfig.volcBigAsrApiKey;
+    final apiKey = await AppConfig.volcApiKey;
     if (apiKey.trim().isEmpty) {
       throw const AsrException(
         AsrFailureType.missingApiKey,
-        'BigASR API Key 未配置，请先在设置页填写',
+        '本机加密配置未读取到火山引擎 API Key',
       );
     }
 
@@ -157,11 +157,12 @@ class StreamingAsrService {
         if (recognized.trim().isEmpty) {
           throw const AsrException(
             AsrFailureType.emptyResult,
-            'BigASR 未返回识别结果，请检查网络或 API Key 配置',
+            'BigASR 未返回识别结果，请检查网络或本机语音配置',
           );
         }
 
-        _trace('success requestId=$requestId textLen=${recognized.trim().length}');
+        _trace(
+            'success requestId=$requestId textLen=${recognized.trim().length}');
         return recognized.trim();
       } finally {
         await subscription.cancel();
@@ -224,7 +225,7 @@ class StreamingAsrService {
 
     throw AsrException(
       AsrFailureType.connectFailed,
-      'BigASR 连接失败，请检查网络、API Key 或 ResourceId（${errors.join(' | ')}）',
+      'BigASR 连接失败，请检查网络、本机语音配置或 ResourceId（${errors.join(' | ')}）',
     );
   }
 

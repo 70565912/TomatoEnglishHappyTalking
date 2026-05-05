@@ -5,7 +5,8 @@ class WordScore {
   final String word;
   final double score;
   final String errorType; // None / Mispronunciation / Omission / Insertion
-  const WordScore({required this.word, required this.score, required this.errorType});
+  const WordScore(
+      {required this.word, required this.score, required this.errorType});
 }
 
 class PronunciationResult {
@@ -31,11 +32,14 @@ class PronunciationResult {
 }
 
 PronunciationResult buildMockPronunciationResult(String text) {
-  final words = text.split(' ').map((w) => WordScore(
-    word: w,
-    score: 75.0,
-    errorType: 'None',
-  )).toList();
+  final words = text
+      .split(' ')
+      .map((w) => WordScore(
+            word: w,
+            score: 75.0,
+            errorType: 'None',
+          ))
+      .toList();
 
   return PronunciationResult(
     overallScore: 75,

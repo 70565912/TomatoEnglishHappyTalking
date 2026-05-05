@@ -69,6 +69,36 @@ function Get-FlutterDartDefineArgs {
     return $args
 }
 
+function Invoke-WebUiBuild {
+    $webUiRoot = Join-Path $workspaceRoot "web_ui"
+    if (-not (Test-Path (Join-Path $webUiRoot "package.json"))) {
+        throw "Web UI 项目不存在: $webUiRoot"
+    }
+
+    $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($null -eq $npmCommand) {
+        $npmCommand = Get-Command npm -ErrorAction Stop
+    }
+    $npmExe = $npmCommand.Source
+
+    Push-Location $webUiRoot
+    try {
+        Write-Host "`n=== 构建 Web UI ===" -ForegroundColor Cyan
+        if (Test-Path (Join-Path $webUiRoot "package-lock.json")) {
+            & $npmExe ci
+            Assert-LastExitCode -CommandName "npm ci"
+        } else {
+            & $npmExe install
+            Assert-LastExitCode -CommandName "npm install"
+        }
+
+        & $npmExe run build
+        Assert-LastExitCode -CommandName "npm run build"
+    } finally {
+        Pop-Location
+    }
+}
+
 function Publish-AndroidReleaseArtifacts {
     param(
         [Parameter(Mandatory = $true)]
@@ -133,6 +163,7 @@ try {
     Write-Host "=== 检查 Flutter 环境 ===" -ForegroundColor Cyan
     & $flutterExe --version
     Assert-LastExitCode -CommandName "flutter --version"
+    Invoke-WebUiBuild
 
     $adbExe = Join-Path $androidSdkRoot "platform-tools\adb.exe"
     $runInReleaseMode = $Release

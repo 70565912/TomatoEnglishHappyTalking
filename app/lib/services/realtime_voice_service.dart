@@ -21,9 +21,9 @@ class RealtimeChatTurn {
   final String content;
 
   Map<String, String> toJson() => {
-    'role': role,
-    'content': content,
-  };
+        'role': role,
+        'content': content,
+      };
 }
 
 class RealtimeReply {
@@ -124,12 +124,12 @@ class RealtimeVoiceService {
 
   static Future<RealtimeReply> _query(List<RealtimeChatTurn> turns) async {
     final appId = await AppConfig.volcRealtimeAppId;
-    final accessKey = await AppConfig.volcRealtimeApiKey;
-    if (accessKey.trim().isEmpty) {
+    final apiKey = await AppConfig.volcApiKey;
+    if (apiKey.trim().isEmpty) {
       return RealtimeReply(
         text: _mockResponse(),
         source: RealtimeReplySource.mockNoKey,
-        errorMessage: 'volc_realtime_api_key is empty',
+        errorMessage: 'volc_api_key is empty',
       );
     }
 
@@ -141,7 +141,7 @@ class RealtimeVoiceService {
     try {
       socket = await _connectSocket(
         appId: appId,
-        accessKey: accessKey,
+        accessKey: apiKey,
         connectId: connectId,
       );
       _trace('connect success connectId=$connectId sessionId=$sessionId');
@@ -182,7 +182,8 @@ class RealtimeVoiceService {
 
         if (_isFailureEvent(eventId) && !completer.isCompleted) {
           completer.completeError(
-            FormatException(_extractError(packet.payloadMap) ?? 'Realtime session failed'),
+            FormatException(
+                _extractError(packet.payloadMap) ?? 'Realtime session failed'),
           );
           return;
         }
@@ -190,7 +191,8 @@ class RealtimeVoiceService {
         if (eventId == _eventConnectionStarted ||
             eventId == _eventSessionStarted ||
             eventId == _eventChatTextQueryConfirmed) {
-          if (eventId == _eventConnectionStarted && !connectionReady.isCompleted) {
+          if (eventId == _eventConnectionStarted &&
+              !connectionReady.isCompleted) {
             connectionReady.complete();
           }
           if (eventId == _eventSessionStarted && !sessionReady.isCompleted) {
@@ -216,12 +218,14 @@ class RealtimeVoiceService {
       }, onDone: () {
         if (!connectionReady.isCompleted) {
           connectionReady.completeError(
-            const FormatException('Realtime connection closed before ConnectionStarted'),
+            const FormatException(
+                'Realtime connection closed before ConnectionStarted'),
           );
         }
         if (!sessionReady.isCompleted) {
           sessionReady.completeError(
-            const FormatException('Realtime connection closed before SessionStarted'),
+            const FormatException(
+                'Realtime connection closed before SessionStarted'),
           );
         }
         if (!completer.isCompleted) {
@@ -249,7 +253,8 @@ class RealtimeVoiceService {
       );
       await connectionReady.future.timeout(
         const Duration(seconds: 10),
-        onTimeout: () => throw const FormatException('Realtime connection start timeout'),
+        onTimeout: () =>
+            throw const FormatException('Realtime connection start timeout'),
       );
 
       socket.add(
@@ -261,7 +266,8 @@ class RealtimeVoiceService {
       );
       await sessionReady.future.timeout(
         const Duration(seconds: 10),
-        onTimeout: () => throw const FormatException('Realtime session start timeout'),
+        onTimeout: () =>
+            throw const FormatException('Realtime session start timeout'),
       );
 
       socket.add(
@@ -465,7 +471,8 @@ class RealtimeVoiceService {
         continue;
       }
 
-      var candidatePayload = data.sublist(contentOffset, contentOffset + payloadSize);
+      var candidatePayload =
+          data.sublist(contentOffset, contentOffset + payloadSize);
       if (compression == _compressionGzip) {
         candidatePayload = Uint8List.fromList(gzip.decode(candidatePayload));
       }

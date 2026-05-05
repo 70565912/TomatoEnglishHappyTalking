@@ -70,6 +70,36 @@ function Get-FlutterDartDefineArgs {
     return $args
 }
 
+function Invoke-WebUiBuild {
+    $webUiRoot = Join-Path $workspaceRoot "web_ui"
+    if (-not (Test-Path (Join-Path $webUiRoot "package.json"))) {
+        throw "Web UI 项目不存在: $webUiRoot"
+    }
+
+    $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if ($null -eq $npmCommand) {
+        $npmCommand = Get-Command npm -ErrorAction Stop
+    }
+    $npmExe = $npmCommand.Source
+
+    Push-Location $webUiRoot
+    try {
+        Write-Host "`n=== 构建 Web UI ===" -ForegroundColor Cyan
+        if (Test-Path (Join-Path $webUiRoot "package-lock.json")) {
+            & $npmExe ci
+            Assert-LastExitCode -CommandName "npm ci"
+        } else {
+            & $npmExe install
+            Assert-LastExitCode -CommandName "npm install"
+        }
+
+        & $npmExe run build
+        Assert-LastExitCode -CommandName "npm run build"
+    } finally {
+        Pop-Location
+    }
+}
+
 function Publish-WindowsReleaseArtifacts {
     param(
         [Parameter(Mandatory = $true)]
@@ -128,6 +158,7 @@ try {
     Write-Host "=== 检查 Flutter 环境 ===" -ForegroundColor Cyan
     & $flutterExe --version
     Assert-LastExitCode -CommandName "flutter --version"
+    Invoke-WebUiBuild
     Clear-StaleWindowsBuildCache -AppRoot (Get-Location).Path -ExpectedBinaryName "tomato_english_happy_talking"
 
     $dartDefineArgs = Get-FlutterDartDefineArgs -Values $DartDefine
@@ -145,15 +176,15 @@ try {
             Start-Process $exePath
         }
     } else {
-        Write-Host "`n=== 构建并运行 Windows Debug ===" -ForegroundColor Cyan
+        Write-Host "`n=== 构建或运行 Windows Debug ===" -ForegroundColor Cyan
         if ($Run) {
             $runArgs = @("run", "-d", "windows") + $dartDefineArgs
             & $flutterExe @runArgs
             Assert-LastExitCode -CommandName "flutter run -d windows"
         } else {
-            $buildArgs = @("build", "windows") + $dartDefineArgs
+            $buildArgs = @("build", "windows", "--debug") + $dartDefineArgs
             & $flutterExe @buildArgs
-            Assert-LastExitCode -CommandName "flutter build windows"
+            Assert-LastExitCode -CommandName "flutter build windows --debug"
             $exePath = "build\windows\x64\runner\Debug\tomato_english_happy_talking.exe"
             Write-Host "`n构建完成: $exePath" -ForegroundColor Green
         }

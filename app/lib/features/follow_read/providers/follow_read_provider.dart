@@ -16,21 +16,21 @@ import '../../../services/tts_service.dart';
 
 part 'follow_read_provider.g.dart';
 
-final followReadAssessmentEngineProvider =
-    Provider<SpeechAssessmentEngine>((ref) => RecognitionBasedAssessmentEngine());
+final followReadAssessmentEngineProvider = Provider<SpeechAssessmentEngine>(
+    (ref) => RecognitionBasedAssessmentEngine());
 
 // ---------------------------------------------------------------------------
 // Step enum
 // ---------------------------------------------------------------------------
 
 enum FollowReadStep {
-  idle,       // ready — waiting for user action
+  idle, // ready — waiting for user action
   loadingTts, // fetching TTS audio from cloud
-  playing,    // playing TTS audio
-  recording,  // user is recording
-  scoring,    // recognizing audio and computing scores
-  result,     // showing recognition and evaluation result
-  completed,  // all sentences done
+  playing, // playing TTS audio
+  recording, // user is recording
+  scoring, // recognizing audio and computing scores
+  result, // showing recognition and evaluation result
+  completed, // all sentences done
 }
 
 // ---------------------------------------------------------------------------
@@ -159,9 +159,12 @@ class FollowRead extends _$FollowRead {
 
   // ---- Play TTS for the current sentence ----
   Future<void> playCurrent() async {
-    if (_s.step != FollowReadStep.idle) return;
+    if (_s.step != FollowReadStep.idle && _s.step != FollowReadStep.result) {
+      return;
+    }
 
-    _trace('playCurrent start idx=${_s.currentIndex} chars=${_s.currentSentence.length}');
+    _trace(
+        'playCurrent start idx=${_s.currentIndex} chars=${_s.currentSentence.length}');
     _set(
       step: FollowReadStep.loadingTts,
       playbackState: PlaybackVisualState.waitingStart,
@@ -260,7 +263,8 @@ class FollowRead extends _$FollowRead {
         playbackState: PlaybackVisualState.playing,
         clearPlaybackError: true,
       );
-      _trace('playCurrent started idx=${_s.currentIndex} at=${lastPosition.inMilliseconds}ms');
+      _trace(
+          'playCurrent started idx=${_s.currentIndex} at=${lastPosition.inMilliseconds}ms');
 
       await playbackDone.future.timeout(const Duration(seconds: 30));
       await player.stop();
@@ -380,8 +384,7 @@ class FollowRead extends _$FollowRead {
   }
 
   // ---- Re-try current sentence ----
-  void retry() =>
-      _set(
+  void retry() => _set(
         step: FollowReadStep.idle,
         playbackState: PlaybackVisualState.idle,
         clearPlaybackError: true,

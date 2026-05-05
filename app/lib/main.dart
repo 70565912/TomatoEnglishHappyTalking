@@ -6,6 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'core/config/app_config.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
+import 'core/webview/webview_environment.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,8 @@ void main() async {
 
   await AppConfig.seedSecureStorageFromEncryptedFile();
   await AppConfig.seedSecureStorageFromEnvironment();
+  await initializeTomatoWebViewEnvironment();
+  await initializeTomatoWebUiServer();
 
   runApp(
     const ProviderScope(

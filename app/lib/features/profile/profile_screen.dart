@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+
 import '../../core/config/app_config.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/tts_service.dart';
@@ -14,103 +15,42 @@ class ProfileScreen extends ConsumerStatefulWidget {
 }
 
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
-  // TTS controllers
-  final _ttsApiKeyCtrl = TextEditingController();
-  final _ttsResourceIdCtrl = TextEditingController();
-  String _selectedSpeakerId = '';
-
-  // Realtime / BigASR controllers
-  final _realtimeAppIdCtrl = TextEditingController();
-  final _realtimeKeyCtrl = TextEditingController();
-  final _bigAsrKeyCtrl = TextEditingController();
-
   bool _loading = true;
-  String? _saveMessage;
-  bool _saveMessageIsError = false;
+  bool _apiKeyReady = false;
+  String _ttsResourceId = 'seed-tts-2.0';
+  String _ttsSpeaker = '默认声音';
+  String _realtimeAppId = '未设置';
 
   @override
   void initState() {
     super.initState();
-    _loadKeys();
+    _loadConfigStatus();
   }
 
-  Future<void> _loadKeys() async {
-    _ttsApiKeyCtrl.text = await AppConfig.volcTtsApiKey;
-    _ttsResourceIdCtrl.text = await AppConfig.volcTtsResourceId;
-    final savedSpeakerId = await AppConfig.volcTtsSpeakerId;
-    final hasMatchedSpeaker = TtsService.voices.any((voice) => voice.id == savedSpeakerId);
-    _selectedSpeakerId = hasMatchedSpeaker
-        ? savedSpeakerId
-        : (TtsService.voices.isNotEmpty ? TtsService.voices.first.id : '');
-    _realtimeAppIdCtrl.text = await AppConfig.volcRealtimeAppId;
-    _realtimeKeyCtrl.text = await AppConfig.volcRealtimeApiKey;
-    _bigAsrKeyCtrl.text = await AppConfig.volcBigAsrApiKey;
-    if (mounted) setState(() => _loading = false);
-  }
+  Future<void> _loadConfigStatus() async {
+    final apiKey = (await AppConfig.volcApiKey).trim();
+    final resourceId = (await AppConfig.volcTtsResourceId).trim();
+    final speakerId = (await AppConfig.volcTtsSpeakerId).trim();
+    final realtimeAppId = (await AppConfig.volcRealtimeAppId).trim();
 
-  Future<void> _saveTts() async {
-    final apiKey = _ttsApiKeyCtrl.text.trim();
-    final resourceId = _ttsResourceIdCtrl.text.trim();
+    final matchedSpeaker = TtsService.voices
+        .where((voice) => voice.id == speakerId)
+        .cast<VoiceInfo?>()
+        .firstWhere((voice) => voice != null, orElse: () => null);
 
-    if (apiKey.isEmpty) {
-      _showMessage('请先填写 TTS 2.0 API Key', isError: true);
+    if (!mounted) {
       return;
     }
 
-    if (resourceId.isEmpty) {
-      _showMessage('请先填写 TTS 2.0 Resource ID', isError: true);
-      return;
-    }
-
-    if (_selectedSpeakerId.isEmpty) {
-      _showMessage('请先选择 Speaker', isError: true);
-      return;
-    }
-
-    await AppConfig.saveVolcTtsV3(
-      apiKey: apiKey,
-      resourceId: resourceId,
-      speakerId: _selectedSpeakerId,
-    );
-    _showMessage('Doubao TTS 2.0 配置已保存');
-  }
-
-  Future<void> _saveRealtime() async {
-    await AppConfig.saveVolcRealtime(
-      appId: _realtimeAppIdCtrl.text.trim(),
-      accessKey: _realtimeKeyCtrl.text.trim(),
-    );
-    _showMessage('Realtime API Key 已保存');
-  }
-
-  Future<void> _saveBigAsr() async {
-    await AppConfig.saveVolcBigAsr(apiKey: _bigAsrKeyCtrl.text.trim());
-    _showMessage('BigASR API Key 已保存');
-  }
-
-  void _showMessage(String msg, {bool isError = false}) {
     setState(() {
-      _saveMessage = msg;
-      _saveMessageIsError = isError;
+      _apiKeyReady = apiKey.isNotEmpty;
+      _ttsResourceId = resourceId.isNotEmpty ? resourceId : 'seed-tts-2.0';
+      _ttsSpeaker = matchedSpeaker != null
+          ? '${matchedSpeaker.name} (${matchedSpeaker.lang})'
+          : (speakerId.isNotEmpty ? speakerId : '默认声音');
+      _realtimeAppId = realtimeAppId.isNotEmpty ? realtimeAppId : '未设置';
+      _loading = false;
     });
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() {
-          _saveMessage = null;
-          _saveMessageIsError = false;
-        });
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _ttsApiKeyCtrl.dispose();
-    _ttsResourceIdCtrl.dispose();
-    _realtimeAppIdCtrl.dispose();
-    _realtimeKeyCtrl.dispose();
-    _bigAsrKeyCtrl.dispose();
-    super.dispose();
   }
 
   @override
@@ -129,151 +69,59 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                if (_saveMessage != null)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: _saveMessageIsError ? Colors.red[50] : Colors.green[50],
-                      border: Border.all(
-                        color: _saveMessageIsError ? Colors.red : Colors.green,
-                      ),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          _saveMessageIsError ? Icons.error_outline : Icons.check_circle,
-                          color: _saveMessageIsError ? Colors.red : Colors.green,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 8),
-                        Text(
-                          _saveMessage!,
-                          style: GoogleFonts.nunito(
-                            color: _saveMessageIsError ? Colors.red[800] : Colors.green[800],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // ─── 火山引擎 TTS ───
                 _SectionCard(
-                  title: '🌋 Doubao TTS 2.0（语音合成）',
-                  subtitle: '配置项：API Key + Resource ID + Speaker',
+                  title: '火山引擎 API Key',
+                  subtitle: 'TTS、BigASR 与 AI 对话共用同一份本机密钥',
                   children: [
-                    _KeyField(
-                        ctrl: _ttsApiKeyCtrl,
-                        label: 'API Key',
-                        hint: 'X-Api-Key',
-                        obscure: true),
-                    const SizedBox(height: 12),
-                    _KeyField(
-                        ctrl: _ttsResourceIdCtrl,
-                        label: 'Resource ID',
-                        hint: 'seed-tts-2.0'),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: _selectedSpeakerId.isNotEmpty ? _selectedSpeakerId : null,
-                      isExpanded: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Speaker',
-                        border: OutlineInputBorder(),
-                        filled: true,
-                        fillColor: Colors.white,
-                        isDense: true,
-                      ),
-                      style: GoogleFonts.nunito(fontSize: 13, color: Colors.black87),
-                      items: TtsService.voices
-                          .map(
-                            (voice) => DropdownMenuItem<String>(
-                              value: voice.id,
-                              child: Text('${voice.name} (${voice.id})'),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value == null) {
-                          return;
-                        }
-
-                        setState(() {
-                          _selectedSpeakerId = value;
-                        });
-                      },
+                    _StatusTile(
+                      ready: _apiKeyReady,
+                      readyText: '统一 API Key 已读取',
+                      missingText: '统一 API Key 未读取',
                     ),
-                    const SizedBox(height: 12),
-                    _SaveButton(label: '保存 TTS 2.0 配置', onPressed: _saveTts),
                   ],
                 ),
-
                 const SizedBox(height: 16),
-
-                // ─── Realtime 语音对话 ───
                 _SectionCard(
-                  title: '🎙️ 端到端实时语音模型（聊天）',
-                  subtitle: '用于聊天文本/语音实时对话能力',
+                  title: '语音合成',
+                  subtitle: '启动时读取本机加密配置中的非密钥参数',
                   children: [
-                    _KeyField(
-                        ctrl: _realtimeAppIdCtrl,
-                        label: 'App ID',
-                        hint: 'X-Api-App-ID'),
+                    const _MetaLine(label: '密钥来源', value: '统一火山引擎 API Key'),
                     const SizedBox(height: 12),
-                    _KeyField(
-                        ctrl: _realtimeKeyCtrl,
-                        label: 'Access Key',
-                        hint: 'X-Api-Access-Key',
-                        obscure: true),
-                    const SizedBox(height: 12),
-                    _SaveButton(label: '保存 Realtime 配置', onPressed: _saveRealtime),
+                    _MetaLine(label: '资源', value: _ttsResourceId),
+                    _MetaLine(label: '伙伴声音', value: _ttsSpeaker),
                   ],
                 ),
-
                 const SizedBox(height: 16),
-
-                // ─── BigASR STT ───
-                _SectionCard(
-                  title: '🗣️ BigASR（聊天语音识别）',
-                  subtitle: '用于聊天语音输入识别',
+                const _SectionCard(
+                  title: '语音识别',
+                  subtitle: '跟读评分与聊天识别使用 BigASR',
                   children: [
-                    _KeyField(
-                        ctrl: _bigAsrKeyCtrl,
-                        label: 'API Key',
-                        hint: 'BigASR API Key',
-                        obscure: true),
-                    const SizedBox(height: 12),
-                    _SaveButton(label: '保存 BigASR 配置', onPressed: _saveBigAsr),
+                    _MetaLine(label: '识别模式', value: 'BigASR 闯关评分'),
+                    _MetaLine(label: '密钥来源', value: '统一火山引擎 API Key'),
                   ],
                 ),
-
+                const SizedBox(height: 16),
+                _SectionCard(
+                  title: 'AI 对话',
+                  subtitle: '未读取到远程配置时保留本地示例回复',
+                  children: [
+                    const _MetaLine(label: '密钥来源', value: '统一火山引擎 API Key'),
+                    _MetaLine(label: 'App ID', value: _realtimeAppId),
+                  ],
+                ),
                 const SizedBox(height: 24),
-
-                // ─── About ───
                 Card(
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '关于',
-                          style: GoogleFonts.nunito(
-                              fontSize: 16, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Tomato English Happy Talking v1.0.0\n所有 API Key 均加密存储在本机，不上传任何服务器。',
-                          style: GoogleFonts.nunito(
-                              color: Colors.grey[600], fontSize: 13),
-                        ),
-                      ],
+                    child: Text(
+                      'Tomato English Happy Talking v1.0.0\n密钥材料只从本机加密配置读取，不在应用页面中手动填写。',
+                      style: GoogleFonts.nunito(
+                        color: Colors.grey[700],
+                        fontSize: 13,
+                      ),
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 32),
               ],
             ),
     );
@@ -286,6 +134,7 @@ class _SectionCard extends StatelessWidget {
     required this.subtitle,
     required this.children,
   });
+
   final String title;
   final String subtitle;
   final List<Widget> children;
@@ -300,13 +149,13 @@ class _SectionCard extends StatelessWidget {
           children: [
             Text(
               title,
-              style: GoogleFonts.nunito(
-                  fontSize: 15, fontWeight: FontWeight.bold),
+              style:
+                  GoogleFonts.nunito(fontSize: 15, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 4),
             Text(
               subtitle,
-              style: GoogleFonts.nunito(fontSize: 12, color: Colors.grey[500]),
+              style: GoogleFonts.nunito(fontSize: 12, color: Colors.grey[600]),
             ),
             const SizedBox(height: 16),
             ...children,
@@ -317,51 +166,79 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _KeyField extends StatelessWidget {
-  const _KeyField({
-    required this.ctrl,
-    required this.label,
-    required this.hint,
-    this.obscure = false,
+class _StatusTile extends StatelessWidget {
+  const _StatusTile({
+    required this.ready,
+    required this.readyText,
+    required this.missingText,
   });
-  final TextEditingController ctrl;
-  final String label;
-  final String hint;
-  final bool obscure;
+
+  final bool ready;
+  final String readyText;
+  final String missingText;
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: ctrl,
-      obscureText: obscure,
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        border: const OutlineInputBorder(),
-        filled: true,
-        fillColor: Colors.white,
-        isDense: true,
+    final color = ready ? Colors.green : Colors.orange;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
-      style: GoogleFonts.nunito(fontSize: 13),
+      child: Row(
+        children: [
+          Icon(ready ? Icons.check_circle : Icons.info_outline, color: color),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              ready ? readyText : missingText,
+              style: GoogleFonts.nunito(
+                fontWeight: FontWeight.w700,
+                color: AppTheme.darkBlue,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-class _SaveButton extends StatelessWidget {
-  const _SaveButton({required this.label, required this.onPressed});
+class _MetaLine extends StatelessWidget {
+  const _MetaLine({
+    required this.label,
+    required this.value,
+  });
+
   final String label;
-  final VoidCallback onPressed;
+  final String value;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: onPressed,
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-        ),
-        child: Text(label, style: GoogleFonts.nunito(fontWeight: FontWeight.w600)),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 88,
+            child: Text(
+              label,
+              style: GoogleFonts.nunito(
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.nunito(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
       ),
     );
   }

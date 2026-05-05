@@ -5,8 +5,8 @@ import 'package:flutter/foundation.dart';
 
 import '../core/config/app_config.dart';
 
-/// TTS 服务 — 直接调用火山引擎语音合成 REST API
-/// 降级方案：若未配置则静默失败（返回空字节）
+/// TTS 服务 — 直接调用火山引擎 Doubao TTS 2.0 HTTP Chunked API。
+/// 未配置或云端失败时抛出 [TtsException]，由 Provider 转成可展示的 UI 状态。
 
 class VoiceInfo {
   final String id;
@@ -70,7 +70,8 @@ class TtsService {
     ),
   ];
 
-  static const _v3Endpoint = 'https://openspeech.bytedance.com/api/v3/tts/unidirectional';
+  static const _v3Endpoint =
+      'https://openspeech.bytedance.com/api/v3/tts/unidirectional';
 
   /// 合成语音，返回 MP3 字节数据
   static Future<List<int>?> synthesize({
@@ -82,14 +83,14 @@ class TtsService {
       throw const TtsException('TTS 文本不能为空');
     }
 
-    final ttsApiKey = await AppConfig.volcTtsApiKey;
-    if (ttsApiKey.isEmpty) {
-      throw const TtsException('请先在设置页配置 TTS 2.0 的 API Key');
+    final apiKey = await AppConfig.volcApiKey;
+    if (apiKey.isEmpty) {
+      throw const TtsException('本机加密配置未读取到火山引擎 API Key');
     }
 
     final ttsResourceId = await AppConfig.volcTtsResourceId;
     if (ttsResourceId.trim().isEmpty) {
-      throw const TtsException('请先在设置页配置 TTS 2.0 的 Resource ID');
+      throw const TtsException('本机加密配置未读取到 TTS 2.0 的 Resource ID');
     }
 
     final configuredSpeakerId = await AppConfig.volcTtsSpeakerId;
@@ -98,13 +99,13 @@ class TtsService {
       requestedVoiceType: voiceType,
     );
     if (resolvedSpeakerId.isEmpty) {
-      throw const TtsException('请先在设置页选择 TTS 2.0 的 Speaker');
+      throw const TtsException('本机加密配置未读取到 TTS 2.0 的 Speaker');
     }
 
     return _synthesizeV3(
       text: trimmedText,
       speakerId: resolvedSpeakerId,
-      apiKey: ttsApiKey,
+      apiKey: apiKey,
       resourceId: ttsResourceId,
     );
   }
@@ -160,7 +161,7 @@ class TtsService {
       _trace('v3 request dioError id=$requestId error=${e.message}');
       throw _mapDioException(
         e,
-        fallbackMessage: 'TTS 2.0 网络请求失败，请检查网络或 API Key 配置',
+        fallbackMessage: 'TTS 2.0 网络请求失败，请检查网络或本机语音配置',
       );
     } on FormatException catch (e) {
       debugPrint('[TtsService] invalid v3 audio payload: $e');
@@ -173,15 +174,16 @@ class TtsService {
     }
   }
 
-  static Future<List<int>> _collectChunkedAudio(ResponseBody responseBody) async {
+  static Future<List<int>> _collectChunkedAudio(
+      ResponseBody responseBody) async {
     final audioBytes = <int>[];
     var sawTerminalSuccess = false;
     var packetCount = 0;
     var audioPacketCount = 0;
 
     await for (final line in utf8.decoder.bind(responseBody.stream).transform(
-      const LineSplitter(),
-    )) {
+          const LineSplitter(),
+        )) {
       final trimmedLine = line.trim();
       if (trimmedLine.isEmpty) {
         continue;
@@ -206,9 +208,14 @@ class TtsService {
         continue;
       }
 
-      final errorMessage = packet['message'] ?? packet['msg'] ?? packet['error'];
-      if (audioBase64 == null && errorMessage != null && errorMessage.toString().isNotEmpty) {
-        final codeLabel = code != null ? '（code=$code，${errorMessage.toString()}）' : '：${errorMessage.toString()}';
+      final errorMessage =
+          packet['message'] ?? packet['msg'] ?? packet['error'];
+      if (audioBase64 == null &&
+          errorMessage != null &&
+          errorMessage.toString().isNotEmpty) {
+        final codeLabel = code != null
+            ? '（code=$code，${errorMessage.toString()}）'
+            : '：${errorMessage.toString()}';
         throw TtsException('TTS 2.0 请求失败$codeLabel');
       }
     }
@@ -233,7 +240,9 @@ class TtsService {
     String? serverMessage;
 
     if (responseData is Map) {
-      final candidate = responseData['message'] ?? responseData['msg'] ?? responseData['error'];
+      final candidate = responseData['message'] ??
+          responseData['msg'] ??
+          responseData['error'];
       if (candidate != null) {
         serverMessage = candidate.toString();
       }
@@ -275,7 +284,8 @@ class TtsService {
       return '';
     }
 
-    final isPresetSpeaker = voices.any((voice) => voice.id == trimmedRequestedVoiceType);
+    final isPresetSpeaker =
+        voices.any((voice) => voice.id == trimmedRequestedVoiceType);
     if (!isPresetSpeaker) {
       return '';
     }

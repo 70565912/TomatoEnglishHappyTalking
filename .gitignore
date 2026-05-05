@@ -13,6 +13,9 @@ security/
 build/
 **/build/
 release/
+node_modules/
+**/node_modules/
+*.tsbuildinfo
 
 # Platform-local files
 app/android/.gradle/

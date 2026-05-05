@@ -19,12 +19,12 @@ part 'chat_provider.g.dart';
 // ---------------------------------------------------------------------------
 
 enum ChatStep {
-  init,        // Loading article & calling AI for first question
-  aiSpeaking,  // TTS playing AI response
-  userIdle,    // Waiting for user input
-  recording,   // User is recording
-  processing,  // STT + AI call in progress
-  completed,   // Max rounds reached
+  init, // Loading article & calling AI for first question
+  aiSpeaking, // TTS playing AI response
+  userIdle, // Waiting for user input
+  recording, // User is recording
+  processing, // STT + AI call in progress
+  completed, // Max rounds reached
   error,
 }
 
@@ -217,9 +217,9 @@ class Chat extends _$Chat {
       final audioBytes = await File(path).readAsBytes();
 
       // Volc BigASR streaming STT for chat mode.
-      final userText = await StreamingAsrService.recognizeSafe(audioBytes: audioBytes);
-      final displayText =
-          userText.isNotEmpty ? userText : '(未能识别语音，请重试)';
+      final userText =
+          await StreamingAsrService.recognizeSafe(audioBytes: audioBytes);
+      final displayText = userText.isNotEmpty ? userText : '(未能识别语音，请重试)';
 
       final newMsgs = [
         ...state.messages,
@@ -337,7 +337,8 @@ class Chat extends _$Chat {
     );
     state = state.copyWith(step: ChatStep.aiSpeaking, clearError: true);
 
-    final playbackError = await _playTts(text: target.text, messageId: messageId);
+    final playbackError =
+        await _playTts(text: target.text, messageId: messageId);
     state = state.copyWith(
       step: state.questionCount >= 8 ? ChatStep.completed : ChatStep.userIdle,
       error: playbackError,
@@ -370,9 +371,7 @@ class Chat extends _$Chat {
       _trace('playTts bytes=${bytes.length} path=$tmpPath');
 
       player = AudioPlayer();
-      await player
-          .setFilePath(tmpPath)
-          .timeout(const Duration(seconds: 10));
+      await player.setFilePath(tmpPath).timeout(const Duration(seconds: 10));
       _trace('playTts loaded');
 
       final playbackStarted = Completer<void>();
@@ -511,7 +510,7 @@ class Chat extends _$Chat {
     }
 
     if (reply.source == RealtimeReplySource.mockNoKey) {
-      return 'AI 未配置 Realtime API Key，当前为本地示例回复';
+      return 'AI 对话配置未读取，当前为本地示例回复';
     }
 
     debugPrint('[ChatProvider] realtime AI fallback: ${reply.errorMessage}');
@@ -524,14 +523,14 @@ class Chat extends _$Chat {
 
   String _mapTtsException(TtsException error) {
     final message = error.message;
-    if (message.contains('API Key')) {
-      return '语音合成失败：请先在设置页配置 TTS API Key';
+    if (message.contains('语音密钥') || message.contains('API Key')) {
+      return '语音合成失败：本机加密配置未读取到语音密钥';
     }
     if (message.contains('Resource ID')) {
-      return '语音合成失败：请先在设置页配置 TTS Resource ID';
+      return '语音合成失败：本机加密配置未读取到 TTS Resource ID';
     }
     if (message.contains('Speaker')) {
-      return '语音合成失败：请先在设置页选择 TTS Speaker';
+      return '语音合成失败：本机加密配置未读取到 TTS Speaker';
     }
     if (message.contains('网络请求失败')) {
       return '语音合成失败：网络或鉴权异常，请稍后重试';

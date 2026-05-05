@@ -56,8 +56,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       }
     });
 
-    final showInput = chatState.step != ChatStep.completed &&
-        chatState.step != ChatStep.init;
+    final showInput =
+        chatState.step != ChatStep.completed && chatState.step != ChatStep.init;
 
     return Scaffold(
       backgroundColor: AppTheme.background,
@@ -79,8 +79,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         actions: [
           if (chatState.questionCount > 0)
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -106,8 +105,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           Expanded(
             child: _buildBody(chatState),
           ),
-          if (chatState.error != null)
-            _ErrorBanner(error: chatState.error!),
+          if (chatState.error != null) _ErrorBanner(error: chatState.error!),
           if (showInput)
             _InputBar(
               state: chatState,
@@ -115,8 +113,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               textController: _textController,
               onToggleText: () =>
                   setState(() => _showTextInput = !_showTextInput),
-              onRecord: () =>
-                  ref.read(chatProvider(widget.articleId).notifier).startRecording(),
+              onRecord: () => ref
+                  .read(chatProvider(widget.articleId).notifier)
+                  .startRecording(),
               onStopRecord: () => ref
                   .read(chatProvider(widget.articleId).notifier)
                   .stopRecordingAndSend(),
@@ -146,16 +145,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       itemCount: chatState.messages.length,
       itemBuilder: (_, i) {
         final msg = chatState.messages[i];
-          return _ChatBubble(
-            message: msg,
-            onReplay: () => ref
-            .read(chatProvider(widget.articleId).notifier)
-            .replayAiMessage(msg.id),
-          )
-            .animate()
-            .fadeIn(duration: 250.ms)
-            .slideX(
-            begin: msg.isAi ? -0.05 : 0.05,
+        return _ChatBubble(
+          message: msg,
+          onReplay: () => ref
+              .read(chatProvider(widget.articleId).notifier)
+              .replayAiMessage(msg.id),
+        ).animate().fadeIn(duration: 250.ms).slideX(
+              begin: msg.isAi ? -0.05 : 0.05,
               end: 0,
               duration: 250.ms,
             );
@@ -176,9 +172,21 @@ class _StatusBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final (IconData icon, String text, Color color) = switch (step) {
       ChatStep.init => (Icons.auto_awesome, '正在初始化对话...', AppTheme.darkBlue),
-      ChatStep.aiSpeaking => (Icons.volume_up, 'Emma 正在说话...', AppTheme.darkBlue),
-      ChatStep.userIdle => (Icons.mic_none, '轮到你了！按麦克风说话或输入文字', AppTheme.primary),
-      ChatStep.recording => (Icons.fiber_manual_record, '录音中... 再次点击停止', Colors.red),
+      ChatStep.aiSpeaking => (
+          Icons.volume_up,
+          'Emma 正在说话...',
+          AppTheme.darkBlue
+        ),
+      ChatStep.userIdle => (
+          Icons.mic_none,
+          '轮到你了！按麦克风说话或输入文字',
+          AppTheme.primary
+        ),
+      ChatStep.recording => (
+          Icons.fiber_manual_record,
+          '录音中... 再次点击停止',
+          Colors.red
+        ),
       ChatStep.processing => (Icons.hourglass_empty, '处理中...', Colors.grey),
       ChatStep.completed => (Icons.emoji_events, '对话完成！', Colors.green),
       ChatStep.error => (Icons.warning_amber, '出错了', Colors.red),
@@ -243,8 +251,7 @@ class _ChatBubble extends StatelessWidget {
             const CircleAvatar(
               radius: 18,
               backgroundColor: AppTheme.darkBlue,
-              child:
-                  Icon(Icons.smart_toy, color: Colors.white, size: 18),
+              child: Icon(Icons.smart_toy, color: Colors.white, size: 18),
             ),
             const SizedBox(width: 8),
           ],
@@ -253,8 +260,7 @@ class _ChatBubble extends StatelessWidget {
               constraints: BoxConstraints(
                 maxWidth: MediaQuery.of(context).size.width * 0.72,
               ),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: isAi ? AppTheme.darkBlue : AppTheme.primary,
                 borderRadius: BorderRadius.only(
@@ -522,8 +528,8 @@ class _CompletedView extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primary,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 32, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(30),
                 ),
@@ -568,4 +574,3 @@ class _ErrorBanner extends StatelessWidget {
     );
   }
 }
-

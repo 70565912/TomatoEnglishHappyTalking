@@ -80,7 +80,8 @@ class DatabaseService {
   static Future<void> deleteArticle(int id) async {
     final db = await _database;
     await db.delete('articles', where: 'id = ?', whereArgs: [id]);
-    await db.delete('learning_records', where: 'article_id = ?', whereArgs: [id]);
+    await db
+        .delete('learning_records', where: 'article_id = ?', whereArgs: [id]);
   }
 
   // ===== Learning Records =====

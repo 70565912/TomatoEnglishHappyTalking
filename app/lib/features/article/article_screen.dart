@@ -78,9 +78,8 @@ class ArticleScreen extends ConsumerWidget {
               onPressed: formState.isSaving
                   ? null
                   : () async {
-                      final ok = await ref
-                          .read(articleFormProvider.notifier)
-                          .save();
+                      final ok =
+                          await ref.read(articleFormProvider.notifier).save();
                       if (ok && context.mounted) {
                         // Refresh article list on home screen
                         ref.invalidate(articleListProvider);

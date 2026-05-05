@@ -86,10 +86,14 @@ class _FollowReadBody extends StatelessWidget {
   final FollowReadState state;
   final WidgetRef ref;
 
-  void _play() => ref.read(followReadProvider(articleId).notifier).playCurrent();
-  void _startRec() => ref.read(followReadProvider(articleId).notifier).startRecording();
-  void _stopRec() => ref.read(followReadProvider(articleId).notifier).stopRecordingAndScore();
-  void _next() => ref.read(followReadProvider(articleId).notifier).nextSentence();
+  void _play() =>
+      ref.read(followReadProvider(articleId).notifier).playCurrent();
+  void _startRec() =>
+      ref.read(followReadProvider(articleId).notifier).startRecording();
+  void _stopRec() =>
+      ref.read(followReadProvider(articleId).notifier).stopRecordingAndScore();
+  void _next() =>
+      ref.read(followReadProvider(articleId).notifier).nextSentence();
   void _retry() => ref.read(followReadProvider(articleId).notifier).retry();
   void _replayCurrent() =>
       ref.read(followReadProvider(articleId).notifier).replayCurrentSentence();
@@ -165,8 +169,8 @@ class _AvatarArea extends StatelessWidget {
   Widget build(BuildContext context) {
     final isRecording = step == FollowReadStep.recording;
     final isPlaying = step == FollowReadStep.playing;
-    final isBusy = step == FollowReadStep.loadingTts ||
-        step == FollowReadStep.scoring;
+    final isBusy =
+        step == FollowReadStep.loadingTts || step == FollowReadStep.scoring;
 
     return Container(
       width: double.infinity,
@@ -547,7 +551,10 @@ class _CompletedView extends StatelessWidget {
           children: [
             const Icon(Icons.emoji_events, color: AppTheme.accent, size: 80)
                 .animate()
-                .scale(begin: const Offset(0, 0), duration: 600.ms, curve: Curves.elasticOut),
+                .scale(
+                    begin: const Offset(0, 0),
+                    duration: 600.ms,
+                    curve: Curves.elasticOut),
             const SizedBox(height: 24),
             Text(
               '全部完成！',

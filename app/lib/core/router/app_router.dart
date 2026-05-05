@@ -1,38 +1,36 @@
 import 'package:go_router/go_router.dart';
-import '../../features/home/home_screen.dart';
-import '../../features/article/article_screen.dart';
-import '../../features/follow_read/follow_read_screen.dart';
-import '../../features/chat/chat_screen.dart';
-import '../../features/profile/profile_screen.dart';
+import '../../features/web_shell/web_shell_screen.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/',
   routes: [
     GoRoute(
       path: '/',
-      builder: (context, state) => const HomeScreen(),
+      builder: (context, state) => const WebShellScreen(),
     ),
     GoRoute(
       path: '/article/new',
-      builder: (context, state) => const ArticleScreen(),
+      builder: (context, state) => const WebShellScreen(),
+    ),
+    GoRoute(
+      path: '/follow/:articleId',
+      builder: (context, state) => const WebShellScreen(),
     ),
     GoRoute(
       path: '/follow-read/:articleId',
-      builder: (context, state) {
-        final articleId = int.parse(state.pathParameters['articleId']!);
-        return FollowReadScreen(articleId: articleId);
-      },
+      builder: (context, state) => const WebShellScreen(),
     ),
     GoRoute(
       path: '/chat/:articleId',
-      builder: (context, state) {
-        final articleId = int.parse(state.pathParameters['articleId']!);
-        return ChatScreen(articleId: articleId);
-      },
+      builder: (context, state) => const WebShellScreen(),
+    ),
+    GoRoute(
+      path: '/settings',
+      builder: (context, state) => const WebShellScreen(),
     ),
     GoRoute(
       path: '/profile',
-      builder: (context, state) => const ProfileScreen(),
+      builder: (context, state) => const WebShellScreen(),
     ),
   ],
 );

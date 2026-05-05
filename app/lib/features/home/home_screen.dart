@@ -80,7 +80,8 @@ class _EmptyState extends StatelessWidget {
           const SizedBox(height: 16),
           Text(
             '还没有文章',
-            style: GoogleFonts.nunito(fontSize: 22, fontWeight: FontWeight.bold),
+            style:
+                GoogleFonts.nunito(fontSize: 22, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
@@ -156,14 +157,17 @@ class _ArticleCard extends StatelessWidget {
                 const SizedBox(width: 4),
                 Text(
                   dateStr,
-                  style: GoogleFonts.nunito(fontSize: 12, color: Colors.grey[400]),
+                  style:
+                      GoogleFonts.nunito(fontSize: 12, color: Colors.grey[400]),
                 ),
                 const SizedBox(width: 12),
-                Icon(Icons.format_list_numbered, size: 12, color: Colors.grey[400]),
+                Icon(Icons.format_list_numbered,
+                    size: 12, color: Colors.grey[400]),
                 const SizedBox(width: 4),
                 Text(
                   '${article.sentences.length} 句',
-                  style: GoogleFonts.nunito(fontSize: 12, color: Colors.grey[400]),
+                  style:
+                      GoogleFonts.nunito(fontSize: 12, color: Colors.grey[400]),
                 ),
                 const Spacer(),
                 _ActionButton(
