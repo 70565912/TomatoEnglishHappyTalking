@@ -24,8 +24,7 @@ class AppConfig {
   static const _maxEncryptedConfigParentSearchDepth = 8;
 
   // ===== Local bootstrap via --dart-define =====
-  static const _envVolcApiKey =
-      String.fromEnvironment('TOMATO_VOLC_API_KEY');
+  static const _envVolcApiKey = String.fromEnvironment('TOMATO_VOLC_API_KEY');
   static const _envVolcTtsAppId =
       String.fromEnvironment('TOMATO_VOLC_TTS_APP_ID');
   static const _envVolcTtsToken =
@@ -85,8 +84,15 @@ class AppConfig {
   static Future<String> get volcTtsApiKey async => await volcApiKey;
   static Future<String> get volcTtsResourceId async =>
       await _readSecret(key: _volcTtsResourceId, defaultValue: 'seed-tts-2.0');
-  static Future<String> get volcTtsSpeakerId async =>
-      await _readSecret(key: _volcTtsSpeakerId);
+  static Future<String> get volcTtsSpeakerId async {
+    final storageValue = await _readStorageSecret(key: _volcTtsSpeakerId);
+    if (storageValue.isNotEmpty) {
+      return storageValue;
+    }
+
+    return _runtimeSecrets[_volcTtsSpeakerId]?.trim() ?? '';
+  }
+
   static Future<String> get volcRealtimeAppId async =>
       await _readSecret(key: _volcRealtimeAppId);
   static Future<String> get volcRealtimeApiKey async => await volcApiKey;
@@ -160,6 +166,13 @@ class AppConfig {
     await _writeIfProvided(key: _volcApiKey, value: apiKey);
     await _storage.write(key: _volcTtsResourceId, value: resourceId);
     await _storage.write(key: _volcTtsSpeakerId, value: speakerId);
+    _runtimeSecrets[_volcTtsSpeakerId] = speakerId.trim();
+  }
+
+  static Future<void> saveVolcTtsSpeakerId(String speakerId) async {
+    final trimmedSpeakerId = speakerId.trim();
+    await _storage.write(key: _volcTtsSpeakerId, value: trimmedSpeakerId);
+    _runtimeSecrets[_volcTtsSpeakerId] = trimmedSpeakerId;
   }
 
   static Future<void> saveVolcRealtime({
@@ -269,9 +282,8 @@ class AppConfig {
 
   static String _joinPath(String basePath, String childPath) {
     final separator = Platform.pathSeparator;
-    final normalizedChild = childPath
-        .replaceAll('/', separator)
-        .replaceAll(r'\', separator);
+    final normalizedChild =
+        childPath.replaceAll('/', separator).replaceAll(r'\', separator);
     if (basePath.endsWith(separator)) {
       return '$basePath$normalizedChild';
     }
@@ -355,7 +367,8 @@ class AppConfig {
       return runtimeValue;
     }
 
-    return await _storage.read(key: key) ?? defaultValue;
+    final storageValue = await _readStorageSecret(key: key);
+    return storageValue.isNotEmpty ? storageValue : defaultValue;
   }
 
   static Future<String> _readFirstSecret({
@@ -370,13 +383,23 @@ class AppConfig {
     }
 
     for (final key in keys) {
-      final storageValue = (await _storage.read(key: key))?.trim();
-      if (storageValue != null && storageValue.isNotEmpty) {
+      final storageValue = await _readStorageSecret(key: key);
+      if (storageValue.isNotEmpty) {
         return storageValue;
       }
     }
 
     return defaultValue;
+  }
+
+  static Future<String> _readStorageSecret({required String key}) async {
+    try {
+      return (await _storage.read(key: key))?.trim() ?? '';
+    } catch (e) {
+      final message = e.toString().split('\n').first;
+      debugPrint('[AppConfig] secure storage read failed for $key: $message');
+      return '';
+    }
   }
 
   static void _setRuntimeSecretIfProvided({

@@ -13,20 +13,26 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByText('今日任务大厅')).toBeInTheDocument();
-    expect(await screen.findByText('Tomato Quest')).toBeInTheDocument();
+    expect(await screen.findByText('今天也要快乐开口说英语！')).toBeInTheDocument();
+    expect(await screen.findByText('最新任务卡')).toBeInTheDocument();
+    expect(await screen.findByText('Tomato English')).toBeInTheDocument();
+    expect(await screen.findByText('Happy Talking')).toBeInTheDocument();
   });
 
-  it('renders settings as read-only encrypted configuration status', async () => {
+  it('renders settings without manual API key input', async () => {
     window.location.hash = '/settings';
 
     render(<App />);
 
-    expect(await screen.findByText('火山引擎 API Key')).toBeInTheDocument();
-    expect(screen.getByText('语音合成')).toBeInTheDocument();
-    expect(screen.getByText('语音识别')).toBeInTheDocument();
-    expect(screen.getAllByText('统一火山引擎 API Key').length).toBeGreaterThan(0);
+    expect(await screen.findByText('API 与服务')).toBeInTheDocument();
+    expect(await screen.findByText('服务状态（运行时）')).toBeInTheDocument();
+    expect(screen.getByLabelText('选择声音')).toBeInTheDocument();
+    expect(screen.getByText(/Vivi 2.0 · 中文\/英文/)).toBeInTheDocument();
+    expect(screen.getAllByText('TTS 语音合成').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('BigASR 语音识别').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Realtime 对话服务').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('TTS 资源 ID').length).toBeGreaterThan(0);
+    expect(screen.queryByText('火山引擎 API Key')).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/api key/i)).not.toBeInTheDocument();
-    expect(screen.queryByText('保存语音装备')).not.toBeInTheDocument();
   });
 });

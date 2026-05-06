@@ -61,6 +61,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'chat.sendText': _handleChatSendText,
         'chat.replay': _handleChatReplay,
         'settings.load': _handleSettingsLoad,
+        'settings.saveVoice': _handleSettingsSaveVoice,
       });
 
   @override
@@ -305,6 +306,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Future<Map<String, dynamic>> _handleSettingsLoad(BridgeMessage message) =>
       _settingsPayload();
 
+  Future<Map<String, dynamic>> _handleSettingsSaveVoice(
+    BridgeMessage message,
+  ) async {
+    final speakerId = _payloadString(message.payload, 'speakerId').trim();
+    if (!TtsService.isPresetVoice(speakerId)) {
+      throw const FormatException('请选择支持的声音');
+    }
+
+    await AppConfig.saveVolcTtsSpeakerId(speakerId);
+    final payload = await _settingsPayload();
+    unawaited(_pushEvent('settings.state', payload));
+    return payload;
+  }
+
   void _openFollowSession(int articleId) {
     if (_activeFollowArticleId == articleId && _followSubscription != null) {
       return;
@@ -398,21 +413,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Future<Map<String, dynamic>> _settingsPayload() async {
     final speakerId = await AppConfig.volcTtsSpeakerId;
-    final apiKey = (await AppConfig.volcApiKey).trim();
+    final resolvedSpeakerId = TtsService.isPresetVoice(speakerId)
+        ? speakerId.trim()
+        : TtsService.defaultVoiceType;
     return {
-      'volcApi': {
-        'configured': apiKey.isNotEmpty,
-      },
       'tts': {
         'resourceId': await AppConfig.volcTtsResourceId,
-        'speakerId':
-            speakerId.isNotEmpty ? speakerId : TtsService.voices.first.id,
-      },
-      'realtime': {
-        'appId': await AppConfig.volcRealtimeAppId,
-      },
-      'bigAsr': {
-        'mode': 'BigASR 闯关评分',
+        'speakerId': resolvedSpeakerId,
       },
       'voices': TtsService.voices
           .map(
@@ -421,6 +428,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               'name': voice.name,
               'lang': voice.lang,
               'gender': voice.gender,
+              'scene': voice.scene,
             },
           )
           .toList(growable: false),

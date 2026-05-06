@@ -158,7 +158,14 @@ cd f:\TomatoEnglishHappyTalking
 .\tools\setup_android_emulator.ps1 -Start
 ```
 
-Web UI 本地调试：
+Web UI 静态预览（只打开 `index.html` 构建产物，不启动 Flutter）：
+
+```powershell
+cd f:\TomatoEnglishHappyTalking
+.\tools\preview_web_ui.ps1
+```
+
+Web UI 本地联调：
 
 ```powershell
 cd f:\TomatoEnglishHappyTalking\web_ui
@@ -229,14 +236,7 @@ cd f:\TomatoEnglishHappyTalking
 - Realtime 语音对话兼容字段：`X-Api-App-ID`、`X-Api-Access-Key`、`X-Api-Resource-Id=volc.speech.dialog`、`X-Api-App-Key=PlgvMymc7f3tQnJ6`
 - BigASR 识别：`X-Api-Key` 使用统一 API Key
 
-当前程序内已内置一组来自火山引擎公开文档的 Doubao TTS 2.0 官方音色预置，设置页只展示当前运行时读取到的音色状态：
-
-- `en_female_dacey_uranus_bigtts`
-- `en_male_tim_uranus_bigtts`
-- `en_female_stokie_uranus_bigtts`
-- `zh_female_yingyujiaoxue_uranus_bigtts`
-
-这些音色 ID 依据火山引擎公开文档“音色列表”页整理，英文学习场景默认优先使用英文音色。
+当前程序内已内置 `docs/豆包语音合成模型2.0 音色列表.md` 中 “豆包语音合成模型2.0” 表的官方音色预置。设置页只保留声音选择，不展示或填写 API Key、BigASR、Realtime 等密钥/服务配置。英文学习场景默认使用 `en_female_dacey_uranus_bigtts`。
 
 ### 本机 API Key 注入方案
 

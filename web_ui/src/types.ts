@@ -87,21 +87,13 @@ export interface VoiceOption {
   name: string;
   lang: string;
   gender: string;
+  scene: string;
 }
 
 export interface SettingsState {
-  volcApi: {
-    configured: boolean;
-  };
   tts: {
     resourceId: string;
     speakerId: string;
-  };
-  realtime: {
-    appId: string;
-  };
-  bigAsr: {
-    mode: string;
   };
   voices: VoiceOption[];
 }
