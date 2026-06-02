@@ -1,0 +1,67 @@
+{
+  "version": "lego-preview-baseline-v3",
+  "baseline": "docs/design-previews/generated-tomato-mascot-lego-preview.png",
+  "generatedAt": "2026-06-01T14:57:23.673Z",
+  "animations": {
+    "wave": {
+      "delayMs": 110,
+      "frameCount": 8,
+      "frameSize": {
+        "width": 444,
+        "height": 444
+      },
+      "frames": [
+        "assets/ui/lego/animations/wave/frame-01.png",
+        "assets/ui/lego/animations/wave/frame-02.png",
+        "assets/ui/lego/animations/wave/frame-03.png",
+        "assets/ui/lego/animations/wave/frame-04.png",
+        "assets/ui/lego/animations/wave/frame-05.png",
+        "assets/ui/lego/animations/wave/frame-06.png",
+        "assets/ui/lego/animations/wave/frame-07.png",
+        "assets/ui/lego/animations/wave/frame-08.png"
+      ],
+      "gif": "assets/ui/lego/lego-wave-animation-v3.gif",
+      "webp": "assets/ui/lego/lego-wave-animation-v3.webp"
+    },
+    "speaking": {
+      "delayMs": 105,
+      "frameCount": 8,
+      "frameSize": {
+        "width": 444,
+        "height": 444
+      },
+      "frames": [
+        "assets/ui/lego/animations/speaking/frame-01.png",
+        "assets/ui/lego/animations/speaking/frame-02.png",
+        "assets/ui/lego/animations/speaking/frame-03.png",
+        "assets/ui/lego/animations/speaking/frame-04.png",
+        "assets/ui/lego/animations/speaking/frame-05.png",
+        "assets/ui/lego/animations/speaking/frame-06.png",
+        "assets/ui/lego/animations/speaking/frame-07.png",
+        "assets/ui/lego/animations/speaking/frame-08.png"
+      ],
+      "gif": "assets/ui/lego/lego-speaking-animation-v3.gif",
+      "webp": "assets/ui/lego/lego-speaking-animation-v3.webp"
+    },
+    "success": {
+      "delayMs": 115,
+      "frameCount": 8,
+      "frameSize": {
+        "width": 444,
+        "height": 444
+      },
+      "frames": [
+        "assets/ui/lego/animations/success/frame-01.png",
+        "assets/ui/lego/animations/success/frame-02.png",
+        "assets/ui/lego/animations/success/frame-03.png",
+        "assets/ui/lego/animations/success/frame-04.png",
+        "assets/ui/lego/animations/success/frame-05.png",
+        "assets/ui/lego/animations/success/frame-06.png",
+        "assets/ui/lego/animations/success/frame-07.png",
+        "assets/ui/lego/animations/success/frame-08.png"
+      ],
+      "gif": "assets/ui/lego/lego-success-animation-v3.gif",
+      "webp": "assets/ui/lego/lego-success-animation-v3.webp"
+    }
+  }
+}

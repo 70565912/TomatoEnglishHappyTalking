@@ -7,6 +7,7 @@ import type {
   SettingsState,
   VoiceOption,
 } from './types';
+import { splitSentences } from './sentenceSplitter';
 
 type NativeListener<T = unknown> = (payload: T) => void;
 
@@ -94,12 +95,14 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return { articles: mockArticles };
   }
   if (type === 'article.create') {
+    const content = String(payload.content ?? '');
+    const sentences = splitSentences(content);
     const article: Article = {
       id: 99,
       title: String(payload.title ?? 'New Quest'),
-      content: String(payload.content ?? ''),
-      sentences: String(payload.content ?? '').split(/[.!?]/).filter(Boolean),
-      sentenceCount: 2,
+      content,
+      sentences,
+      sentenceCount: sentences.length,
       createdAt: new Date().toISOString(),
       averageScore: 0,
     };
@@ -107,6 +110,34 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'follow.open') {
     return mockFollow;
+  }
+  if (type === 'follow.play' || type === 'follow.replay') {
+    return {
+      ...mockFollow,
+      step: 'idle',
+      playbackState: 'success',
+      result: null,
+    };
+  }
+  if (type === 'follow.next') {
+    return {
+      ...mockFollow,
+      currentIndex: 1,
+      currentSentence: mockArticles[0].sentences[1],
+      currentTranslation: '他把它分享给自己的队友。',
+      isLastSentence: true,
+      step: 'idle',
+      playbackState: 'idle',
+      result: null,
+    };
+  }
+  if (type === 'follow.retry') {
+    return {
+      ...mockFollow,
+      step: 'idle',
+      playbackState: 'idle',
+      result: null,
+    };
   }
   if (type.startsWith('follow.')) {
     return {
@@ -181,6 +212,7 @@ const mockFollow: FollowState = {
   currentIndex: 0,
   totalSentences: 2,
   currentSentence: mockArticles[0].sentences[0],
+  currentTranslation: '汤姆发现了一个明亮的零食盒。',
   isLastSentence: false,
   step: 'idle',
   playbackState: 'idle',
@@ -203,6 +235,7 @@ const mockChat: ChatState = {
       id: 'ai_1',
       isAi: true,
       text: 'What did Tom find?',
+      translation: '汤姆发现了什么？',
       playbackState: 'success',
     },
   ],

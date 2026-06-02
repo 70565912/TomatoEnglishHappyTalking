@@ -609,12 +609,103 @@ class TtsService {
       throw const TtsException('本机加密配置未读取到 TTS 2.0 的 Speaker');
     }
 
-    return _synthesizeV3(
-      text: trimmedText,
-      speakerId: resolvedSpeakerId,
-      apiKey: apiKey,
-      resourceId: ttsResourceId,
-    );
+    final textCandidates = _synthesisTextCandidates(trimmedText);
+    TtsException? firstError;
+    for (var i = 0; i < textCandidates.length; i++) {
+      final candidate = textCandidates[i];
+      try {
+        if (i > 0) {
+          _trace(
+            'v3 retry with readable fallback textLen=${candidate.length}',
+          );
+        }
+        return await _synthesizeV3(
+          text: candidate,
+          speakerId: resolvedSpeakerId,
+          apiKey: apiKey,
+          resourceId: ttsResourceId,
+        );
+      } on TtsException catch (error) {
+        firstError ??= error;
+        final canRetry = i == 0 &&
+            textCandidates.length > 1 &&
+            _shouldRetryWithReadableFallback(error);
+        if (!canRetry) {
+          rethrow;
+        }
+        debugPrint(
+          '[TtsService] retrying with readable text after empty audio: '
+          '${error.message}',
+        );
+      }
+    }
+
+    throw firstError ?? const TtsException('TTS 2.0 合成失败');
+  }
+
+  @visibleForTesting
+  static List<String> synthesisTextCandidatesForTest(String text) =>
+      _synthesisTextCandidates(text.trim());
+
+  static List<String> _synthesisTextCandidates(String text) {
+    final normalized = _normalizeTtsText(text);
+    final candidates = <String>[normalized];
+    final readableFallback = _englishReadableFallback(normalized);
+    if (readableFallback.isNotEmpty && readableFallback != normalized) {
+      candidates.add(readableFallback);
+    }
+    return candidates;
+  }
+
+  static String _normalizeTtsText(String text) => text
+      .replaceAll(RegExp(r'[ \t\r\n]+'), ' ')
+      .replaceAllMapped(RegExp(r'\s+([,.!?;:])'), (match) => match.group(1)!)
+      .trim();
+
+  static bool _shouldRetryWithReadableFallback(TtsException error) {
+    final message = error.message;
+    return message.contains('未返回音频数据') || message.contains('响应为空');
+  }
+
+  static String _englishReadableFallback(String text) {
+    if (!RegExp(r'[\u3400-\u9FFF]').hasMatch(text) ||
+        !RegExp(r'[A-Za-z]').hasMatch(text)) {
+      return text;
+    }
+
+    var readable = text
+        .replaceAll(RegExp(r'[\u3400-\u9FFF]+'), ' ')
+        .replaceAll(RegExp(r'[（）《》【】]'), ' ')
+        .replaceAll(RegExp(r'\b(?:E|EP)\s*\d+\b', caseSensitive: false), ' ')
+        .replaceAll(
+            RegExp(r'\bEpisod(?:e)?\s*\d+\b', caseSensitive: false), ' ')
+        .replaceAll(RegExp(r'\s+[-–—]\s+'), ' ')
+        .replaceAll(RegExp(r'[ \t\r\n]+'), ' ')
+        .trim();
+
+    final quoteIndex = readable.indexOf('"');
+    if (quoteIndex > 0) {
+      final leading = readable.substring(0, quoteIndex).trim();
+      if (_looksLikeImportedTitle(leading)) {
+        readable = readable.substring(quoteIndex).trim();
+      }
+    }
+
+    return readable
+        .replaceAll(RegExp(r'[ \t\r\n]+'), ' ')
+        .replaceAllMapped(RegExp(r'\s+([,.!?;:])'), (match) => match.group(1)!)
+        .trim();
+  }
+
+  static bool _looksLikeImportedTitle(String text) {
+    final words = text
+        .split(RegExp(r'\s+'))
+        .where((word) => word.trim().isNotEmpty)
+        .length;
+    return words <= 8 ||
+        RegExp(r'\bAdventures\b|\bWonderland\b|\bChapter\b',
+                caseSensitive: false)
+            .hasMatch(text);
   }
 
   static Future<List<int>> _synthesizeV3({

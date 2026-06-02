@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as path_lib;
 import '../data/models/article_model.dart';
@@ -75,6 +77,19 @@ class DatabaseService {
   static Future<int> saveArticle(Article article) async {
     final db = await _database;
     return db.insert('articles', article.toMap());
+  }
+
+  static Future<void> updateArticleSentences(
+    int id,
+    List<String> sentences,
+  ) async {
+    final db = await _database;
+    await db.update(
+      'articles',
+      {'sentences': jsonEncode(sentences)},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   static Future<void> deleteArticle(int id) async {

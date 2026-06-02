@@ -1,0 +1,8 @@
+{
+  "baseUrl": "https://api.pixellab.ai/v2",
+  "endpoint": "/animate-with-text-v3",
+  "pollIntervalSeconds": 5,
+  "outputRoot": "web_ui/public/assets/ui/animations",
+  "appOutputRoot": "app/assets/web/assets/ui/animations",
+  "animations": []
+}

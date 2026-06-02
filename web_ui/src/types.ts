@@ -55,6 +55,7 @@ export interface FollowState {
   currentIndex?: number;
   totalSentences?: number;
   currentSentence?: string;
+  currentTranslation?: string;
   isLastSentence?: boolean;
   step?: string;
   playbackState?: string;
@@ -68,6 +69,7 @@ export interface ChatMessage {
   id: string;
   isAi: boolean;
   text: string;
+  translation?: string | null;
   playbackState: string;
   playbackError?: string | null;
 }

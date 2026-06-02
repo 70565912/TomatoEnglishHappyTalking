@@ -11,6 +11,7 @@ import '../../../services/database_service.dart';
 import '../../../services/realtime_voice_service.dart';
 import '../../../services/streaming_asr_service.dart';
 import '../../../services/tts_service.dart';
+import '../../../services/translation_service.dart';
 
 part 'chat_provider.g.dart';
 
@@ -36,6 +37,7 @@ class DisplayMessage {
   final String id;
   final bool isAi;
   final String text;
+  final String? translation;
   final PlaybackVisualState playbackState;
   final String? playbackError;
 
@@ -43,19 +45,24 @@ class DisplayMessage {
     required this.id,
     required this.isAi,
     required this.text,
+    this.translation,
     required this.playbackState,
     this.playbackError,
   });
 
   DisplayMessage copyWith({
+    String? translation,
     PlaybackVisualState? playbackState,
     String? playbackError,
     bool clearPlaybackError = false,
+    bool clearTranslation = false,
   }) =>
       DisplayMessage(
         id: id,
         isAi: isAi,
         text: text,
+        translation:
+            clearTranslation ? null : (translation ?? this.translation),
         playbackState: playbackState ?? this.playbackState,
         playbackError:
             clearPlaybackError ? null : (playbackError ?? this.playbackError),
@@ -112,9 +119,11 @@ class Chat extends _$Chat {
   final _recorder = AudioRecorder();
   String? _recordingPath;
   List<RealtimeChatTurn> _history = [];
+  bool _disposed = false;
 
   @override
   ChatState build(int articleId) {
+    _disposed = false;
     ref.onDispose(_cleanup);
     _init(articleId);
     return const ChatState();
@@ -168,6 +177,7 @@ class Chat extends _$Chat {
         error: _mapAiFallbackMessage(aiReply),
         clearError: _mapAiFallbackMessage(aiReply) == null,
       );
+      unawaited(_translateMessage(aiMessageId, aiText));
 
       final ttsError = await _playTts(
         text: aiText,
@@ -220,17 +230,19 @@ class Chat extends _$Chat {
       final userText =
           await StreamingAsrService.recognizeSafe(audioBytes: audioBytes);
       final displayText = userText.isNotEmpty ? userText : '(未能识别语音，请重试)';
+      final userMessageId = _newMessageId();
 
       final newMsgs = [
         ...state.messages,
         DisplayMessage(
-          id: _newMessageId(),
+          id: userMessageId,
           isAi: false,
           text: displayText,
           playbackState: PlaybackVisualState.success,
         ),
       ];
       state = state.copyWith(messages: newMsgs);
+      unawaited(_translateMessage(userMessageId, displayText));
 
       await _sendToAi(
         userText.isNotEmpty
@@ -257,8 +269,10 @@ class Chat extends _$Chat {
         playbackState: PlaybackVisualState.success,
       ),
     ];
+    final userMessageId = newMsgs.last.id;
     state = state.copyWith(
         messages: newMsgs, step: ChatStep.processing, clearError: true);
+    unawaited(_translateMessage(userMessageId, text));
     await _sendToAi(text);
   }
 
@@ -299,6 +313,7 @@ class Chat extends _$Chat {
         error: _mapAiFallbackMessage(aiReply),
         clearError: _mapAiFallbackMessage(aiReply) == null,
       );
+      unawaited(_translateMessage(aiMessageId, aiText));
 
       final ttsError = await _playTts(
         text: aiText,
@@ -372,14 +387,40 @@ class Chat extends _$Chat {
 
       player = AudioPlayer();
       await player.setFilePath(tmpPath).timeout(const Duration(seconds: 10));
-      _trace('playTts loaded');
+      await player.seek(Duration.zero).timeout(const Duration(seconds: 3));
+      await player.setVolume(1.0);
+      _trace(
+        'playTts loaded duration=${player.duration?.inMilliseconds ?? 0}ms',
+      );
 
       final playbackStarted = Completer<void>();
       final playbackDone = Completer<void>();
       var playCommandIssued = false;
-      var progressObserved = false;
       Duration lastPosition = Duration.zero;
       Duration? mediaDuration;
+      DateTime? playbackStartedAt;
+
+      void completeStarted() {
+        if (!playbackStarted.isCompleted) {
+          playbackStarted.complete();
+        }
+      }
+
+      void completeDone() {
+        completeStarted();
+        if (!playbackDone.isCompleted) {
+          playbackDone.complete();
+        }
+      }
+
+      void completeError(Object error, StackTrace stackTrace) {
+        if (!playbackStarted.isCompleted) {
+          playbackStarted.completeError(error, stackTrace);
+        }
+        if (!playbackDone.isCompleted) {
+          playbackDone.completeError(error, stackTrace);
+        }
+      }
 
       playerStateSub = player.playerStateStream.listen((event) {
         _trace(
@@ -388,20 +429,13 @@ class Chat extends _$Chat {
 
         mediaDuration = player?.duration ?? mediaDuration;
 
-        if (event.processingState == ProcessingState.completed &&
-            !playbackDone.isCompleted) {
-          if (!playbackStarted.isCompleted) {
-            playbackStarted.complete();
-          }
-          playbackDone.complete();
-          return;
+        if (playCommandIssued && event.playing) {
+          completeStarted();
         }
 
-        if (playCommandIssued &&
-            progressObserved &&
-            !event.playing &&
-            !playbackDone.isCompleted) {
-          playbackDone.complete();
+        if (event.processingState == ProcessingState.completed) {
+          completeDone();
+          return;
         }
       });
 
@@ -409,24 +443,15 @@ class Chat extends _$Chat {
         lastPosition = position;
         mediaDuration = player?.duration ?? mediaDuration;
 
-        if (playCommandIssued &&
-            position > const Duration(milliseconds: 120) &&
-            !playbackStarted.isCompleted) {
-          progressObserved = true;
-          playbackStarted.complete();
+        if (playCommandIssued && position > const Duration(milliseconds: 120)) {
+          completeStarted();
         }
 
         final duration = mediaDuration;
         if (duration != null &&
             duration > Duration.zero &&
             position >= duration - const Duration(milliseconds: 180)) {
-          progressObserved = true;
-          if (!playbackStarted.isCompleted) {
-            playbackStarted.complete();
-          }
-          if (!playbackDone.isCompleted) {
-            playbackDone.complete();
-          }
+          completeDone();
         }
       });
 
@@ -434,20 +459,14 @@ class Chat extends _$Chat {
         (_) {},
         onError: (Object error, StackTrace stackTrace) {
           _trace('playTts playbackEvent error=$error');
+          completeError(error, stackTrace);
         },
       );
 
       final playFuture = player.play();
       playCommandIssued = true;
       unawaited(
-        playFuture.catchError((Object error, StackTrace stackTrace) {
-          if (!playbackStarted.isCompleted) {
-            playbackStarted.completeError(error, stackTrace);
-          }
-          if (!playbackDone.isCompleted) {
-            playbackDone.completeError(error, stackTrace);
-          }
-        }),
+        playFuture.then((_) => completeDone()).catchError(completeError),
       );
       _updateMessagePlayback(
         messageId,
@@ -456,14 +475,26 @@ class Chat extends _$Chat {
       );
 
       await playbackStarted.future.timeout(const Duration(seconds: 6));
+      playbackStartedAt = DateTime.now();
+      final minimumPlaybackDuration =
+          _minimumPlaybackDuration(text, mediaDuration);
       _updateMessagePlayback(
         messageId,
         PlaybackVisualState.playing,
         clearError: true,
       );
-      _trace('playTts started at=${lastPosition.inMilliseconds}ms');
+      _trace(
+        'playTts started at=${lastPosition.inMilliseconds}ms '
+        'minimum=${minimumPlaybackDuration.inMilliseconds}ms',
+      );
 
-      await playbackDone.future.timeout(const Duration(seconds: 45));
+      await playbackDone.future.timeout(
+        _playbackTimeout(minimumPlaybackDuration),
+      );
+      await _holdUntilMinimumPlaybackDuration(
+        startedAt: playbackStartedAt,
+        minimumDuration: minimumPlaybackDuration,
+      );
 
       _updateMessagePlayback(
         messageId,
@@ -538,8 +569,73 @@ class Chat extends _$Chat {
     return '语音合成失败：$message';
   }
 
+  Duration _minimumPlaybackDuration(String text, Duration? decoderDuration) {
+    final wordCount =
+        RegExp(r"[A-Za-z]+(?:'[A-Za-z]+)?").allMatches(text).length;
+    final estimatedDuration = Duration(milliseconds: 900 + (wordCount * 270));
+    var duration = decoderDuration ?? Duration.zero;
+    if (estimatedDuration > duration) {
+      duration = estimatedDuration;
+    }
+    if (duration < const Duration(seconds: 2)) {
+      return const Duration(seconds: 2);
+    }
+    if (duration > const Duration(seconds: 30)) {
+      return const Duration(seconds: 30);
+    }
+    return duration;
+  }
+
+  Future<void> _holdUntilMinimumPlaybackDuration({
+    required DateTime? startedAt,
+    required Duration minimumDuration,
+  }) async {
+    if (startedAt == null || minimumDuration <= Duration.zero) {
+      return;
+    }
+
+    final elapsed = DateTime.now().difference(startedAt);
+    final remaining = minimumDuration - elapsed;
+    if (remaining > const Duration(milliseconds: 250)) {
+      _trace('playTts hold player alive ${remaining.inMilliseconds}ms');
+      await Future<void>.delayed(remaining);
+    }
+  }
+
+  Duration _playbackTimeout(Duration duration) {
+    if (duration <= Duration.zero) {
+      return const Duration(seconds: 30);
+    }
+
+    final timeout = duration + const Duration(seconds: 8);
+    if (timeout < const Duration(seconds: 12)) {
+      return const Duration(seconds: 12);
+    }
+    if (timeout > const Duration(seconds: 60)) {
+      return const Duration(seconds: 60);
+    }
+    return timeout;
+  }
+
   Future<void> _cleanup() async {
+    _disposed = true;
     await _recorder.dispose();
+  }
+
+  Future<void> _translateMessage(String messageId, String text) async {
+    final translated = await TranslationService.toChinese(text);
+    if (_disposed || translated.trim().isEmpty) {
+      return;
+    }
+
+    final updated = state.messages
+        .map(
+          (message) => message.id == messageId
+              ? message.copyWith(translation: translated.trim())
+              : message,
+        )
+        .toList(growable: false);
+    state = state.copyWith(messages: updated);
   }
 
   void _updateMessagePlayback(

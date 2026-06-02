@@ -1,0 +1,16 @@
+{
+  "name": "tomato-english-happy-talking-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "assets:lego-animations": "node tools/export_lego_animations.mjs",
+    "assets:lego-props": "node tools/export_ui_props.mjs",
+    "assets:app-icons": "node tools/generate_app_icons.mjs",
+    "qa:windows": "node tools/qa_windows_release.mjs"
+  },
+  "devDependencies": {
+    "gifenc": "^1.0.3",
+    "sharp": "^0.34.5"
+  }
+}

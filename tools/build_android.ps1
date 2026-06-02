@@ -28,6 +28,22 @@ $env:PATH = "$($flutterRoot)\bin;" + $env:PATH
 $env:ANDROID_HOME = $androidSdkRoot
 $env:ANDROID_SDK_ROOT = $androidSdkRoot
 
+function Initialize-FlutterGitTrust {
+    $toolingRoot = Join-Path $workspaceRoot ".tmp\tooling"
+    New-Item -ItemType Directory -Path $toolingRoot -Force | Out-Null
+
+    $env:GIT_CONFIG_GLOBAL = Join-Path $toolingRoot "flutter-safe-gitconfig"
+
+    foreach ($safePath in @($flutterRoot, $workspaceRoot)) {
+        $normalizedPath = $safePath.Replace("\", "/")
+        $existingValues = @(& git config --global --get-all safe.directory 2>$null)
+        if ($existingValues -notcontains $normalizedPath) {
+            & git config --global --add safe.directory $normalizedPath
+            Assert-LastExitCode -CommandName "git config safe.directory"
+        }
+    }
+}
+
 if (-not $env:PUB_HOSTED_URL) {
     $env:PUB_HOSTED_URL = "https://pub.flutter-io.cn"
 }
@@ -47,12 +63,14 @@ function Assert-LastExitCode {
     }
 }
 
+Initialize-FlutterGitTrust
+
 function Get-FlutterDartDefineArgs {
     param(
         [string[]]$Values
     )
 
-    $args = @()
+    $dartDefineOptions = @()
     foreach ($value in @($Values)) {
         if ([string]::IsNullOrWhiteSpace($value)) {
             continue
@@ -60,13 +78,151 @@ function Get-FlutterDartDefineArgs {
 
         $trimmedValue = $value.Trim()
         if ($trimmedValue.StartsWith("--dart-define=")) {
-            $args += $trimmedValue
+            $dartDefineOptions += $trimmedValue
         } else {
-            $args += "--dart-define=$trimmedValue"
+            $dartDefineOptions += "--dart-define=$trimmedValue"
         }
     }
 
-    return $args
+    return $dartDefineOptions
+}
+
+function Get-OptionalFileHash {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return $null
+    }
+
+    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+}
+
+function Get-WebUiDependencyStatePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WebUiRoot
+    )
+
+    return Join-Path $WebUiRoot "node_modules\.tomato-package-lock.sha256"
+}
+
+function Save-WebUiDependencyState {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WebUiRoot,
+        [string]$PackageLockHash
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PackageLockHash)) {
+        return
+    }
+
+    $stateFilePath = Get-WebUiDependencyStatePath -WebUiRoot $WebUiRoot
+    Set-Content -Path $stateFilePath -Value $PackageLockHash -NoNewline
+}
+
+function Test-WebUiDependenciesReady {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WebUiRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$NpmExe,
+        [string]$PackageLockHash
+    )
+
+    $nodeModulesPath = Join-Path $WebUiRoot "node_modules"
+    if (-not (Test-Path $nodeModulesPath)) {
+        return $false
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($PackageLockHash)) {
+        $stateFilePath = Get-WebUiDependencyStatePath -WebUiRoot $WebUiRoot
+        if (Test-Path $stateFilePath) {
+            $savedHash = (Get-Content -Path $stateFilePath -Raw).Trim()
+            return $savedHash -eq $PackageLockHash
+        }
+    }
+
+    $null = & $NpmExe ls --depth=0 --silent 2>$null
+    $dependenciesReady = $LASTEXITCODE -eq 0
+
+    if ($dependenciesReady) {
+        Save-WebUiDependencyState -WebUiRoot $WebUiRoot -PackageLockHash $PackageLockHash
+    }
+
+    return $dependenciesReady
+}
+
+function Sync-WebUiBuildArtifacts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationRoot
+    )
+
+    if (-not (Test-Path $SourceRoot)) {
+        throw "Web UI 构建输出不存在: $SourceRoot"
+    }
+
+    New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
+
+    Get-ChildItem -Path $DestinationRoot -Force | ForEach-Object {
+        Remove-Item -Path $_.FullName -Recurse -Force
+    }
+
+    Copy-Item -Path (Join-Path $SourceRoot "*") -Destination $DestinationRoot -Recurse -Force
+}
+
+function Invoke-WebUiBuildInTempWorkspace {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$WebUiRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$NpmExe
+    )
+
+    $tempWorkspaceRoot = Join-Path $env:TEMP ("tomato-web-ui-build-" + [guid]::NewGuid().ToString("N"))
+    $tempWebUiRoot = Join-Path $tempWorkspaceRoot "web_ui"
+    $tempOutputRoot = Join-Path $tempWorkspaceRoot "app\assets\web"
+    $workspaceOutputRoot = Join-Path $workspaceRoot "app\assets\web"
+
+    New-Item -ItemType Directory -Path $tempWebUiRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $tempOutputRoot -Force | Out-Null
+
+    try {
+        Get-ChildItem -Path $WebUiRoot -Force | Where-Object {
+            $_.Name -ne "node_modules"
+        } | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination (Join-Path $tempWebUiRoot $_.Name) -Recurse -Force
+        }
+
+        Push-Location $tempWebUiRoot
+        try {
+            Write-Host "检测到本地依赖目录被占用，改用临时目录构建 Web UI。" -ForegroundColor Yellow
+            if (Test-Path (Join-Path $tempWebUiRoot "package-lock.json")) {
+                & $NpmExe ci
+                Assert-LastExitCode -CommandName "npm ci (temp web_ui)"
+            } else {
+                & $NpmExe install
+                Assert-LastExitCode -CommandName "npm install (temp web_ui)"
+            }
+
+            & $NpmExe run build
+            Assert-LastExitCode -CommandName "npm run build (temp web_ui)"
+        } finally {
+            Pop-Location
+        }
+
+        Sync-WebUiBuildArtifacts -SourceRoot $tempOutputRoot -DestinationRoot $workspaceOutputRoot
+    } finally {
+        if (Test-Path $tempWorkspaceRoot) {
+            Remove-Item -Path $tempWorkspaceRoot -Recurse -Force
+        }
+    }
 }
 
 function Invoke-WebUiBuild {
@@ -80,22 +236,40 @@ function Invoke-WebUiBuild {
         $npmCommand = Get-Command npm -ErrorAction Stop
     }
     $npmExe = $npmCommand.Source
+    $packageLockPath = Join-Path $webUiRoot "package-lock.json"
+    $packageLockHash = Get-OptionalFileHash -Path $packageLockPath
+    $shouldUseTempBuild = $false
 
     Push-Location $webUiRoot
     try {
         Write-Host "`n=== 构建 Web UI ===" -ForegroundColor Cyan
-        if (Test-Path (Join-Path $webUiRoot "package-lock.json")) {
-            & $npmExe ci
-            Assert-LastExitCode -CommandName "npm ci"
-        } else {
-            & $npmExe install
-            Assert-LastExitCode -CommandName "npm install"
-        }
+        try {
+            if (Test-WebUiDependenciesReady -WebUiRoot $webUiRoot -NpmExe $npmExe -PackageLockHash $packageLockHash) {
+                Write-Host "检测到 Web UI 依赖未变更，跳过 npm 安装。" -ForegroundColor DarkGray
+            } elseif (Test-Path $packageLockPath) {
+                & $npmExe ci
+                Assert-LastExitCode -CommandName "npm ci"
+                Save-WebUiDependencyState -WebUiRoot $webUiRoot -PackageLockHash $packageLockHash
+            } else {
+                & $npmExe install
+                Assert-LastExitCode -CommandName "npm install"
+            }
 
-        & $npmExe run build
-        Assert-LastExitCode -CommandName "npm run build"
+            & $npmExe run build
+            Assert-LastExitCode -CommandName "npm run build"
+        } catch {
+            if (-not (Test-Path (Join-Path $webUiRoot "node_modules"))) {
+                throw
+            }
+
+            $shouldUseTempBuild = $true
+        }
     } finally {
         Pop-Location
+    }
+
+    if ($shouldUseTempBuild) {
+        Invoke-WebUiBuildInTempWorkspace -WebUiRoot $webUiRoot -NpmExe $npmExe
     }
 }
 

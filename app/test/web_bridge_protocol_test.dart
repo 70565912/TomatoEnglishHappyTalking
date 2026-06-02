@@ -12,6 +12,18 @@ void main() {
     expect(message.payload['page'], 1);
   });
 
+  test('BridgeMessage parses local map payload', () {
+    final message = BridgeMessage.fromRaw({
+      'id': 'qa_1',
+      'type': 'settings.load',
+      'payload': <String, Object?>{},
+    });
+
+    expect(message.id, 'qa_1');
+    expect(message.type, 'settings.load');
+    expect(message.payload, isEmpty);
+  });
+
   test('BridgeRouter returns structured error for unknown command', () async {
     const router = BridgeRouter({});
 

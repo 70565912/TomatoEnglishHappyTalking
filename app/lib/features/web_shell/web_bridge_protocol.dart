@@ -15,7 +15,7 @@ class BridgeMessage {
   factory BridgeMessage.fromRaw(Object? raw) {
     final decoded = switch (raw) {
       final String text => jsonDecode(text),
-      final Map<Object?, Object?> map => map,
+      final Map map => map,
       _ => throw const FormatException('Bridge message must be JSON object'),
     };
 

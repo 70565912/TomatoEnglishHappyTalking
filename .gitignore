@@ -13,6 +13,7 @@ security/
 build/
 **/build/
 release/
+.tmp/
 node_modules/
 **/node_modules/
 *.tsbuildinfo

@@ -122,12 +122,51 @@ class RealtimeVoiceService {
     return _query(turns);
   }
 
-  static Future<RealtimeReply> _query(List<RealtimeChatTurn> turns) async {
+  static Future<RealtimeReply> translateToChinese({
+    required String text,
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return const RealtimeReply(text: '', source: RealtimeReplySource.remote);
+    }
+    if (RegExp(r'[\u3400-\u9FFF]').hasMatch(trimmed) &&
+        !RegExp(r'[A-Za-z]').hasMatch(trimmed)) {
+      return RealtimeReply(text: trimmed, source: RealtimeReplySource.remote);
+    }
+
+    final turns = <RealtimeChatTurn>[
+      const RealtimeChatTurn(
+        role: 'system',
+        content:
+            'You are a precise English-to-Chinese translation engine. Return only natural Simplified Chinese. Do not explain.',
+      ),
+      RealtimeChatTurn(
+        role: 'user',
+        content:
+            'Translate this English learning text into natural Simplified Chinese. Keep names readable and return only the translation:\n\n$trimmed',
+      ),
+    ];
+
+    final reply = await _query(
+      turns,
+      fallbackText: _mockTranslation(trimmed),
+    );
+    return RealtimeReply(
+      text: _cleanTranslation(reply.text),
+      source: reply.source,
+      errorMessage: reply.errorMessage,
+    );
+  }
+
+  static Future<RealtimeReply> _query(
+    List<RealtimeChatTurn> turns, {
+    String? fallbackText,
+  }) async {
     final appId = await AppConfig.volcRealtimeAppId;
     final apiKey = await AppConfig.volcApiKey;
     if (apiKey.trim().isEmpty) {
       return RealtimeReply(
-        text: _mockResponse(),
+        text: fallbackText ?? _mockResponse(),
         source: RealtimeReplySource.mockNoKey,
         errorMessage: 'volc_api_key is empty',
       );
@@ -319,7 +358,7 @@ class RealtimeVoiceService {
     } catch (e) {
       _trace('fallback error=$e');
       return RealtimeReply(
-        text: _mockResponse(),
+        text: fallbackText ?? _mockResponse(),
         source: RealtimeReplySource.mockOnError,
         errorMessage: e.toString(),
       );
@@ -738,6 +777,35 @@ class RealtimeVoiceService {
 
   static String _mockResponse() =>
       "That's interesting! What do you think is the most important idea in this article?";
+
+  static String _mockTranslation(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty) {
+      return '';
+    }
+
+    final lower = normalized.toLowerCase();
+    if (lower.contains('tom finds a bright snack box')) {
+      return '汤姆发现了一个明亮的零食盒。';
+    }
+    if (lower.contains('he shares it with his team')) {
+      return '他把它分享给自己的队友。';
+    }
+    if (lower.contains('alice')) {
+      return '这是一句关于爱丽丝故事的英文，请结合上方英文理解。';
+    }
+    return '中文翻译暂不可用，请先参考英文原句。';
+  }
+
+  static String _cleanTranslation(String text) {
+    var cleaned = text.trim();
+    cleaned = cleaned.replaceAll(
+      RegExp(r'^(中文翻译|翻译|译文)\s*[:：]\s*'),
+      '',
+    );
+    cleaned = cleaned.replaceAll(RegExp(r'^["“]|["”]$'), '').trim();
+    return cleaned;
+  }
 }
 
 class _RealtimeServerPacket {

@@ -1,31 +1,49 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { onNativeEvent, sendNative } from './bridge';
+import { splitSentences } from './sentenceSplitter';
 import type {
   Article,
-  AvatarState,
   ChatState,
   FollowState,
   SettingsState,
-  VoiceOption,
 } from './types';
 import './styles.css';
-
-const idleAvatar: AvatarState = {
-  mode: 'idle',
-  emotion: 'encouraging',
-  mouth: 'closed',
-  volume: 0,
-};
 
 const sampleText = 'Tom is on a space trip. He sees a bright snack box. It looks like a snack box! Tom opens it slowly.';
 
 const asset = (name: string) => `assets/ui/${name}`;
 
 const fallbackCards = [
-  'card-space-snacks.svg',
-  'card-daisy-diver.svg',
-  'card-rocket-race.svg',
+  'card-space-snacks.png',
+  'card-daisy-diver.png',
+  'card-rocket-race.png',
 ];
+
+const mascotBlinkFrames = [
+  'lego/mascot-blink/frame-01.png',
+  'lego/mascot-blink/frame-02.png',
+  'lego/mascot-blink/frame-03.png',
+  'lego/mascot-blink/frame-04.png',
+  'lego/mascot-blink/frame-05.png',
+  'lego/mascot-blink/frame-06.png',
+  'lego/mascot-blink/frame-07.png',
+];
+
+const legoMascot = {
+  idle: mascotBlinkFrames[0],
+  blink: mascotBlinkFrames[3],
+  blinkFrames: mascotBlinkFrames,
+};
+
+const pngAsset = {
+  star: 'lego/prop-star.png',
+  brick: 'lego/prop-bricks.png',
+  legoLogo: 'lego/brand-tomato.png',
+  legoListen: 'lego/prop-headphones.png',
+  legoRecord: 'lego/prop-microphone.png',
+  legoScore: 'lego/prop-shield.png',
+  legoMonster: 'lego/prop-monster.png',
+};
 
 function App() {
   const [route, setRoute] = useHashRoute();
@@ -33,42 +51,54 @@ function App() {
   const [followState, setFollowState] = useState<FollowState | null>(null);
   const [chatState, setChatState] = useState<ChatState | null>(null);
   const [settings, setSettings] = useState<SettingsState | null>(null);
-  const [avatar, setAvatar] = useState<AvatarState>(idleAvatar);
   const [notice, setNotice] = useState<string | null>(null);
 
   const navigate = (path: string) => {
+    setNotice(null);
     setRoute(path);
     void sendNative('app.navigate', { path });
   };
 
   useEffect(() => {
+    let isMounted = true;
     const offArticles = onNativeEvent<{ articles: Article[] }>(
       'article.state',
-      (payload) => setArticles(payload.articles),
+      (payload) => {
+        if (isMounted) setArticles(payload.articles);
+      },
     );
     const offFollow = onNativeEvent<FollowState>('follow.state', (payload) => {
-      setFollowState(payload);
-      if (payload.avatar) setAvatar(payload.avatar);
+      if (isMounted) setFollowState(payload);
     });
     const offChat = onNativeEvent<ChatState>('chat.state', (payload) => {
-      setChatState(payload);
-      if (payload.avatar) setAvatar(payload.avatar);
+      if (isMounted) setChatState(payload);
     });
-    const offSettings = onNativeEvent<SettingsState>('settings.state', setSettings);
-    const offAvatar = onNativeEvent<AvatarState>('avatar.state', setAvatar);
+    const offSettings = onNativeEvent<SettingsState>('settings.state', (payload) => {
+      if (isMounted) setSettings(payload);
+    });
 
     sendNative<{ articles: Article[] }>('app.ready')
-      .then((payload) => setArticles(payload.articles))
-      .catch((error) => setNotice(error.message));
+      .then((payload) => {
+        if (isMounted) setArticles(payload.articles);
+      })
+      .catch((error) => {
+        if (isMounted) setNotice(error.message);
+      });
 
     return () => {
+      isMounted = false;
       offArticles();
       offFollow();
       offChat();
       offSettings();
-      offAvatar();
     };
   }, []);
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timer = window.setTimeout(() => setNotice(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const parsedRoute = parseRoute(route);
   const latestArticle = articles[0];
@@ -79,9 +109,12 @@ function App() {
 
       <aside className="side-rail">
         <button className="brand-card" onClick={() => navigate('/')}>
-          <img src={asset('tomato-wave.svg')} alt="" />
-          <span>
-            <b>Tomato English</b>
+          <img src={asset(pngAsset.legoLogo)} alt="" />
+          <span className="brand-copy">
+            <b>
+              <span>Tomato</span>
+              <span>English</span>
+            </b>
             <small>Happy Talking</small>
           </span>
         </button>
@@ -105,7 +138,7 @@ function App() {
         {notice && (
           <div className="toast" role="status">
             {notice}
-            <button onClick={() => setNotice(null)}>OK</button>
+            <button onClick={() => setNotice(null)}>知道了</button>
           </div>
         )}
 
@@ -113,7 +146,6 @@ function App() {
           <HomePage
             articles={articles}
             latestArticle={latestArticle}
-            avatar={avatar}
             onNavigate={navigate}
             onDelete={async (articleId) => {
               const payload = await sendNative<{ articles: Article[] }>(
@@ -130,8 +162,8 @@ function App() {
             onCancel={() => navigate('/')}
             onSaved={(payload) => {
               setArticles(payload.articles);
-              setNotice('任务卡已加入大厅');
               navigate('/');
+              setNotice('任务卡已加入大厅');
             }}
           />
         )}
@@ -141,6 +173,7 @@ function App() {
             articleId={parsedRoute.articleId}
             state={followState}
             onNavigate={navigate}
+            onLoaded={setFollowState}
           />
         )}
 
@@ -149,6 +182,7 @@ function App() {
             articleId={parsedRoute.articleId}
             state={chatState}
             onNavigate={navigate}
+            onLoaded={setChatState}
           />
         )}
 
@@ -163,13 +197,11 @@ function App() {
 function HomePage({
   articles,
   latestArticle,
-  avatar,
   onNavigate,
   onDelete,
 }: {
   articles: Article[];
   latestArticle?: Article;
-  avatar: AvatarState;
   onNavigate: (path: string) => void;
   onDelete: (articleId: number) => Promise<void>;
 }) {
@@ -185,11 +217,26 @@ function HomePage({
   return (
     <section className="page home-page">
       <header className="home-hero">
-        <div>
-          <p className="eyebrow">Hi, Tommy!</p>
+        <div className="hero-copy">
+          <p className="eyebrow">Level 12 · Speaking Quest</p>
           <h1>今天也要快乐开口说英语！</h1>
+          <p>把文章变成闯关卡：先听、再跟读、最后和番茄伙伴对话。</p>
+          <div className="hero-actions">
+            <button className="primary-action" onClick={() => onNavigate(latestArticle ? `/follow/${latestArticle.id}` : '/article/new')}>
+              <Icon name="play" /> 开始闯关
+            </button>
+            <button className="ghost-action" onClick={() => onNavigate('/article/new')}>
+              <Icon name="plus" /> 新建任务
+            </button>
+          </div>
         </div>
-        <img className="hero-mascot" src={asset(mascotForAvatar(avatar, 'tomato-wave.svg'))} alt="" />
+        <div className="hero-stage">
+          <MascotBlinker className="hero-mascot" />
+          <div className="xp-chip">
+            <span>Next reward</span>
+            <b>+350 XP</b>
+          </div>
+        </div>
       </header>
 
       <div className="dashboard-grid">
@@ -201,6 +248,7 @@ function HomePage({
             <div className="latest-content">
               <img src={asset(cardArtForArticle(latestArticle, 0))} alt="" />
               <div>
+                <span className="quest-tag">主线任务</span>
                 <h2>{latestArticle.title}</h2>
                 <p>{latestArticle.content}</p>
                 <ProgressLine value={latestArticle.averageScore || 75} label="进度" />
@@ -213,7 +261,6 @@ function HomePage({
                   </button>
                 </div>
               </div>
-              <img className="card-monster" src={asset('monster-buddy.svg')} alt="" />
             </div>
           ) : (
             <EmptyMission onNavigate={onNavigate} />
@@ -226,6 +273,18 @@ function HomePage({
           <StatTile label="平均分" value={averageScore > 0 ? averageScore.toString() : '--'} icon="star" />
         </section>
       </div>
+
+      <section className="quest-map">
+        <div className="section-heading">
+          <span>今日闯关路线</span>
+        </div>
+        <div className="map-steps">
+          <MapStep number="1" title="听原音" text="番茄伙伴先示范" active />
+          <MapStep number="2" title="开口读" text="录音跟读拿星星" />
+          <MapStep number="3" title="AI 对话" text="用文章内容聊天" />
+          <MapStep number="4" title="领奖励" text="收集番茄积木" />
+        </div>
+      </section>
 
       <section className="mission-list-panel">
         <div className="section-heading with-action">
@@ -262,15 +321,36 @@ function ArticlePage({
   onCancel: () => void;
   onSaved: (payload: { article: Article; articles: Article[] }) => void;
 }) {
-  const [title, setTitle] = useState('Space Snacks');
-  const [content, setContent] = useState(sampleText);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sentences = useMemo(() => splitSentences(content), [content]);
+  const canSave = Boolean(title.trim() && content.trim() && sentences.length > 0) && !saving;
+
+  const importFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('text/') && !/\.(txt|md|markdown)$/i.test(file.name)) {
+      setError('请导入 txt 或 markdown 文本文件');
+      return;
+    }
+    const text = await file.text();
+    const cleaned = text.trim();
+    if (!cleaned) {
+      setError('这个文件没有可导入的文字内容');
+      return;
+    }
+    setContent(cleaned.slice(0, 5000));
+    if (!title.trim()) {
+      setTitle(file.name.replace(/\.[^.]+$/, '').slice(0, 80));
+    }
+    setError(null);
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!title.trim() || !content.trim()) {
+    if (!title.trim() || !content.trim() || sentences.length === 0) {
       setError('请先填写标题和英文文章');
       return;
     }
@@ -293,43 +373,76 @@ function ArticlePage({
   return (
     <section className="page article-page">
       <TopBar title="新增文章" onBack={onCancel}>
-        <button className="ghost-action">
+        <button className="ghost-action" type="button" onClick={() => fileInputRef.current?.click()}>
           <Icon name="upload" /> 导入文件
         </button>
+        <input
+          ref={fileInputRef}
+          className="visually-hidden"
+          type="file"
+          accept=".txt,.md,.markdown,text/plain,text/markdown"
+          onChange={(event) => {
+            void importFile(event.target.files?.[0]);
+            event.target.value = '';
+          }}
+        />
       </TopBar>
 
       <form className="article-editor" onSubmit={submit}>
         <div className="article-form">
           <label>
             <span>文章标题</span>
-            <input value={title} maxLength={80} onChange={(event) => setTitle(event.target.value)} />
+            <input
+              value={title}
+              maxLength={80}
+              placeholder="给这张任务卡起个名字"
+              onChange={(event) => {
+                setTitle(event.target.value);
+                setError(null);
+              }}
+            />
             <small>{title.length}/80</small>
           </label>
           <label>
             <span>文章内容</span>
-            <textarea value={content} onChange={(event) => setContent(event.target.value)} />
+            <textarea
+              value={content}
+              maxLength={5000}
+              placeholder={sampleText}
+              onChange={(event) => {
+                setContent(event.target.value);
+                setError(null);
+              }}
+            />
             <small>{content.length}/5000</small>
           </label>
         </div>
 
         <aside className="article-helper-card">
-          <img className="helper-tomato" src={asset('tomato-pencil.svg')} alt="" />
-          <img className="helper-monster" src={asset('monster-buddy.svg')} alt="" />
+          <MascotBlinker className="helper-tomato" />
+          <div className="helper-copy">
+            <b>任务编辑台</b>
+            <span>短句越清楚，闯关越顺滑。</span>
+          </div>
         </aside>
 
         <section className="sentence-board">
           <div className="section-heading">
             <span>句子预览（本地分句）</span>
           </div>
-          <div className="sentence-grid">
-            {sentences.map((sentence, index) => (
+          {sentences.length > 0 ? (
+            <div className="sentence-grid">
+              {sentences.map((sentence, index) => (
               <div className="sentence-pill" key={`${sentence}-${index}`}>
                 <b>{index + 1}</b>
                 <span>{sentence}</span>
                 <Icon name="drag" />
               </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="sentence-empty">输入英文短文后，这里会自动切成适合跟读的短句。</p>
+          )}
         </section>
 
         <footer className="form-footer">
@@ -337,7 +450,7 @@ function ArticlePage({
           <button type="button" className="ghost-action" onClick={onCancel}>
             取消
           </button>
-          <button className="primary-action" disabled={saving}>
+          <button className="primary-action" disabled={!canSave}>
             <Icon name="save" /> {saving ? '保存中' : '保存任务'}
           </button>
         </footer>
@@ -350,20 +463,153 @@ function FollowPage({
   articleId,
   state,
   onNavigate,
+  onLoaded,
 }: {
   articleId: number;
   state: FollowState | null;
   onNavigate: (path: string) => void;
+  onLoaded: (state: FollowState) => void;
 }) {
+  const [commandBusy, setCommandBusy] = useState(false);
+
   useEffect(() => {
-    void sendNative('follow.open', { articleId });
-  }, [articleId]);
+    let isMounted = true;
+
+    setCommandBusy(false);
+    onLoaded({ status: 'loading' });
+
+    const openAndPlay = async () => {
+      try {
+        const payload = await sendNative<FollowState>('follow.open', { articleId });
+        if (!isMounted || !payload) return;
+        onLoaded(payload);
+
+        if (payload.status === 'ready' && payload.step !== 'completed') {
+          const played = await sendNative<FollowState>('follow.play');
+          if (isMounted && played) onLoaded(played);
+        }
+      } catch (error) {
+        if (!isMounted) return;
+        onLoaded({
+          status: 'error',
+          step: 'idle',
+          playbackState: 'failed',
+          error: error instanceof Error ? error.message : '无法打开跟读任务',
+        });
+      }
+    };
+
+    void openAndPlay();
+    return () => {
+      isMounted = false;
+    };
+  }, [articleId, onLoaded]);
+
+  const runFollowCommand = async (type: string): Promise<FollowState | null> => {
+    setCommandBusy(true);
+    try {
+      const payload = await sendNative<FollowState>(type);
+      if (payload) onLoaded(payload);
+      return payload ?? null;
+    } catch (error) {
+      onLoaded({
+        status: 'error',
+        step: 'idle',
+        playbackState: 'failed',
+        error: error instanceof Error ? error.message : '跟读操作失败，请重试',
+      });
+      return null;
+    } finally {
+      setCommandBusy(false);
+    }
+  };
+
+  const playCurrent = () => {
+    void runFollowCommand('follow.play');
+  };
+
+  const replayCurrent = () => {
+    void runFollowCommand('follow.replay');
+  };
+
+  const retryCurrent = () => {
+    void runFollowCommand('follow.retry');
+  };
+
+  const advanceSentence = () => {
+    void (async () => {
+      setCommandBusy(true);
+      try {
+        const next = await sendNative<FollowState>('follow.next');
+        if (next) onLoaded(next);
+        if (next?.status === 'ready' && next.step !== 'completed') {
+          const played = await sendNative<FollowState>('follow.play');
+          if (played) onLoaded(played);
+        }
+      } catch (error) {
+        onLoaded({
+          status: 'error',
+          step: 'idle',
+          playbackState: 'failed',
+          error: error instanceof Error ? error.message : '无法进入下一句，请重试',
+        });
+      } finally {
+        setCommandBusy(false);
+      }
+    })();
+  };
+
+  if (!state || state.status === 'loading') {
+    return (
+      <section className="page follow-page">
+        <TopBar title="跟读任务准备中" onBack={() => onNavigate('/')}>
+          <button className="ghost-action" onClick={() => onNavigate('/')}>
+            <Icon name="exit" /> 退出
+          </button>
+        </TopBar>
+        <LoadingPanel text="正在准备句子、中文翻译和原音" />
+      </section>
+    );
+  }
+
+  if (state.status === 'error') {
+    return (
+      <section className="page follow-page">
+        <TopBar title="跟读任务暂时打不开" onBack={() => onNavigate('/')}>
+          <button className="ghost-action" onClick={() => onNavigate('/')}>
+            <Icon name="exit" /> 退出
+          </button>
+        </TopBar>
+        <section className="loading-panel">
+          <img src={asset(legoMascot.idle)} alt="" />
+          <p>{state.error ?? '跟读任务打开失败，请回到大厅后重试。'}</p>
+        </section>
+      </section>
+    );
+  }
 
   const step = state?.step ?? 'idle';
   const currentSentence = state?.currentSentence ?? '正在准备句子...';
+  const currentTranslation = state?.currentTranslation ?? '';
   const result = state?.result;
   const currentIndex = state?.currentIndex ?? 0;
   const totalSentences = state?.totalSentences ?? 0;
+  const playbackCue = followPlaybackCue(step, state?.playbackState, state?.playbackError);
+  const bottomActionsDisabled = isFollowActionLocked(step) || commandBusy;
+  const canReplayCurrent =
+    !bottomActionsDisabled &&
+    step !== 'completed' &&
+    (['success', 'failed'].includes(state?.playbackState ?? '') || step === 'result' || Boolean(result));
+  const canRetryCurrent =
+    !bottomActionsDisabled &&
+    step !== 'completed' &&
+    Boolean(result || state?.error || state?.playbackError);
+  const canAdvanceSentence = !bottomActionsDisabled && step !== 'completed' && totalSentences > 0;
+  const advanceLabel = state?.isLastSentence ? '完成' : '下一句';
+  const activePartnerStatus = followPartnerStatus(step, state?.playbackState, result);
+  const canRecordCurrent =
+    !commandBusy &&
+    (step === 'recording' || (step === 'idle' && state?.playbackState === 'success'));
 
   return (
     <section className="page follow-page">
@@ -378,52 +624,57 @@ function FollowPage({
         <main className="follow-main">
           <StepTrack step={step} />
           <div className="sentence-card">
-            <h1>
-              <strong>{highlightFirstWord(currentSentence)}</strong>
-              {currentSentence.replace(highlightFirstWord(currentSentence), '')}
-            </h1>
-            <button className="ghost-action" onClick={() => sendNative('follow.play')} disabled={isFollowBusy(step)}>
-              <Icon name="play" /> 播放原音
+            <div className="sentence-copy">
+              <h1>
+                <strong>{highlightFirstWord(currentSentence)}</strong>
+                {currentSentence.replace(highlightFirstWord(currentSentence), '')}
+              </h1>
+              {currentTranslation && <p className="sentence-translation">{currentTranslation}</p>}
+            </div>
+            <button className="ghost-action" onClick={playCurrent} disabled={isFollowBusy(step) || commandBusy}>
+              <Icon name="play" /> {followPlayButtonLabel(step)}
             </button>
+            <p className={`playback-cue ${state?.playbackError ? 'error' : ''}`}>{playbackCue}</p>
           </div>
           <Waveform active={['playing', 'recording', 'scoring'].includes(step)} />
           {state?.playbackError && <p className="error-text">{state.playbackError}</p>}
           {state?.error && <p className="error-text">{state.error}</p>}
           <div className="record-console">
-            <button
-              className={step === 'recording' ? 'record-button active' : 'record-button'}
-              onClick={() => sendNative(step === 'recording' ? 'follow.recordStop' : 'follow.recordStart')}
-              disabled={step !== 'recording' && isFollowBusy(step)}
-            >
-              <Icon name={step === 'recording' ? 'stop' : 'mic'} />
-            </button>
-            <span>{step === 'recording' ? '正在录音，点击停止' : '点击录音，跟读这句话'}</span>
+            <div className="record-primary">
+              <button
+                className={step === 'recording' ? 'record-button active' : 'record-button'}
+                aria-label={step === 'recording' ? '停止录音' : '开始录音'}
+                onClick={() => {
+                  void runFollowCommand(step === 'recording' ? 'follow.recordStop' : 'follow.recordStart');
+                }}
+                disabled={!canRecordCurrent}
+              >
+                <Icon name={step === 'recording' ? 'stop' : 'mic'} />
+              </button>
+              <span>{followRecordCue(step, state?.playbackState, state?.playbackError)}</span>
+            </div>
+            <div className="record-actions">
+              <button className="ghost-action" onClick={replayCurrent} disabled={!canReplayCurrent}>
+                <Icon name="replay" /> 重播
+              </button>
+              <button className="ghost-action" onClick={retryCurrent} disabled={!canRetryCurrent}>
+                <Icon name="refresh" /> 再试一次
+              </button>
+              <button className="primary-action" onClick={advanceSentence} disabled={!canAdvanceSentence}>
+                {advanceLabel} <Icon name="arrow" />
+              </button>
+            </div>
           </div>
         </main>
 
         <aside className="partner-status">
           <h2>伙伴状态</h2>
-          <StatusItem image="tomato-headphones.svg" text="听我读..." active />
-          <StatusItem image="tomato-wave.svg" text="现在说..." />
-          <StatusItem image="tomato-pencil.svg" text="我在思考..." />
-          <img className="status-monster" src={asset('monster-mic.svg')} alt="" />
+          <StatusItem image={pngAsset.legoListen} text="听原音" active={activePartnerStatus === 'listen'} />
+          <StatusItem image={pngAsset.legoRecord} text="跟读录音" active={activePartnerStatus === 'record'} />
+          <StatusItem image={pngAsset.legoScore} text="查看得分" active={activePartnerStatus === 'score'} />
+          {result && <FollowScoreBadge result={result} />}
+          <img className="status-monster" src={asset(pngAsset.legoMonster)} alt="" />
         </aside>
-
-        <PhonePreview mode="follow" />
-      </div>
-
-      {result && <ScorePanel result={result} />}
-
-      <div className="bottom-actions">
-        <button className="ghost-action" onClick={() => sendNative('follow.retry')}>
-          <Icon name="replay" /> 重播
-        </button>
-        <button className="ghost-action" onClick={() => sendNative('follow.retry')}>
-          <Icon name="refresh" /> 再试一次
-        </button>
-        <button className="primary-action" onClick={() => sendNative('follow.next')}>
-          下一句 <Icon name="arrow" />
-        </button>
       </div>
     </section>
   );
@@ -433,32 +684,67 @@ function ChatPage({
   articleId,
   state,
   onNavigate,
+  onLoaded,
 }: {
   articleId: number;
   state: ChatState | null;
   onNavigate: (path: string) => void;
+  onLoaded: (state: ChatState) => void;
 }) {
   const [text, setText] = useState('');
+  const [revealedTranslations, setRevealedTranslations] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
-    void sendNative('chat.open', { articleId });
+    let isMounted = true;
+    sendNative<ChatState>('chat.open', { articleId })
+      .then((payload) => {
+        if (isMounted && payload) onLoaded(payload);
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        onLoaded({
+          articleTitle: 'Space Snacks',
+          step: 'error',
+          error: error instanceof Error ? error.message : '无法打开对话任务',
+          questionCount: 0,
+          maxQuestions: 8,
+          messages: [],
+        });
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [articleId, onLoaded]);
+
+  useEffect(() => {
+    setRevealedTranslations(new Set());
   }, [articleId]);
 
   const step = state?.step ?? 'init';
   const canTalk = step === 'userIdle' || step === 'recording';
+  const questionCount = state?.questionCount ?? 0;
+  const maxQuestions = state?.maxQuestions ?? 8;
   const messages = state?.messages ?? [];
+  const chatCue = chatSideCue(step);
+  const chatInputPlaceholder = chatInputCue(step);
+  const chatProgress = maxQuestions > 0 ? (questionCount / maxQuestions) * 100 : 0;
 
   const sendText = async () => {
-    if (!text.trim()) return;
-    await sendNative('chat.sendText', { text });
+    const draft = text.trim();
+    if (!draft || step !== 'userIdle') return;
     setText('');
+    try {
+      await sendNative('chat.sendText', { text: draft });
+    } catch {
+      setText(draft);
+    }
   };
 
   return (
     <section className="page chat-page">
       <TopBar title={state?.articleTitle || 'Space Snacks'} onBack={() => onNavigate('/')}>
         <Pager current={state?.questionCount ?? 1} total={state?.maxQuestions ?? 8} />
-        <button className="danger-light">结束对话</button>
+        <button className="danger-light" onClick={() => onNavigate('/')}>结束对话</button>
       </TopBar>
 
       <div className="chat-layout">
@@ -469,12 +755,31 @@ function ChatPage({
                 className={`chat-bubble ${message.isAi ? 'ai-bubble' : 'user-bubble'}`}
                 key={message.id}
               >
-                {message.isAi && <img src={asset('tomato-wave.svg')} alt="" />}
+                {message.isAi && <img src={asset(legoMascot.idle)} alt="" />}
                 <div>
                   <p>{message.text}</p>
                   {message.isAi && (
-                    <button onClick={() => sendNative('chat.replay', { messageId: message.id })}>
+                    <button
+                      aria-label="重播这句"
+                      disabled={['waitingStart', 'playing'].includes(message.playbackState)}
+                      onClick={() => sendNative('chat.replay', { messageId: message.id })}
+                    >
                       <Icon name="sound" />
+                    </button>
+                  )}
+                  {message.translation && (
+                    <button
+                      className={`chat-translation ${revealedTranslations.has(message.id) ? 'revealed' : ''}`}
+                      type="button"
+                      onClick={() => {
+                        setRevealedTranslations((previous) => {
+                          const next = new Set(previous);
+                          next.add(message.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      {message.translation}
                     </button>
                   )}
                 </div>
@@ -482,7 +787,7 @@ function ChatPage({
             ))}
             {messages.length === 0 && (
               <div className="chat-empty">
-                <img src={asset('monster-buddy.svg')} alt="" />
+                <img src={asset(pngAsset.legoMonster)} alt="" />
                 <span>番茄伙伴正在准备第一个问题。</span>
               </div>
             )}
@@ -493,17 +798,19 @@ function ChatPage({
             <input
               value={text}
               onChange={(event) => setText(event.target.value)}
-              placeholder="输入或按住说英语"
+              placeholder={chatInputPlaceholder}
+              disabled={step !== 'userIdle'}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void sendText();
               }}
             />
-            <button className="ghost-action" onClick={sendText} disabled={step !== 'userIdle'}>
+            <button className="ghost-action" onClick={sendText} disabled={step !== 'userIdle' || !text.trim()}>
               发送
             </button>
             <button
               className={step === 'recording' ? 'record-button mini active' : 'record-button mini'}
               disabled={!canTalk}
+              aria-label={step === 'recording' ? '停止录音' : '开始录音'}
               onClick={() => sendNative(step === 'recording' ? 'chat.recordStop' : 'chat.recordStart')}
             >
               <Icon name={step === 'recording' ? 'stop' : 'mic'} />
@@ -512,20 +819,18 @@ function ChatPage({
         </main>
 
         <aside className="chat-side-card">
-          <img src={asset('tomato-wave.svg')} alt="" />
+          <MascotBlinker className="chat-mascot" />
           <div className="voice-state">
             <WaveMini />
-            <span>我在和你对话...</span>
+            <span>{chatCue}</span>
           </div>
-          <ProgressLine value={12.5} label="对话进度" />
+          <ProgressLine value={chatProgress} label={`对话进度 ${questionCount} / ${maxQuestions}`} />
           <div className="reward-preview">
             <span>奖励预览</span>
-            <img src={asset('reward-star.svg')} alt="" />
-            <img src={asset('reward-brick.svg')} alt="" />
+            <img src={asset(pngAsset.star)} alt="" />
+            <img src={asset(pngAsset.brick)} alt="" />
           </div>
         </aside>
-
-        <PhonePreview mode="chat" />
       </div>
     </section>
   );
@@ -542,15 +847,23 @@ function SettingsPage({
   const [selectedVoiceId, setSelectedVoiceId] = useState(settings?.tts.speakerId ?? '');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const selectedVoiceButtonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
+    let isMounted = true;
     sendNative<SettingsState>('settings.load')
       .then((payload) => {
+        if (!isMounted) return;
         setCurrent(payload);
         setSelectedVoiceId(payload.tts.speakerId);
         onLoaded(payload);
       })
-      .catch((error) => setStatus(error.message));
+      .catch((error) => {
+        if (isMounted) setStatus(error.message);
+      });
+    return () => {
+      isMounted = false;
+    };
   }, [onLoaded]);
 
   useEffect(() => {
@@ -560,12 +873,15 @@ function SettingsPage({
     }
   }, [settings]);
 
+  useEffect(() => {
+    selectedVoiceButtonRef.current?.scrollIntoView?.({ block: 'center', inline: 'nearest' });
+  }, [selectedVoiceId]);
+
   if (!current) {
-    return <LoadingPanel text="正在打开声音控制台" />;
+    return <LoadingPanel text="正在打开声音设置" />;
   }
 
   const selectedVoice = current.voices.find((voice) => voice.id === selectedVoiceId);
-  const spotlightVoices = pickSpotlightVoices(current.voices, selectedVoiceId);
   const unchanged = selectedVoiceId === current.tts.speakerId;
 
   const saveVoice = async (event: FormEvent<HTMLFormElement>) => {
@@ -591,52 +907,34 @@ function SettingsPage({
 
   return (
     <section className="page settings-page">
-      <form className="settings-shell" onSubmit={saveVoice}>
-        <div className="settings-nav">
-          <button className="nav-button active" type="button"><Icon name="gear" /> 设置</button>
-          <button className="nav-button" type="button"><Icon name="home" /> 大厅</button>
-          <button className="nav-button" type="button"><Icon name="plus" /> 新增</button>
-        </div>
-
+      <form className="settings-shell voice-settings-shell" onSubmit={saveVoice}>
         <main className="settings-main">
-          <div className="settings-tabs">
-            <button className="active" type="button">API 与服务</button>
-            <button type="button">语音设置</button>
-            <button type="button">其他</button>
-          </div>
+          <header className="settings-header">
+            <p className="eyebrow">Voice</p>
+            <h1>选择番茄伙伴的发音</h1>
+            <p>选择一个适合孩子跟读和对话的声音，保存后会用于朗读和聊天。</p>
+          </header>
 
-          <div className="settings-grid">
-            <FieldGroup title="服务状态（运行时）">
-              <ServiceRow title="TTS 语音合成" status="已连接" />
-              <ServiceRow title="BigASR 语音识别" status="已连接" />
-              <ServiceRow title="Realtime 对话服务" status="已连接" />
-            </FieldGroup>
-
-            <FieldGroup title="连接发音人">
-              <label className="voice-picker">
-                <span>选择声音</span>
-                <select
-                  aria-label="选择声音"
-                  value={selectedVoiceId}
-                  onChange={(event) => {
-                    setSelectedVoiceId(event.target.value);
-                    setStatus(null);
-                  }}
-                >
+          <div className="settings-grid voice-settings-grid">
+            <FieldGroup title="发音人">
+              <div className="voice-list-header">
+                <span>可选声音</span>
+                <small>{current.voices.length} 个发音人</small>
+              </div>
+              <div className="voice-list-scroll" role="listbox" aria-label="可选声音">
+                <div className="voice-list">
                   {current.voices.map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {`${voice.name} · ${displayVoiceLanguage(voice.lang)}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="voice-list">
-                {spotlightVoices.slice(0, 3).map((voice) => (
                   <button
                     className={`voice-card ${voice.id === selectedVoiceId ? 'selected' : ''}`}
                     key={voice.id}
+                    ref={voice.id === selectedVoiceId ? selectedVoiceButtonRef : undefined}
                     type="button"
-                    onClick={() => setSelectedVoiceId(voice.id)}
+                    role="option"
+                    aria-selected={voice.id === selectedVoiceId}
+                    onClick={() => {
+                      setSelectedVoiceId(voice.id);
+                      setStatus(null);
+                    }}
                   >
                     <span className="voice-avatar">{voice.name.slice(0, 1)}</span>
                     <span>
@@ -646,16 +944,18 @@ function SettingsPage({
                     <WaveMini />
                   </button>
                 ))}
+                </div>
               </div>
             </FieldGroup>
 
-            <FieldGroup title="TTS 资源">
-              <div className="resource-card">
-                <span>TTS 资源 ID</span>
-                <b>{current.tts.resourceId}</b>
-                {selectedVoice && <small>当前声音：{selectedVoice.name}</small>}
-              </div>
-            </FieldGroup>
+            <aside className="selected-voice-panel">
+              <MascotBlinker className="settings-mascot" />
+              <span>当前声音</span>
+              <b>{selectedVoice?.name ?? '未选择'}</b>
+              {selectedVoice && (
+                <small>{displayVoiceLanguage(selectedVoice.lang)} · {selectedVoice.gender === 'female' ? '女声' : '男声'}</small>
+              )}
+            </aside>
           </div>
 
           <footer className="settings-footer">
@@ -665,59 +965,40 @@ function SettingsPage({
             {status && <span role="status">{status}</span>}
           </footer>
         </main>
-
-        <aside className="settings-art">
-          <PhonePreview mode="settings" />
-          <img src={asset('tomato-secure.svg')} alt="" />
-        </aside>
       </form>
     </section>
   );
 }
 
-function ScorePanel({ result }: { result: NonNullable<FollowState['result']> }) {
+function FollowScoreBadge({ result }: { result: NonNullable<FollowState['result']> }) {
   return (
-    <section className="score-panel">
-      <div className="score-summary">
-        <div className="score-meter">
-          <b>{Math.round(result.overallScore)}</b>
-          <span>综合得分</span>
-        </div>
-        <div className="stars">
-          <img src={asset('reward-star.svg')} alt="" />
-          <img src={asset('reward-star.svg')} alt="" />
-          <img src={asset('reward-star.svg')} alt="" />
-          <img src={asset('reward-star.svg')} alt="" />
-          <span />
-        </div>
-        <strong>太棒了！继续保持！</strong>
-      </div>
+    <div className="follow-score-badge">
+      <span>总体评分</span>
+      <b>{Math.round(result.overallScore)}</b>
+      <small>{result.isMock ? '示例评分' : '本句得分'}</small>
+    </div>
+  );
+}
 
-      <div className="score-bars">
-        <ScoreBar label="Accuracy 准确度" value={result.accuracyScore} tone="green" />
-        <ScoreBar label="Fluency 流利度" value={result.fluencyScore} tone="blue" />
-        <ScoreBar label="Completeness 完整度" value={result.completenessScore} tone="purple" />
-        <ScoreBar label="Prosody 语调语感" value={result.prosodyScore} tone="orange" />
-      </div>
-
-      <div className="recognized-box">
-        <span>识别结果</span>
-        <p>{result.recognizedText || 'Tom finds a bright snack box.'}</p>
-        <Icon name="sound" />
-      </div>
-
-      <div className="word-score-grid">
-        {result.words.map((word, index) => (
-          <span className={word.score >= 80 ? 'good' : word.score >= 60 ? 'ok' : 'low'} key={`${word.word}-${index}`}>
-            <b>{word.word}</b>
-            <small>{Math.round(word.score)}</small>
-          </span>
-        ))}
-      </div>
-
-      <img className="score-tomato" src={asset('tomato-celebrate.svg')} alt="" />
-      <img className="score-monster" src={asset('monster-buddy.svg')} alt="" />
-    </section>
+function MapStep({
+  number,
+  title,
+  text,
+  active = false,
+}: {
+  number: string;
+  title: string;
+  text: string;
+  active?: boolean;
+}) {
+  return (
+    <article className={`map-step ${active ? 'active' : ''}`}>
+      <b>{number}</b>
+      <span>
+        <strong>{title}</strong>
+        <small>{text}</small>
+      </span>
+    </article>
   );
 }
 
@@ -753,7 +1034,7 @@ function MissionRow({
 function EmptyMission({ onNavigate }: { onNavigate: (path: string) => void }) {
   return (
     <div className="empty-mission">
-      <img src={asset('tomato-pencil.svg')} alt="" />
+      <img src={asset(legoMascot.idle)} alt="" />
       <p>先放入一篇英文短文，番茄伙伴会把它变成闯关任务。</p>
       <button className="primary-action" onClick={() => onNavigate('/article/new')}>
         <Icon name="plus" /> 创建第一张任务卡
@@ -801,47 +1082,47 @@ function StatusItem({ image, text, active = false }: { image: string; text: stri
   );
 }
 
-function PhonePreview({ mode }: { mode: 'follow' | 'chat' | 'settings' }) {
-  return (
-    <aside className={`phone-preview ${mode}`}>
-      <div className="phone-screen">
-        <header>
-          <span>{mode === 'settings' ? '设置' : 'Space Snacks'}</span>
-          <Icon name="gear" />
-        </header>
-        {mode === 'settings' ? (
-          <div className="phone-settings">
-            <ServiceRow title="TTS 语音合成" status="已连接" />
-            <ServiceRow title="BigASR 语音识别" status="已连接" />
-            <ServiceRow title="Realtime 对话服务" status="已连接" />
-            <div className="resource-card">
-              <span>TTS 资源 ID</span>
-              <b>seed-tts-2.0</b>
-            </div>
-          </div>
-        ) : (
-          <>
-            <Pager current={mode === 'follow' ? 1 : 1} total={mode === 'follow' ? 2 : 8} />
-            <p>{mode === 'follow' ? 'Tom finds a bright snack box.' : 'What did Tom find?'}</p>
-            <Waveform active />
-            <img src={asset(mode === 'follow' ? 'tomato-headphones.svg' : 'tomato-wave.svg')} alt="" />
-            <button className="record-button mini"><Icon name="mic" /></button>
-          </>
-        )}
-      </div>
-    </aside>
-  );
-}
+function MascotBlinker({ className }: { className: string }) {
+  const [frameIndex, setFrameIndex] = useState(0);
 
-function ServiceRow({ title, status }: { title: string; status: string }) {
+  useEffect(() => {
+    let blinkTimer: number | undefined;
+    let frameTimer: number | undefined;
+
+    const scheduleBlink = () => {
+      const delay = 2400 + Math.round(Math.random() * 3600);
+      blinkTimer = window.setTimeout(() => {
+        let nextFrame = 1;
+        const playFrame = () => {
+          setFrameIndex(nextFrame);
+          nextFrame += 1;
+
+          if (nextFrame < legoMascot.blinkFrames.length) {
+            frameTimer = window.setTimeout(playFrame, 58);
+            return;
+          }
+
+          frameTimer = window.setTimeout(() => {
+            setFrameIndex(0);
+            scheduleBlink();
+          }, 72);
+        };
+
+        playFrame();
+      }, delay);
+    };
+
+    scheduleBlink();
+    return () => {
+      if (blinkTimer !== undefined) window.clearTimeout(blinkTimer);
+      if (frameTimer !== undefined) window.clearTimeout(frameTimer);
+    };
+  }, []);
+
   return (
-    <div className="service-row">
-      <span>
-        <b>{title}</b>
-        <small>{status}</small>
-      </span>
-      <i />
-    </div>
+    <span className={`mascot-blinker ${className}`} aria-hidden="true">
+      <img className="mascot-frame" src={asset(legoMascot.blinkFrames[frameIndex])} alt="" />
+    </span>
   );
 }
 
@@ -878,24 +1159,6 @@ function WaveMini() {
     <span className="wave-mini">
       <i /><i /><i /><i />
     </span>
-  );
-}
-
-function ScoreBar({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: 'green' | 'blue' | 'purple' | 'orange';
-}) {
-  return (
-    <div className={`score-bar ${tone}`}>
-      <span>{label}</span>
-      <div><i style={{ width: `${Math.max(0, Math.min(100, value))}%` }} /></div>
-      <b>{Math.round(value)}</b>
-    </div>
   );
 }
 
@@ -948,7 +1211,7 @@ function FieldGroup({ title, children }: { title: string; children: ReactNode })
 function LoadingPanel({ text }: { text: string }) {
   return (
     <div className="loading-panel">
-      <img src={asset('tomato-wave.svg')} alt="" />
+      <img src={asset(legoMascot.idle)} alt="" />
       <p>{text}</p>
     </div>
   );
@@ -979,24 +1242,9 @@ function Icon({ name }: { name: string }) {
 
 function cardArtForArticle(article: Article, index: number): string {
   const title = article.title.toLowerCase();
-  if (title.includes('daisy') || title.includes('diver')) return 'card-daisy-diver.svg';
-  if (title.includes('rocket') || title.includes('race')) return 'card-rocket-race.svg';
+  if (title.includes('daisy') || title.includes('diver')) return 'card-daisy-diver.png';
+  if (title.includes('rocket') || title.includes('race')) return 'card-rocket-race.png';
   return fallbackCards[index % fallbackCards.length];
-}
-
-function mascotForAvatar(avatar: AvatarState, fallback: string): string {
-  if (avatar.mode === 'listening' || avatar.mode === 'speaking') return 'tomato-headphones.svg';
-  if (avatar.mode === 'celebrating') return 'tomato-celebrate.svg';
-  if (avatar.mode === 'thinking') return 'tomato-pencil.svg';
-  return fallback;
-}
-
-function splitSentences(text: string): string[] {
-  return text
-    .split(/(?<=[.!?])\s+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 8);
 }
 
 function highlightFirstWord(sentence: string): string {
@@ -1005,21 +1253,6 @@ function highlightFirstWord(sentence: string): string {
 
 function displayVoiceLanguage(lang: string): string {
   return lang.replaceAll('中文', '中文/英文');
-}
-
-function pickSpotlightVoices(voices: VoiceOption[], selectedVoiceId: string): VoiceOption[] {
-  const preferred = voices.filter((voice) =>
-    [
-      selectedVoiceId,
-      'en_female_dacey_uranus_bigtts',
-      'en_male_tim_uranus_bigtts',
-      'zh_female_xiaoxue_uranus_bigtts',
-      'zh_male_naiqimengwa_uranus_bigtts',
-      'zh_female_yingyujiaoxue_uranus_bigtts',
-    ].includes(voice.id),
-  );
-  const fallback = voices.slice(0, 6);
-  return Array.from(new Map([...preferred, ...fallback].map((voice) => [voice.id, voice])).values()).slice(0, 6);
 }
 
 function useHashRoute(): [string, (path: string) => void] {
@@ -1060,6 +1293,77 @@ function parseRoute(route: string):
 
 function isFollowBusy(step: string): boolean {
   return ['loadingTts', 'playing', 'scoring'].includes(step);
+}
+
+function isFollowActionLocked(step: string): boolean {
+  return ['loadingTts', 'playing', 'recording', 'scoring'].includes(step);
+}
+
+function followPlayButtonLabel(step: string): string {
+  if (step === 'loadingTts') return '准备原音';
+  if (step === 'playing') return '播放中';
+  return '播放原音';
+}
+
+function followPlaybackCue(
+  step: string,
+  playbackState?: string,
+  playbackError?: string | null,
+): string {
+  if (playbackError || playbackState === 'failed') return '原音播放失败，可以点重播再试。';
+  if (step === 'loadingTts' || playbackState === 'waitingStart') return '正在准备原音，请稍等一下。';
+  if (step === 'playing' || playbackState === 'playing') return '正在播放原音，听完再开始跟读。';
+  if (step === 'recording') return '认真读出来，番茄伙伴正在听。';
+  if (step === 'scoring') return '正在识别和评分，请稍等。';
+  if (step === 'result') return '看完得分后，可以重播、重试或进入下一句。';
+  if (step === 'completed') return '这篇文章已经完成啦。';
+  if (playbackState === 'success') return '原音播放完成，现在可以开始跟读。';
+  return '先听一遍原音，再点击录音跟读。';
+}
+
+function followRecordCue(
+  step: string,
+  playbackState?: string,
+  playbackError?: string | null,
+): string {
+  if (step === 'loadingTts') return '原音准备中，稍后再录音';
+  if (step === 'playing') return '原音播放中，听完再录音';
+  if (step === 'recording') return '正在录音，点击停止';
+  if (step === 'scoring') return '正在评分，请稍等';
+  if (playbackError || playbackState === 'failed') return '先重播原音，再开始跟读';
+  if (playbackState === 'success') return '点击录音，跟读这句话';
+  return '先听完原音，再开始录音';
+}
+
+function followPartnerStatus(
+  step: string,
+  playbackState?: string,
+  result?: FollowState['result'],
+): 'listen' | 'record' | 'score' {
+  if (['recording'].includes(step)) return 'record';
+  if (['scoring', 'result', 'completed'].includes(step) || result) return 'score';
+  if (playbackState === 'success' && step === 'idle') return 'record';
+  return 'listen';
+}
+
+function chatSideCue(step: string): string {
+  if (step === 'init') return '番茄伙伴正在准备问题...';
+  if (step === 'aiSpeaking') return '番茄伙伴正在说，认真听。';
+  if (step === 'recording') return '正在听你说英语。';
+  if (step === 'processing') return '番茄伙伴正在想答案。';
+  if (step === 'completed') return '这轮对话完成啦。';
+  if (step === 'error') return '对话暂时卡住了。';
+  return '轮到你说英语啦。';
+}
+
+function chatInputCue(step: string): string {
+  if (step === 'init') return '正在准备第一个问题';
+  if (step === 'aiSpeaking') return '先听番茄伙伴说完';
+  if (step === 'recording') return '正在录音';
+  if (step === 'processing') return '番茄伙伴思考中';
+  if (step === 'completed') return '这轮对话已经完成';
+  if (step === 'error') return '可以返回后重新进入对话';
+  return '输入或按住说英语';
 }
 
 export default App;

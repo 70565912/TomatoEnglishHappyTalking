@@ -1,0 +1,34 @@
+{
+  "baseUrl": "https://api.pixellab.ai/v2",
+  "endpoint": "/create-image-pixflux",
+  "style": "Bright child-friendly pixel art for story card cover illustrations in a cheerful English speaking practice app. Clear subject, full colorful background, readable thumbnail composition, saturated tomato red, sky blue, lemon yellow, mint green, white highlights. No text, no letters, no watermark.",
+  "assets": [
+    {
+      "name": "card-space-snacks",
+      "output": "card-space-snacks.png",
+      "width": 360,
+      "height": 220,
+      "noBackground": false,
+      "outline": "selective outline",
+      "description": "A story card illustration about Space Snacks: a small astronaut, a cute robot snack box, floating star-shaped cookies and fruit jelly in outer space, readable at small size."
+    },
+    {
+      "name": "card-daisy-diver",
+      "output": "card-daisy-diver.png",
+      "width": 360,
+      "height": 220,
+      "noBackground": false,
+      "outline": "selective outline",
+      "description": "A story card illustration about Daisy the Diver: a cheerful young diver exploring a bright underwater garden with daisy-like sea flowers, bubbles, and friendly fish, readable at small size."
+    },
+    {
+      "name": "card-rocket-race",
+      "output": "card-rocket-race.png",
+      "width": 360,
+      "height": 220,
+      "noBackground": false,
+      "outline": "selective outline",
+      "description": "A story card illustration about Rocket Race: a colorful rocket racing across a starry track with speed lines, tiny planets, and playful classroom game energy, readable at small size."
+    }
+  ]
+}

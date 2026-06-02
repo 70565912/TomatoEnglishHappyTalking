@@ -77,6 +77,13 @@ flutter:
   assets:
     - assets/web/
     - assets/web/assets/
+    - assets/web/assets/ui/
+    - assets/web/assets/ui/lego/
+    - assets/web/assets/ui/lego/animations/
+    - assets/web/assets/ui/lego/animations/speaking/
+    - assets/web/assets/ui/lego/animations/success/
+    - assets/web/assets/ui/lego/animations/wave/
+    - assets/web/assets/ui/lego/mascot-blink/
   # Fonts are loaded via google_fonts package (no local font files needed)
 
 hooks:

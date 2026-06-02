@@ -17,6 +17,7 @@ import '../../services/tts_service.dart';
 import '../chat/providers/chat_provider.dart';
 import '../follow_read/providers/follow_read_provider.dart';
 import 'web_bridge_protocol.dart';
+import 'web_shell_qa_server.dart';
 
 class WebShellScreen extends ConsumerStatefulWidget {
   const WebShellScreen({super.key});
@@ -29,8 +30,15 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   static const _devServerUrl = String.fromEnvironment(
     'TOMATO_WEB_UI_DEV_URL',
   );
+  static const _qaRemoteEnabled = bool.fromEnvironment('TOMATO_QA_REMOTE');
+  static const _qaRemotePort = int.fromEnvironment(
+    'TOMATO_QA_PORT',
+    defaultValue: 39317,
+  );
+  static const _qaRemoteToken = String.fromEnvironment('TOMATO_QA_TOKEN');
 
   InAppWebViewController? _controller;
+  WebShellQaServer? _qaServer;
   ProviderSubscription<AsyncValue<FollowReadState>>? _followSubscription;
   ProviderSubscription<ChatState>? _chatSubscription;
   int? _activeFollowArticleId;
@@ -65,7 +73,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       });
 
   @override
+  void initState() {
+    super.initState();
+    if (_qaRemoteEnabled) {
+      _qaServer = WebShellQaServer(
+        port: _qaRemotePort,
+        token: _qaRemoteToken,
+        health: _qaHealth,
+        snapshot: _qaSnapshot,
+        screenshot: _qaScreenshot,
+        navigate: _qaNavigate,
+        click: _qaClick,
+        fill: _qaFill,
+        dispatchBridge: (raw) => _bridgeRouter.dispatch(raw),
+      );
+      unawaited(_qaServer!.start());
+    }
+  }
+
+  @override
   void dispose() {
+    unawaited(_qaServer?.stop());
     _closeFollowSession();
     _closeChatSession();
     super.dispose();
@@ -247,7 +275,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Future<Map<String, dynamic>> _handleFollowNext(BridgeMessage message) async {
     final articleId = _requireActiveFollow();
-    ref.read(followReadProvider(articleId).notifier).nextSentence();
+    await ref.read(followReadProvider(articleId).notifier).nextSentence();
     return _currentFollowPayload(articleId);
   }
 
@@ -402,13 +430,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Future<Map<String, dynamic>> _articleListPayload() async {
     final articles = await DatabaseService.getArticles();
     final articlePayloads = <Map<String, dynamic>>[];
-    for (final article in articles) {
+    for (final originalArticle in articles) {
+      final article = await _articleWithCurrentSentences(originalArticle);
       final id = article.id;
       final averageScore =
           id == null ? 0.0 : await DatabaseService.getAverageScore(id);
       articlePayloads.add(_articleJson(article, averageScore: averageScore));
     }
     return {'articles': articlePayloads};
+  }
+
+  Future<Article> _articleWithCurrentSentences(Article article) async {
+    final id = article.id;
+    final sentences = NlpService.splitSentences(article.content);
+    if (sentences.isEmpty || listEquals(article.sentences, sentences)) {
+      return article;
+    }
+
+    if (id != null) {
+      await DatabaseService.updateArticleSentences(id, sentences);
+    }
+    return article.copyWith(sentences: sentences);
   }
 
   Future<Map<String, dynamic>> _settingsPayload() async {
@@ -462,6 +504,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           'currentIndex': state.currentIndex,
           'totalSentences': state.totalSentences,
           'currentSentence': state.currentSentence,
+          'currentTranslation': state.currentTranslation,
           'isLastSentence': state.isLastSentence,
           'step': state.step.name,
           'playbackState': state.playbackState.name,
@@ -488,6 +531,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               'id': message.id,
               'isAi': message.isAi,
               'text': message.text,
+              'translation': message.translation,
               'playbackState': message.playbackState.name,
               'playbackError': message.playbackError,
             },
@@ -651,6 +695,397 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     for (final event in events) {
       await _pushEvent(event['type'] as String, event['payload']);
     }
+  }
+
+  Future<Map<String, dynamic>> _qaHealth() async {
+    final controller = _controller;
+    final url = controller == null ? null : await controller.getUrl();
+    return {
+      'ok': true,
+      'platform': defaultTargetPlatform.name,
+      'webReady': _webReady,
+      'usesDevServer': _usesDevServer,
+      'activeFollowArticleId': _activeFollowArticleId,
+      'activeChatArticleId': _activeChatArticleId,
+      'url': url?.toString(),
+      'runtimeState': await _qaRuntimeState(),
+      'endpoints': [
+        'GET /health',
+        'GET /snapshot',
+        'GET /screenshot',
+        'POST /navigate {"path":"/settings"}',
+        'POST /click {"text":"保存任务"}',
+        'POST /fill {"selector":"input","value":"Space Snacks"}',
+        'POST /bridge {"type":"article.list","payload":{}}',
+      ],
+    };
+  }
+
+  Future<Map<String, dynamic>> _qaNavigate(String path) async {
+    await _bridgeRouter.dispatch({
+      'id': 'qa_nav_${DateTime.now().microsecondsSinceEpoch}',
+      'type': 'app.navigate',
+      'payload': {'path': path},
+    });
+    final controller = _requireWebController();
+    await controller.evaluateJavascript(
+      source: 'window.location.hash = ${jsonEncode(path)};',
+    );
+    return {
+      'ok': true,
+      'path': path,
+    };
+  }
+
+  Future<Uint8List> _qaScreenshot() async {
+    final bytes = await _requireWebController().takeScreenshot();
+    if (bytes == null || bytes.isEmpty) {
+      throw StateError('WebView screenshot is empty');
+    }
+    return bytes;
+  }
+
+  Future<Map<String, dynamic>> _qaClick(Map<String, dynamic> payload) async {
+    final raw = await _requireWebController().evaluateJavascript(
+      source: '''
+(() => {
+  const payload = ${jsonEncode(payload)};
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const rectOf = (element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  };
+  const isVisible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none';
+  };
+  const selector = normalize(payload.selector);
+  const text = normalize(payload.text);
+  const exact = Boolean(payload.exact);
+  const index = Number.isFinite(Number(payload.index)) ? Number(payload.index) : 0;
+  let candidates = selector
+    ? Array.from(document.querySelectorAll(selector))
+    : Array.from(document.querySelectorAll('button, [role="button"], a, label, input, textarea, select'));
+  candidates = candidates.filter(isVisible);
+  if (text) {
+    const wanted = text.toLowerCase();
+    const labelOf = (element) => normalize(
+      element.getAttribute('aria-label') ||
+      element.getAttribute('placeholder') ||
+      element.textContent ||
+      element.value
+    ).toLowerCase();
+    candidates = candidates.filter((element) => {
+      const label = labelOf(element);
+      return exact ? label === wanted : label.includes(wanted);
+    });
+    candidates.sort((left, right) => {
+      const leftLabel = labelOf(left);
+      const rightLabel = labelOf(right);
+      const leftExact = leftLabel === wanted ? 0 : 1;
+      const rightExact = rightLabel === wanted ? 0 : 1;
+      if (leftExact !== rightExact) return leftExact - rightExact;
+      const leftStarts = leftLabel.startsWith(wanted) ? 0 : 1;
+      const rightStarts = rightLabel.startsWith(wanted) ? 0 : 1;
+      if (leftStarts !== rightStarts) return leftStarts - rightStarts;
+      return leftLabel.length - rightLabel.length;
+    });
+  }
+  const target = candidates[index];
+  if (!target) {
+    return JSON.stringify({
+      ok: false,
+      error: {
+        message: 'No clickable element matched',
+        selector,
+        text,
+        index,
+        candidates: candidates.length
+      }
+    });
+  }
+  const disabled = Boolean(target.disabled) || target.getAttribute('aria-disabled') === 'true';
+  if (disabled) {
+    return JSON.stringify({
+      ok: false,
+      error: {
+        message: 'Clickable element is disabled',
+        selector,
+        text,
+        index
+      },
+      target: {
+        tag: target.tagName.toLowerCase(),
+        className: String(target.className || ''),
+        text: normalize(target.textContent || target.getAttribute('aria-label') || target.getAttribute('placeholder') || target.value).slice(0, 160),
+        disabled,
+        rect: rectOf(target)
+      }
+    });
+  }
+  target.scrollIntoView({ block: 'center', inline: 'center' });
+  target.focus?.();
+  target.click();
+  return JSON.stringify({
+    ok: true,
+    action: 'click',
+    target: {
+      tag: target.tagName.toLowerCase(),
+      className: String(target.className || ''),
+      text: normalize(target.textContent || target.getAttribute('aria-label') || target.getAttribute('placeholder') || target.value).slice(0, 160),
+      disabled: Boolean(target.disabled),
+      rect: rectOf(target)
+    }
+  });
+})()
+''',
+    );
+    return _decodeJavascriptJsonMap(raw);
+  }
+
+  Future<Map<String, dynamic>> _qaFill(Map<String, dynamic> payload) async {
+    final raw = await _requireWebController().evaluateJavascript(
+      source: '''
+(() => {
+  const payload = ${jsonEncode(payload)};
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const rectOf = (element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  };
+  const isVisible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none';
+  };
+  const selector = normalize(payload.selector);
+  if (!selector) {
+    return JSON.stringify({
+      ok: false,
+      error: { message: 'fill.selector is required' }
+    });
+  }
+  const value = String(payload.value ?? '');
+  const index = Number.isFinite(Number(payload.index)) ? Number(payload.index) : 0;
+  const candidates = Array.from(document.querySelectorAll(selector)).filter(isVisible);
+  const target = candidates[index];
+  if (!target) {
+    return JSON.stringify({
+      ok: false,
+      error: {
+        message: 'No fillable element matched',
+        selector,
+        index,
+        candidates: candidates.length
+      }
+    });
+  }
+  target.scrollIntoView({ block: 'center', inline: 'center' });
+  target.focus?.();
+  if (target.isContentEditable) {
+    target.textContent = value;
+  } else {
+    const prototype = Object.getPrototypeOf(target);
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value') ||
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value') ||
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+    if (descriptor?.set) {
+      descriptor.set.call(target, value);
+    } else {
+      target.value = value;
+    }
+  }
+  target.dispatchEvent(new Event('input', { bubbles: true }));
+  target.dispatchEvent(new Event('change', { bubbles: true }));
+  return JSON.stringify({
+    ok: true,
+    action: 'fill',
+    target: {
+      tag: target.tagName.toLowerCase(),
+      className: String(target.className || ''),
+      placeholder: target.getAttribute('placeholder') || '',
+      valueLength: value.length,
+      rect: rectOf(target)
+    }
+  });
+})()
+''',
+    );
+    return _decodeJavascriptJsonMap(raw);
+  }
+
+  Future<Map<String, dynamic>> _qaSnapshot() async {
+    final raw = await _requireWebController().evaluateJavascript(
+      source: '''
+(() => {
+  const rectOf = (element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+  };
+  const images = Array.from(document.images).map((image) => ({
+    src: image.getAttribute('src') || '',
+    currentSrc: image.currentSrc || '',
+    complete: image.complete,
+    naturalWidth: image.naturalWidth,
+    naturalHeight: image.naturalHeight,
+    rect: rectOf(image)
+  }));
+  const brokenImages = images.filter((image) =>
+    !image.complete || image.naturalWidth === 0 || image.naturalHeight === 0
+  );
+  const isQaVisible = (element) => {
+    if (element.closest('.visually-hidden,[hidden],[aria-hidden="true"]')) {
+      return false;
+    }
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 1 || rect.height <= 1) {
+      return false;
+    }
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      Number(style.opacity || '1') > 0.01;
+  };
+  const isExpectedScrollContainer = (element) => {
+    const style = window.getComputedStyle(element);
+    const overflowX = style.overflowX;
+    const overflowY = style.overflowY;
+    const horizontalScroll = element.scrollWidth > element.clientWidth + 4 &&
+      (overflowX === 'auto' || overflowX === 'scroll');
+    const verticalScroll = element.scrollHeight > element.clientHeight + 4 &&
+      (overflowY === 'auto' || overflowY === 'scroll');
+    return horizontalScroll || verticalScroll;
+  };
+  const overflowElements = Array.from(document.querySelectorAll('*'))
+    .filter((element) =>
+      isQaVisible(element) &&
+      !isExpectedScrollContainer(element) &&
+      (
+        element.scrollWidth > element.clientWidth + 4 ||
+        element.scrollHeight > element.clientHeight + 4
+      )
+    )
+    .slice(0, 80)
+    .map((element) => ({
+      tag: element.tagName.toLowerCase(),
+      className: String(element.className || ''),
+      text: (element.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 120),
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      rect: rectOf(element)
+    }));
+  const buttons = Array.from(document.querySelectorAll('button'))
+    .map((button) => ({
+      text: (button.textContent || '').trim().replace(/\\s+/g, ' '),
+      disabled: button.disabled,
+      rect: rectOf(button)
+    }));
+  const formControls = Array.from(document.querySelectorAll('input, textarea, select'))
+    .map((control) => ({
+      tag: control.tagName.toLowerCase(),
+      className: String(control.className || ''),
+      placeholder: control.getAttribute('placeholder') || '',
+      value: String(control.value || '').slice(0, 240),
+      disabled: Boolean(control.disabled),
+      rect: rectOf(control)
+    }));
+  return JSON.stringify({
+    href: location.href,
+    hash: location.hash,
+    title: document.title,
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      bodyScrollWidth: document.body.scrollWidth,
+      bodyScrollHeight: document.body.scrollHeight
+    },
+    imageCount: images.length,
+    images,
+    brokenImages,
+    overflowElements,
+    buttons,
+    formControls,
+    visibleText: (document.body?.innerText || '').replace(/\\s+/g, ' ').slice(0, 4000)
+  });
+})()
+''',
+    );
+    final payload = _decodeJavascriptJsonMap(raw);
+    payload['runtimeState'] = await _qaRuntimeState();
+    return payload;
+  }
+
+  Future<Map<String, dynamic>> _qaRuntimeState() async {
+    final followArticleId = _activeFollowArticleId;
+    final chatArticleId = _activeChatArticleId;
+    final payload = <String, dynamic>{
+      'activeFollowArticleId': followArticleId,
+      'activeChatArticleId': chatArticleId,
+    };
+
+    if (followArticleId != null) {
+      try {
+        payload['follow'] = await _currentFollowPayload(followArticleId);
+      } catch (error) {
+        payload['followError'] = error.toString();
+      }
+    }
+
+    if (chatArticleId != null) {
+      try {
+        payload['chat'] = _chatPayload(ref.read(chatProvider(chatArticleId)));
+      } catch (error) {
+        payload['chatError'] = error.toString();
+      }
+    }
+
+    return payload;
+  }
+
+  InAppWebViewController _requireWebController() {
+    final controller = _controller;
+    if (controller == null) {
+      throw StateError('WebView is not ready');
+    }
+    return controller;
+  }
+
+  Map<String, dynamic> _decodeJavascriptJsonMap(Object? raw) {
+    final decoded = switch (raw) {
+      final String text => jsonDecode(text),
+      final Map map => map,
+      _ => throw const FormatException('JavaScript result must be JSON object'),
+    };
+    if (decoded is! Map) {
+      throw const FormatException('JavaScript result must be JSON object');
+    }
+    return decoded.map((key, value) => MapEntry(key.toString(), value));
   }
 
   int _payloadInt(Map<String, dynamic> payload, String key) {
