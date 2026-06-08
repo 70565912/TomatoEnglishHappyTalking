@@ -411,7 +411,7 @@ img {
 
 .dashboard-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.9fr);
+  grid-template-columns: 1fr;
   gap: 16px;
 }
 
@@ -558,7 +558,7 @@ img {
 
 .stats-row {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   padding: 12px;
   background: rgba(234, 244, 255, 0.82);
@@ -812,9 +812,21 @@ img {
   background: var(--panel);
 }
 
-.mission-row > img {
+.mission-cover-button {
+  display: block;
   width: 92px;
   height: 60px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.mission-cover-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
   border-radius: 8px;
   object-fit: cover;
 }
@@ -823,6 +835,35 @@ img {
   margin-bottom: 3px;
   font-size: 16px;
   line-height: 1.2;
+}
+
+.mission-title-button {
+  justify-content: flex-start;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  overflow-wrap: break-word;
+}
+
+.mission-cover-button:hover,
+.mission-cover-button:focus-visible,
+.mission-title-button:hover,
+.mission-title-button:focus-visible {
+  color: var(--tomato-dark);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.mission-cover-button:hover,
+.mission-cover-button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.22);
 }
 
 .mission-row p {
@@ -925,6 +966,32 @@ img {
   margin: 0;
   font-size: 22px;
   line-height: 1.2;
+}
+
+.story-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.story-title-book,
+.story-title-chapter {
+  display: block;
+  min-width: 0;
+  overflow-wrap: break-word;
+  letter-spacing: 0;
+}
+
+.story-title-book {
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.16;
+}
+
+.story-title-chapter {
+  color: var(--soft-ink);
+  font-size: 18px;
+  line-height: 1.18;
 }
 
 .icon-button {
@@ -3497,12 +3564,15 @@ select:disabled {
     grid-template-columns: 78px minmax(0, 1fr);
   }
 
-  .mission-row > img {
+  .mission-cover-button {
     width: 78px;
     height: 56px;
   }
 
-  .mission-row button,
+  .mission-row > .primary-action,
+  .mission-row > .purple-action,
+  .mission-row > .listen-action,
+  .mission-row > .delete-action,
   .ring-score {
     grid-column: span 2;
     width: 100%;
@@ -3513,6 +3583,14 @@ select:disabled {
   .bottom-actions,
   .chat-input {
     grid-template-columns: 1fr;
+  }
+
+  .story-title-book {
+    font-size: 20px;
+  }
+
+  .story-title-chapter {
+    font-size: 16px;
   }
 
   .top-actions {

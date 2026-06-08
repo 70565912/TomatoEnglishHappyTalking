@@ -294,9 +294,6 @@ function HomePage({
             <button className="primary-action" onClick={() => onNavigate(latestArticle ? `/follow/${latestArticle.id}` : '/article/new')}>
               <Icon name="play" /> 开始闯关
             </button>
-            <button className="ghost-action" onClick={() => onNavigate('/article/new')}>
-              <Icon name="plus" /> 新建任务
-            </button>
           </div>
         </div>
         <div className="hero-stage">
@@ -309,54 +306,12 @@ function HomePage({
       </header>
 
       <div className="dashboard-grid">
-        <section className="latest-card">
-          <div className="section-heading">
-            <span>最新任务卡</span>
-          </div>
-          {latestArticle ? (
-            <div className="latest-content">
-              <img src={articleCoverSource(latestArticle, 0)} alt="" />
-              <div>
-                <span className="quest-tag">主线任务</span>
-                <h2>{latestArticle.title}</h2>
-                <p>{latestArticle.content}</p>
-                <ProgressLine value={latestArticle.averageScore || 75} label="进度" />
-                <div className="button-row">
-                  <button className="primary-action" onClick={() => onNavigate(`/follow/${latestArticle.id}`)}>
-                    <Icon name="mic" /> 跟读
-                  </button>
-                  <button className="purple-action" onClick={() => onNavigate(`/chat/${latestArticle.id}`)}>
-                    <Icon name="chat" /> 对话
-                  </button>
-                  <button className="listen-action" onClick={() => onNavigate(`/listen/${latestArticle.id}`)}>
-                    <Icon name="sound" /> 听力
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <EmptyMission onNavigate={onNavigate} />
-          )}
-        </section>
-
         <section className="stats-row" aria-label="learning stats">
           <StatTile label="任务卡" value={articles.length.toString()} icon="card" />
           <StatTile label="句子" value={totalSentences.toString()} icon="sentence" />
           <StatTile label="平均分" value={averageScore > 0 ? averageScore.toString() : '--'} icon="star" />
         </section>
       </div>
-
-      <section className="quest-map">
-        <div className="section-heading">
-          <span>今日闯关路线</span>
-        </div>
-        <div className="map-steps">
-          <MapStep number="1" title="开口读" text="录音跟读拿星星" active />
-          <MapStep number="2" title="AI 对话" text="用文章内容聊天" />
-          <MapStep number="3" title="领奖励" text="收集番茄积木" />
-          <MapStep number="4" title="再复习" text="回到任务卡巩固" />
-        </div>
-      </section>
 
       <section className="mission-list-panel">
         <div className="section-heading with-action">
@@ -398,16 +353,6 @@ function HomePage({
                     <b>{selectedBook.title}</b>
                   </div>
                   <div className="chapter-tools">
-                    <button
-                      className="ghost-action"
-                      type="button"
-                      onClick={() => {
-                        setChapterOrder((current) => (current === 'asc' ? 'desc' : 'asc'));
-                        setChapterPage(0);
-                      }}
-                    >
-                      <Icon name="swap" /> {chapterOrder === 'asc' ? '正序' : '倒序'}
-                    </button>
                     <div className="pagination" aria-label="章节分页">
                       <button
                         type="button"
@@ -415,6 +360,15 @@ function HomePage({
                         disabled={safeChapterPage === 0}
                       >
                         <Icon name="prev" /> 上一页
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setChapterOrder((current) => (current === 'asc' ? 'desc' : 'asc'));
+                          setChapterPage(0);
+                        }}
+                      >
+                        <Icon name="swap" /> {chapterOrder === 'asc' ? '正序' : '倒序'}
                       </button>
                       <span>第 {safeChapterPage + 1} / {totalChapterPages} 页 · 每页 10 篇</span>
                       <button
@@ -1106,7 +1060,7 @@ function ListeningPage({
         : Math.round(((currentIndex + (busy ? 0.5 : 0)) / items.length) * 100);
   const playbackError = status === 'error' ? error : null;
   const startLabel = status === 'done' ? '再听一遍' : '开始听全文';
-  const title = storyTitleFor(article, pictureBookState);
+  const titleParts = storyTitlePartsFor(article, pictureBookState, article.title);
   const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
   const retryPicturePage = (page: PictureBookPage) => {
     void sendNative<PictureBookState>('pictureBook.retryPage', {
@@ -1119,7 +1073,7 @@ function ListeningPage({
 
   return (
     <section className="page listening-page">
-      <TopBar title={title || article.title} onBack={() => onNavigate('/')}>
+      <TopBar title={<StoryTitle parts={titleParts} />} onBack={() => onNavigate('/')}>
         <div className="listening-progress-summary">
           <ProgressLine
             value={progress}
@@ -1660,7 +1614,7 @@ function FollowPage({
         ? liveTranscript || '正在整理识别结果...'
       : liveTranscript;
   const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
-  const title = storyTitleFor(state?.article, pictureBookState);
+  const titleParts = storyTitlePartsFor(state?.article, pictureBookState, '跟读任务');
   const retryPicturePage = (page: PictureBookPage) => {
     void sendNative<PictureBookState>('pictureBook.retryPage', {
       articleId,
@@ -1672,7 +1626,7 @@ function FollowPage({
 
   return (
     <section className="page follow-page">
-      <TopBar title={title || '跟读任务'} onBack={() => onNavigate('/')}>
+      <TopBar title={<StoryTitle parts={titleParts} />} onBack={() => onNavigate('/')}>
         <Pager current={currentIndex + 1} total={totalSentences || 2} />
         <button className="ghost-action" onClick={() => onNavigate('/')}>
           <Icon name="exit" /> 退出
@@ -1828,13 +1782,52 @@ function PictureBookScene({
   );
 }
 
-function storyTitleFor(article?: Article | null, pictureBookState?: PictureBookState | null): string {
+type StoryTitleParts = {
+  seriesTitle: string;
+  chapterTitle: string;
+};
+
+function storyTitlePartsFor(
+  article?: Article | null,
+  pictureBookState?: PictureBookState | null,
+  fallback = '',
+): StoryTitleParts {
   const articleTitle = article?.title?.trim() ?? '';
   const seriesTitle = pictureBookState?.series?.title?.trim() || article?.seriesTitle?.trim() || '';
-  if (!seriesTitle) return articleTitle;
-  if (!articleTitle) return seriesTitle;
-  if (articleTitle.toLowerCase().includes(seriesTitle.toLowerCase())) return articleTitle;
-  return `${seriesTitle} · ${articleTitle}`;
+  const chapterTitle = chapterTitleForDisplay(articleTitle, seriesTitle) || articleTitle || fallback.trim() || seriesTitle;
+  return {
+    seriesTitle,
+    chapterTitle,
+  };
+}
+
+function chapterTitleForDisplay(articleTitle: string, seriesTitle: string): string {
+  if (!articleTitle || !seriesTitle) return articleTitle;
+  if (!articleTitle.toLowerCase().startsWith(seriesTitle.toLowerCase())) {
+    return articleTitle;
+  }
+  return articleTitle
+    .slice(seriesTitle.length)
+    .replace(/^[\s·:：\-–—|]+/, '')
+    .trim() || articleTitle;
+}
+
+function StoryTitle({ parts }: { parts: StoryTitleParts }) {
+  const hasSeries = parts.seriesTitle.trim().length > 0 && parts.chapterTitle.trim() !== parts.seriesTitle.trim();
+  if (!hasSeries) {
+    return (
+      <span className="story-title single">
+        <span className="story-title-book">{parts.chapterTitle || parts.seriesTitle}</span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="story-title">
+      <span className="story-title-book">{parts.seriesTitle}</span>
+      <span className="story-title-chapter">{parts.chapterTitle}</span>
+    </span>
+  );
 }
 
 function ChatPage({
@@ -2305,9 +2298,20 @@ function MissionRow({
   const score = article.averageScore > 0 ? Math.round(article.averageScore) : 40;
   return (
     <article className="mission-row">
-      <img src={imageSrc} alt="" />
+      <button
+        className="mission-cover-button"
+        type="button"
+        onClick={onFollow}
+        aria-label={`进入《${article.title}》跟读`}
+      >
+        <img src={imageSrc} alt="" />
+      </button>
       <div>
-        <h3>{article.title}</h3>
+        <h3>
+          <button type="button" className="mission-title-button" onClick={onFollow}>
+            {article.title}
+          </button>
+        </h3>
         <p>{article.sentenceCount} 句子 · 最近学习 今天</p>
       </div>
       <span className="ring-score">{score}%</span>
@@ -2336,7 +2340,7 @@ function TopBar({
   onBack,
   children,
 }: {
-  title: string;
+  title: ReactNode;
   onBack: () => void;
   children?: ReactNode;
 }) {
