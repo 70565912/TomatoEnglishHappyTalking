@@ -113,6 +113,27 @@ class StoryChapter {
         'updatedAt': updatedAt.toIso8601String(),
       };
 
+  StoryChapter copyWith({
+    int? id,
+    int? seriesId,
+    int? articleId,
+    int? chapterOrder,
+    String? chapterTitle,
+    String? summaryJson,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) =>
+      StoryChapter(
+        id: id ?? this.id,
+        seriesId: seriesId ?? this.seriesId,
+        articleId: articleId ?? this.articleId,
+        chapterOrder: chapterOrder ?? this.chapterOrder,
+        chapterTitle: chapterTitle ?? this.chapterTitle,
+        summaryJson: summaryJson ?? this.summaryJson,
+        createdAt: createdAt ?? this.createdAt,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+
   factory StoryChapter.fromMap(Map<String, dynamic> map) => StoryChapter(
         id: (map['id'] as num?)?.toInt(),
         seriesId: (map['series_id'] as num).toInt(),

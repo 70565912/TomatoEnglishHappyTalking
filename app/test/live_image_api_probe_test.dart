@@ -29,7 +29,7 @@ void main() {
             'A warm English picture-book chapter illustration: a smiling child walks through a sunny garden, gentle colors, simple composition, a small storybook title sign may appear naturally if useful.',
         promptMetadata: const {
           'probe': true,
-          'policy': 'chapter_single_image_v1',
+          'policy': 'chapter_storyboard_group_v1',
         },
         cachePurpose: 'live_image_probe',
       );

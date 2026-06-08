@@ -809,6 +809,21 @@ class DatabaseService {
     );
   }
 
+  static Future<void> updateStoryChapter(StoryChapter chapter) async {
+    final id = chapter.id;
+    final db = await _database;
+    if (id == null) {
+      await saveStoryChapter(chapter);
+      return;
+    }
+    await db.update(
+      'story_chapters',
+      chapter.toMap(),
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   static Future<List<PictureBookPage>> getPictureBookPages(
     int articleId,
   ) async {

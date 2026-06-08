@@ -17,18 +17,23 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('今天也要快乐开口说英语！')).toBeInTheDocument();
-    expect(await screen.findByText('主线任务')).toBeInTheDocument();
+    expect(await screen.findByText('我的书籍')).toBeInTheDocument();
+    expect(await screen.findByText('Space Story Series')).toBeInTheDocument();
     expect(await screen.findByText('Tomato')).toBeInTheDocument();
     expect(await screen.findByText('English')).toBeInTheDocument();
     expect(await screen.findByText('Happy Talking')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '任务' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '新增' })).not.toBeInTheDocument();
-    expect(screen.getByText('我的书籍')).toBeInTheDocument();
-    expect(screen.getByText('开口读')).toBeInTheDocument();
+    expect(screen.getByText('任务卡')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Space Story Series/ }));
+    expect(await screen.findByText('章节列表')).toBeInTheDocument();
+    expect(screen.getByText('跟读')).toBeInTheDocument();
+    expect(screen.getByText('对话')).toBeInTheDocument();
+    expect(screen.getByText('听力')).toBeInTheDocument();
     expect(screen.queryByText('听全文')).not.toBeInTheDocument();
   });
 
-  it('prefers generated picture-book covers in latest and mission cards', async () => {
+  it('prefers generated picture-book covers in book and mission cards', async () => {
     window.location.hash = '/';
     const generatedCover = 'data:image/png;base64,AAAA';
     const article = {
@@ -64,14 +69,14 @@ describe('App', () => {
 
     const { container } = render(<App />);
 
-    expect(await screen.findAllByText('Generated Cover Story')).toHaveLength(1);
     expect(await screen.findByText('Generated Series')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Generated Series/ }));
     expect(await screen.findByText('章节列表')).toBeInTheDocument();
-    const imageSources = Array.from(container.querySelectorAll('.latest-content img, .book-card img, .mission-row img')).map((img) =>
+    expect(await screen.findByText('Generated Cover Story')).toBeInTheDocument();
+    const imageSources = Array.from(container.querySelectorAll('.book-card img, .mission-row img')).map((img) =>
       img.getAttribute('src'),
     );
-    expect(imageSources).toEqual([generatedCover, generatedCover, generatedCover]);
+    expect(imageSources).toEqual([generatedCover, generatedCover]);
   });
 
   it('renders settings without manual API key input', async () => {
@@ -129,9 +134,9 @@ describe('App', () => {
     expect(screen.getByText('Tom opens a lunch box.')).toBeInTheDocument();
 
     fireEvent.click(saveButton);
-    await waitFor(() => {
-      expect(screen.getAllByText('Opens Lunch Shares').length).toBeGreaterThan(0);
-    });
+    expect(await screen.findByText('任务卡已加入大厅')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Space Story Series/ }));
+    expect(await screen.findByText('Opens Lunch Shares')).toBeInTheDocument();
   });
 
   it('sends picture-book series choices when saving a new task', async () => {
@@ -706,6 +711,46 @@ describe('App', () => {
 
   it('opens listening practice and switches to bilingual playback mode', async () => {
     window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [
+              { index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' },
+              { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
+            ],
+          });
+        }
+        if (type === 'listening.prepare' || type === 'listening.play' || type === 'listening.stop') {
+          return ok(message.id, type, { playbackState: 'success', prepared: true, stopped: true });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
 
     render(<App />);
 
@@ -713,7 +758,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'bright' })).toHaveLength(1);
     expect(screen.getAllByText('汤姆发现了一个明亮的零食盒。').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: /开始听全文/ })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /开始播放/ })).not.toBeDisabled();
     expect(screen.getByText(/听力进度/)).toBeInTheDocument();
     expect(document.querySelector('.picture-book-scene')).toBeInTheDocument();
     expect(document.querySelector('.listening-side')).not.toBeInTheDocument();
@@ -726,6 +771,718 @@ describe('App', () => {
     expect(screen.queryByText('中英对照听力')).not.toBeInTheDocument();
     expect(document.querySelector('.listening-page .waveform')).not.toBeInTheDocument();
     expect(document.querySelector('.listening-page .wave-mini')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('He shares it with his team.').closest('.listening-row') as HTMLElement);
+    fireEvent.click(screen.getByRole('button', { name: /开始播放/ }));
+
+    await waitFor(() => {
+      const playCalls = calls.filter((call) => call.type === 'listening.play');
+      expect(playCalls.length).toBeGreaterThan(0);
+      expect(playCalls[0]?.payload).toMatchObject({ index: 1, part: 'english' });
+    });
+  });
+
+  it('shows picture-book loading placeholders in listening, follow, and chat', async () => {
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    const loadingPicture = {
+      articleId: 1,
+      enabled: true,
+      status: 'generating',
+      pages: [
+        {
+          articleId: 1,
+          seriesId: 1,
+          pageIndex: 0,
+          sentenceStartIndex: 0,
+          sentenceEndIndex: 0,
+          paragraphText: article.content,
+          imagePath: null,
+          imageUri: null,
+          status: 'generating',
+          errorMessage: null,
+        },
+      ],
+    };
+
+    const renderRoute = async (hash: string) => {
+      cleanup();
+      window.location.hash = hash;
+      window.flutter_inappwebview = {
+        callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+          const type = String(message.type ?? '');
+          if (type === 'app.ready' || type === 'article.list') {
+            return ok(message.id, type, { articles: [article], series: [] });
+          }
+          if (type === 'pictureBook.state') {
+            return ok(message.id, type, loadingPicture);
+          }
+          if (type === 'listening.open') {
+            return ok(message.id, type, {
+              article,
+              items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+            });
+          }
+          if (type === 'listening.prepare') {
+            return ok(message.id, type, { prepared: true });
+          }
+          if (type === 'follow.open' || type === 'follow.play') {
+            return ok(message.id, type, {
+              status: 'ready',
+              article,
+              currentIndex: 0,
+              totalSentences: 1,
+              currentSentence: article.sentences[0],
+              currentTranslation: '汤姆发现了一个明亮的零食盒。',
+              isLastSentence: true,
+              step: 'idle',
+              playbackState: 'success',
+              hasRecording: false,
+              liveRecognizedText: '',
+              result: null,
+            });
+          }
+          if (type === 'chat.open') {
+            return ok(message.id, type, {
+              articleTitle: article.title,
+              step: 'userIdle',
+              questionCount: 1,
+              maxQuestions: 4,
+              messages: [
+                {
+                  id: 'ai_1',
+                  isAi: true,
+                  text: 'What did Tom find?',
+                  translation: '汤姆发现了什么？',
+                  playbackState: 'success',
+                },
+              ],
+            });
+          }
+          return ok(message.id, type, {});
+        }),
+      };
+
+      render(<App />);
+      expect(await screen.findByText('绘本图正在生成中...')).toBeInTheDocument();
+    };
+
+    await renderRoute('/listen/1');
+    await renderRoute('/follow/1');
+    await renderRoute('/chat/1');
+  });
+
+  it('keeps a loading placeholder while a listening page image is hydrated lazily', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const calls: string[] = [];
+    let resolvePageImage: (() => void) | null = null;
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        calls.push(type);
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: 1,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.content,
+                imagePath: 'F:/tmp/picture-book-page.png',
+                imageUri: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        if (type === 'pictureBook.pageImage') {
+          return new Promise((resolve) => {
+            resolvePageImage = () =>
+              resolve(
+                ok(message.id, type, {
+                  articleId: 1,
+                  pageIndex: 0,
+                  imageUri: 'data:image/png;base64,READY',
+                }),
+              );
+          });
+        }
+        if (type === 'listening.prepare') {
+          return ok(message.id, type, { prepared: true });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    const { container } = render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    expect(await screen.findByText('正在加载绘本图...')).toBeInTheDocument();
+    expect(screen.queryByText('绘本图暂不可用')).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(calls).toContain('pictureBook.pageImage');
+    });
+
+    act(() => {
+      resolvePageImage?.();
+    });
+
+    await waitFor(() => {
+      const image = container.querySelector('.picture-book-scene img');
+      expect(image?.getAttribute('src')).toBe('data:image/png;base64,READY');
+    });
+  });
+
+  it('shows picture-book failure reasons and retries from chat', async () => {
+    window.location.hash = '/chat/1';
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    const failedPicture = {
+      articleId: 1,
+      enabled: true,
+      status: 'error',
+      pages: [
+        {
+          articleId: 1,
+          seriesId: 1,
+          pageIndex: 0,
+          sentenceStartIndex: 0,
+          sentenceEndIndex: 0,
+          paragraphText: article.content,
+          imagePath: null,
+          imageUri: null,
+          status: 'error',
+          errorMessage: '组图接口超时',
+        },
+      ],
+    };
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, failedPicture);
+        }
+        if (type === 'pictureBook.retryPage') {
+          return ok(message.id, type, { ...failedPicture, status: 'generating' });
+        }
+        if (type === 'chat.open') {
+          return ok(message.id, type, {
+            articleTitle: article.title,
+            step: 'userIdle',
+            questionCount: 1,
+            maxQuestions: 4,
+            messages: [
+              {
+                id: 'ai_1',
+                isAi: true,
+                text: 'What did Tom find?',
+                translation: '汤姆发现了什么？',
+                playbackState: 'success',
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('组图接口超时')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /重试/ }));
+
+    await waitFor(() => {
+      expect(calls).toContainEqual({
+        type: 'pictureBook.retryPage',
+        payload: { articleId: 1, pageIndex: 0 },
+      });
+    });
+  });
+
+  it('disables repeated picture-book retry clicks while a retry is running', async () => {
+    window.location.hash = '/chat/1';
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    let resolveRetry: (() => void) | null = null;
+    const retryPromise = new Promise<BridgeResponse>((resolve) => {
+      resolveRetry = () => {
+        resolve(
+          ok('retry', 'pictureBook.retryPage', {
+            articleId: 1,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.content,
+                imagePath: '/tmp/retry.png',
+                imageUri: 'data:image/png;base64,READY',
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          }),
+        );
+      };
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: 1,
+            enabled: true,
+            status: 'error',
+            pages: [
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.content,
+                imagePath: null,
+                imageUri: null,
+                status: 'error',
+                errorMessage: '组图接口超时',
+              },
+            ],
+          });
+        }
+        if (type === 'pictureBook.retryPage') {
+          return retryPromise;
+        }
+        if (type === 'chat.open') {
+          return ok(message.id, type, {
+            articleTitle: article.title,
+            step: 'userIdle',
+            questionCount: 1,
+            maxQuestions: 4,
+            messages: [
+              {
+                id: 'ai_1',
+                isAi: true,
+                text: 'What did Tom find?',
+                translation: '汤姆发现了什么？',
+                playbackState: 'success',
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    const { container } = render(<App />);
+
+    expect(await screen.findByText('组图接口超时')).toBeInTheDocument();
+    const retryButton = container.querySelector('.picture-book-retry');
+    expect(retryButton).not.toBeNull();
+    fireEvent.click(retryButton as HTMLElement);
+
+    await waitFor(() => {
+      expect(calls.filter((call) => call.type === 'pictureBook.retryPage')).toHaveLength(1);
+    });
+    expect(retryButton).toBeDisabled();
+
+    fireEvent.click(retryButton as HTMLElement);
+    expect(calls.filter((call) => call.type === 'pictureBook.retryPage')).toHaveLength(1);
+
+    act(() => {
+      resolveRetry?.();
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('组图接口超时')).not.toBeInTheDocument();
+    });
+  });
+
+  it('turns a missing chat picture-book cache file into a retryable error', async () => {
+    window.location.hash = '/chat/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: 1,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.sentences[0],
+                imageUri: null,
+                imagePath: 'F:/tmp/missing-picture-book-page.png',
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        if (type === 'pictureBook.pageImage') {
+          return ok(message.id, type, {
+            articleId: 1,
+            pageIndex: 0,
+            imageUri: null,
+            missing: true,
+            errorMessage: '绘本缓存文件丢失，请重试生成',
+          });
+        }
+        if (type === 'chat.open') {
+          return ok(message.id, type, {
+            articleTitle: article.title,
+            step: 'userIdle',
+            questionCount: 1,
+            maxQuestions: 4,
+            messages: [
+              {
+                id: 'ai_1',
+                isAi: true,
+                text: 'What did Tom find?',
+                translation: '汤姆发现了什么？',
+                playbackState: 'success',
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('绘本缓存文件丢失，请重试生成')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /重试/ })).toBeInTheDocument();
+    expect(screen.queryByText('正在加载绘本图...')).not.toBeInTheDocument();
+  });
+
+  it('maps late chat progress to the later picture-book page', async () => {
+    window.location.hash = '/chat/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: 1,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.sentences[0],
+                imageUri: 'data:image/png;base64,FIRST',
+                imagePath: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 1,
+                sentenceStartIndex: 1,
+                sentenceEndIndex: 1,
+                paragraphText: article.sentences[1],
+                imageUri: 'data:image/png;base64,SECOND',
+                imagePath: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        if (type === 'chat.open') {
+          return ok(message.id, type, {
+            articleTitle: article.title,
+            step: 'userIdle',
+            questionCount: 4,
+            maxQuestions: 4,
+            messages: [
+              {
+                id: 'ai_4',
+                isAi: true,
+                text: 'What happens at the end?',
+                translation: '最后发生了什么？',
+                playbackState: 'success',
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    const { container } = render(<App />);
+
+    expect(await screen.findByText('最后发生了什么？')).toBeInTheDocument();
+    const images = Array.from(
+      container.querySelectorAll('.chat-room-card .picture-book-scene img'),
+    ).map((image) => image.getAttribute('src'));
+    expect(images).toEqual(['data:image/png;base64,FIRST', 'data:image/png;base64,SECOND']);
+  });
+
+  it('reveals chat storyboard images one scene per question round', async () => {
+    window.location.hash = '/chat/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team. They open it together. Everyone cheers.',
+      sentences: [
+        'Tom finds a bright snack box.',
+        'He shares it with his team.',
+        'They open it together.',
+        'Everyone cheers.',
+      ],
+      sentenceCount: 4,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: 1,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.sentences[0],
+                imageUri: 'data:image/png;base64,FIRST',
+                imagePath: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 1,
+                sentenceStartIndex: 1,
+                sentenceEndIndex: 1,
+                paragraphText: article.sentences[1],
+                imageUri: 'data:image/png;base64,SECOND',
+                imagePath: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 2,
+                sentenceStartIndex: 2,
+                sentenceEndIndex: 2,
+                paragraphText: article.sentences[2],
+                imageUri: 'data:image/png;base64,THIRD',
+                imagePath: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+              {
+                articleId: 1,
+                seriesId: 1,
+                pageIndex: 3,
+                sentenceStartIndex: 3,
+                sentenceEndIndex: 3,
+                paragraphText: article.sentences[3],
+                imageUri: 'data:image/png;base64,FOURTH',
+                imagePath: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        if (type === 'chat.open') {
+          return ok(message.id, type, {
+            articleTitle: article.title,
+            step: 'userIdle',
+            questionCount: 2,
+            maxQuestions: 8,
+            messages: [
+              {
+                id: 'ai_1',
+                isAi: true,
+                text: 'What did Tom find first?',
+                translation: '汤姆先发现了什么？',
+                playbackState: 'success',
+              },
+              {
+                id: 'user_1',
+                isAi: false,
+                text: 'He found a bright snack box.',
+                translation: null,
+                playbackState: 'success',
+              },
+              {
+                id: 'ai_2',
+                isAi: true,
+                text: 'Great. What did he do next?',
+                translation: '很好。接下来他做了什么？',
+                playbackState: 'success',
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    const { container } = render(<App />);
+
+    expect(await screen.findByText('Great. What did he do next?')).toBeInTheDocument();
+    const images = Array.from(
+      container.querySelectorAll('.chat-room-card .picture-book-scene img'),
+    ).map((image) => image.getAttribute('src'));
+    expect(images).toEqual(['data:image/png;base64,FIRST', 'data:image/png;base64,SECOND']);
   });
 
   it('marks the active listening text while playback is pending', async () => {
@@ -1017,6 +1774,7 @@ describe('App', () => {
     expect(imageSources.some((src) => src.includes('reward-brick.png'))).toBe(false);
     expect(imageSources.some((src) => src.includes('lego/prop-star.png'))).toBe(true);
     expect(imageSources.some((src) => src.includes('lego/prop-bricks.png'))).toBe(true);
+    expect(container.querySelector('.chat-side-card')).toBeNull();
   });
 
   it('returns to the hall when ending chat', async () => {

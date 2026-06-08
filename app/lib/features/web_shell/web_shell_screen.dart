@@ -64,6 +64,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   bool _webReady = false;
   String? _loadError;
   final List<Map<String, dynamic>> _pendingEvents = [];
+  final Set<String> _retryingPictureBookPages = <String>{};
 
   bool get _usesDevServer => _devServerUrl.trim().isNotEmpty;
 
@@ -80,6 +81,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'series.create': _handleSeriesCreate,
         'series.attachArticle': _handleSeriesAttachArticle,
         'pictureBook.state': _handlePictureBookState,
+        'pictureBook.pageImage': _handlePictureBookPageImage,
         'pictureBook.generate': _handlePictureBookGenerate,
         'pictureBook.retryPage': _handlePictureBookRetryPage,
         'follow.open': _handleFollowOpen,
@@ -459,6 +461,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return PictureBookService.statePayload(articleId);
   }
 
+  Future<Map<String, dynamic>> _handlePictureBookPageImage(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final pageIndex = _payloadInt(message.payload, 'pageIndex');
+    return PictureBookService.pageImagePayload(
+      articleId: articleId,
+      pageIndex: pageIndex,
+    );
+  }
+
   Future<Map<String, dynamic>> _handlePictureBookGenerate(
     BridgeMessage message,
   ) async {
@@ -504,16 +517,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   ) async {
     final articleId = _payloadInt(message.payload, 'articleId');
     final pageIndex = _payloadInt(message.payload, 'pageIndex');
-    unawaited(
-      PictureBookService.regeneratePage(
-        articleId: articleId,
-        pageIndex: pageIndex,
-        onProgress: (state) => _pushEvent('pictureBook.state', state),
-      ),
+    final retryKey = '$articleId:$pageIndex';
+    if (_retryingPictureBookPages.contains(retryKey)) {
+      return PictureBookService.statePayload(articleId);
+    }
+    _retryingPictureBookPages.add(retryKey);
+    try {
+    await PictureBookService.regeneratePage(
+      articleId: articleId,
+      pageIndex: pageIndex,
+      onProgress: (state) => _pushEvent('pictureBook.state', state),
     );
     final state = await PictureBookService.statePayload(articleId);
     unawaited(_pushEvent('pictureBook.state', state));
     return state;
+    } finally {
+      _retryingPictureBookPages.remove(retryKey);
+    }
   }
 
   Future<Map<String, dynamic>> _handleFollowOpen(BridgeMessage message) async {
@@ -789,6 +809,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _activeListeningArticleId = null;
     await _stopListeningPlayback();
     _openChatSession(articleId);
+    unawaited(
+      PictureBookService.statePayload(articleId).then(
+        (state) => _pushEvent('pictureBook.state', state),
+      ),
+    );
     return _chatPayload(ref.read(chatProvider(articleId)));
   }
 
@@ -2198,6 +2223,40 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       disabled: Boolean(control.disabled),
       rect: rectOf(control)
     }));
+  const pictureBookScene = (() => {
+    const scene = document.querySelector('.picture-book-scene');
+    if (!scene) return null;
+    const image = scene.querySelector('img');
+    const placeholder = scene.querySelector('.picture-book-placeholder');
+    const retry = scene.querySelector('.picture-book-retry');
+    const badge = scene.querySelector('.picture-book-page-badge');
+    const subtitles = scene.querySelector('.picture-book-subtitles');
+    return {
+      className: String(scene.className || ''),
+      ready: scene.classList.contains('ready'),
+      busy: scene.classList.contains('busy'),
+      failed: scene.classList.contains('failed'),
+      placeholderText: (placeholder?.textContent || '').trim().replace(/\\s+/g, ' '),
+      retryText: (retry?.textContent || '').trim().replace(/\\s+/g, ' '),
+      hasRetry: Boolean(retry),
+      badgeText: (badge?.textContent || '').trim(),
+      image: image
+        ? {
+            src: image.getAttribute('src') || '',
+            currentSrc: image.currentSrc || '',
+            complete: image.complete,
+            naturalWidth: image.naturalWidth,
+            naturalHeight: image.naturalHeight,
+            rect: rectOf(image)
+          }
+        : null,
+      subtitles: {
+        english: (subtitles?.querySelector('h1')?.textContent || '').trim().replace(/\\s+/g, ' '),
+        chinese: (subtitles?.querySelector('p')?.textContent || '').trim().replace(/\\s+/g, ' ')
+      },
+      rect: rectOf(scene)
+    };
+  })();
   return JSON.stringify({
     href: location.href,
     hash: location.hash,
@@ -2216,6 +2275,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     overflowElements,
     buttons,
     formControls,
+    pictureBookScene,
     visibleText: (document.body?.innerText || '').replace(/\\s+/g, ' ').slice(0, 4000)
   });
 })()
@@ -2228,9 +2288,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Future<Map<String, dynamic>> _qaRuntimeState() async {
     final followArticleId = _activeFollowArticleId;
+    final listeningArticleId = _activeListeningArticleId;
     final chatArticleId = _activeChatArticleId;
     final payload = <String, dynamic>{
       'activeFollowArticleId': followArticleId,
+      'activeListeningArticleId': listeningArticleId,
       'activeChatArticleId': chatArticleId,
     };
 
@@ -2250,7 +2312,71 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
 
+    final pictureBookArticleId =
+        listeningArticleId ?? followArticleId ?? chatArticleId;
+    if (pictureBookArticleId != null) {
+      try {
+        payload['pictureBook'] =
+            await _qaPictureBookSummary(pictureBookArticleId);
+      } catch (error) {
+        payload['pictureBookError'] = error.toString();
+      }
+    }
+
     return payload;
+  }
+
+  Future<Map<String, dynamic>> _qaPictureBookSummary(int articleId) async {
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    final statusCounts = <String, int>{};
+    for (final page in pages) {
+      final status = page.status;
+      statusCounts[status] = (statusCounts[status] ?? 0) + 1;
+    }
+    return {
+      'articleId': articleId,
+      'status': _pictureBookSummaryStatus(pages),
+      'pageCount': pages.length,
+      'statusCounts': statusCounts,
+      'ranges': pages
+          .map(
+            (page) => {
+              'pageIndex': page.pageIndex,
+              'sentenceStartIndex': page.sentenceStartIndex,
+              'sentenceEndIndex': page.sentenceEndIndex,
+              'status': page.status,
+              'imagePath': page.imagePath,
+              'hasImage': page.imagePath?.trim().isNotEmpty ?? false,
+              'errorMessage': page.errorMessage,
+            },
+          )
+          .toList(growable: false),
+    };
+  }
+
+  String _pictureBookSummaryStatus(List<PictureBookPage> pages) {
+    if (pages.isEmpty) {
+      return 'empty';
+    }
+    if (pages.any((page) =>
+        page.status == 'queued' ||
+        page.status == 'prompting' ||
+        page.status == 'generating')) {
+      return 'generating';
+    }
+    if (pages.every((page) => page.status == 'ready')) {
+      return 'ready';
+    }
+    if (pages.every((page) => page.status == 'skipped')) {
+      return 'skipped';
+    }
+    if (pages.any((page) => page.status == 'ready')) {
+      return 'partial';
+    }
+    if (pages.any((page) => page.status == 'error')) {
+      return 'error';
+    }
+    return 'empty';
   }
 
   InAppWebViewController _requireWebController() {

@@ -57,6 +57,28 @@ node .\tools\qa_windows_release.mjs --token dev-token
 node .\tools\qa_windows_release.mjs --no-screenshots
 ```
 
+绘本整章组图和听力模式需要跑真实异步链路，不要只用 service
+test 代替。先用 QA 接口启动 Windows App，再运行：
+
+```powershell
+npm run qa:picture-book-live
+```
+
+默认会读取 Alice E27 粘贴文本，使用 UI 新增文章页保存到
+`Alice's Adventures in Wonderland`，打开听力页，确认真实 WebView
+显示“绘本图正在生成中...”，长轮询 `/health.runtimeState.pictureBook`
+等待整章组图进入 `ready` / `error` / `partial` / `skipped`，再验证首句
+字幕、重听本句播放和第 6 句切到第 2 张绘本页。脚本不点击真实重试按钮；
+失败时只记录失败文案和重试按钮状态。
+
+可选参数：
+
+```powershell
+node .\tools\qa_picture_book_live.mjs --picture-timeout-minutes 60
+node .\tools\qa_picture_book_live.mjs --text C:\path\chapter.txt --title "E27 - The Queen's Croquet-Ground"
+node .\tools\qa_picture_book_live.mjs --no-screenshots
+```
+
 健康检查：
 
 ```powershell
@@ -69,7 +91,7 @@ Invoke-RestMethod http://127.0.0.1:39317/health
 Invoke-RestMethod http://127.0.0.1:39317/snapshot
 ```
 
-`/snapshot` 会返回 `images`、`brokenImages`、`overflowElements`、`buttons`、`formControls` 和 `runtimeState`。`formControls` 可用于确认输入框是否已清空；`runtimeState.follow.step` / `runtimeState.follow.playbackState` 可用于确认跟读播放是否处于 `loadingTts`、`playing` 或已恢复到 `idle`。
+`/snapshot` 会返回 `images`、`brokenImages`、`overflowElements`、`buttons`、`formControls`、`pictureBookScene` 和 `runtimeState`。`formControls` 可用于确认输入框是否已清空；`pictureBookScene` 可用于确认真实 WebView 当前绘本区域是 loading、ready 还是 error，并读取页码、失败文案、重试按钮、字幕和图片尺寸；`runtimeState.follow.step` / `runtimeState.follow.playbackState` 可用于确认跟读播放是否处于 `loadingTts`、`playing` 或已恢复到 `idle`。`runtimeState.pictureBook` 是轻量页状态摘要，不包含 base64 图片，适合长轮询整章组图生成。
 
 `/health` 也会返回 `runtimeState`，适合在不需要 DOM 快照时快速看当前跟读 / 对话 provider 状态。
 

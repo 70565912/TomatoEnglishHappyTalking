@@ -780,9 +780,15 @@ img {
 }
 
 .pagination button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-height: 32px;
   padding: 6px 9px;
   color: var(--ink);
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.2;
   border-radius: 8px;
   background: var(--panel);
 }
@@ -796,8 +802,9 @@ img {
 .pagination span {
   padding: 0 6px;
   color: var(--soft-ink);
-  font-size: 12px;
-  font-weight: 1000;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.2;
 }
 
 .mission-row {
@@ -1206,6 +1213,11 @@ select:disabled {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 250px;
   gap: 16px;
+}
+
+.chat-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
 }
 
 .follow-layout {
@@ -1765,6 +1777,11 @@ select:disabled {
   background: #101827;
 }
 
+.picture-book-scene.busy,
+.picture-book-scene.failed {
+  background: rgba(255, 255, 255, 0.72);
+}
+
 .picture-book-scene img {
   position: absolute;
   inset: 0;
@@ -1777,10 +1794,15 @@ select:disabled {
   position: absolute;
   inset: 0;
   min-height: 0;
-  color: white;
-  background:
-    radial-gradient(circle at 50% 38%, rgba(255, 255, 255, 0.16), transparent 35%),
-    linear-gradient(135deg, #24304b, #162034);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 84px 28px 28px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.74);
+  backdrop-filter: blur(2px);
 }
 
 .picture-book-page-badge {
@@ -1857,7 +1879,7 @@ select:disabled {
 
 .picture-book-subtitles .playing-text,
 .picture-book-subtitles .playing-text .word-token {
-  color: #ff4d3d;
+  color: #fffaf3;
 }
 
 .picture-book-placeholder {
@@ -1881,7 +1903,12 @@ select:disabled {
 }
 
 .picture-book-placeholder.busy .icon {
-  animation: record-pulse 980ms ease-in-out infinite;
+  animation: picture-spin 900ms linear infinite;
+}
+
+.picture-book-placeholder span {
+  max-width: min(560px, 88%);
+  line-height: 1.38;
 }
 
 .picture-book-caption {
@@ -2446,15 +2473,58 @@ select:disabled {
 }
 
 .chat-room-card {
-  grid-template-rows: minmax(390px, 1fr) auto;
+  grid-template-rows: auto minmax(260px, 1fr) auto;
+}
+
+.chat-room-card .picture-book-scene {
+  width: 100%;
+  min-height: 220px;
+}
+
+.chat-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid rgba(98, 123, 167, 0.16);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(240, 247, 255, 0.94));
+}
+
+.chat-status-strip > * {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.chat-voice-state {
+  justify-content: flex-start;
+}
+
+.chat-reward-preview {
+  width: auto;
+  grid-template-columns: 1fr 36px 40px;
+}
+
+.chat-reward-preview img {
+  width: 36px;
+  height: 36px;
+}
+
+.chat-completion-inline {
+  margin-top: -4px;
 }
 
 .chat-list {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 390px;
+  min-height: 260px;
   overflow: auto;
+}
+
+.chat-scene-block {
+  width: 100%;
 }
 
 .chat-bubble {
@@ -3388,6 +3458,12 @@ select:disabled {
   }
 }
 
+@keyframes picture-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes page-in {
   from {
     opacity: 0;
@@ -3628,6 +3704,10 @@ select:disabled {
   .picture-book-subtitles p {
     font-size: 16px;
     line-height: 1.22;
+  }
+
+  .picture-book-scene .picture-book-placeholder {
+    padding-top: 64px;
   }
 
   .follow-control-panel {

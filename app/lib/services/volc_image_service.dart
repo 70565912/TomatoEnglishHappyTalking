@@ -86,11 +86,23 @@ class VolcImageService {
     'TOMATO_VOLC_IMAGE_WATERMARK',
     defaultValue: false,
   );
+  static const _minReceiveTimeoutSeconds = int.fromEnvironment(
+    'TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS',
+    defaultValue: 180,
+  );
+  static const _secondsPerSequentialImage = int.fromEnvironment(
+    'TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE',
+    defaultValue: 150,
+  );
+  static const _maxReceiveTimeoutSeconds = int.fromEnvironment(
+    'TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS',
+    defaultValue: 2700,
+  );
 
   static final Dio _dio = Dio(
     BaseOptions(
       connectTimeout: const Duration(seconds: 12),
-      receiveTimeout: const Duration(seconds: 120),
+      receiveTimeout: const Duration(seconds: _minReceiveTimeoutSeconds),
       sendTimeout: const Duration(seconds: 30),
     ),
   );
@@ -153,6 +165,7 @@ class VolcImageService {
     List<String> referenceImagePaths = const [],
     String cachePurpose = 'picture_book_image',
     bool useSequential = false,
+    bool reusePartialCache = true,
   }) async {
     final cleaned = requests
         .where((request) => request.prompt.trim().isNotEmpty)
@@ -248,13 +261,15 @@ class VolcImageService {
         for (final request in cleaned) cachedResults[request.pageIndex]!,
       ];
     }
-    if (cachedResults.isNotEmpty) {
+    if (cachedResults.isNotEmpty && reusePartialCache) {
       final generated = await generatePictureBookImageGroup(
         requests: missingRequests,
         articleId: articleId,
         seriesId: seriesId,
         referenceImagePaths: referenceImagePaths,
         cachePurpose: cachePurpose,
+        useSequential: useSequential,
+        reusePartialCache: reusePartialCache,
       );
       final byPage = <int, VolcImageResult>{
         ...cachedResults,
@@ -279,7 +294,11 @@ class VolcImageService {
         sequential: true,
         maxImages: cleaned.length,
       );
-      final responseData = await _postArkImages(apiKey: apiKey, body: body);
+      final responseData = await _postArkImages(
+        apiKey: apiKey,
+        body: body,
+        imageCount: cleaned.length,
+      );
       final images = await _extractAllImageBytes(responseData);
       if (images.isEmpty) {
         throw const _VolcImageRemoteException('组图接口未返回可保存的图片');
@@ -396,6 +415,7 @@ class VolcImageService {
           referenceImages: referenceImages,
           sequential: false,
         ),
+        imageCount: 1,
       );
       final imageBytes = await _extractImageBytes(responseData);
       if (imageBytes.isEmpty) {
@@ -515,6 +535,7 @@ class VolcImageService {
   static Future<Object?> _postArkImages({
     required String apiKey,
     required Map<String, dynamic> body,
+    required int imageCount,
   }) async {
     final headers = <String, String>{
       'Authorization': 'Bearer $apiKey',
@@ -535,6 +556,7 @@ class VolcImageService {
         headers: headers,
         responseType: ResponseType.json,
         validateStatus: (_) => true,
+        receiveTimeout: _receiveTimeoutForImageCount(imageCount),
       ),
     );
     final statusCode = response.statusCode ?? 0;
@@ -544,6 +566,21 @@ class VolcImageService {
       );
     }
     return response.data;
+  }
+
+  static Duration _receiveTimeoutForImageCount(int imageCount) {
+    final count = imageCount.clamp(1, 15).toInt();
+    const perImageSeconds =
+        _secondsPerSequentialImage <= 0 ? 150 : _secondsPerSequentialImage;
+    const minSeconds =
+        _minReceiveTimeoutSeconds <= 0 ? 180 : _minReceiveTimeoutSeconds;
+    const maxSeconds = _maxReceiveTimeoutSeconds <= minSeconds
+        ? minSeconds
+        : _maxReceiveTimeoutSeconds;
+    final requestedSeconds = count * perImageSeconds;
+    return Duration(
+      seconds: requestedSeconds.clamp(minSeconds, maxSeconds).toInt(),
+    );
   }
 
   static String _groupPrompt(List<VolcImageBatchRequest> requests) {

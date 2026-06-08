@@ -233,6 +233,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'pictureBook.state') {
     return mockPictureBook(Number(payload.articleId ?? 1));
   }
+  if (type === 'pictureBook.pageImage') {
+    return {
+      articleId: Number(payload.articleId ?? 1),
+      pageIndex: Number(payload.pageIndex ?? 0),
+      imageUri: assetUrl('card-space-snacks.png'),
+    };
+  }
   if (type === 'pictureBook.generate' || type === 'pictureBook.retryPage') {
     return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
   }

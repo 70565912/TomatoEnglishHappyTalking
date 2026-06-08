@@ -25,10 +25,12 @@ void main() {
     DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
     await DatabaseService.resetForTest();
     TextGenerationService.setPostOverrideForTest(null);
+    TranslationService.clearCacheForTest();
   });
 
   tearDown(() async {
     TextGenerationService.setPostOverrideForTest(null);
+    TranslationService.clearCacheForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
     Directory.current = previousDirectory;
@@ -78,6 +80,62 @@ void main() {
     );
 
     expect(translated, '汤姆发现了一个明亮的零食盒。');
+  });
+
+  test('evicts unavailable in-memory translation results so retries can recover',
+      () async {
+    const sentence = 'Very," said Alice.';
+    const importedTranslation = '爱丽丝说：“非常。"';
+    final now = DateTime.utc(2026, 1, 2);
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Alice sample',
+        content: sentence,
+        sentences: const [sentence],
+        createdAt: now,
+      ),
+    );
+    await DatabaseService.saveArticleSentenceTranslations(
+      articleId,
+      [
+        ArticleSentenceTranslation(
+          articleId: articleId,
+          sentenceIndex: 0,
+          englishSentence: sentence,
+          chineseText: importedTranslation,
+          source: 'imported_bilingual',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      ],
+    );
+
+    final memoryKey = TranslationService.cacheMemoryKeyForTest(
+      sentence,
+      articleId: articleId,
+      sentenceIndex: 0,
+      cachePurpose: 'follow_translation',
+    );
+    TranslationService.setCacheEntryForTest(
+      memoryKey,
+      Future.value('中文翻译暂不可用。'),
+    );
+
+    final first = await TranslationService.toChinese(
+      sentence,
+      articleId: articleId,
+      sentenceIndex: 0,
+      cachePurpose: 'follow_translation',
+    );
+    expect(first, '中文翻译暂不可用。');
+
+    final second = await TranslationService.toChinese(
+      sentence,
+      articleId: articleId,
+      sentenceIndex: 0,
+      cachePurpose: 'follow_translation',
+    );
+    expect(second, importedTranslation);
   });
 }
 

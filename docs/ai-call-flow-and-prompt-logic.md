@@ -9,7 +9,7 @@
 - 只缓存成功的真实远程结果；API Key、请求 Header、失败响应、异常文本、mock fallback 都不入缓存。
 - 缓存 key 由规范化后的请求 JSON 或音频字节 SHA-256 生成，必须包含模型、资源 ID、声音、尺寸、输出格式、prompt policy version 等会影响结果的字段。
 - 标准中英对照故事必须本地解析直用，不允许整篇送 AI 做英文提取。
-- 新增文章页默认生成一张章节绘本图；绘本图是一篇文章/一章一图，不再按段落或句子生成多图。
+- 新增文章页默认异步生成一组连续章节绘本图；先缓存结构化分镜，再用一次顺序组图请求让第 N 张图对应第 N 个分镜。
 
 ## 密钥与配置来源
 
@@ -29,13 +29,13 @@
 | 自动标题 | 用户标题 > 本地英文标题候选 > 本地 fallback | 方舟文本 | `suggest_article_title` / `ark_text` | 2-5 词英文标题 |
 | 中文对照 | 导入时保存的 `article_sentence_translations` > 内存 Future cache | 方舟文本 | `follow_translation` / `listening_translation` / `chat_translation` | 简体中文翻译 |
 | 单词释义 | 规范化单词与句子，缓存命中直接返回 | 方舟文本 | `word_lookup` / `ark_text` | JSON: 拼写、音标、含义、句中义 |
-| 章节对话提纲 | 同一章节提纲缓存命中直接返回 | 方舟文本 | `chat_chapter_guide_v1` / `ark_text` | 紧凑教学提纲 |
+| 章节结构化分镜/对话提纲 | 同一章节分镜缓存或 `story_chapters.summary_json` 命中直接返回 | 方舟文本 | `chapter_story_outline_v1` / `ark_text` | JSON: 章节摘要、分镜、句子范围、角色/地点连续性 |
 | AI 对话 | 完整 turns 转 textQuery，但 turns 只包含提纲、进度和历史，不重复带全文 | Realtime V3 | `chat_start` / `chat_reply` / `realtime` | AI 英文回复 |
 | 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | Doubao TTS 2.0 | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
 | 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | BigASR | `asr_recognize` / `asr` | 识别文本 |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
-| 绘本提示词润色 | 默认本地模板；只有 env 开启才远程润色 | 方舟文本 | `picture_book_page_prompt` / `ark_text` | 图片 prompt JSON |
-| 绘本图片 | 图片文件缓存命中直接返回 | 方舟图片 | `picture_book_image` / file | 本地图片文件 |
+| 绘本提示词润色 | 默认使用结构化分镜 + 本地模板；只有 env 开启才远程润色 | 方舟文本 | `picture_book_page_prompt` / `ark_text` | 图片 prompt JSON |
+| 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 方舟图片 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 
 ## 新增文章保存流程
 
@@ -58,7 +58,7 @@
    - 方舟失败：用首句前几个英文词本地 fallback。
 7. 保存文章、句子和导入中文对照。
 8. 如果正文处理或标题生成在保存前已经调用过远程，保存后调用 `attachExistingCache` 把全局缓存引用绑定到新文章。
-9. 默认创建/复用“书籍”系列与章节关系，然后后台 `PictureBookService.generateForArticle` 生成一张绘本图，不阻塞文章保存返回。
+9. 默认创建/复用“书籍”系列与章节关系，然后后台 `PictureBookService.generateForArticle` 先准备 `chapter_story_outline_v1`，再提交一次顺序组图请求生成连续绘本页，不阻塞文章保存返回。
 
 ## 方舟文本生成统一层
 
@@ -232,42 +232,46 @@ sentenceMeaning is the meaning of this word in this exact sentence.
 
 入口：
 
-- `ChatChapterGuideService.prepareGuide`：把完整章节英文正文提交给方舟一次，让方舟按场景、事件、冲突、角色决定和结尾自然切分并生成可复用的紧凑教学提纲；结果通过 `TextGenerationService` / `ApiCacheService` 持久缓存。
-- `RealtimeVoiceService`：使用火山 Realtime V3 文本 query 模式，后续只带教学提纲、进度判断指令和对话历史，不再重复提交完整章节原文。
+- `ChapterStoryOutlineService.prepareOutline`：把完整章节英文句子提交给方舟一次，让方舟按场景、事件、冲突、角色决定和结尾自然切分并生成结构化分镜 JSON；结果通过 `TextGenerationService` / `ApiCacheService` 持久缓存，并同步写入 `story_chapters.summary_json`。
+- `ChatChapterGuideService.prepareGuide`：不再单独生成聊天提纲，而是复用 `chapter_story_outline_v1`，把结构化分镜转成可复用的紧凑教学提纲。
+- `RealtimeVoiceService`：使用火山 Realtime V3 文本 query 模式，后续只带分镜提纲、进度判断指令和对话历史，不再重复提交完整章节原文。
 
 ### 章节提纲生成
 
 远程语义切分：
 
-- 方舟输入使用完整章节正文，不再使用固定 8 条本地均分提纲作为远程输入。
-- 方舟自己根据故事内容决定 `Ordered coverage points` 数量：短章节可 3-5 条，普通章节常见 6-10 条，长章节最多可到 14 条。
-- 切分依据应是自然场景、事件、冲突、角色决定和结尾变化，不是固定句数或固定段数。
-- 程序本地 `buildLocalGuide` 仍保留“最多 8 条”均分覆盖点，但只作为无 key/远程失败 fallback，不能代表远程语义切分结果。
+- 方舟输入使用完整章节编号句子，不再使用固定 8 条本地均分提纲作为远程输入。
+- 方舟自己根据故事内容决定 `segments` 数量：短章节可 3-5 条，普通章节常见 6-10 条，长章节最多 14 条。
+- 每个分镜包含 `sentenceStartIndex`、`sentenceEndIndex`、`title`、`summary`、`visualPrompt`、`characters`、`locations`、`continuityNotes`。
+- 切分依据应是自然场景、事件、冲突、角色决定和结尾变化，不是固定句数或固定段数；如果文章特别长，在分镜阶段合并相邻场景，不拆成多组图片请求。
+- 程序本地 fallback 也生成最多 14 段结构化分镜，只作为无 key/远程失败兜底，不能代表远程语义切分结果。
 - 提交方舟前，由 `ContentSafetyService` 按已验证/已学习规则做词级拆分，例如 `heads -> he-ads`。
 
 方舟文本生成 prompt：
 
 ```text
-[SYSTEM] You analyze complete English story chapters and create compact teaching guides for speaking practice.
-Return only a concise English guide, not JSON and not the full chapter.
-Include these exact sections: Chapter summary, Ordered coverage points,
-Character and setting facts, Completion rubric, Ability assessment cues.
-Keep the guide short enough to reuse in every chat turn.
-Choose the number of Ordered coverage points from the story structure itself.
-Do not use a fixed count.
+[SYSTEM] You analyze complete English story chapters and create structured storyboards for picture-book generation and speaking practice.
+Return only valid compact JSON. Do not include markdown.
+Choose the segment count from the story structure itself, never from a fixed target.
+Use at most 14 segments. Merge adjacent scenes if needed.
+Every segment must include zero-based sentenceStartIndex and sentenceEndIndex.
 
-[USER] Chapter title: <文章标题>
+[USER] Book or series title: <书名>
+Chapter title: <文章标题>
 
-Complete chapter text:
-<完整章节英文正文>
+Numbered chapter sentences:
+0. <sentence>
+1. <sentence>
+...
 
-Create a compact reusable conversation guide from this complete chapter.
-Decide the Ordered coverage points by semantic story structure, not by a fixed sentence count.
-Coverage points must follow the chapter order and cover the whole chapter, including the ending and meaning.
-Prefer short phrases over long quotations.
+Return JSON with:
+summary, characters, locations, continuityNotes, segments.
+Each segment must map to consecutive sentence indexes and include title, summary,
+visualPrompt, characters, locations, continuityNotes.
+Segments must follow chapter order and cover the whole chapter, including the ending and meaning.
 ```
 
-缓存请求包含应用安全规则后的完整章节正文、模型、`maxTokens: 1400` 和 `cachePurpose: chat_chapter_guide_v1`。同一章节命中缓存后，打开对话不再调用方舟生成提纲，也不再重复提交完整章节。缺 key 或失败时使用本地 fallback 提纲，本地 fallback 不写入远程结果缓存；疑似安全失败另写入 `content_safety_failures`。
+缓存请求包含应用安全规则后的完整章节句子、模型、`maxTokens: 2400` 和 `cachePurpose: chapter_story_outline_v1`。同一章节命中缓存后，绘本生成和打开对话都复用这份分镜，不再单独调用方舟生成聊天提纲，也不再重复提交完整章节。缺 key 或失败时使用本地 fallback 分镜，本地 fallback 不写入远程结果缓存；疑似安全失败另写入 `content_safety_failures`。
 
 全局系统角色：
 
@@ -338,35 +342,38 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 当前策略：
 
-- 正常只生成一个 `PictureBookPage`：
-  - `pageIndex = 0`
-  - `sentenceStartIndex = 0`
-  - `sentenceEndIndex = 最后一句`
-  - `paragraphText = 清理后的完整章节英文原文`
-- 如果已有页面符合当前 `chapter_single_image_v1` 策略且状态是 ready/skipped/error，不重复生成。
-- 如果发现旧的多页策略缓存，会删除旧页并按单图策略重建。
+- 先调用 `ChapterStoryOutlineService.prepareOutline` 生成或读取 `chapter_story_outline_v1`。
+- 正常为每个分镜生成一个 `PictureBookPage`：
+  - `pageIndex = segment.index`
+  - `sentenceStartIndex = segment.sentenceStartIndex`
+  - `sentenceEndIndex = segment.sentenceEndIndex`
+  - `paragraphText = 当前分镜覆盖的英文句子`
+- 分镜数量最多 14 段。超长章节在分镜阶段合并相邻场景，确保一次组图请求覆盖整章。
+- 如果已有页面符合当前 `chapter_storyboard_group_v1` 策略且状态是 ready/skipped/error，不重复生成。
+- 如果页面数量、句子范围或 prompt policy 与当前分镜不一致，会删除旧页并按新分镜重建。
 
-### 章节故事文本构造
+### 章节分镜文本构造
 
-1. 用空行拆英文段落。
-2. 过滤中文译文、过短标题行、章节/episode 元信息。
-3. 对每个英文段落只合并多余空白，保留段落顺序。
-4. 不再按前 950 / 中间 700 / 结尾 750 字符抽样，不插入 `[middle of chapter]` / `[end of chapter]` 标记。
-5. 如果段落过滤后为空，退回使用 `sentences.join(' ')` 的完整英文句子文本。
+1. 以 `NlpService.splitSentences(article.content)` 得到的句子为主，保留完整章节顺序。
+2. 方舟远程分镜返回每段句子范围、场景说明、角色/地点和连续性信息。
+3. 本地 fallback 按句子顺序均匀覆盖全文，最多 14 段，并为每段生成保守场景摘要。
+4. 每个分镜的 `paragraphText` 只保存对应句子文本，整章摘要和连续性信息保存在 prompt metadata / `story_chapters.summary_json` 中。
 
 ### 默认本地 prompt JSON
 
-默认不开启方舟文本润色。`_buildPagePrompt` 生成本地 JSON：
+默认不开启方舟文本润色。`_buildPagePrompt` 按分镜生成本地 JSON：
 
-- `scene`: 章节级绘本图说明。
-- `characters`: 从当前章节文本中提取的通用英文专名，不再硬编码 Alice 角色。
-- `prompt`: 青少年儿童英语绘本风格 + 书名 + 章节名 + 整章故事 + 自然文字策略 + 安全改写策略。
+- `scene`: 当前分镜的绘本图说明。
+- `characters`: 来自分镜 JSON 和当前章节文本的通用英文专名，不再硬编码 Alice 角色。
+- `prompt`: 青少年儿童英语绘本风格 + 书名 + 章节名 + 当前分镜 + 整章摘要 + 连续性提示 + 自然文字策略 + 安全改写策略。
 - `negativePrompt`: 安全底线。
-- `continuityGuide`: 根据书名、系列 bible、前章摘要和当前章节推断角色/时代/服装/地点，不固化任何单本书。
+- `continuityGuide`: 根据书名、系列 bible、前章摘要、当前章节分镜和组图上下文推断角色/时代/服装/地点，不固化任何单本书。
 - `chapterTitle`
-- `chapterStoryText`
-- `safeChapterStoryText`
-- `promptPolicyVersion: chapter_single_image_v1`
+- `storyboardIndex`
+- `storyboardCount`
+- `segmentSummary`
+- `segmentText`
+- `promptPolicyVersion: chapter_storyboard_group_v1`
 
 ### 可选 AI prompt 润色
 
@@ -381,9 +388,9 @@ TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS=true
 系统约束：
 
 ```text
-You write image prompts for single chapter-level English picture-book illustrations for teens and children.
+You write image prompts for sequential English picture-book storyboard illustrations for teens and children.
 Return only valid compact JSON with keys scene, characters, prompt, negativePrompt.
-The image prompt must be visual, concrete, safe, and based on the whole chapter, not one sentence.
+The image prompt must be visual, concrete, safe, and based on the assigned storyboard segment while preserving whole-chapter continuity.
 Visible text is allowed when it naturally belongs in the scene...
 If the source is a classic story with severe royal threats or comic panic,
 adapt it into harmless theatrical emotion and keep every character safe and whole.
@@ -394,17 +401,18 @@ adapt it into harmless theatrical emotion and keep every character safe and whol
 - series title
 - style guide JSON
 - story bible JSON
+- structured storyboard segment
 - continuity guide
 - natural text policy
 - safe classic story adaptation rule
 - chapter order/title
-- safe chapter story content
+- safe segment story content
 
 末尾要求：
 
 ```text
-Create one chapter-level 16:9 illustration prompt that summarizes this chapter
-with the correct book, setting, characters, mood, and central action.
+Create one 16:9 illustration prompt for this exact storyboard segment
+with the correct book, setting, characters, mood, and action.
 Prioritize the current chapter content over unrelated characters or locations from earlier chapters.
 Prefer timeless storybook settings over modern classrooms unless the chapter explicitly requires a modern setting.
 Return JSON only.
@@ -415,16 +423,16 @@ Return JSON only.
 `_imagePromptFrom` 把 prompt JSON 拼成最终给图片模型的文本，核心结构：
 
 ```text
-Create one 16:9 English picture-book chapter illustration for an app.
-This is a single image for the whole chapter, not a per-sentence panel.
+Create one 16:9 English picture-book storyboard illustration for an app.
+This image is page <N> of <TOTAL>; it must match the assigned storyboard segment, not act as a candidate variant.
 
 BOOK TITLE / SERIES TITLE: <书名>.
 Use this title to keep the story world, recurring characters, tone, and chapter continuity accurate.
 
-STORY CONTEXT: This is one illustrated chapter image from the book or story series "<书名>"...
+STORY CONTEXT: This is one image in a coherent illustrated sequence from the book or story series "<书名>"...
 
 CONTINUITY GUIDE: Use the book title "<书名>", the saved series bible, previous chapter summaries,
-and the current chapter story to infer recurring characters, era, costumes, props, locations...
+and the current chapter storyboard to infer recurring characters, era, costumes, props, locations...
 
 SCENE GUARD: The setting must come from the current "<书名>" chapter title and story content first...
 
@@ -434,9 +442,11 @@ SAFETY ADAPTATION FOR CLASSIC STORY NONSENSE: reinterpret severe royal threats..
 
 <prompt JSON 中的 prompt>
 
+STORYBOARD SEGMENT: <分镜标题、摘要、句子范围、视觉提示>
+
 Style: <styleGuide>
 Audience: teens and children learning English.
-Use the book title, chapter title, and current chapter story as the priority...
+Use the book title, chapter title, current segment, and whole-chapter continuity as the priority...
 Do not import unrelated characters or locations from earlier chapters unless...
 The app overlays subtitles separately...
 ```
@@ -448,42 +458,41 @@ The app overlays subtitles separately...
 - 当前章节内容优先于历史章节，避免角色/场景串章。
 - 自然文字允许出现，但不能成为理解画面的唯一方式。
 
-### 图片生成与缓存
+### 组图生成与缓存
 
 优先顺序：
 
-1. 如果 `volcArkImageApiKey` 存在，调用方舟 `/api/v3/images/generations`。
+1. 如果 `volcArkImageApiKey` 存在，调用方舟 `/api/v3/images/generations`，并传 `sequential_image_generation: "auto"`。
 2. 如果没有方舟 Bearer key，标记 `skippedNoKey`，不写成功缓存，也不再尝试旧 Visual / AK-SK 图片接口。
 
 方舟图片缓存请求包含：
 
 - endpoint/model/size/response_format/output_format/watermark
-- sequential_image_generation 是否启用
+- `sequential_image_generation: "auto"`
+- `sequential_image_generation_options.max_images = 分镜页数`
 - prompt
 - prompt_metadata
 - series_id/page_index
 - reference_image_hashes
 
-返回 URL 或 base64 后立即下载/保存到 `tomato_api_cache/picture_book/`，后续页面只读本地文件。
+`PictureBookService` 调用 `generatePictureBookImageGroup(..., useSequential: true, reusePartialCache: false)`，一次请求生成整章分镜图。第 1 张图写入第 1 个分镜页，第 N 张图写入第 N 个分镜页；不做候选图筛选。返回 URL 或 base64 后立即下载/保存到 `tomato_api_cache/picture_book/`，后续页面只读本地文件。
 
 图片 prompt 提交前同样走 `ContentSafetyService.prepareTextForApi`。疑似安全拒绝记录失败快照；但图片尺寸、参数、鉴权、额度等 400 错误不能当作敏感词规则学习。
 
-### 组图与参考图
+### 失败与重试
+
+- 组图失败时不自动回退单图。
+- 未完成页会标记为 `error` 并保存失败原因。
+- Web UI 的重试按钮重新提交整章失败组图，而不是只重试单张候选图。
+- 听力、跟读和聊天根据当前句子或对话进度选择对应绘本页；生成中显示等待占位，失败显示原因和重试按钮。
+
+### 参考图
 
 默认关闭：
 
-- `TOMATO_VOLC_IMAGE_GROUP_PAGES=false`
 - `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=false`
 
-开启组图时 `_groupPrompt` 会要求：
-
-```text
-Generate exactly N separate 16:9 English picture-book illustrations as a coherent visual sequence.
-Keep the same book title, character appearances, costumes, color palette, and picture-book style across all images.
-Use any reference images only for character and style consistency...
-```
-
-当前正式流程不依赖组图，因为产品已经改为每章一张图。
+自动参考图只有显式打开 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true` 时才创建或使用；正常冷缓存流程是一次分镜文本调用加一次顺序组图调用。
 
 ## TTS 调用逻辑
 

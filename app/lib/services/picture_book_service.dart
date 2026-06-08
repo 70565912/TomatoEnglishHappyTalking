@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../data/models/article_model.dart';
 import '../data/models/picture_book_model.dart';
 import 'api_cache_service.dart';
+import 'chapter_story_outline_service.dart';
 import 'database_service.dart';
 import 'text_generation_service.dart';
 import 'volc_image_service.dart';
@@ -16,11 +17,8 @@ typedef PictureBookProgressCallback = FutureOr<void> Function(
 );
 
 class PictureBookService {
-  static const String _promptPolicyVersion = 'chapter_single_image_v1';
-  static const int _pictureGroupMaxPages = int.fromEnvironment(
-    'TOMATO_PICTURE_BOOK_GROUP_MAX_PAGES',
-    defaultValue: 4,
-  );
+  static final Map<String, String> _imageUriCache = <String, String>{};
+  static const String _promptPolicyVersion = 'chapter_storyboard_group_v1';
   static const int _maxReferenceImagesPerRequest = int.fromEnvironment(
     'TOMATO_PICTURE_BOOK_MAX_REFERENCE_IMAGES',
     defaultValue: 6,
@@ -55,7 +53,7 @@ class PictureBookService {
     'safety':
         'safe, warm, child-appropriate storybook imagery; no frightening adult content, no graphic violence, no adult sexual content, no hateful content, no realistic gore',
     'layout':
-        'one clear 16:9 chapter-level illustration, cinematic picture-book framing, enough visual focus for app-rendered subtitles, natural text-bearing props are allowed when useful',
+        'a coherent sequence of 16:9 story illustrations, one image per storyboard segment, cinematic picture-book framing, enough visual focus for app-rendered subtitles, natural text-bearing props are allowed when useful',
   };
 
   static Future<StorySeries> createSeries({
@@ -171,8 +169,26 @@ class PictureBookService {
     }
 
     final existingPages = await DatabaseService.getPictureBookPages(articleId);
+    final series = await DatabaseService.getStorySeriesById(chapter.seriesId);
+    if (series == null) {
+      return;
+    }
+
+    final outline = await ChapterStoryOutlineService.prepareOutline(
+      articleTitle: article.title,
+      articleContent: article.content,
+      sentences: article.sentences,
+      articleId: articleId,
+      chapter: chapter,
+      series: series,
+    );
+    final pages = _segmentArticle(article, outline);
+    if (pages.isEmpty) {
+      return;
+    }
+
     final existingPagesAreCurrent =
-        _existingPagesMatchSingleChapterPolicy(existingPages, article);
+        _existingPagesMatchStoryboardPolicy(existingPages, pages);
     if (!regenerate &&
         existingPagesAreCurrent &&
         existingPages.every((page) =>
@@ -183,18 +199,8 @@ class PictureBookService {
       return;
     }
 
-    final series = await DatabaseService.getStorySeriesById(chapter.seriesId);
-    if (series == null) {
-      return;
-    }
-
     if (regenerate || (existingPages.isNotEmpty && !existingPagesAreCurrent)) {
       await DatabaseService.deletePictureBookPagesForArticle(articleId);
-    }
-
-    final pages = _segmentArticle(article);
-    if (pages.isEmpty) {
-      return;
     }
 
     await _updateSeriesBible(
@@ -215,6 +221,8 @@ class PictureBookService {
         promptJson: ApiCacheService.canonicalJson({
           'status': 'queued',
           'style': defaultStyleGuide,
+          'promptPolicyVersion': _promptPolicyVersion,
+          'storyboard': segment.outlineJson,
         }),
         status: 'queued',
         createdAt: now,
@@ -273,65 +281,51 @@ class PictureBookService {
             : const <StoryReferenceAsset>[];
     await _emit(articleId, onProgress);
 
-    for (var start = 0; start < promptedSegments.length;) {
-      final remaining = promptedSegments.length - start;
-      final batchSize =
-          remaining < _pictureGroupMaxPages ? remaining : _pictureGroupMaxPages;
-      final batch =
-          promptedSegments.skip(start).take(batchSize).toList(growable: false);
-      start += batchSize;
-
-      final batchReferences = _referencePathsForBatch(references, batch);
-      final groupResults = batch.length > 1
-          ? await VolcImageService.generatePictureBookImageGroup(
-              requests: [
-                for (final item in batch)
-                  VolcImageBatchRequest(
-                    pageIndex: item.segment.pageIndex,
-                    prompt: item.prompt,
-                    promptMetadata: item.promptJson,
-                  ),
-              ],
-              articleId: articleId,
-              seriesId: refreshedSeries.id,
-              referenceImagePaths: batchReferences,
-            )
-          : const <VolcImageResult>[];
-      final groupResultByPage = {
-        for (final result in groupResults)
-          if (result.pageIndex != null) result.pageIndex!: result,
-      };
-
-      for (final item in batch) {
-        var result = groupResultByPage[item.segment.pageIndex];
-        if (result == null || result.source == VolcImageResultSource.failed) {
-          result = await VolcImageService.generatePictureBookImage(
+    final groupResults = await VolcImageService.generatePictureBookImageGroup(
+      requests: [
+        for (final item in promptedSegments)
+          VolcImageBatchRequest(
+            pageIndex: item.segment.pageIndex,
             prompt: item.prompt,
             promptMetadata: item.promptJson,
-            articleId: articleId,
-            seriesId: refreshedSeries.id,
-            pageIndex: item.segment.pageIndex,
-            referenceImagePaths: _referencePathsForPage(references, item),
-          );
-        }
-        final status = switch (result.source) {
-          VolcImageResultSource.remote ||
-          VolcImageResultSource.cached =>
-            'ready',
-          VolcImageResultSource.skippedNoKey => 'skipped',
-          VolcImageResultSource.failed => 'error',
-        };
-        await DatabaseService.upsertPictureBookPage(
-          item.page.copyWith(
-            imageCacheKey: result.cacheKey,
-            imagePath: result.filePath,
-            status: status,
-            errorMessage: result.errorMessage ?? '',
-            updatedAt: DateTime.now(),
           ),
-        );
-        await _emit(articleId, onProgress);
-      }
+      ],
+      articleId: articleId,
+      seriesId: refreshedSeries.id,
+      referenceImagePaths: _referencePathsForBatch(
+        references,
+        promptedSegments,
+      ),
+      useSequential: true,
+      reusePartialCache: false,
+    );
+    final groupResultByPage = {
+      for (final result in groupResults)
+        if (result.pageIndex != null) result.pageIndex!: result,
+    };
+
+    for (final item in promptedSegments) {
+      final result = groupResultByPage[item.segment.pageIndex] ??
+          VolcImageResult(
+            source: VolcImageResultSource.failed,
+            pageIndex: item.segment.pageIndex,
+            errorMessage: '组图接口未返回第 ${item.segment.pageIndex + 1} 张图片',
+          );
+      final status = switch (result.source) {
+        VolcImageResultSource.remote || VolcImageResultSource.cached => 'ready',
+        VolcImageResultSource.skippedNoKey => 'skipped',
+        VolcImageResultSource.failed => 'error',
+      };
+      await DatabaseService.upsertPictureBookPage(
+        item.page.copyWith(
+          imageCacheKey: result.cacheKey,
+          imagePath: result.filePath,
+          status: status,
+          errorMessage: result.errorMessage ?? '',
+          updatedAt: DateTime.now(),
+        ),
+      );
+      await _emit(articleId, onProgress);
     }
   }
 
@@ -345,33 +339,63 @@ class PictureBookService {
     if (article == null || chapter == null) {
       return;
     }
-    final pages = _segmentArticle(article)
-        .where((page) => page.pageIndex == pageIndex)
-        .toList(growable: false);
-    if (pages.isEmpty) {
-      return;
-    }
+
     final series = await DatabaseService.getStorySeriesById(chapter.seriesId);
     if (series == null) {
       return;
     }
-    final segment = pages.first;
-    final promptPage = await _markPage(
-      segment,
+
+    final outline = await ChapterStoryOutlineService.prepareOutline(
+      articleTitle: article.title,
+      articleContent: article.content,
+      sentences: article.sentences,
+      articleId: articleId,
+      chapter: chapter,
+      series: series,
+    );
+    final segments = _segmentArticle(article, outline);
+    _PicturePageSegment? targetSegment;
+    for (final segment in segments) {
+      if (segment.pageIndex == pageIndex) {
+        targetSegment = segment;
+        break;
+      }
+    }
+    if (targetSegment == null) {
+      return;
+    }
+
+    final promptingPage = await _markPage(
+      targetSegment,
       articleId: articleId,
       seriesId: series.id,
       status: 'prompting',
+      imagePath: '',
+      imageCacheKey: '',
+      errorMessage: '',
     );
     await _emit(articleId, onProgress);
+
     final promptJson = await _buildPagePrompt(
       series: series,
       chapter: chapter,
-      segment: segment,
+      segment: targetSegment,
       articleId: articleId,
     );
+    final generatingPage = promptingPage.copyWith(
+      promptJson: ApiCacheService.canonicalJson(promptJson),
+      imagePath: '',
+      imageCacheKey: '',
+      status: 'generating',
+      errorMessage: '',
+      updatedAt: DateTime.now(),
+    );
+    await DatabaseService.upsertPictureBookPage(generatingPage);
+    await _emit(articleId, onProgress);
+
     final promptedSegment = _PromptedSegment(
-      segment: segment,
-      page: promptPage,
+      segment: targetSegment,
+      page: generatingPage,
       promptJson: promptJson,
       prompt: _imagePromptFrom(promptJson),
       characterNames: _characterNamesForPrompt(promptJson),
@@ -384,26 +408,31 @@ class PictureBookService {
                 promptedSegments: [promptedSegment],
               )
             : const <StoryReferenceAsset>[];
+    await _emit(articleId, onProgress);
+
     final result = await VolcImageService.generatePictureBookImage(
       prompt: promptedSegment.prompt,
-      promptMetadata: {
-        ...promptJson,
-        'regenerate': true,
-      },
+      promptMetadata: promptedSegment.promptJson,
       articleId: articleId,
       seriesId: series.id,
-      pageIndex: pageIndex,
+      pageIndex: targetSegment.pageIndex,
       referenceImagePaths: _referencePathsForPage(references, promptedSegment),
+      cachePurpose: 'picture_book_image',
     );
-    await _markPage(
-      segment,
-      articleId: articleId,
-      seriesId: series.id,
-      status: result.hasImage ? 'ready' : 'error',
-      promptJson: promptJson,
-      imagePath: result.filePath,
-      imageCacheKey: result.cacheKey,
-      errorMessage: result.errorMessage,
+
+    final status = switch (result.source) {
+      VolcImageResultSource.remote || VolcImageResultSource.cached => 'ready',
+      VolcImageResultSource.skippedNoKey => 'skipped',
+      VolcImageResultSource.failed => 'error',
+    };
+    await DatabaseService.upsertPictureBookPage(
+      generatingPage.copyWith(
+        imageCacheKey: result.cacheKey ?? '',
+        imagePath: result.filePath ?? '',
+        status: status,
+        errorMessage: result.errorMessage ?? '',
+        updatedAt: DateTime.now(),
+      ),
     );
     await _emit(articleId, onProgress);
   }
@@ -414,7 +443,9 @@ class PictureBookService {
         ? null
         : await DatabaseService.getStorySeriesById(chapter.seriesId);
     final pages = await DatabaseService.getPictureBookPages(articleId);
-    final pageJsons = await Future.wait(pages.map(_pageJson));
+    final pageJsons = await Future.wait(
+      pages.map((page) => _pageJson(page, includeImageUri: false)),
+    );
     final status = _overallStatus(pages);
     return {
       'articleId': articleId,
@@ -426,25 +457,62 @@ class PictureBookService {
     };
   }
 
-  static bool _existingPagesMatchSingleChapterPolicy(
+  static Future<Map<String, dynamic>> pageImagePayload({
+    required int articleId,
+    required int pageIndex,
+  }) async {
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    PictureBookPage? targetPage;
+    for (final page in pages) {
+      if (page.pageIndex == pageIndex) {
+        targetPage = page;
+        break;
+      }
+    }
+
+    if (targetPage == null) {
+      return {
+        'articleId': articleId,
+        'pageIndex': pageIndex,
+        'imageUri': null,
+      };
+    }
+
+    final imageUri = await _imageUriForPath(targetPage.imagePath);
+    final imagePath = targetPage.imagePath?.trim() ?? '';
+    return {
+      'articleId': articleId,
+      'pageIndex': pageIndex,
+      'imageUri': imageUri,
+      'missing': imageUri == null && imagePath.isNotEmpty,
+      'errorMessage':
+          imageUri == null && imagePath.isNotEmpty ? '绘本缓存文件丢失，请重试生成' : null,
+    };
+  }
+
+  static bool _existingPagesMatchStoryboardPolicy(
     List<PictureBookPage> pages,
-    Article article,
+    List<_PicturePageSegment> segments,
   ) {
-    final sentences = article.sentences
-        .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
-        .toList(growable: false);
-    if (pages.length != 1 || sentences.isEmpty) {
+    if (pages.length != segments.length || segments.isEmpty) {
       return false;
     }
-    final page = pages.single;
-    if (page.pageIndex != 0 ||
-        page.sentenceStartIndex != 0 ||
-        page.sentenceEndIndex != sentences.length - 1) {
-      return false;
+    final byIndex = {
+      for (final page in pages) page.pageIndex: page,
+    };
+    for (final segment in segments) {
+      final page = byIndex[segment.pageIndex];
+      if (page == null ||
+          page.sentenceStartIndex != segment.sentenceStartIndex ||
+          page.sentenceEndIndex != segment.sentenceEndIndex) {
+        return false;
+      }
+      final promptJson = _decodeJson(page.promptJson, const {});
+      if (promptJson['promptPolicyVersion'] != _promptPolicyVersion) {
+        return false;
+      }
     }
-    final promptJson = _decodeJson(page.promptJson, const {});
-    return promptJson['promptPolicyVersion'] == _promptPolicyVersion;
+    return true;
   }
 
   static Future<Map<String, dynamic>?> coverImagePayloadForArticle(
@@ -459,18 +527,13 @@ class PictureBookService {
       if (imagePath.isEmpty) {
         continue;
       }
-      final file = File(imagePath);
-      if (!await file.exists()) {
-        continue;
-      }
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) {
+      final imageUri = await _imageUriForPath(imagePath);
+      if (imageUri == null) {
         continue;
       }
       return {
         'coverImagePath': imagePath,
-        'coverImageUri':
-            'data:${_imageContentType(imagePath)};base64,${base64Encode(bytes)}',
+        'coverImageUri': imageUri,
       };
     }
     return null;
@@ -952,17 +1015,23 @@ class PictureBookService {
     final storyCharacters = _knownCharacterNamesForText(safeChapterStory);
     final fallback = {
       'scene':
-          'One chapter-level picture-book illustration summarizing this chapter.',
-      'characters': storyCharacters,
+          'Picture-book storyboard image ${segment.pageIndex + 1} of ${segment.pageCount}: ${segment.title}.',
+      'characters':
+          segment.characters.isNotEmpty ? segment.characters : storyCharacters,
       'prompt':
-          '${defaultStyleGuide['visualStyle']}. Create one 16:9 chapter illustration for the book/story series "${series.title}" and chapter "${chapter.chapterTitle}". Base it on the whole chapter story, not a single sentence. Show the most important setting, main characters, mood, and central action in one cohesive English picture-book scene. Chapter story content: $safeChapterStory. $_naturalTextPolicy $_safeClassicStoryPolicy',
+          '${defaultStyleGuide['visualStyle']}. Create image ${segment.pageIndex + 1} of ${segment.pageCount} in a continuous 16:9 picture-book sequence for the book/story series "${series.title}" and chapter "${chapter.chapterTitle}". This image corresponds only to this storyboard segment, but it must visually match the same characters, costumes, setting logic, color palette, and story world used by the other images in the same generated group. Segment title: ${segment.title}. Segment summary: ${segment.summary}. Visual direction: ${segment.visualPrompt}. Segment story text: $safeChapterStory. $_naturalTextPolicy $_safeClassicStoryPolicy',
       'negativePrompt': defaultStyleGuide['safety'],
       'textPolicy': _naturalTextPolicy,
       'safeClassicStoryPolicy': _safeClassicStoryPolicy,
       'continuityGuide': continuityGuide,
       'chapterTitle': chapter.chapterTitle,
-      'chapterStoryText': segment.text,
-      'safeChapterStoryText': safeChapterStory,
+      'segmentTitle': segment.title,
+      'segmentSummary': segment.summary,
+      'visualPrompt': segment.visualPrompt,
+      'pageCount': segment.pageCount,
+      'storyboard': segment.outlineJson,
+      'segmentStoryText': segment.text,
+      'safeSegmentStoryText': safeChapterStory,
     };
     if (!_aiPagePromptEnabled) {
       return {
@@ -975,8 +1044,8 @@ class PictureBookService {
         'textPolicy': _naturalTextPolicy,
         'promptPolicyVersion': _promptPolicyVersion,
         'paragraphText': segment.text,
-        'chapterStoryText': segment.text,
-        'safeChapterStoryText': safeChapterStory,
+        'segmentStoryText': segment.text,
+        'safeSegmentStoryText': safeChapterStory,
       };
     }
     final reply = await TextGenerationService.generate(
@@ -984,12 +1053,12 @@ class PictureBookService {
         const TextGenerationTurn(
           role: 'system',
           content:
-              'You write image prompts for single chapter-level English picture-book illustrations for teens and children. Return only valid compact JSON with keys scene, characters, prompt, negativePrompt. The image prompt must be visual, concrete, safe, and based on the whole chapter, not one sentence. Visible text is allowed when it naturally belongs in the scene, such as a title, sign, playing-card markings, book cover, label, note, or map detail. Text is optional and should not be the only way the story is communicated. If the source is a classic story with severe royal threats or comic panic, adapt it into harmless theatrical emotion and keep every character safe and whole.',
+              'You write image prompts for one image inside a sequential English picture-book group for teens and children. Return only valid compact JSON with keys scene, characters, prompt, negativePrompt. The image prompt must be visual, concrete, safe, and based on the storyboard segment. It must preserve character and setting continuity with the other images in the same generated group. Visible text is allowed when it naturally belongs in the scene. If the source is a classic story with severe royal threats or comic panic, adapt it into harmless theatrical emotion and keep every character safe and whole.',
         ),
         TextGenerationTurn(
           role: 'user',
           content:
-              'Series title: ${series.title}\nStyle guide JSON:\n${series.styleGuideJson}\nStory bible JSON:\n${series.bibleJson}\n${_optionalSection('Fixed continuity guide', continuityGuide)}\nNatural text policy:\n$_naturalTextPolicy\nSafe classic story adaptation rule:\n$_safeClassicStoryPolicy\n\nChapter ${chapter.chapterOrder}: ${chapter.chapterTitle}\nChapter story content:\n$safeChapterStory\n\nCreate one chapter-level 16:9 illustration prompt that summarizes this chapter with the correct book, setting, characters, mood, and central action. Prioritize the current chapter content over unrelated characters or locations from earlier chapters. Prefer timeless storybook settings over modern classrooms unless the chapter explicitly requires a modern setting. Return JSON only.',
+              'Series title: ${series.title}\nStyle guide JSON:\n${series.styleGuideJson}\nStory bible JSON:\n${series.bibleJson}\n${_optionalSection('Fixed continuity guide', continuityGuide)}\nNatural text policy:\n$_naturalTextPolicy\nSafe classic story adaptation rule:\n$_safeClassicStoryPolicy\n\nChapter ${chapter.chapterOrder}: ${chapter.chapterTitle}\nStoryboard image ${segment.pageIndex + 1} of ${segment.pageCount}: ${segment.title}\nStoryboard JSON:\n${jsonEncode(segment.outlineJson)}\nSegment story content:\n$safeChapterStory\n\nCreate one 16:9 illustration prompt for this exact storyboard image. Keep the correct book, setting, characters, mood, and action, and make it visually continuous with the rest of the same sequential group. Prioritize the current segment content over unrelated earlier events. Return JSON only.',
         ),
       ],
       fallbackText: jsonEncode(fallback),
@@ -1008,8 +1077,8 @@ class PictureBookService {
       'textPolicy': _naturalTextPolicy,
       'promptPolicyVersion': _promptPolicyVersion,
       'paragraphText': segment.text,
-      'chapterStoryText': segment.text,
-      'safeChapterStoryText': safeChapterStory,
+      'segmentStoryText': segment.text,
+      'safeSegmentStoryText': safeChapterStory,
     };
   }
 
@@ -1054,7 +1123,10 @@ class PictureBookService {
     return page;
   }
 
-  static List<_PicturePageSegment> _segmentArticle(Article article) {
+  static List<_PicturePageSegment> _segmentArticle(
+    Article article,
+    ChapterStoryOutline outline,
+  ) {
     final sentences = article.sentences
         .map((sentence) => sentence.trim())
         .where((sentence) => sentence.isNotEmpty)
@@ -1063,25 +1135,30 @@ class PictureBookService {
       return const [];
     }
 
-    return [
-      _PicturePageSegment(
-        pageIndex: 0,
-        sentenceStartIndex: 0,
-        sentenceEndIndex: sentences.length - 1,
-        text: _chapterImageStoryText(article, sentences),
-      ),
-    ];
-  }
-
-  static String _chapterImageStoryText(
-    Article article,
-    List<String> sentences,
-  ) {
-    final paragraphTexts = _storyParagraphsForPictureBook(article.content);
-    final source = paragraphTexts.isNotEmpty
-        ? paragraphTexts.join('\n\n')
-        : sentences.join(' ');
-    return _normalizeFullChapterStoryForPrompt(source);
+    return outline.segments.map((segment) {
+      final start =
+          segment.sentenceStartIndex.clamp(0, sentences.length - 1).toInt();
+      final end =
+          segment.sentenceEndIndex.clamp(start, sentences.length - 1).toInt();
+      final text = sentences.sublist(start, end + 1).join(' ');
+      return _PicturePageSegment(
+        pageIndex: segment.index,
+        pageCount: outline.segments.length,
+        sentenceStartIndex: start,
+        sentenceEndIndex: end,
+        text: _normalizeFullChapterStoryForPrompt(text),
+        title: segment.title,
+        summary: segment.summary,
+        visualPrompt: segment.visualPrompt,
+        characters: segment.characters,
+        locations: segment.locations,
+        continuityNotes: [
+          ...outline.continuityNotes,
+          ...segment.continuityNotes,
+        ],
+        outlineJson: segment.toJson(),
+      );
+    }).toList(growable: false);
   }
 
   static String _normalizeFullChapterStoryForPrompt(String text) {
@@ -1096,82 +1173,68 @@ class PictureBookService {
     return paragraphs.join('\n\n');
   }
 
-  static List<String> _storyParagraphsForPictureBook(String content) {
-    return content
-        .split(RegExp(r'\n\s*\n+'))
-        .map(_cleanPictureBookParagraph)
-        .where((text) => text.isNotEmpty)
-        .toList(growable: false);
-  }
-
-  static String _cleanPictureBookParagraph(String rawText) {
-    var text = rawText.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (text.isEmpty) {
-      return '';
-    }
-
-    final chineseCount = RegExp(r'[\u3400-\u9FFF]').allMatches(text).length;
-    final englishWordCount =
-        RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(text).length;
-    if (englishWordCount < 4 || chineseCount > englishWordCount) {
-      return '';
-    }
-
-    text = text.replaceFirst(RegExp(r'^E\d+\s+', caseSensitive: false), '');
-    text = text.replaceFirst(
-      RegExp(r"^[A-Z][A-Za-z'\s:,&]+[-–—]\s*(?:Episode|E)\s*\d+\s*",
-          caseSensitive: false),
-      '',
-    );
-    text = text.trim();
-    if (text.isEmpty || _looksLikePictureBookHeading(text)) {
-      return '';
-    }
-    return text;
-  }
-
-  static bool _looksLikePictureBookHeading(String text) {
-    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (RegExp(r'^(chapter|episode|part|book)\b', caseSensitive: false)
-        .hasMatch(normalized)) {
-      return true;
-    }
-    if (!RegExp(r'[.!?;:"“”]').hasMatch(normalized)) {
-      final wordCount =
-          RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(normalized).length;
-      return wordCount <= 8;
-    }
-    return false;
-  }
-
   @visibleForTesting
   static List<Map<String, dynamic>> pictureSegmentsForTest(Article article) {
-    return _segmentArticle(article)
+    final outline = ChapterStoryOutlineService.buildLocalOutline(
+      articleTitle: article.title,
+      articleContent: article.content,
+      sentences: article.sentences,
+    );
+    return _segmentArticle(article, outline)
         .map(
           (segment) => {
             'pageIndex': segment.pageIndex,
             'sentenceStartIndex': segment.sentenceStartIndex,
             'sentenceEndIndex': segment.sentenceEndIndex,
+            'title': segment.title,
+            'summary': segment.summary,
             'text': segment.text,
           },
         )
         .toList(growable: false);
   }
 
-  static Future<Map<String, dynamic>> _pageJson(PictureBookPage page) async {
+  static Future<Map<String, dynamic>> _pageJson(
+    PictureBookPage page, {
+    bool includeImageUri = true,
+  }) async {
     final json = page.toJson();
-    final imagePath = page.imagePath?.trim() ?? '';
-    if (imagePath.isNotEmpty) {
-      final file = File(imagePath);
-      if (await file.exists()) {
-        final bytes = await file.readAsBytes();
-        if (bytes.isNotEmpty) {
-          json['imageUri'] =
-              'data:${_imageContentType(imagePath)};base64,${base64Encode(bytes)}';
-        }
-      }
+    if (!includeImageUri) {
+      return json;
+    }
+
+    final imageUri = await _imageUriForPath(page.imagePath);
+    if (imageUri != null) {
+      json['imageUri'] = imageUri;
     }
     return json;
+  }
+
+  static Future<String?> _imageUriForPath(String? rawPath) async {
+    final imagePath = rawPath?.trim() ?? '';
+    if (imagePath.isEmpty) {
+      return null;
+    }
+
+    final cached = _imageUriCache[imagePath];
+    if (cached != null && cached.isNotEmpty) {
+      return cached;
+    }
+
+    final file = File(imagePath);
+    if (!await file.exists()) {
+      return null;
+    }
+
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) {
+      return null;
+    }
+
+    final imageUri =
+        'data:${_imageContentType(imagePath)};base64,${base64Encode(bytes)}';
+    _imageUriCache[imagePath] = imageUri;
+    return imageUri;
   }
 
   static String _imageContentType(String imagePath) {
@@ -1235,8 +1298,15 @@ class PictureBookService {
     final sceneGuard = _knownSeriesSceneGuard(seriesTitle);
     final style = promptJson['styleGuide']?.toString() ??
         defaultStyleGuide['visualStyle'].toString();
+    final pageIndex = (promptJson['pageIndex'] as num?)?.toInt();
+    final pageCount = (promptJson['pageCount'] as num?)?.toInt();
+    final imageNumber = pageIndex == null ? '' : '${pageIndex + 1}';
+    final sequenceLine = pageCount == null || pageIndex == null
+        ? 'This image is one page in a coherent sequential picture-book storyboard.'
+        : 'This image is page $imageNumber of $pageCount in a coherent sequential picture-book storyboard. It is not a candidate variant.';
     return [
-      'Create one 16:9 English picture-book chapter illustration for an app. This is a single image for the whole chapter, not a per-sentence panel.',
+      'Create one 16:9 English picture-book scene illustration for an app.',
+      sequenceLine,
       if (seriesTitle.isNotEmpty)
         'BOOK TITLE / SERIES TITLE: $seriesTitle. Use this title to keep the story world, recurring characters, tone, and chapter continuity accurate.',
       if (storyContext.isNotEmpty) 'STORY CONTEXT: $storyContext',
@@ -1247,8 +1317,9 @@ class PictureBookService {
       prompt.isEmpty ? 'A warm English picture book illustration.' : prompt,
       'Style: $style',
       'Audience: teens and children learning English.',
-      'Use the book title, chapter title, and current chapter story as the priority. Show the chapter setting, main characters, props, mood, and central action in one cohesive scene.',
-      'Do not import unrelated characters or locations from earlier chapters unless the current chapter story mentions or strongly implies them.',
+      'Use the book title, chapter title, and current storyboard segment as the priority. Show the segment setting, main characters, props, mood, and action in one cohesive scene.',
+      'Keep recurring characters, costumes, color palette, and setting logic visually consistent with the other images in the same generated group.',
+      'Do not import unrelated characters or locations from earlier segments unless the current segment mentions or strongly implies them.',
       'The app overlays subtitles separately, so readable text can be decorative or atmospheric, but facial expression, posture, action, and setting should carry the story.',
     ].join('\n');
   }
@@ -1312,7 +1383,7 @@ class PictureBookService {
     if (trimmed.isEmpty) {
       return '';
     }
-    return 'This is one illustrated chapter image from the book or story series "$trimmed". Use the book title, existing series bible, prior chapter continuity, and current chapter story to keep the story world, recurring characters, era, tone, and setting consistent. Do not reinterpret it as an unrelated generic children\'s lesson or as another book.';
+    return 'This is one image in a coherent illustrated chapter sequence from the book or story series "$trimmed". Use the book title, existing series bible, prior chapter continuity, and current chapter storyboard to keep the story world, recurring characters, era, tone, and setting consistent. Do not reinterpret it as an unrelated generic children\'s lesson or as another book.';
   }
 
   static String _knownSeriesSceneGuard(String title) {
@@ -1366,15 +1437,31 @@ class PictureBookService {
 class _PicturePageSegment {
   const _PicturePageSegment({
     required this.pageIndex,
+    required this.pageCount,
     required this.sentenceStartIndex,
     required this.sentenceEndIndex,
     required this.text,
+    required this.title,
+    required this.summary,
+    required this.visualPrompt,
+    required this.characters,
+    required this.locations,
+    required this.continuityNotes,
+    required this.outlineJson,
   });
 
   final int pageIndex;
+  final int pageCount;
   final int sentenceStartIndex;
   final int sentenceEndIndex;
   final String text;
+  final String title;
+  final String summary;
+  final String visualPrompt;
+  final List<String> characters;
+  final List<String> locations;
+  final List<String> continuityNotes;
+  final Map<String, dynamic> outlineJson;
 }
 
 class _PromptedSegment {

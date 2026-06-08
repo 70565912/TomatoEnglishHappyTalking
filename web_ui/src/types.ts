@@ -65,10 +65,18 @@ export interface PictureBookPage {
 export interface PictureBookState {
   articleId: number;
   enabled: boolean;
-  status: 'empty' | 'generating' | 'ready' | 'partial' | 'skipped' | 'error' | string;
+  status: 'loading' | 'empty' | 'generating' | 'ready' | 'partial' | 'skipped' | 'error' | string;
   series?: StorySeries | null;
   chapter?: Record<string, unknown> | null;
   pages: PictureBookPage[];
+}
+
+export interface PictureBookPageImagePayload {
+  articleId: number;
+  pageIndex: number;
+  imageUri?: string | null;
+  missing?: boolean;
+  errorMessage?: string | null;
 }
 
 export interface WordScore {

@@ -51,8 +51,46 @@ void main() {
           'choices': [
             {
               'message': {
-                'content':
-                    'Chapter summary: A compact guide.\nOrdered coverage points:\n1. Beginning.\n2. Middle.\n3. Ending.\nCompletion rubric: discuss the whole chapter.',
+                'content': '''
+{
+  "summary": "A compact guide.",
+  "characters": ["Alice"],
+  "locations": ["garden"],
+  "continuityNotes": ["Keep the same story world."],
+  "segments": [
+    {
+      "title": "Beginning",
+      "sentenceStartIndex": 0,
+      "sentenceEndIndex": 20,
+      "summary": "Beginning scene.",
+      "visualPrompt": "Alice enters the scene.",
+      "characters": ["Alice"],
+      "locations": ["garden"],
+      "continuityNotes": []
+    },
+    {
+      "title": "Middle",
+      "sentenceStartIndex": 21,
+      "sentenceEndIndex": 50,
+      "summary": "Middle scene.",
+      "visualPrompt": "Alice studies the problem.",
+      "characters": ["Alice"],
+      "locations": ["garden"],
+      "continuityNotes": []
+    },
+    {
+      "title": "Ending",
+      "sentenceStartIndex": 51,
+      "sentenceEndIndex": 79,
+      "summary": "Ending scene.",
+      "visualPrompt": "Alice reaches the ending.",
+      "characters": ["Alice"],
+      "locations": ["garden"],
+      "continuityNotes": []
+    }
+  ]
+}
+''',
               },
             }
           ],
@@ -81,13 +119,12 @@ void main() {
     final userMessage = messages.last as Map;
     expect(
       systemMessage['content'] as String,
-      contains('Choose the number of Ordered coverage points'),
+      contains('structured storyboards'),
     );
     expect(
       userMessage['content'] as String,
-      contains('Complete chapter text'),
+      contains('Numbered chapter sentences'),
     );
-    expect(userMessage['content'] as String, contains(fullChapter));
     expect(userMessage['content'] as String, contains('marker_0'));
     expect(userMessage['content'] as String, contains('marker_79'));
     expect(
@@ -123,7 +160,25 @@ void main() {
         return {
           'choices': [
             {
-              'message': {'content': 'Chapter summary: safe guide.'},
+              'message': {
+                'content': '''
+{
+  "summary": "safe guide",
+  "segments": [
+    {
+      "title": "Queen scene",
+      "sentenceStartIndex": 0,
+      "sentenceEndIndex": 0,
+      "summary": "The Queen shouts.",
+      "visualPrompt": "The Queen shouts in a safe storybook way.",
+      "characters": ["Queen"],
+      "locations": [],
+      "continuityNotes": []
+    }
+  ]
+}
+''',
+              },
             }
           ],
         };

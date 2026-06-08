@@ -8,6 +8,7 @@ import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_service.dart';
+import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
 import 'package:tomato_english_happy_talking/services/volc_image_service.dart';
 
 void main() {
@@ -27,10 +28,12 @@ void main() {
     await databaseFactory.setDatabasesPath(tempDir.path);
     DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
     await DatabaseService.resetForTest();
+    TextGenerationService.setPostOverrideForTest(null);
     VolcImageService.setPostOverrideForTest(null);
   });
 
   tearDown(() async {
+    TextGenerationService.setPostOverrideForTest(null);
     VolcImageService.setPostOverrideForTest(null);
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
@@ -375,11 +378,123 @@ void main() {
     expect(postedBodies.last['prompt'], 'Page two picture-book image.');
   });
 
+  test('Ark group generation can force a full sequential retry', () async {
+    _writeImageArkKey(tempDir, 'ark-full-retry-key-12345678901234567890');
+    final postedBodies = <Map<String, dynamic>>[];
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        postedBodies.add(Map<String, dynamic>.from(body));
+        if (postedBodies.length == 1) {
+          return {
+            'data': [
+              {
+                'b64_json': base64Encode([137, 80, 78, 71, 31])
+              },
+            ],
+          };
+        }
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 32])
+            },
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 33])
+            },
+          ],
+        };
+      },
+    );
+    const requests = [
+      VolcImageBatchRequest(
+        pageIndex: 0,
+        prompt: 'Page one picture-book image.',
+        promptMetadata: {'page': 0},
+      ),
+      VolcImageBatchRequest(
+        pageIndex: 1,
+        prompt: 'Page two picture-book image.',
+        promptMetadata: {'page': 1},
+      ),
+    ];
+
+    final first = await VolcImageService.generatePictureBookImageGroup(
+      requests: requests,
+      seriesId: 13,
+      useSequential: true,
+    );
+    expect(first.map((result) => result.source), [
+      VolcImageResultSource.remote,
+      VolcImageResultSource.failed,
+    ]);
+
+    final second = await VolcImageService.generatePictureBookImageGroup(
+      requests: requests,
+      seriesId: 13,
+      useSequential: true,
+      reusePartialCache: false,
+    );
+
+    expect(second.map((result) => result.source), [
+      VolcImageResultSource.remote,
+      VolcImageResultSource.remote,
+    ]);
+    expect(postedBodies, hasLength(2));
+    expect(postedBodies.last['sequential_image_generation'], 'auto');
+    expect(
+      postedBodies.last['sequential_image_generation_options'],
+      containsPair('max_images', 2),
+    );
+  });
+
   test(
-      'picture-book generation creates one chapter image without references by default',
+      'picture-book generation creates storyboard group images without references by default',
       () async {
     _writeImageArkKey(tempDir, 'ark-role-key-12345678901234567890');
     final postedBodies = <Map<String, dynamic>>[];
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'summary': 'Alice joins the tea table and watches the group.',
+                  'characters': ['Alice', 'March Hare', 'Hatter', 'Dormouse'],
+                  'locations': ['tea table'],
+                  'continuityNotes': ['Keep the same tea-party setting.'],
+                  'segments': [
+                    {
+                      'title': 'Alice arrives',
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 2,
+                      'summary': 'Alice sits near the tea table.',
+                      'visualPrompt':
+                          'Alice approaches the March Hare and Hatter at the tea table.',
+                      'characters': ['Alice', 'March Hare', 'Hatter'],
+                      'locations': ['tea table'],
+                      'continuityNotes': ['Use the same costumes.'],
+                    },
+                    {
+                      'title': 'The table continues',
+                      'sentenceStartIndex': 3,
+                      'sentenceEndIndex': 5,
+                      'summary':
+                          'The Hatter lifts a cup while the Dormouse sleeps.',
+                      'visualPrompt':
+                          'The Hatter lifts a cup and the Dormouse sleeps beside the same table.',
+                      'characters': ['Hatter', 'Dormouse'],
+                      'locations': ['tea table'],
+                      'continuityNotes': ['Keep the same table and palette.'],
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
     VolcImageService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
         postedBodies.add(Map<String, dynamic>.from(body));
@@ -436,20 +551,27 @@ void main() {
     final groupBodies = postedBodies
         .where((body) => body['sequential_image_generation'] == 'auto')
         .toList(growable: false);
-    expect(groupBodies, isEmpty);
+    expect(groupBodies, hasLength(1));
     expect(postedBodies, hasLength(1));
-    expect(postedBodies.single['sequential_image_generation'], 'disabled');
+    expect(postedBodies.single['sequential_image_generation'], 'auto');
+    expect(
+      postedBodies.single['sequential_image_generation_options'],
+      containsPair('max_images', 2),
+    );
     expect(postedBodies.single['image'], isNull);
     expect(
       postedBodies.single['prompt'] as String,
-      contains('single image for the whole chapter'),
+      contains('Image 1:'),
     );
+    expect(postedBodies.single['prompt'] as String, contains('Image 2:'));
     final state = await PictureBookService.statePayload(articleId);
     expect(state['status'], 'ready');
     final pages = state['pages'] as List;
-    expect(pages, hasLength(1));
-    expect(pages.single['sentenceStartIndex'], 0);
-    expect(pages.single['sentenceEndIndex'], 5);
+    expect(pages, hasLength(2));
+    expect(pages.first['sentenceStartIndex'], 0);
+    expect(pages.first['sentenceEndIndex'], 2);
+    expect(pages.last['sentenceStartIndex'], 3);
+    expect(pages.last['sentenceEndIndex'], 5);
   });
 
   test('picture-book image prompt allows natural visible text', () {
@@ -463,7 +585,7 @@ void main() {
       },
     });
 
-    expect(prompt, contains('single image for the whole chapter'));
+    expect(prompt, contains('coherent sequential picture-book storyboard'));
     expect(prompt, contains('NATURAL TEXT POLICY'));
     expect(prompt, contains('visible text is allowed'));
     expect(prompt, contains('BOOK TITLE / SERIES TITLE'));
@@ -471,11 +593,11 @@ void main() {
     expect(
         prompt,
         contains(
-            'one illustrated chapter image from the book or story series'));
+            'one image in a coherent illustrated chapter sequence from the book or story series'));
     expect(prompt,
         contains('Use the book title "Alice\'s Adventures in Wonderland"'));
     expect(prompt, contains('saved series bible'));
-    expect(prompt, contains('current chapter story'));
+    expect(prompt, contains('current chapter storyboard'));
     expect(prompt, contains('Do not import unrelated characters'));
     expect(prompt, contains('Avoid modern classroom'));
     expect(prompt,
@@ -499,7 +621,7 @@ void main() {
     expect(
       prompt,
       contains(
-        'one illustrated chapter image from the book or story series "The Secret Garden"',
+        'one image in a coherent illustrated chapter sequence from the book or story series "The Secret Garden"',
       ),
     );
     expect(prompt, contains('Use the book title "The Secret Garden"'));
@@ -527,7 +649,7 @@ void main() {
     expect(prompt, contains('scrambling'));
   });
 
-  test('picture-book segmentation creates one chapter-level image segment', () {
+  test('picture-book segmentation creates storyboard image segments', () {
     final sentences = [
       'There was a table set out under a tree in front of the house,',
       'and the March Hare and the Hatter were having tea at it:',
@@ -566,12 +688,12 @@ but the three were all crowded together at one corner of it.
 
     final segments = PictureBookService.pictureSegmentsForTest(article);
 
-    expect(segments, hasLength(1));
+    expect(segments, hasLength(greaterThan(1)));
     expect(segments.first['text'], isNot(contains('Chapter Seven')));
     expect(segments.first['sentenceStartIndex'], 0);
-    expect(segments.first['sentenceEndIndex'], 10);
     expect(segments.first['text'], contains('There was a table'));
-    expect(segments.first['text'], contains('"No room! No room!"'));
+    expect(segments.last['sentenceEndIndex'], 10);
+    expect(segments.last['text'], contains('"No room! No room!"'));
   });
 
   test('picture-book chapter segment keeps full long chapter text', () {
@@ -589,14 +711,14 @@ but the three were all crowded together at one corner of it.
     );
 
     final segments = PictureBookService.pictureSegmentsForTest(article);
-    expect(segments, hasLength(1));
+    expect(segments, hasLength(14));
 
-    final text = segments.single['text'] as String;
-    expect(text, contains('full_story_marker_0'));
-    expect(text, contains('full_story_marker_35'));
-    expect(text, contains('full_story_marker_69'));
-    expect(text, isNot(contains('[middle of chapter]')));
-    expect(text, isNot(contains('[end of chapter]')));
+    final firstText = segments.first['text'] as String;
+    final lastText = segments.last['text'] as String;
+    expect(firstText, contains('full_story_marker_0'));
+    expect(lastText, contains('full_story_marker_69'));
+    expect(firstText, isNot(contains('[middle of chapter]')));
+    expect(lastText, isNot(contains('[end of chapter]')));
   });
 
   test('picture-book cover payload uses the first ready generated image',

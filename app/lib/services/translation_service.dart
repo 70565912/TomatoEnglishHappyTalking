@@ -8,6 +8,27 @@ import 'practice_text_service.dart';
 class TranslationService {
   static final Map<String, Future<String>> _cache = {};
 
+  @visibleForTesting
+  static void clearCacheForTest() {
+    _cache.clear();
+  }
+
+  @visibleForTesting
+  static void setCacheEntryForTest(String memoryKey, Future<String> value) {
+    _cache[memoryKey] = value;
+  }
+
+  @visibleForTesting
+  static String cacheMemoryKeyForTest(
+    String text, {
+    int? articleId,
+    int? sentenceIndex,
+    String cachePurpose = 'translate_to_chinese',
+  }) {
+    final key = _cacheKey(text);
+    return '$cachePurpose:${articleId ?? 'global'}:${sentenceIndex ?? 'any'}:$key';
+  }
+
   static Future<String> toChinese(
     String text, {
     int? articleId,
@@ -18,8 +39,12 @@ class TranslationService {
     if (key.isEmpty) {
       return Future.value('');
     }
-    final memoryKey =
-        '$cachePurpose:${articleId ?? 'global'}:${sentenceIndex ?? 'any'}:$key';
+    final memoryKey = cacheMemoryKeyForTest(
+      text,
+      articleId: articleId,
+      sentenceIndex: sentenceIndex,
+      cachePurpose: cachePurpose,
+    );
     return _cache.putIfAbsent(
       memoryKey,
       () => _translate(
@@ -28,7 +53,12 @@ class TranslationService {
         sentenceIndex: sentenceIndex,
         cachePurpose: cachePurpose,
       ),
-    );
+    ).then((translated) {
+      if (translated == '中文翻译暂不可用。') {
+        _cache.remove(memoryKey);
+      }
+      return translated;
+    });
   }
 
   static Future<String> _translate(

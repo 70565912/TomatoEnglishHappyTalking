@@ -225,15 +225,18 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 新增测试时要覆盖二次调用命中缓存、不重复远程请求、删除文章不误删共享缓存。
 - “省 API”约束主要针对正式运行流程和重复调用：正式功能必须最大化复用本地解析、数据库、文件缓存和成功远程结果。
 - 开发验证不能为了省一次测试调用而跳过关键链路；涉及新增文章、方舟提取/翻译、标题、绘本生成、TTS/听力、跟读录音/识别等端到端改动时，必须做足够完整的回归测试。绘本验证要跑全量文章流程，不能只测第一页或只测 prompt 预览。
-- 绘本生成策略为“每篇文章/每章一张图”，不是每段或每句多图。`picture_book_pages` 表继续复用，但正常生成只写入 `pageIndex=0`，`sentenceStartIndex=0`，`sentenceEndIndex` 覆盖整章最后一句。
-- 章节图 prompt 必须基于书籍名、章节标题和当前章节故事内容，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。
-- Web UI 中“书籍”就是 `story_series`；新增文章页不再展示绘本开关，保存时默认生成一张绘本图。只有内部测试或显式 payload 才可以传 `pictureBookEnabled=false` 跳过生成。
+- 绘本生成策略为“每篇文章/每章一组连续分镜图”：先生成并缓存 `chapter_story_outline_v1`，再按分镜创建多条 `picture_book_pages`；第 1 张对应第 1 个分镜，第 N 张对应第 N 个分镜，不做候选图筛选。
+- 正常分镜数最多 14 段，`picture_book_pages` 必须覆盖完整句子范围；超长章节在分镜阶段合并相邻场景，不拆成多组图片请求。
+- 章节组图 prompt 必须基于书籍名、章节标题、当前章节故事内容和结构化分镜，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。
+- Web UI 中“书籍”就是 `story_series`；新增文章页不再展示绘本开关，保存时默认异步生成连续绘本组图。只有内部测试或显式 payload 才可以传 `pictureBookEnabled=false` 跳过生成。
 - 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
 - 绘本 prompt 默认使用本地安全模板和系列设定，不要每章都调用方舟文本模型润色；AI prompt 润色只在显式打开 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS=true` 时启用。
 - 系列设定集默认本地合并章节摘要；AI 更新系列 bible 只在显式打开 `TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE=true` 时启用。
-- 自动生成风格/角色参考图默认关闭以节省费用；只有显式打开 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true` 时才创建或使用自动参考图。正式冷缓存流程应尽量保持每章一次图片调用。
-- Seedream 组图 `sequential_image_generation` 目前作为实验能力保留，默认关闭；2026-06-07 Alice 全量测试中 4 页组图请求超过 120 秒超时并回退单图，可能造成无效调用。只有显式打开 `TOMATO_VOLC_IMAGE_GROUP_PAGES=true` 时才使用组图。
-- 对话练习提纲应由方舟根据完整章节内容做语义切分和总结，程序不要固定为 8 条。程序内部的 `ChatChapterGuideService.buildLocalGuide` 只作为无 key/远程失败 fallback，允许用最多 8 条本地均分覆盖点保证可用；远程成功时必须以 AI 按场景/事件/冲突/结尾自然划分的提纲为准，并缓存结果，后续聊天轮次只复用提纲，不重复提交完整章节。
+- 自动生成风格/角色参考图默认关闭以节省费用；只有显式打开 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true` 时才创建或使用自动参考图。正式冷缓存流程应尽量保持每章一次结构化分镜调用和一次顺序组图调用。
+- Seedream 组图 `sequential_image_generation` 是正式绘本链路：`PictureBookService` 直接调用 `generatePictureBookImageGroup(..., useSequential: true)`，`max_images` 等于分镜页数。组图失败不自动回退单图；失败页保存错误原因，重试按钮重新提交整章组图。
+- 整章组图 HTTP 返回可能按每张图耗时数分钟，不能再用固定 120 秒判定失败。`VolcImageService` 按请求图片数动态设置接收超时，默认每张 150 秒、最小 180 秒、最大 2700 秒；可通过 `TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE`、`TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS`、`TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS` 调整。
+- 绘本保存/生成/听力模式的最终联调必须跑真实 Windows App UI。外部窗口截图不可用时，开启 `TOMATO_QA_REMOTE=true`，用 `npm run qa:picture-book-live` 通过本机 QA 控制接口填表保存、打开听力、轮询异步绘本状态、检查 loading/error/ready UI、字幕和播放；不要只用 service/test harness 作为最终结论。
+- 对话练习提纲复用 `chapter_story_outline_v1` 的结构化分镜，不再单独重复生成聊天提纲。程序内部 fallback 只在无 key/远程失败时本地生成最多 14 段分镜覆盖点，后续聊天轮次只复用提纲，不重复提交完整章节。
 
 内容安全失败与敏感词规则：
 
@@ -259,11 +262,11 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 不要把整篇标准中英对照内容直接送给方舟或 Realtime 做“提取英文原文”，这会浪费费用，还可能因为 prompt 截断导致只保存前半篇。
 - 如果必须用 AI 处理长文本，必须分块且保证全量覆盖；不要只取前 `1600` 或 `2200` 字符后把结果当完整文章。
 - 跟读/听力的中文对照应优先复用导入时解析出的中文翻译；不要再逐句调用 `translate_to_chinese` 生成一份可能风格不同的新译文。
-- 绘本生成现在是一章一图；解析出的英文段落只用于构造整章故事内容/摘要提示词，不再决定图片页数。
+- 绘本生成现在是一章一组结构化分镜图；解析出的英文段落只用于构造整章故事内容、分镜摘要和连续性提示，不再直接决定图片页数。
 
 Alice 回归测试用例：
 
-- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；除默认一张绘本图外，不应因正文提取/中文对照再产生无谓 AI 调用，`listening.open` 返回 75 项且没有空中文。
+- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；除默认结构化分镜和一组绘本图外，不应因正文提取/中文对照再产生无谓 AI 调用，`listening.open` 返回 75 项且没有空中文。
 - 数据库中旧 Alice 文章要作为回归样本保留：`Alice's Adventures in Wonderland - Episod 56`、`爱丽丝梦游仙境（原著领读版）- E61` 以及新导入的 `The Queen's Croquet-Ground`。这些文章都必须挂到同一本书籍 `Alice's Adventures in Wonderland` 下。
 - 对旧 Alice 混合正文不要重新整篇提交给 `article.create` 做 AI 提取；旧数据中已保存的英文句子/正文可以用于 `article.list`、`follow.open`、`pictureBook.state`、系列归属测试。若需要重新导入旧内容，优先使用已经提取出的纯英文内容，避免触发 mixed -> 方舟提取。
 - 整理已有文章的书籍归属时使用 `series.attachArticle`，不要用 `pictureBook.generate` 代替；`series.attachArticle` 只创建或更新 `story_chapters` 关系，不触发图片生成和其它云 API。

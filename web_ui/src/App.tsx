@@ -12,6 +12,7 @@ import type {
   ListeningResumePayload,
   ListeningTranslationsPayload,
   PictureBookPage,
+  PictureBookPageImagePayload,
   PictureBookState,
   VoicePreviewPayload,
   WordLookupPayload,
@@ -30,6 +31,144 @@ const fallbackCards = [
   'card-daisy-diver.png',
   'card-rocket-race.png',
 ];
+
+type StateSetter<T> = (value: T | ((current: T) => T)) => void;
+type PictureBookStateSetter = StateSetter<PictureBookState | null>;
+
+type PictureBookRetryGate = {
+  begin: (articleId: number, pageIndex: number) => boolean;
+  finish: (articleId: number, pageIndex: number) => void;
+  isRetrying: (articleId: number, pageIndex: number) => boolean;
+};
+
+function loadingPictureBookState(articleId: number): PictureBookState {
+  return {
+    articleId,
+    enabled: false,
+    status: 'loading',
+    pages: [],
+  };
+}
+
+function mergePictureBookState(
+  current: PictureBookState | null,
+  next: PictureBookState | null,
+): PictureBookState | null {
+  if (!next) {
+    return current;
+  }
+  if (!current || current.articleId !== next.articleId) {
+    return next;
+  }
+
+  const imageUriByPage = new Map(
+    current.pages
+      .filter((page) => page.imageUri?.trim())
+      .map((page) => [page.pageIndex, page.imageUri?.trim() ?? '']),
+  );
+  let changed = false;
+  const pages = next.pages.map((page) => {
+    if (page.imageUri?.trim()) {
+      return page;
+    }
+    const imageUri = imageUriByPage.get(page.pageIndex);
+    if (!imageUri) {
+      return page;
+    }
+    changed = true;
+    return {
+      ...page,
+      imageUri,
+    };
+  });
+
+  return changed ? { ...next, pages } : next;
+}
+
+function mergePictureBookPageImage(
+  current: PictureBookState | null,
+  payload: PictureBookPageImagePayload,
+): PictureBookState | null {
+  const imageUri = payload.imageUri?.trim() ?? '';
+  if (!current || current.articleId !== payload.articleId) {
+    return current;
+  }
+
+  let changed = false;
+  const pages = current.pages.map((page) => {
+    if (page.pageIndex !== payload.pageIndex) {
+      return page;
+    }
+
+    if (imageUri && page.imageUri === imageUri) {
+      return page;
+    }
+
+    if (imageUri) {
+      changed = true;
+      return {
+        ...page,
+        imageUri,
+      };
+    }
+
+    if (!payload.missing) {
+      return page;
+    }
+
+    const errorMessage =
+      payload.errorMessage?.trim() || page.errorMessage?.trim() || '绘本缓存文件丢失，请重试生成';
+    if (page.status === 'error' && (page.errorMessage?.trim() ?? '') === errorMessage) {
+      return page;
+    }
+    changed = true;
+    return {
+      ...page,
+      status: 'error',
+      errorMessage,
+    };
+  });
+
+  return changed ? { ...current, pages } : current;
+}
+
+function usePictureBookRetryGate(): PictureBookRetryGate {
+  const retryingKeysRef = useRef<Set<string>>(new Set());
+  const [retryingKeys, setRetryingKeys] = useState<string[]>([]);
+
+  const syncState = () => {
+    setRetryingKeys(Array.from(retryingKeysRef.current));
+  };
+
+  const keyFor = (articleId: number, pageIndex: number) => `${articleId}:${pageIndex}`;
+
+  const begin = (articleId: number, pageIndex: number) => {
+    const key = keyFor(articleId, pageIndex);
+    if (retryingKeysRef.current.has(key)) {
+      return false;
+    }
+    retryingKeysRef.current.add(key);
+    syncState();
+    return true;
+  };
+
+  const finish = (articleId: number, pageIndex: number) => {
+    const key = keyFor(articleId, pageIndex);
+    if (!retryingKeysRef.current.delete(key)) {
+      return;
+    }
+    syncState();
+  };
+
+  const isRetrying = (articleId: number, pageIndex: number) =>
+    retryingKeys.includes(keyFor(articleId, pageIndex));
+
+  return {
+    begin,
+    finish,
+    isRetrying,
+  };
+}
 
 const mascotBlinkFrames = [
   'lego/mascot-blink/frame-01.png',
@@ -66,6 +205,7 @@ function App() {
   const [settings, setSettings] = useState<SettingsState | null>(null);
   const [series, setSeries] = useState<StorySeries[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const pictureBookRetryGate = usePictureBookRetryGate();
 
   const navigate = (path: string) => {
     setNotice(null);
@@ -88,7 +228,9 @@ function App() {
       if (isMounted) setFollowState(payload);
     });
     const offPictureBook = onNativeEvent<PictureBookState>('pictureBook.state', (payload) => {
-      if (isMounted) setPictureBookState(payload);
+      if (isMounted) {
+        setPictureBookState((current) => mergePictureBookState(current, payload));
+      }
     });
     const offChat = onNativeEvent<ChatState>('chat.state', (payload) => {
       if (isMounted) setChatState(payload);
@@ -204,6 +346,7 @@ function App() {
             pictureBookState={pictureBookState?.articleId === parsedRoute.articleId ? pictureBookState : null}
             onNavigate={navigate}
             onPictureBookLoaded={setPictureBookState}
+            pictureBookRetryGate={pictureBookRetryGate}
           />
         )}
 
@@ -215,6 +358,7 @@ function App() {
             onNavigate={navigate}
             onLoaded={setFollowState}
             onPictureBookLoaded={setPictureBookState}
+            pictureBookRetryGate={pictureBookRetryGate}
           />
         )}
 
@@ -222,8 +366,11 @@ function App() {
           <ChatPage
             articleId={parsedRoute.articleId}
             state={chatState}
+            pictureBookState={pictureBookState?.articleId === parsedRoute.articleId ? pictureBookState : null}
             onNavigate={navigate}
             onLoaded={setChatState}
+            onPictureBookLoaded={setPictureBookState}
+            pictureBookRetryGate={pictureBookRetryGate}
           />
         )}
 
@@ -641,7 +788,7 @@ function ArticlePage({
                 />
               )}
             </div>
-            <small>保存后会自动生成一张适合本章内容的英语绘本图。</small>
+            <small>保存后会按本章分镜异步生成连续绘本图。</small>
           </section>
 
           <div className="article-field title-field">
@@ -733,11 +880,13 @@ function ListeningPage({
   pictureBookState,
   onNavigate,
   onPictureBookLoaded,
+  pictureBookRetryGate,
 }: {
   articleId: number;
   pictureBookState: PictureBookState | null;
   onNavigate: (path: string) => void;
-  onPictureBookLoaded: (state: PictureBookState) => void;
+  onPictureBookLoaded: PictureBookStateSetter;
+  pictureBookRetryGate: PictureBookRetryGate;
 }) {
   const [article, setArticle] = useState<Article | null>(null);
   const [items, setItems] = useState<ListeningItem[]>([]);
@@ -761,14 +910,17 @@ function ListeningPage({
     setError(null);
     setWordCard(null);
     wordCardTokenRef.current += 1;
-    onPictureBookLoaded({
-      articleId,
-      enabled: false,
-      status: 'empty',
-      pages: [],
-    });
+    onPictureBookLoaded(loadingPictureBookState(articleId));
 
-    sendNative<ListeningOpenPayload>('listening.open', { articleId })
+    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId })
+      .then((picturePayload) => {
+        if (isMounted) {
+          onPictureBookLoaded((current) => mergePictureBookState(current, picturePayload));
+        }
+      })
+      .catch(() => undefined);
+
+    const listeningPromise = sendNative<ListeningOpenPayload>('listening.open', { articleId })
       .then((payload) => {
         if (!isMounted) return;
         setArticle(payload.article);
@@ -777,17 +929,14 @@ function ListeningPage({
         if (payload.items.length === 0) {
           setError('这篇文章还没有可朗读的英文句子。');
         }
-        sendNative<PictureBookState>('pictureBook.state', { articleId })
-          .then((picturePayload) => {
-            if (isMounted) onPictureBookLoaded(picturePayload);
-          })
-          .catch(() => undefined);
       })
       .catch((loadError) => {
         if (!isMounted) return;
         setStatus('error');
         setError(loadError instanceof Error ? loadError.message : '听力任务打开失败');
       });
+
+    void Promise.allSettled([listeningPromise, picturePromise]);
 
     return () => {
       isMounted = false;
@@ -1021,6 +1170,14 @@ function ListeningPage({
     }
   };
 
+  const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
+  useEnsurePictureBookPageImage({
+    articleId,
+    state: pictureBookState,
+    page: picturePage,
+    onPictureBookLoaded,
+  });
+
   if (status === 'loading') {
     return (
       <section className="page listening-page">
@@ -1059,16 +1216,24 @@ function ListeningPage({
         ? 100
         : Math.round(((currentIndex + (busy ? 0.5 : 0)) / items.length) * 100);
   const playbackError = status === 'error' ? error : null;
-  const startLabel = status === 'done' ? '再听一遍' : '开始听全文';
+  const startLabel = status === 'done' ? '重新播放' : '开始播放';
   const titleParts = storyTitlePartsFor(article, pictureBookState, article.title);
-  const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
   const retryPicturePage = (page: PictureBookPage) => {
+    if (!pictureBookRetryGate.begin(articleId, page.pageIndex)) {
+      return;
+    }
+
     void sendNative<PictureBookState>('pictureBook.retryPage', {
       articleId,
       pageIndex: page.pageIndex,
     })
-      .then(onPictureBookLoaded)
-      .catch(() => undefined);
+      .then((payload) => {
+        onPictureBookLoaded((current) => mergePictureBookState(current, payload));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        pictureBookRetryGate.finish(articleId, page.pageIndex);
+      });
   };
 
   return (
@@ -1097,6 +1262,7 @@ function ListeningPage({
             chineseActive={activePart === 'chinese'}
             onWordClick={openWordCard}
             onRetry={retryPicturePage}
+            isRetrying={picturePage ? pictureBookRetryGate.isRetrying(articleId, picturePage.pageIndex) : false}
           />
           {playbackError && <p className="playback-cue error">{playbackError}</p>}
           <div className="listening-control-panel">
@@ -1128,7 +1294,7 @@ function ListeningPage({
                   <Icon name="stop" /> 停止
                 </button>
               ) : (
-                <button className="primary-action" onClick={() => void playFrom(0)} disabled={items.length === 0}>
+                <button className="primary-action" onClick={() => void playFrom(currentIndex)} disabled={items.length === 0}>
                   <Icon name="play" /> {startLabel}
                 </button>
               )}
@@ -1310,13 +1476,15 @@ function FollowPage({
   onNavigate,
   onLoaded,
   onPictureBookLoaded,
+  pictureBookRetryGate,
 }: {
   articleId: number;
   state: FollowState | null;
   pictureBookState: PictureBookState | null;
   onNavigate: (path: string) => void;
   onLoaded: (state: FollowState) => void;
-  onPictureBookLoaded: (state: PictureBookState) => void;
+  onPictureBookLoaded: PictureBookStateSetter;
+  pictureBookRetryGate: PictureBookRetryGate;
 }) {
   const [commandBusy, setCommandBusy] = useState(false);
   const [activeFollowControl, setActiveFollowControl] = useState<FollowControl | null>(null);
@@ -1330,12 +1498,7 @@ function FollowPage({
     setWordCard(null);
     wordCardTokenRef.current += 1;
     onLoaded({ status: 'loading' });
-    onPictureBookLoaded({
-      articleId,
-      enabled: false,
-      status: 'empty',
-      pages: [],
-    });
+    onPictureBookLoaded(loadingPictureBookState(articleId));
 
     const openAndPlay = async () => {
       try {
@@ -1344,10 +1507,11 @@ function FollowPage({
         onLoaded(payload);
         sendNative<PictureBookState>('pictureBook.state', { articleId })
           .then((picturePayload) => {
-            if (isMounted) onPictureBookLoaded(picturePayload);
+            if (isMounted) {
+              onPictureBookLoaded((current) => mergePictureBookState(current, picturePayload));
+            }
           })
           .catch(() => undefined);
-
         if (payload.status === 'ready' && payload.step !== 'completed') {
           const played = await sendNative<FollowState>('follow.play');
           if (isMounted && played) onLoaded(played);
@@ -1553,6 +1717,15 @@ function FollowPage({
     })();
   };
 
+  const currentIndex = state?.currentIndex ?? 0;
+  const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
+  useEnsurePictureBookPageImage({
+    articleId,
+    state: pictureBookState,
+    page: picturePage,
+    onPictureBookLoaded,
+  });
+
   if (!state || state.status === 'loading') {
     return (
       <section className="page follow-page">
@@ -1586,7 +1759,6 @@ function FollowPage({
   const currentSentence = state?.currentSentence ?? '正在准备句子...';
   const currentTranslation = state?.currentTranslation ?? '';
   const result = state?.result;
-  const currentIndex = state?.currentIndex ?? 0;
   const totalSentences = state?.totalSentences ?? 0;
   const canInterruptRecordingPlayback =
     commandBusy &&
@@ -1613,15 +1785,23 @@ function FollowPage({
       : step === 'scoring'
         ? liveTranscript || '正在整理识别结果...'
       : liveTranscript;
-  const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
   const titleParts = storyTitlePartsFor(state?.article, pictureBookState, '跟读任务');
   const retryPicturePage = (page: PictureBookPage) => {
+    if (!pictureBookRetryGate.begin(articleId, page.pageIndex)) {
+      return;
+    }
+
     void sendNative<PictureBookState>('pictureBook.retryPage', {
       articleId,
       pageIndex: page.pageIndex,
     })
-      .then(onPictureBookLoaded)
-      .catch(() => undefined);
+      .then((payload) => {
+        onPictureBookLoaded((current) => mergePictureBookState(current, payload));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        pictureBookRetryGate.finish(articleId, page.pageIndex);
+      });
   };
 
   return (
@@ -1643,6 +1823,7 @@ function FollowPage({
             englishActive={sourceActive}
             onWordClick={openWordCard}
             onRetry={retryPicturePage}
+            isRetrying={picturePage ? pictureBookRetryGate.isRetrying(articleId, picturePage.pageIndex) : false}
           />
           {state?.playbackError && <p className="error-text">{state.playbackError}</p>}
           {state?.error && <p className="error-text">{state.error}</p>}
@@ -1717,6 +1898,177 @@ function currentPictureBookPage(
   );
 }
 
+type ChatTimelineEntry =
+  | {
+      kind: 'scene';
+      key: string;
+      page: PictureBookPage | null;
+    }
+  | {
+      kind: 'message';
+      key: string;
+      message: ChatState['messages'][number];
+    };
+
+function pictureBookPagesForChatConversation(
+  state: PictureBookState | null,
+  questionCount: number,
+): PictureBookPage[] {
+  if (!state?.pages.length) {
+    return [];
+  }
+
+  const orderedPages = [...state.pages].sort((left, right) => left.pageIndex - right.pageIndex);
+  // Keep chat scene changes aligned to storyboard beats instead of jumping across
+  // multiple multi-sentence pages on a single question round.
+  const visibleCount = Math.min(
+    orderedPages.length,
+    Math.max(questionCount, 1),
+  );
+  return orderedPages.slice(0, visibleCount);
+}
+
+function buildChatTimelineEntries(
+  messages: ChatState['messages'],
+  pages: PictureBookPage[],
+  showLeadingScene: boolean,
+): ChatTimelineEntry[] {
+  const orderedPages = [...pages].sort((left, right) => left.pageIndex - right.pageIndex);
+  const sceneEntries: Array<PictureBookPage | null> =
+    orderedPages.length > 0 ? orderedPages : showLeadingScene ? [null] : [];
+  const timeline: ChatTimelineEntry[] = [];
+  const scenesByPosition = new Map<number, Array<PictureBookPage | null>>();
+
+  sceneEntries.forEach((page, index) => {
+    const position =
+      index === 0
+        ? 0
+        : Math.min(
+            messages.length,
+            Math.max(1, Math.round((index / sceneEntries.length) * messages.length)),
+          );
+    const bucket = scenesByPosition.get(position) ?? [];
+    bucket.push(page);
+    scenesByPosition.set(position, bucket);
+  });
+
+  const pushScenes = (position: number) => {
+    const bucket = scenesByPosition.get(position) ?? [];
+    bucket.forEach((page, index) => {
+      timeline.push({
+        kind: 'scene',
+        key: page ? `scene-${page.pageIndex}` : `scene-loading-${position}-${index}`,
+        page,
+      });
+    });
+  };
+
+  pushScenes(0);
+  messages.forEach((message, index) => {
+    timeline.push({
+      kind: 'message',
+      key: message.id,
+      message,
+    });
+    pushScenes(index + 1);
+  });
+
+  return timeline;
+}
+
+function useEnsurePictureBookPageImage({
+  articleId,
+  state,
+  page,
+  onPictureBookLoaded,
+}: {
+  articleId: number;
+  state: PictureBookState | null;
+  page: PictureBookPage | null;
+  onPictureBookLoaded: PictureBookStateSetter;
+}) {
+  const requestKeyRef = useRef('');
+  const stateArticleId = state?.articleId ?? null;
+  const pageIndex = page?.pageIndex ?? -1;
+  const pageStatus = page?.status ?? '';
+  const imagePath = page?.imagePath?.trim() ?? '';
+  const imageUri = page?.imageUri?.trim() ?? '';
+
+  useEffect(() => {
+    if (stateArticleId !== articleId || pageIndex < 0) {
+      requestKeyRef.current = '';
+      return;
+    }
+    if (pageStatus !== 'ready' || imageUri || !imagePath) {
+      return;
+    }
+
+    const requestKey = `${articleId}:${pageIndex}:${imagePath}`;
+    if (requestKeyRef.current === requestKey) {
+      return;
+    }
+    requestKeyRef.current = requestKey;
+
+    let isMounted = true;
+    sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
+      articleId,
+      pageIndex,
+    })
+      .then((payload) => {
+        if (!isMounted) {
+          return;
+        }
+        onPictureBookLoaded((current) => mergePictureBookPageImage(current, payload));
+      })
+      .catch(() => {
+        if (requestKeyRef.current === requestKey) {
+          requestKeyRef.current = '';
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [articleId, imagePath, imageUri, onPictureBookLoaded, pageIndex, pageStatus, stateArticleId]);
+}
+
+function ChatPictureSceneBlock({
+  articleId,
+  state,
+  page,
+  onPictureBookLoaded,
+  onRetry,
+  isRetrying,
+}: {
+  articleId: number;
+  state: PictureBookState | null;
+  page: PictureBookPage | null;
+  onPictureBookLoaded: PictureBookStateSetter;
+  onRetry: (page: PictureBookPage) => void;
+  isRetrying: boolean;
+}) {
+  useEnsurePictureBookPageImage({
+    articleId,
+    state,
+    page,
+    onPictureBookLoaded,
+  });
+
+  return (
+    <div className="chat-scene-block">
+      <PictureBookScene
+        state={state}
+        page={page}
+        english=""
+        showSubtitles={false}
+        onWordClick={() => undefined}
+        onRetry={onRetry}
+        isRetrying={isRetrying}
+      />
+    </div>
+  );
+}
+
 function PictureBookScene({
   state,
   page,
@@ -1724,8 +2076,10 @@ function PictureBookScene({
   chinese,
   englishActive = false,
   chineseActive = false,
+  showSubtitles = true,
   onWordClick,
   onRetry,
+  isRetrying = false,
 }: {
   state: PictureBookState | null;
   page: PictureBookPage | null;
@@ -1733,48 +2087,66 @@ function PictureBookScene({
   chinese?: string;
   englishActive?: boolean;
   chineseActive?: boolean;
+  showSubtitles?: boolean;
   onWordClick: (word: string, sentence: string, anchor: DOMRect) => void;
   onRetry: (page: PictureBookPage) => void;
+  isRetrying?: boolean;
 }) {
-  const imageSrc = page?.imageUri || page?.imagePath || '';
+  const imageSrc = directImageSource(page?.imageUri) ?? directImageSource(page?.imagePath) ?? '';
   const isReady = page?.status === 'ready' && imageSrc;
+  const hasPotentialPicture = Boolean(
+    state?.status === 'loading' || state?.enabled || (state?.pages.length ?? 0) > 0,
+  );
+  const isLoadingImage =
+    state?.status === 'loading' ||
+    (!page && hasPotentialPicture) ||
+    (page?.status === 'ready' && !imageSrc && Boolean(page?.imagePath?.trim()));
   const isBusy =
+    isLoadingImage ||
+    isRetrying ||
     state?.status === 'generating' ||
     page?.status === 'queued' ||
     page?.status === 'prompting' ||
     page?.status === 'generating';
   const isRetryable = Boolean(page && (page.status === 'error' || page.status === 'skipped'));
-  const placeholderText = isBusy
-    ? '绘本图生成中'
-    : page?.status === 'skipped'
-      ? '缺少图片引擎 Key'
-      : '绘本图暂不可用';
+  const failureText = page?.errorMessage?.trim() || (page?.status === 'skipped' ? '缺少图片引擎 Key' : '绘本图生成失败');
+  const placeholderText = isLoadingImage
+    ? '正在加载绘本图...'
+    : isRetrying
+      ? '正在重试生成...'
+      : isBusy
+        ? '绘本图正在生成中...'
+        : isRetryable
+          ? failureText
+          : '绘本图暂不可用';
 
   return (
-    <section className={`picture-book-scene ${isReady ? 'ready' : ''}`}>
+    <section className={`picture-book-scene ${isReady ? 'ready' : ''} ${isBusy ? 'busy' : ''} ${isRetryable ? 'failed' : ''}`}>
       {isReady ? (
         <img src={imageSrc} alt="" />
       ) : (
         <div className={`picture-book-placeholder ${isBusy ? 'busy' : ''}`}>
-          <Icon name={isRetryable ? 'replay' : 'spark'} />
+          <Icon name={isBusy ? 'refresh' : isRetryable ? 'replay' : 'spark'} />
           <span>{placeholderText}</span>
         </div>
       )}
       {page && (state?.pages.length ?? 0) > 1 && (
         <span className="picture-book-page-badge">{page.pageIndex + 1}</span>
       )}
-      <div className="picture-book-subtitles">
-        <h1 className={englishActive ? 'playing-text' : undefined} aria-label={english}>
-          <ClickableEnglishText
-            text={english}
-            sentence={english}
-            onWordClick={onWordClick}
-          />
-        </h1>
-        {chinese && <p className={chineseActive ? 'playing-text' : undefined}>{chinese}</p>}
-      </div>
+      {showSubtitles && (
+        <div className="picture-book-subtitles">
+          <h1 className={englishActive ? 'playing-text' : undefined} aria-label={english}>
+            <ClickableEnglishText
+              text={english}
+              sentence={english}
+              onWordClick={onWordClick}
+            />
+          </h1>
+          {chinese && <p className={chineseActive ? 'playing-text' : undefined}>{chinese}</p>}
+        </div>
+      )}
       {isRetryable && page && (
-        <button className="picture-book-retry" type="button" onClick={() => onRetry(page)}>
+        <button className="picture-book-retry" type="button" disabled={isRetrying} onClick={() => onRetry(page)}>
           <Icon name="replay" /> 重试
         </button>
       )}
@@ -1833,20 +2205,34 @@ function StoryTitle({ parts }: { parts: StoryTitleParts }) {
 function ChatPage({
   articleId,
   state,
+  pictureBookState,
   onNavigate,
   onLoaded,
+  onPictureBookLoaded,
+  pictureBookRetryGate,
 }: {
   articleId: number;
   state: ChatState | null;
+  pictureBookState: PictureBookState | null;
   onNavigate: (path: string) => void;
   onLoaded: (state: ChatState) => void;
+  onPictureBookLoaded: PictureBookStateSetter;
+  pictureBookRetryGate: PictureBookRetryGate;
 }) {
   const [text, setText] = useState('');
   const [revealedTranslations, setRevealedTranslations] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     let isMounted = true;
-    sendNative<ChatState>('chat.open', { articleId })
+    onPictureBookLoaded(loadingPictureBookState(articleId));
+    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId })
+      .then((payload) => {
+        if (isMounted) {
+          onPictureBookLoaded((current) => mergePictureBookState(current, payload));
+        }
+      })
+      .catch(() => undefined);
+    const chatPromise = sendNative<ChatState>('chat.open', { articleId })
       .then((payload) => {
         if (isMounted && payload) onLoaded(payload);
       })
@@ -1861,10 +2247,11 @@ function ChatPage({
           messages: [],
         });
       });
+    void Promise.allSettled([chatPromise, picturePromise]);
     return () => {
       isMounted = false;
     };
-  }, [articleId, onLoaded]);
+  }, [articleId, onLoaded, onPictureBookLoaded]);
 
   useEffect(() => {
     setRevealedTranslations(new Set());
@@ -1878,6 +2265,32 @@ function ChatPage({
   const chatCue = chatSideCue(step);
   const chatInputPlaceholder = chatInputCue(step);
   const chatProgress = maxQuestions > 0 ? (questionCount / maxQuestions) * 100 : 0;
+  const visibleScenePages = pictureBookPagesForChatConversation(
+    pictureBookState,
+    questionCount,
+  );
+  const chatTimeline = buildChatTimelineEntries(
+    messages,
+    visibleScenePages,
+    Boolean(pictureBookState?.status === 'loading' || pictureBookState?.enabled),
+  );
+  const retryPicturePage = (page: PictureBookPage) => {
+    if (!pictureBookRetryGate.begin(articleId, page.pageIndex)) {
+      return;
+    }
+
+    void sendNative<PictureBookState>('pictureBook.retryPage', {
+      articleId,
+      pageIndex: page.pageIndex,
+    })
+      .then((payload) => {
+        onPictureBookLoaded((current) => mergePictureBookState(current, payload));
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        pictureBookRetryGate.finish(articleId, page.pageIndex);
+      });
+  };
 
   const sendText = async () => {
     const draft = text.trim();
@@ -1899,42 +2312,82 @@ function ChatPage({
 
       <div className="chat-layout">
         <main className="chat-room-card">
-          <div className="chat-list">
-            {messages.map((message) => (
-              <div
-                className={`chat-bubble ${message.isAi ? 'ai-bubble' : 'user-bubble'}`}
-                key={message.id}
-              >
-                {message.isAi && <img src={asset(legoMascot.idle)} alt="" />}
+          <div className="chat-status-strip">
+            <div className="voice-state chat-voice-state">
+              <WaveMini />
+              <span>{chatCue}</span>
+            </div>
+            <ProgressLine value={chatProgress} label={`对话进度 ${questionCount} / ${maxQuestions}`} compact />
+            <div className="reward-preview chat-reward-preview">
+              <span>奖励预览</span>
+              <img src={asset(pngAsset.star)} alt="" />
+              <img src={asset(pngAsset.brick)} alt="" />
+            </div>
+          </div>
+          {step === 'completed' && (state?.abilityLevel || state?.practiceSummary) && (
+            <div className="chat-completion-card chat-completion-inline">
+              {state?.abilityLevel && (
                 <div>
-                  <p>{message.text}</p>
-                  {message.isAi && (
-                    <button
-                      aria-label="重播这句"
-                      disabled={['waitingStart', 'playing'].includes(message.playbackState)}
-                      onClick={() => sendNative('chat.replay', { messageId: message.id })}
-                    >
-                      <Icon name="sound" />
-                    </button>
-                  )}
-                  {message.translation && (
-                    <button
-                      className={`chat-translation ${revealedTranslations.has(message.id) ? 'revealed' : ''}`}
-                      type="button"
-                      onClick={() => {
-                        setRevealedTranslations((previous) => {
-                          const next = new Set(previous);
-                          next.add(message.id);
-                          return next;
-                        });
-                      }}
-                    >
-                      {message.translation}
-                    </button>
-                  )}
+                  <span>能力级别</span>
+                  <b>{state.abilityLevel}</b>
                 </div>
-              </div>
-            ))}
+              )}
+              {state?.practiceSummary && <p>{state.practiceSummary}</p>}
+            </div>
+          )}
+          <div className="chat-list">
+            {chatTimeline.map((entry) => {
+              if (entry.kind === 'scene') {
+                return (
+                  <ChatPictureSceneBlock
+                    key={entry.key}
+                    articleId={articleId}
+                    state={pictureBookState}
+                    page={entry.page}
+                    onPictureBookLoaded={onPictureBookLoaded}
+                    onRetry={retryPicturePage}
+                    isRetrying={entry.page ? pictureBookRetryGate.isRetrying(articleId, entry.page.pageIndex) : false}
+                  />
+                );
+              }
+
+              const message = entry.message;
+              return (
+                <div
+                  className={`chat-bubble ${message.isAi ? 'ai-bubble' : 'user-bubble'}`}
+                  key={entry.key}
+                >
+                  {message.isAi && <img src={asset(legoMascot.idle)} alt="" />}
+                  <div>
+                    <p>{message.text}</p>
+                    {message.isAi && (
+                      <button
+                        aria-label="重播这句"
+                        disabled={['waitingStart', 'playing'].includes(message.playbackState)}
+                        onClick={() => sendNative('chat.replay', { messageId: message.id })}
+                      >
+                        <Icon name="sound" />
+                      </button>
+                    )}
+                    {message.translation && (
+                      <button
+                        className={`chat-translation ${revealedTranslations.has(message.id) ? 'revealed' : ''}`}
+                        type="button"
+                        onClick={() => {
+                          setRevealedTranslations((previous) => {
+                            const next = new Set(previous);
+                            next.add(message.id);
+                            return next;
+                          });
+                        }}
+                      >
+                        {message.translation}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
             {messages.length === 0 && (
               <div className="chat-empty">
                 <img src={asset(pngAsset.legoMonster)} alt="" />
@@ -1967,31 +2420,6 @@ function ChatPage({
             </button>
           </div>
         </main>
-
-        <aside className="chat-side-card">
-          <MascotBlinker className="chat-mascot" />
-          <div className="voice-state">
-            <WaveMini />
-            <span>{chatCue}</span>
-          </div>
-          <ProgressLine value={chatProgress} label={`对话进度 ${questionCount} / ${maxQuestions}`} />
-          {step === 'completed' && (state?.abilityLevel || state?.practiceSummary) && (
-            <div className="chat-completion-card">
-              {state?.abilityLevel && (
-                <div>
-                  <span>能力级别</span>
-                  <b>{state.abilityLevel}</b>
-                </div>
-              )}
-              {state?.practiceSummary && <p>{state.practiceSummary}</p>}
-            </div>
-          )}
-          <div className="reward-preview">
-            <span>奖励预览</span>
-            <img src={asset(pngAsset.star)} alt="" />
-            <img src={asset(pngAsset.brick)} alt="" />
-          </div>
-        </aside>
       </div>
     </section>
   );

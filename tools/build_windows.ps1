@@ -354,20 +354,8 @@ function New-WindowsReleasePackageBackup {
     return $backupDir
 }
 
-function Restore-WindowsRuntimeData {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$BackupDir,
-        [Parameter(Mandatory = $true)]
-        [string]$PackageDir
-    )
-
-    if (-not (Test-Path $BackupDir)) {
-        return @()
-    }
-
-    $restoredItems = @()
-    $runtimeDirectories = @(
+function Get-WindowsRuntimeDirectories {
+    return @(
         ".dart_tool",
         "tomato_api_cache",
         "downloads",
@@ -384,6 +372,215 @@ function Restore-WindowsRuntimeData {
         "data\user_data",
         "data\databases"
     )
+}
+
+function Get-WindowsRuntimeFiles {
+    return @(
+        "AccessKey.txt",
+        "speech-api-key.txt",
+        "settings.json"
+    )
+}
+
+function Normalize-WindowsRelativePath {
+    param(
+        [string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $normalized = $Path.Trim().Replace('/', '\')
+    while ($normalized.StartsWith('.\', [System.StringComparison]::Ordinal)) {
+        $normalized = $normalized.Substring(2)
+    }
+
+    return $normalized.TrimStart('\')
+}
+
+function Get-WindowsRelativePath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$BaseDir
+    )
+
+    return Normalize-WindowsRelativePath ([System.IO.Path]::GetRelativePath($BaseDir, $Path))
+}
+
+function Test-IsPreservedWindowsRuntimeDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $normalized = Normalize-WindowsRelativePath $RelativePath
+    foreach ($runtimePath in @(Get-WindowsRuntimeDirectories)) {
+        if ($normalized.Equals($runtimePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-HasPreservedWindowsRuntimeDescendants {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $normalized = Normalize-WindowsRelativePath $RelativePath
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return $true
+    }
+
+    $prefix = "$normalized\"
+    foreach ($runtimePath in @(Get-WindowsRuntimeDirectories) + @(Get-WindowsRuntimeFiles)) {
+        $candidate = Normalize-WindowsRelativePath $runtimePath
+        if ($candidate.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Test-IsPreservedWindowsRuntimeFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RelativePath
+    )
+
+    $normalized = Normalize-WindowsRelativePath $RelativePath
+    foreach ($runtimePath in @(Get-WindowsRuntimeFiles)) {
+        if ($normalized.Equals($runtimePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    $parentPath = [System.IO.Path]::GetDirectoryName($normalized)
+    if ([string]::IsNullOrWhiteSpace($parentPath)) {
+        return ([System.IO.Path]::GetFileName($normalized) -match '\.(db|sqlite|sqlite3)(-wal|-shm)?$')
+    }
+
+    return $false
+}
+
+function Clear-WindowsReleaseProgramFiles {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir
+    )
+
+    if (-not (Test-Path $PackageDir)) {
+        return @()
+    }
+
+    $removedItems = @()
+    foreach ($item in @(Get-ChildItem -LiteralPath $PackageDir -Force)) {
+        $relativePath = Get-WindowsRelativePath -Path $item.FullName -BaseDir $PackageDir
+
+        if ($item.PSIsContainer) {
+            if (Test-IsPreservedWindowsRuntimeDirectory -RelativePath $relativePath) {
+                continue
+            }
+
+            if (Test-HasPreservedWindowsRuntimeDescendants -RelativePath $relativePath) {
+                $removedItems += @(Clear-WindowsReleaseProgramFiles -PackageDir $item.FullName)
+                if (-not (Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                    Assert-PathInsideDirectory -Path $item.FullName -ParentPath $PackageDir
+                    Remove-Item -LiteralPath $item.FullName -Recurse -Force
+                    $removedItems += $relativePath
+                }
+                continue
+            }
+
+            Assert-PathInsideDirectory -Path $item.FullName -ParentPath $PackageDir
+            Remove-Item -LiteralPath $item.FullName -Recurse -Force
+            $removedItems += $relativePath
+            continue
+        }
+
+        if (Test-IsPreservedWindowsRuntimeFile -RelativePath $relativePath) {
+            continue
+        }
+
+        Assert-PathInsideDirectory -Path $item.FullName -ParentPath $PackageDir
+        Remove-Item -LiteralPath $item.FullName -Force
+        $removedItems += $relativePath
+    }
+
+    return $removedItems
+}
+
+function Assert-WindowsReleasePackageNotRunning {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir,
+        [Parameter(Mandatory = $true)]
+        [string]$ProcessName
+    )
+
+    if (-not (Test-Path $PackageDir)) {
+        return
+    }
+
+    $resolvedPackageDir = (Resolve-Path -LiteralPath $PackageDir).Path.TrimEnd('\')
+    $packagePrefix = "$resolvedPackageDir\"
+    $blockingProcesses = @()
+
+    foreach ($process in @(Get-Process -Name $ProcessName -ErrorAction SilentlyContinue)) {
+        $processPath = $null
+        try {
+            $processPath = $process.Path
+        } catch {
+            $processPath = $null
+        }
+
+        if ([string]::IsNullOrWhiteSpace($processPath)) {
+            continue
+        }
+
+        $resolvedProcessPath = $null
+        try {
+            $resolvedProcessPath = (Resolve-Path -LiteralPath $processPath -ErrorAction Stop).Path
+        } catch {
+            $resolvedProcessPath = $processPath
+        }
+
+        if ($resolvedProcessPath.StartsWith($packagePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $blockingProcesses += $process
+        }
+    }
+
+    if ($blockingProcesses.Count -eq 0) {
+        return
+    }
+
+    $processSummary = @(
+        $blockingProcesses |
+            ForEach-Object { "PID $($_.Id)" }
+    ) -join ', '
+    throw "发布目录正在被运行中的程序占用，请先关闭 Tomato English Happy Talking 后重试。占用进程: $processSummary"
+}
+
+function Restore-WindowsRuntimeData {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BackupDir,
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir
+    )
+
+    if (-not (Test-Path $BackupDir)) {
+        return @()
+    }
+
+    $restoredItems = @()
+    $runtimeDirectories = @(Get-WindowsRuntimeDirectories)
 
     foreach ($relativePath in $runtimeDirectories) {
         $sourcePath = Join-Path $BackupDir $relativePath
@@ -402,11 +599,7 @@ function Restore-WindowsRuntimeData {
         $restoredItems += $relativePath
     }
 
-    $runtimeFiles = @(
-        "AccessKey.txt",
-        "speech-api-key.txt",
-        "settings.json"
-    )
+    $runtimeFiles = @(Get-WindowsRuntimeFiles)
 
     foreach ($relativePath in $runtimeFiles) {
         $sourcePath = Join-Path $BackupDir $relativePath
@@ -453,23 +646,24 @@ function Publish-WindowsReleaseArtifacts {
         Remove-Item -LiteralPath $legacyPackageDir -Recurse -Force
     }
 
+    Assert-WindowsReleasePackageNotRunning -PackageDir $packageDir -ProcessName "tomato_english_happy_talking"
     if (Test-Path $packageDir) {
         Assert-PathInsideDirectory -Path $packageDir -ParentPath $releaseWindowsDir
         $packageBackupDir = New-WindowsReleasePackageBackup -PackageDir $packageDir -BackupRoot $runtimeBackupRoot
         if ($null -ne $packageBackupDir) {
             Write-Host "已备份发布目录: $packageBackupDir" -ForegroundColor Yellow
         }
-        Remove-Item -LiteralPath $packageDir -Recurse -Force
     }
 
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+    $removedItems = @(Clear-WindowsReleaseProgramFiles -PackageDir $packageDir)
+    if ($removedItems.Count -gt 0) {
+        Write-Host "已清理旧程序产物: $($removedItems.Count) 项" -ForegroundColor Yellow
+    }
     Copy-Item -Path (Join-Path $BuildOutputDir "*") -Destination $packageDir -Recurse -Force
+
     if ($null -ne $packageBackupDir -and (Test-Path $packageBackupDir)) {
-        $restoredItems = @(Restore-WindowsRuntimeData -BackupDir $packageBackupDir -PackageDir $packageDir)
-        if ($restoredItems.Count -gt 0) {
-            Write-Host "已恢复发布目录运行数据: $($restoredItems -join ', ')" -ForegroundColor Yellow
-        }
-        Write-Host "发布前完整备份保留在: $packageBackupDir" -ForegroundColor DarkGray
+        Write-Host "已保留发布目录运行数据，完整备份保留在: $packageBackupDir" -ForegroundColor DarkGray
     }
 
     Write-Host "发布目录已更新: $packageDir" -ForegroundColor Green
