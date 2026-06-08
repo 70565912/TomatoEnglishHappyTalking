@@ -1,9 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/config/app_config.dart';
+import 'api_cache_service.dart';
+import 'content_safety_service.dart';
 
 /// TTS 服务 — 直接调用火山引擎 Doubao TTS 2.0 HTTP Chunked API。
 /// 未配置或云端失败时抛出 [TtsException]，由 Provider 转成可展示的 UI 状态。
@@ -584,16 +587,38 @@ class TtsService {
   static Future<List<int>?> synthesize({
     required String text,
     String voiceType = defaultVoiceType,
+    bool preferRequestedVoice = false,
+    int? articleId,
+    String cachePurpose = 'tts',
+  }) async {
+    final path = await synthesizeToCachedFile(
+      text: text,
+      voiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
+      articleId: articleId,
+      cachePurpose: cachePurpose,
+    );
+    return await File(path).readAsBytes();
+  }
+
+  static Future<String> synthesizeToCachedFile({
+    required String text,
+    String voiceType = defaultVoiceType,
+    bool preferRequestedVoice = false,
+    int? articleId,
+    String cachePurpose = 'tts',
   }) async {
     final trimmedText = text.trim();
     if (trimmedText.isEmpty) {
       throw const TtsException('TTS 文本不能为空');
     }
-
-    final apiKey = await AppConfig.volcApiKey;
-    if (apiKey.isEmpty) {
-      throw const TtsException('本机加密配置未读取到火山引擎 API Key');
-    }
+    final requestText = (await ContentSafetyService.prepareTextForApi(
+      trimmedText,
+      serviceKind: ContentSafetyService.serviceTts,
+      purpose: cachePurpose,
+    ))
+        .trim();
+    final safeText = requestText.isEmpty ? trimmedText : requestText;
 
     final ttsResourceId = await AppConfig.volcTtsResourceId;
     if (ttsResourceId.trim().isEmpty) {
@@ -604,33 +629,95 @@ class TtsService {
     final resolvedSpeakerId = _resolveSpeakerId(
       configuredSpeakerId: configuredSpeakerId,
       requestedVoiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
     );
     if (resolvedSpeakerId.isEmpty) {
       throw const TtsException('本机加密配置未读取到 TTS 2.0 的 Speaker');
     }
 
-    final textCandidates = _synthesisTextCandidates(trimmedText);
+    final textCandidates = await Future.wait(
+      _synthesisTextCandidates(safeText).map((candidate) async {
+        final request = _cacheRequest(
+          text: candidate,
+          speakerId: resolvedSpeakerId,
+          resourceId: ttsResourceId,
+        );
+        final cacheKey = await ApiCacheService.keyForJson('tts', request);
+        return _TtsCacheCandidate(
+          text: candidate,
+          cacheKey: cacheKey,
+          request: request,
+        );
+      }),
+    );
+
+    for (final candidate in textCandidates) {
+      final cachedPath = await ApiCacheService.getFilePath(
+        candidate.cacheKey,
+        articleId: articleId,
+        purpose: cachePurpose,
+      );
+      if (cachedPath != null) {
+        _trace('cache hit key=${candidate.cacheKey} path=$cachedPath');
+        return cachedPath;
+      }
+    }
+
+    final apiKey = await AppConfig.volcTtsApiKey;
+    if (apiKey.isEmpty) {
+      throw const TtsException('未读取到 speech-api-key.txt 里的新版语音 API Key');
+    }
+
     TtsException? firstError;
     for (var i = 0; i < textCandidates.length; i++) {
       final candidate = textCandidates[i];
       try {
         if (i > 0) {
           _trace(
-            'v3 retry with readable fallback textLen=${candidate.length}',
+            'v3 retry with readable fallback textLen=${candidate.text.length}',
           );
         }
-        return await _synthesizeV3(
-          text: candidate,
+        final bytes = await _synthesizeV3(
+          text: candidate.text,
           speakerId: resolvedSpeakerId,
           apiKey: apiKey,
           resourceId: ttsResourceId,
         );
+        final filePath = await ApiCacheService.putFileBytes(
+          cacheKey: candidate.cacheKey,
+          kind: 'tts',
+          purpose: cachePurpose,
+          request: candidate.request,
+          bytes: bytes,
+          subdirectory: 'tts',
+          extension: 'mp3',
+          contentType: 'audio/mpeg',
+          articleId: articleId,
+        );
+        await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
+          serviceKind: ContentSafetyService.serviceTts,
+          purpose: cachePurpose,
+          articleId: articleId,
+          successfulText: candidate.text,
+        );
+        return filePath;
       } on TtsException catch (error) {
         firstError ??= error;
         final canRetry = i == 0 &&
             textCandidates.length > 1 &&
             _shouldRetryWithReadableFallback(error);
         if (!canRetry) {
+          final safety = ContentSafetyService.classifyFailure(error);
+          if (safety.suspectedSafetyBlock) {
+            await ContentSafetyService.recordFailure(
+              serviceKind: ContentSafetyService.serviceTts,
+              purpose: cachePurpose,
+              articleId: articleId,
+              failedText: trimmedText,
+              errorCode: safety.errorCode,
+              errorMessage: safety.message,
+            );
+          }
           rethrow;
         }
         debugPrint(
@@ -642,6 +729,23 @@ class TtsService {
 
     throw firstError ?? const TtsException('TTS 2.0 合成失败');
   }
+
+  static Map<String, dynamic> _cacheRequest({
+    required String text,
+    required String speakerId,
+    required String resourceId,
+  }) =>
+      {
+        'service': 'doubao_tts_2',
+        'endpoint': _v3Endpoint,
+        'resourceId': resourceId,
+        'speaker': speakerId,
+        'text': text,
+        'audio': {
+          'format': 'mp3',
+          'sampleRate': 24000,
+        },
+      };
 
   @visibleForTesting
   static List<String> synthesisTextCandidatesForTest(String text) =>
@@ -659,6 +763,10 @@ class TtsService {
 
   static String _normalizeTtsText(String text) => text
       .replaceAll(RegExp(r'[ \t\r\n]+'), ' ')
+      .replaceAllMapped(
+        RegExp(r'([A-Za-z])\s*-\s*([A-Za-z])'),
+        (match) => '${match.group(1)!}-${match.group(2)!}',
+      )
       .replaceAllMapped(RegExp(r'\s+([,.!?;:])'), (match) => match.group(1)!)
       .trim();
 
@@ -693,6 +801,10 @@ class TtsService {
 
     return readable
         .replaceAll(RegExp(r'[ \t\r\n]+'), ' ')
+        .replaceAllMapped(
+          RegExp(r'([A-Za-z])\s*-\s*([A-Za-z])'),
+          (match) => '${match.group(1)!}-${match.group(2)!}',
+        )
         .replaceAllMapped(RegExp(r'\s+([,.!?;:])'), (match) => match.group(1)!)
         .trim();
   }
@@ -852,10 +964,14 @@ class TtsService {
       '[TtsService] request failed: ${exception.message}; status=${exception.response?.statusCode}',
     );
 
+    final status = exception.response?.statusCode;
+    final statusPart = status == null ? '' : ' HTTP $status';
     if (serverMessage != null && serverMessage.isNotEmpty) {
-      return TtsException('TTS 网络请求失败：$serverMessage');
+      return TtsException('TTS 网络请求失败$statusPart：$serverMessage');
     }
-    return TtsException(fallbackMessage);
+    return TtsException(
+      statusPart.isEmpty ? fallbackMessage : '$fallbackMessage$statusPart',
+    );
   }
 
   static int? _parsePacketCode(Object? value) {
@@ -871,13 +987,18 @@ class TtsService {
   static String _resolveSpeakerId({
     required String configuredSpeakerId,
     required String requestedVoiceType,
+    bool preferRequestedVoice = false,
   }) {
+    final trimmedRequestedVoiceType = requestedVoiceType.trim();
+    if (preferRequestedVoice && isPresetVoice(trimmedRequestedVoiceType)) {
+      return trimmedRequestedVoiceType;
+    }
+
     final trimmedConfiguredSpeakerId = configuredSpeakerId.trim();
     if (trimmedConfiguredSpeakerId.isNotEmpty) {
       return trimmedConfiguredSpeakerId;
     }
 
-    final trimmedRequestedVoiceType = requestedVoiceType.trim();
     if (trimmedRequestedVoiceType.isEmpty) {
       return '';
     }
@@ -896,4 +1017,16 @@ class TtsService {
     }
     debugPrint('[TtsTrace] $message');
   }
+}
+
+class _TtsCacheCandidate {
+  const _TtsCacheCandidate({
+    required this.text,
+    required this.cacheKey,
+    required this.request,
+  });
+
+  final String text;
+  final String cacheKey;
+  final Map<String, dynamic> request;
 }

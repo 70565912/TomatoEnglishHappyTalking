@@ -21,6 +21,10 @@ final appRouter = GoRouter(
       builder: (context, state) => const WebShellScreen(),
     ),
     GoRoute(
+      path: '/listen/:articleId',
+      builder: (context, state) => const WebShellScreen(),
+    ),
+    GoRoute(
       path: '/chat/:articleId',
       builder: (context, state) => const WebShellScreen(),
     ),

@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,78 +9,47 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// 使用 flutter_secure_storage 加密存储在本机
 class AppConfig {
   static const _storage = FlutterSecureStorage();
-  static final _cipher = AesGcm.with256bits();
   static final Map<String, String> _runtimeSecrets = <String, String>{};
 
-  static const _encryptedApiKeyFileCandidates = [
-    'security/api-key.txt',
-    '../security/api-key.txt',
-  ];
-  static const _encryptionKeyFileCandidates = [
-    'security/api-key.key.txt',
-    '../security/api-key.key.txt',
-  ];
-  static const _maxEncryptedConfigParentSearchDepth = 8;
+  static const _maxConfigParentSearchDepth = 8;
 
   // ===== Local bootstrap via --dart-define =====
-  static const _envVolcApiKey = String.fromEnvironment('TOMATO_VOLC_API_KEY');
-  static const _envVolcTtsAppId =
-      String.fromEnvironment('TOMATO_VOLC_TTS_APP_ID');
-  static const _envVolcTtsToken =
-      String.fromEnvironment('TOMATO_VOLC_TTS_TOKEN');
-  static const _envVolcAccessKey =
-      String.fromEnvironment('TOMATO_VOLC_ACCESS_KEY');
-  static const _envVolcSecretKey =
-      String.fromEnvironment('TOMATO_VOLC_SECRET_KEY');
-  static const _envVolcTtsApiKey =
-      String.fromEnvironment('TOMATO_VOLC_TTS_API_KEY');
   static const _envVolcTtsResourceId =
       String.fromEnvironment('TOMATO_VOLC_TTS_RESOURCE_ID');
   static const _envVolcTtsSpeakerId =
       String.fromEnvironment('TOMATO_VOLC_TTS_SPEAKER_ID');
-  static const _envVolcRealtimeAppId =
-      String.fromEnvironment('TOMATO_VOLC_REALTIME_APP_ID');
-  static const _envVolcRealtimeApiKey =
-      String.fromEnvironment('TOMATO_VOLC_REALTIME_API_KEY');
-  static const _envVolcBigAsrApiKey =
-      String.fromEnvironment('TOMATO_VOLC_BIGASR_API_KEY');
+  static const _envVolcSpeechApiKey =
+      String.fromEnvironment('TOMATO_VOLC_SPEECH_API_KEY');
+  static const _envVolcArkApiKey =
+      String.fromEnvironment('TOMATO_VOLC_ARK_API_KEY');
+  static const _envVolcArkTextModel =
+      String.fromEnvironment('TOMATO_VOLC_ARK_TEXT_MODEL');
 
-  // ===== Unified Volcengine API Key =====
-  static const _volcApiKey = 'volc_api_key';
+  static const defaultVolcArkTextModel = 'doubao-seed-2-0-lite-260215';
+
+  static const _speechApiKeyFileCandidates = [
+    'speech-api-key.txt',
+    'security/speech-api-key.txt',
+    '../speech-api-key.txt',
+    '../security/speech-api-key.txt',
+  ];
+
+  static const _arkApiKeyFileCandidates = [
+    'ark.txt',
+    'security/ark.txt',
+    '../ark.txt',
+    '../security/ark.txt',
+  ];
 
   // ===== 火山引擎 TTS =====
-  static const _volcTtsAppId = 'volc_tts_appid';
-  static const _volcTtsToken = 'volc_tts_token';
-  static const _volcAccessKey = 'volc_access_key';
-  static const _volcSecretKey = 'volc_secret_key';
-  static const _volcTtsApiKey = 'volc_tts_api_key';
   static const _volcTtsResourceId = 'volc_tts_resource_id';
   static const _volcTtsSpeakerId = 'volc_tts_speaker_id';
 
   // ===== 实时语音与 BigASR =====
-  static const _volcRealtimeAppId = 'volc_realtime_app_id';
-  static const _volcRealtimeApiKey = 'volc_realtime_api_key';
-  static const _volcBigAsrApiKey = 'volc_bigasr_api_key';
+  static const _volcSpeechApiKey = 'volc_speech_api_key';
+  static const _volcArkApiKey = 'volc_ark_api_key';
+  static const _volcArkTextModel = 'volc_ark_text_model';
 
-  static Future<String> get volcApiKey async => _readFirstSecret(
-        keys: const [
-          _volcApiKey,
-          // Legacy keys are read only for older encrypted files / secure storage.
-          _volcTtsApiKey,
-          _volcRealtimeApiKey,
-          _volcBigAsrApiKey,
-          'volc_ark_api_key',
-        ],
-      );
-  static Future<String> get volcTtsAppId async =>
-      await _readSecret(key: _volcTtsAppId);
-  static Future<String> get volcTtsToken async =>
-      await _readSecret(key: _volcTtsToken);
-  static Future<String> get volcAccessKey async =>
-      await _readSecret(key: _volcAccessKey);
-  static Future<String> get volcSecretKey async =>
-      await _readSecret(key: _volcSecretKey);
-  static Future<String> get volcTtsApiKey async => await volcApiKey;
   static Future<String> get volcTtsResourceId async =>
       await _readSecret(key: _volcTtsResourceId, defaultValue: 'seed-tts-2.0');
   static Future<String> get volcTtsSpeakerId async {
@@ -93,69 +61,287 @@ class AppConfig {
     return _runtimeSecrets[_volcTtsSpeakerId]?.trim() ?? '';
   }
 
-  static Future<String> get volcRealtimeAppId async =>
-      await _readSecret(key: _volcRealtimeAppId);
-  static Future<String> get volcRealtimeApiKey async => await volcApiKey;
+  static Future<String> get volcSpeechApiKey async {
+    final speechApiKeyFile = _findExistingFile(_speechApiKeyFileCandidates);
+    if (speechApiKeyFile != null) {
+      try {
+        final value =
+            _parseSpeechApiKeyFile(await speechApiKeyFile.readAsString());
+        if (value.isNotEmpty) {
+          return value;
+        }
+      } catch (e) {
+        debugPrint('[AppConfig] speech-api-key.txt read failed: $e');
+      }
+    }
 
-  static Future<String> get volcBigAsrApiKey async => await volcApiKey;
+    final envValue = _envVolcSpeechApiKey.trim();
+    if (envValue.isNotEmpty) {
+      return envValue;
+    }
+
+    return _readSecret(key: _volcSpeechApiKey);
+  }
+
+  static Future<String> get volcTtsApiKey async => await volcSpeechApiKey;
+
+  static Future<String> get volcRealtimeApiKey async => await volcSpeechApiKey;
+
+  static Future<String> get volcBigAsrApiKey async => await volcSpeechApiKey;
+
+  static Future<String> get volcArkTextApiKey async {
+    final arkApiKeyFile = _findExistingFile(_arkApiKeyFileCandidates);
+    if (arkApiKeyFile != null) {
+      try {
+        final value = _parseArkApiKeyFile(await arkApiKeyFile.readAsString());
+        if (value.isNotEmpty) {
+          return value;
+        }
+      } catch (e) {
+        debugPrint('[AppConfig] ark.txt read failed: $e');
+      }
+    }
+
+    final envValue = _envVolcArkApiKey.trim();
+    if (envValue.isNotEmpty) {
+      return _stripBearerPrefix(envValue);
+    }
+
+    return _readSecret(key: _volcArkApiKey);
+  }
+
+  static Future<String> get volcArkTextModel async {
+    final arkApiKeyFile = _findExistingFile(_arkApiKeyFileCandidates);
+    if (arkApiKeyFile != null) {
+      try {
+        final value =
+            _parseArkTextModelFile(await arkApiKeyFile.readAsString());
+        if (value.isNotEmpty) {
+          return value;
+        }
+      } catch (e) {
+        debugPrint('[AppConfig] ark.txt model read failed: $e');
+      }
+    }
+
+    final envValue = _envVolcArkTextModel.trim();
+    if (envValue.isNotEmpty) {
+      return envValue;
+    }
+
+    final stored = await _readSecret(key: _volcArkTextModel);
+    return stored.isNotEmpty ? stored : defaultVolcArkTextModel;
+  }
+
+  static Future<String> get volcArkImageApiKey async {
+    final arkApiKeyFile = _findExistingFile(_arkApiKeyFileCandidates);
+    if (arkApiKeyFile != null) {
+      try {
+        final value = _parseArkApiKeyFile(await arkApiKeyFile.readAsString());
+        if (value.isNotEmpty) {
+          return value;
+        }
+      } catch (e) {
+        debugPrint('[AppConfig] ark.txt image key read failed: $e');
+      }
+    }
+
+    final envValue = _envVolcArkApiKey.trim();
+    if (envValue.isNotEmpty) {
+      return _stripBearerPrefix(envValue);
+    }
+
+    return _readSecret(key: _volcArkApiKey);
+  }
+
+  static String _parseSpeechApiKeyFile(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        return _firstNonEmpty([
+          decoded['X-Api-Key']?.toString(),
+          decoded['x_api_key']?.toString(),
+          decoded['speech_api_key']?.toString(),
+          decoded['volc_speech_api_key']?.toString(),
+          decoded['api_key']?.toString(),
+          decoded['apiKey']?.toString(),
+        ]);
+      }
+    } catch (_) {
+      // Plain text is the common local format.
+    }
+
+    final labeledPattern = RegExp(
+      r'^\s*(?:X-Api-Key|SPEECH_API_KEY|TOMATO_VOLC_SPEECH_API_KEY|volc_speech_api_key|api[_ -]?key)\s*[:=]\s*(.+?)\s*$',
+      caseSensitive: false,
+    );
+    final values = <String>[];
+    for (final rawLine in trimmed.split(RegExp(r'[\r\n]+'))) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) {
+        continue;
+      }
+      final match = labeledPattern.firstMatch(line);
+      if (match != null) {
+        return match.group(1)?.trim() ?? '';
+      }
+      values.add(line);
+    }
+    if (values.isEmpty) {
+      return '';
+    }
+
+    final uuidLike = values.where((value) {
+      return RegExp(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        caseSensitive: false,
+      ).hasMatch(value);
+    }).toList(growable: false);
+    if (uuidLike.isNotEmpty) {
+      return uuidLike.first;
+    }
+
+    final longValues =
+        values.where((value) => value.length >= 32).toList(growable: false);
+    if (longValues.isNotEmpty) {
+      return longValues.first;
+    }
+
+    return values.first;
+  }
+
+  static String _parseArkApiKeyFile(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        return _stripBearerPrefix(
+          _firstNonEmpty([
+            decoded['ARK_API_KEY']?.toString(),
+            decoded['TOMATO_VOLC_ARK_API_KEY']?.toString(),
+            decoded['volc_ark_api_key']?.toString(),
+            decoded['api_key']?.toString(),
+            decoded['apiKey']?.toString(),
+          ]),
+        );
+      }
+    } catch (_) {
+      // Plain text and key:value lines are the common local formats.
+    }
+
+    final labeledPattern = RegExp(
+      r'^(?:ARK_API_KEY|TOMATO_VOLC_ARK_API_KEY|volc_ark_api_key|api[_ -]?key)\s*[:=]\s*(.+)$',
+      caseSensitive: false,
+    );
+    final unlabeledValues = <String>[];
+    for (final rawLine in trimmed.split(RegExp(r'[\r\n]+'))) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) {
+        continue;
+      }
+      final match = labeledPattern.firstMatch(line);
+      if (match != null) {
+        return _stripBearerPrefix(match.group(1) ?? '');
+      }
+      if (RegExp(r'^[A-Za-z_][A-Za-z0-9_\- ]*\s*[:=]').hasMatch(line)) {
+        continue;
+      }
+      unlabeledValues.add(line);
+    }
+
+    if (RegExp(
+      r'AccessKeyId|SecretAccessKey',
+      caseSensitive: false,
+    ).hasMatch(trimmed)) {
+      return '';
+    }
+
+    if (unlabeledValues.isEmpty) {
+      return '';
+    }
+    if (unlabeledValues.length == 1) {
+      return _stripBearerPrefix(unlabeledValues.first);
+    }
+
+    final longValues = unlabeledValues
+        .where((value) => value.length >= 32)
+        .toList(growable: false)
+      ..sort((left, right) => right.length.compareTo(left.length));
+    if (longValues.isNotEmpty) {
+      return _stripBearerPrefix(longValues.first);
+    }
+    return '';
+  }
+
+  static String _parseArkTextModelFile(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map) {
+        return _firstNonEmpty([
+          decoded['ARK_TEXT_MODEL']?.toString(),
+          decoded['TOMATO_VOLC_ARK_TEXT_MODEL']?.toString(),
+          decoded['volc_ark_text_model']?.toString(),
+          decoded['model']?.toString(),
+        ]).trim();
+      }
+    } catch (_) {
+      // Plain text and key:value lines are the common local formats.
+    }
+
+    final labeledPattern = RegExp(
+      r'^(?:ARK_TEXT_MODEL|TOMATO_VOLC_ARK_TEXT_MODEL|volc_ark_text_model|model)\s*[:=]\s*(.+)$',
+      caseSensitive: false,
+    );
+    for (final rawLine in trimmed.split(RegExp(r'[\r\n]+'))) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) {
+        continue;
+      }
+      final match = labeledPattern.firstMatch(line);
+      if (match != null) {
+        return match.group(1)?.trim() ?? '';
+      }
+    }
+    return '';
+  }
+
+  static String _stripBearerPrefix(String value) {
+    return value
+        .trim()
+        .replaceFirst(RegExp(r'^Bearer\s+', caseSensitive: false), '')
+        .trim();
+  }
 
   static Future<void> seedSecureStorageFromEnvironment() async {
     try {
-      await _writeIfProvided(key: _volcTtsAppId, value: _envVolcTtsAppId);
-      await _writeIfProvided(key: _volcTtsToken, value: _envVolcTtsToken);
-      await _writeIfProvided(key: _volcAccessKey, value: _envVolcAccessKey);
-      await _writeIfProvided(key: _volcSecretKey, value: _envVolcSecretKey);
-      await _writeIfProvided(
-        key: _volcApiKey,
-        value: _firstNonEmpty([
-          _envVolcApiKey,
-          _envVolcTtsApiKey,
-          _envVolcRealtimeApiKey,
-          _envVolcBigAsrApiKey,
-        ]),
-      );
       await _writeIfProvided(
           key: _volcTtsResourceId, value: _envVolcTtsResourceId);
       await _writeIfProvided(
           key: _volcTtsSpeakerId, value: _envVolcTtsSpeakerId);
       await _writeIfProvided(
-          key: _volcRealtimeAppId, value: _envVolcRealtimeAppId);
+        key: _volcSpeechApiKey,
+        value: _envVolcSpeechApiKey,
+      );
+      await _writeIfProvided(key: _volcArkApiKey, value: _envVolcArkApiKey);
+      await _writeIfProvided(
+          key: _volcArkTextModel, value: _envVolcArkTextModel);
     } catch (e) {
       debugPrint('[AppConfig] secure storage bootstrap failed: $e');
     }
-  }
-
-  static Future<void> seedSecureStorageFromEncryptedFile() async {
-    try {
-      final encryptedFile = _findExistingFile(_encryptedApiKeyFileCandidates);
-      final keyFile = _findExistingFile(_encryptionKeyFileCandidates);
-      if (encryptedFile == null || keyFile == null) {
-        return;
-      }
-
-      final encryptedContent = await encryptedFile.readAsString();
-      final keyContent = await keyFile.readAsString();
-      final decryptedJson = await _decryptJsonPayload(
-        encryptedJsonText: encryptedContent,
-        base64KeyText: keyContent,
-      );
-
-      await _seedFromEncryptedMap(decryptedJson);
-    } catch (e) {
-      debugPrint('[AppConfig] encrypted file bootstrap failed: $e');
-    }
-  }
-
-  static Future<void> saveVolcTts({
-    required String appId,
-    required String token,
-    required String ak,
-    required String sk,
-  }) async {
-    await _storage.write(key: _volcTtsAppId, value: appId);
-    await _storage.write(key: _volcTtsToken, value: token);
-    await _storage.write(key: _volcAccessKey, value: ak);
-    await _storage.write(key: _volcSecretKey, value: sk);
   }
 
   static Future<void> saveVolcTtsV3({
@@ -163,7 +349,7 @@ class AppConfig {
     String resourceId = 'seed-tts-2.0',
     String speakerId = '',
   }) async {
-    await _writeIfProvided(key: _volcApiKey, value: apiKey);
+    await _writeIfProvided(key: _volcSpeechApiKey, value: apiKey);
     await _storage.write(key: _volcTtsResourceId, value: resourceId);
     await _storage.write(key: _volcTtsSpeakerId, value: speakerId);
     _runtimeSecrets[_volcTtsSpeakerId] = speakerId.trim();
@@ -175,22 +361,10 @@ class AppConfig {
     _runtimeSecrets[_volcTtsSpeakerId] = trimmedSpeakerId;
   }
 
-  static Future<void> saveVolcRealtime({
-    String apiKey = '',
-    String accessKey = '',
-    String appId = '',
-  }) async {
-    final resolvedAccessKey =
-        accessKey.trim().isNotEmpty ? accessKey.trim() : apiKey.trim();
-
-    await _writeIfProvided(key: _volcApiKey, value: resolvedAccessKey);
-    await _storage.write(key: _volcRealtimeAppId, value: appId.trim());
-  }
-
   static Future<void> saveVolcBigAsr({
     required String apiKey,
   }) async {
-    await _writeIfProvided(key: _volcApiKey, value: apiKey);
+    await _writeIfProvided(key: _volcSpeechApiKey, value: apiKey);
   }
 
   static Future<void> _writeIfProvided({
@@ -212,7 +386,7 @@ class AppConfig {
 
   static File? _findExistingFile(List<String> filePathCandidates) {
     final checkedPaths = <String>{};
-    for (final file in _encryptedConfigFileCandidates(filePathCandidates)) {
+    for (final file in _configFileCandidates(filePathCandidates)) {
       if (!checkedPaths.add(file.absolute.path)) {
         continue;
       }
@@ -228,7 +402,7 @@ class AppConfig {
   static File? findExistingFileForTest(List<String> filePathCandidates) =>
       _findExistingFile(filePathCandidates);
 
-  static Iterable<File> _encryptedConfigFileCandidates(
+  static Iterable<File> _configFileCandidates(
     List<String> filePathCandidates,
   ) sync* {
     for (final path in filePathCandidates) {
@@ -268,9 +442,7 @@ class AppConfig {
 
   static Iterable<Directory> _selfAndParents(Directory start) sync* {
     var directory = start.absolute;
-    for (var depth = 0;
-        depth <= _maxEncryptedConfigParentSearchDepth;
-        depth += 1) {
+    for (var depth = 0; depth <= _maxConfigParentSearchDepth; depth += 1) {
       yield directory;
       final parent = directory.parent.absolute;
       if (parent.path == directory.path) {
@@ -290,74 +462,6 @@ class AppConfig {
     return '$basePath$separator$normalizedChild';
   }
 
-  static Future<Map<String, dynamic>> _decryptJsonPayload({
-    required String encryptedJsonText,
-    required String base64KeyText,
-  }) async {
-    final encryptedMap = jsonDecode(encryptedJsonText);
-    if (encryptedMap is! Map<String, dynamic>) {
-      throw const FormatException('Encrypted API payload must be JSON object');
-    }
-
-    final nonceText = encryptedMap['nonce'];
-    final cipherText = encryptedMap['cipherText'];
-    final macText = encryptedMap['mac'];
-
-    if (nonceText is! String || cipherText is! String || macText is! String) {
-      throw const FormatException(
-          'Encrypted API payload missing nonce/cipherText/mac');
-    }
-
-    final keyText = base64KeyText.trim();
-    final secretKey = SecretKey(base64Decode(keyText));
-    final secretBox = SecretBox(
-      base64Decode(cipherText),
-      nonce: base64Decode(nonceText),
-      mac: Mac(base64Decode(macText)),
-    );
-
-    final clearTextBytes = await _cipher.decrypt(
-      secretBox,
-      secretKey: secretKey,
-    );
-    final clearText = utf8.decode(clearTextBytes);
-    final clearMap = jsonDecode(clearText);
-
-    if (clearMap is! Map<String, dynamic>) {
-      throw const FormatException('Decrypted API payload must be JSON object');
-    }
-
-    return clearMap;
-  }
-
-  static Future<void> _seedFromEncryptedMap(
-      Map<String, dynamic> decryptedMap) async {
-    final unifiedApiKey = _firstNonEmpty([
-      decryptedMap['volc_api_key'] as String?,
-      // Legacy encrypted payload fields. New files should only write volc_api_key.
-      decryptedMap['volc_tts_api_key'] as String?,
-      decryptedMap['volc_realtime_api_key'] as String?,
-      decryptedMap['volc_bigasr_api_key'] as String?,
-      decryptedMap['volc_ark_api_key'] as String?,
-    ]);
-    _setRuntimeSecretIfProvided(key: _volcApiKey, value: unifiedApiKey);
-
-    final volcTtsResourceId =
-        (decryptedMap['volc_tts_resource_id'] as String?) ?? '';
-    _setRuntimeSecretIfProvided(
-        key: _volcTtsResourceId, value: volcTtsResourceId);
-
-    final volcTtsSpeakerId =
-        (decryptedMap['volc_tts_speaker_id'] as String?) ?? '';
-    _setRuntimeSecretIfProvided(
-        key: _volcTtsSpeakerId, value: volcTtsSpeakerId);
-
-    final volcRealtimeAppId =
-        (decryptedMap['volc_realtime_app_id'] as String?) ?? '';
-    _setRuntimeSecretIfProvided(
-        key: _volcRealtimeAppId, value: volcRealtimeAppId);
-  }
-
   static Future<String> _readSecret({
     required String key,
     String defaultValue = '',
@@ -371,27 +475,6 @@ class AppConfig {
     return storageValue.isNotEmpty ? storageValue : defaultValue;
   }
 
-  static Future<String> _readFirstSecret({
-    required List<String> keys,
-    String defaultValue = '',
-  }) async {
-    for (final key in keys) {
-      final runtimeValue = _runtimeSecrets[key]?.trim();
-      if (runtimeValue != null && runtimeValue.isNotEmpty) {
-        return runtimeValue;
-      }
-    }
-
-    for (final key in keys) {
-      final storageValue = await _readStorageSecret(key: key);
-      if (storageValue.isNotEmpty) {
-        return storageValue;
-      }
-    }
-
-    return defaultValue;
-  }
-
   static Future<String> _readStorageSecret({required String key}) async {
     try {
       return (await _storage.read(key: key))?.trim() ?? '';
@@ -400,18 +483,6 @@ class AppConfig {
       debugPrint('[AppConfig] secure storage read failed for $key: $message');
       return '';
     }
-  }
-
-  static void _setRuntimeSecretIfProvided({
-    required String key,
-    required String value,
-  }) {
-    final trimmedValue = value.trim();
-    if (trimmedValue.isEmpty) {
-      return;
-    }
-
-    _runtimeSecrets[key] = trimmedValue;
   }
 
   static String _firstNonEmpty(List<String?> values) {
@@ -426,9 +497,8 @@ class AppConfig {
   }
 }
 
-/// Riverpod provider — 判断是否已配置统一 API Key
+/// Riverpod provider — 判断是否已配置新版语音 API Key
 final configReadyProvider = FutureProvider<bool>((ref) async {
-  final legacyToken = await AppConfig.volcTtsToken;
-  final apiKey = await AppConfig.volcApiKey;
-  return legacyToken.isNotEmpty || apiKey.isNotEmpty;
+  final apiKey = await AppConfig.volcSpeechApiKey;
+  return apiKey.isNotEmpty;
 });

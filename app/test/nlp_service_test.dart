@@ -2,9 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tomato_english_happy_talking/services/nlp_service.dart';
 
 void main() {
-  int wordCount(String text) =>
-      text.split(RegExp(r'\s+')).where((word) => word.trim().isNotEmpty).length;
-
   group('NlpService.splitSentences', () {
     test('returns empty list for empty text', () {
       expect(NlpService.splitSentences('   \n\t  '), isEmpty);
@@ -22,25 +19,36 @@ void main() {
       );
     });
 
-    test('splits long sentences into standard reading chunks', () {
+    test('splits long natural sentences into read-aloud chunks', () {
       final chunks = NlpService.splitSentences(
         'Tom walks into the bright library, finds a tiny blue robot beside the big window, and asks it to help him read a funny story before lunch.',
       );
 
       expect(chunks.length, greaterThan(1));
-      expect(chunks.every((chunk) => wordCount(chunk) <= 18), isTrue);
-      expect(chunks.every((chunk) => chunk.length <= 106), isTrue);
+      expect(chunks.every((chunk) => chunk.split(RegExp(r'\s+')).length <= 22),
+          isTrue);
     });
 
-    test('uses comma and connector boundaries for long read-aloud text', () {
+    test('splits long sentences at safe commas and connectors', () {
       final chunks = NlpService.splitSentences(
         'The rocket jumps over the moon, then turns around slowly, because Tom wants everyone to see the shiny snack box before the team goes home.',
       );
 
-      expect(chunks.length, greaterThan(1));
-      expect(
-          chunks.first.endsWith(',') || chunks.first.contains(' then'), isTrue);
-      expect(chunks.every((chunk) => wordCount(chunk) <= 18), isTrue);
+      expect(chunks, [
+        'The rocket jumps over the moon,',
+        'then turns around slowly, because Tom wants everyone to see the shiny snack box before the team goes home.',
+      ]);
+    });
+
+    test('keeps hyphenated words joined for read-aloud text', () {
+      final chunks = NlpService.splitSentences(
+        'The well - known mother - in - law smiles at the child.',
+      );
+      final joined = chunks.join(' ');
+
+      expect(joined, contains('well-known'));
+      expect(joined, contains('mother-in-law'));
+      expect(joined, isNot(contains('well - known')));
     });
 
     test('does not split common abbreviations into standalone chunks', () {
@@ -82,6 +90,67 @@ void main() {
       expect(chunks.last, startsWith('A large rose-tree stood'));
       expect(chunks.join(' '), isNot(contains('Croquet - Ground')));
       expect(chunks.join(' '), isNot(contains('Episod 62')));
+    });
+
+    test('splits Alice Mad Tea-Party natural sentences into phrase chunks', () {
+      final chunks = NlpService.splitSentences(
+        'A Mad Tea-Party\n'
+        'There was a table set out under a tree in front of the house, '
+        'and the March Hare and the Hatter were having tea at it: '
+        'a Dormouse was sitting between them, fast asleep, and '
+        'the other two were using it as a cushion, resting their elbows on it, '
+        'and talking over its head.\n'
+        '"Very uncomfortable for the Dormouse," thought Alice: '
+        '"only as it\'s asleep, I suppose it doesn\'t mind."\n'
+        'The table was a large one, but the three were all crowded together at '
+        'one corner of it: "No room! No room!" they cried out when they saw '
+        'Alice coming.',
+      );
+
+      expect(chunks, [
+        'There was a table set out under a tree in front of the house,',
+        'and the March Hare and the Hatter were having tea at it:',
+        'a Dormouse was sitting between them, fast asleep,',
+        'and the other two were using it as a cushion,',
+        'resting their elbows on it,',
+        'and talking over its head.',
+        '"Very uncomfortable for the Dormouse," thought Alice:',
+        '"only as it\'s asleep, I suppose it doesn\'t mind."',
+        'The table was a large one,',
+        'but the three were all crowded together at one corner of it:',
+        '"No room! No room!" they cried out when they saw Alice coming.',
+      ]);
+      expect(chunks.join(' '), isNot(contains('A Mad Tea-Party')));
+    });
+
+    test('splits direct speech when a quote follows a phrase without colon',
+        () {
+      final chunks = NlpService.splitSentences(
+        'The table was a large one, but the three were all crowded together at '
+        'one corner of it "No room! No room!" they cried out when they saw '
+        'Alice coming.',
+      );
+
+      expect(chunks, [
+        'The table was a large one,',
+        'but the three were all crowded together at one corner of it',
+        '"No room! No room!" they cried out when they saw Alice coming.',
+      ]);
+    });
+
+    test('keeps direct command together after an em dash', () {
+      final chunks = NlpService.splitSentences(
+        '"The Queen will hear you! You see she came rather late, and the Queen said—" '
+        '"Get to your places!" shouted the Queen in a voice of thunder, and people began running about in all directions.',
+      );
+
+      expect(chunks, isNot(contains('"Get')));
+      expect(
+        chunks,
+        contains(
+          '"Get to your places!" shouted the Queen in a voice of thunder,',
+        ),
+      );
     });
   });
 }

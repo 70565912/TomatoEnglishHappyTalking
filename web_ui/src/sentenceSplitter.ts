@@ -1,9 +1,3 @@
-const TARGET_MIN_WORDS = 8;
-const TARGET_MAX_WORDS = 14;
-const HARD_MAX_WORDS = 16;
-const HARD_MAX_CHARS = 90;
-const MIN_TAIL_WORDS = 4;
-
 const ABBREVIATIONS = new Set([
   'mr',
   'mrs',
@@ -40,31 +34,13 @@ const ABBREVIATIONS = new Set([
   'st',
 ]);
 
-const CONNECTORS = new Set([
-  'and',
-  'but',
-  'or',
-  'so',
-  'then',
-  'because',
-  'when',
-  'while',
-  'after',
-  'before',
-  'if',
-  'that',
-  'which',
-  'who',
-  'where',
-]);
-
 export function splitSentences(text: string): string[] {
   const cleaned = normalizeArticleText(text);
   if (!cleaned) return [];
 
   return splitSentenceCandidates(cleaned)
-    .flatMap(splitReadingChunks)
-    .map((chunk) => chunk.trim())
+    .flatMap(splitLongReadAloudChunk)
+    .map((sentence) => sentence.trim())
     .filter(Boolean);
 }
 
@@ -75,9 +51,15 @@ function normalizeArticleText(text: string): string {
     .filter((line) => line.length > 0 && !isImportedHeadingLine(line))
     .map(stripCjkPrefix)
     .filter((line) => line.length > 0 && !isImportedHeadingLine(line))
+    .map(normalizeInWordHyphens)
     .join(' ')
     .replace(/[ \t\r\n]+/g, ' ')
+    .replace(/([A-Za-z])\s*-\s*([A-Za-z])/g, '$1-$2')
     .trim();
+}
+
+function normalizeInWordHyphens(text: string): string {
+  return text.replace(/([A-Za-z])\s*-\s*([A-Za-z])/g, '$1-$2');
 }
 
 function isImportedHeadingLine(line: string): boolean {
@@ -99,7 +81,41 @@ function isImportedHeadingLine(line: string): boolean {
   if (isChapterHeading) return true;
 
   const looksLikeTitle = wordCount <= 7 && !isSentenceLike && /\s-\s/.test(normalized);
-  return looksLikeTitle;
+  if (looksLikeTitle) return true;
+
+  return looksLikeStandaloneTitle(normalized, wordCount, isSentenceLike);
+}
+
+function looksLikeStandaloneTitle(line: string, wordCount: number, isSentenceLike: boolean): boolean {
+  if (isSentenceLike || wordCount < 2 || wordCount > 7) return false;
+  if (/[,;:!?。！？]/.test(line)) return false;
+
+  const tokens = line.match(/[A-Za-z][A-Za-z'’-]*(?:-[A-Za-z][A-Za-z'’-]*)*/g) ?? [];
+  if (tokens.length !== wordCount) return false;
+
+  return tokens.every(isTitleWord);
+}
+
+function isTitleWord(token: string): boolean {
+  const normalized = token.toLowerCase();
+  const smallTitleWords = new Set([
+    'a',
+    'an',
+    'and',
+    'as',
+    'at',
+    'by',
+    'for',
+    'from',
+    'in',
+    'of',
+    'on',
+    'or',
+    'the',
+    'to',
+    'with',
+  ]);
+  return smallTitleWords.has(normalized) || /^[A-Z]/.test(token);
 }
 
 function stripCjkPrefix(line: string): string {
@@ -127,8 +143,13 @@ function splitSentenceCandidates(cleaned: string): string[] {
       lookahead += 1;
     }
 
+    const currentWithClosers = buffer.trim();
+    if (shouldKeepReadingThroughSentenceEnd(currentWithClosers, cleaned, lookahead)) {
+      continue;
+    }
+
     if (lookahead >= cleaned.length || /\s/.test(cleaned[lookahead])) {
-      const sentence = buffer.trim();
+      const sentence = currentWithClosers;
       if (sentence) candidates.push(sentence);
       buffer = '';
 
@@ -144,92 +165,144 @@ function splitSentenceCandidates(cleaned: string): string[] {
   return candidates.length > 0 ? candidates : [cleaned];
 }
 
-function splitReadingChunks(sentence: string): string[] {
-  const tokens = words(sentence);
-  if (tokens.length === 0) return [];
-  if (tokens.length <= HARD_MAX_WORDS && sentence.length <= HARD_MAX_CHARS) {
-    return [sentence.trim()];
-  }
+type BreakKind = 'strong' | 'comma';
+
+type PhraseBreak = {
+  index: number;
+  kind: BreakKind;
+};
+
+const TARGET_PHRASE_MIN_WORDS = 8;
+const TARGET_PHRASE_MAX_WORDS = 16;
+const HARD_PHRASE_MAX_WORDS = 22;
+const SHORT_CONNECTOR_MIN_WORDS = 5;
+
+function splitLongReadAloudChunk(sentence: string): string[] {
+  const trimmed = sentence.trim();
+  if (!trimmed) return [trimmed];
 
   const chunks: string[] = [];
   let start = 0;
-  while (start < tokens.length) {
-    const end = chooseChunkEnd(tokens, start);
-    chunks.push(tokens.slice(start, end).join(' ').trim());
-    start = end;
+
+  while (start < trimmed.length) {
+    const rest = trimmed.slice(start).trimStart();
+    start += trimmed.slice(start).length - rest.length;
+    if (!rest) break;
+
+    const restWordCount = words(rest).length;
+    const optionalBreak = chooseOptionalPhraseBreak(trimmed, start);
+    if (restWordCount <= HARD_PHRASE_MAX_WORDS && optionalBreak == null) {
+      chunks.push(rest);
+      break;
+    }
+
+    const breakIndex =
+      restWordCount <= HARD_PHRASE_MAX_WORDS && optionalBreak != null
+        ? optionalBreak
+        : choosePhraseBreak(trimmed, start);
+    if (breakIndex <= start || breakIndex >= trimmed.length) {
+      chunks.push(rest);
+      break;
+    }
+
+    const chunk = trimmed.slice(start, breakIndex).trim();
+    if (chunk) chunks.push(chunk);
+    start = breakIndex;
   }
 
-  return mergeTinyChunks(chunks);
+  return chunks.length > 0 ? chunks : [trimmed];
 }
 
-function chooseChunkEnd(tokens: string[], start: number): number {
-  const remaining = tokens.length - start;
-  const remainingText = tokens.slice(start).join(' ');
-  if (remaining <= HARD_MAX_WORDS && remainingText.length <= HARD_MAX_CHARS) {
-    return tokens.length;
+function chooseOptionalPhraseBreak(text: string, start: number): number | null {
+  for (const phraseBreak of phraseBreaks(text, start)) {
+    const current = text.slice(start, phraseBreak.index).trim();
+    const count = words(current).length;
+    const remaining = words(text.slice(phraseBreak.index).trim()).length;
+    if (remaining < 4) continue;
+
+    if (phraseBreak.kind === 'strong' && count >= SHORT_CONNECTOR_MIN_WORDS) {
+      return phraseBreak.index;
+    }
+    if (count >= TARGET_PHRASE_MIN_WORDS && count <= TARGET_PHRASE_MAX_WORDS) {
+      return phraseBreak.index;
+    }
+    if (
+      count >= SHORT_CONNECTOR_MIN_WORDS &&
+      nextChunkStartsWithConnector(text, phraseBreak.index)
+    ) {
+      return phraseBreak.index;
+    }
   }
+  return null;
+}
 
-  const hardEnd = Math.min(start + HARD_MAX_WORDS, tokens.length);
-  const minEnd = Math.min(start + TARGET_MIN_WORDS, tokens.length);
+function choosePhraseBreak(text: string, start: number): number {
+  const breaks = phraseBreaks(text, start);
+  let fallbackBeforeHard: PhraseBreak | null = null;
 
-  for (let end = hardEnd; end > minEnd; end -= 1) {
-    if (chunkText(tokens, start, end).length > HARD_MAX_CHARS) continue;
-    if (isClauseBreak(tokens[end - 1])) return avoidTinyTail(tokens, start, end);
-  }
+  for (const phraseBreak of breaks) {
+    const current = text.slice(start, phraseBreak.index).trim();
+    const count = words(current).length;
+    if (count > HARD_PHRASE_MAX_WORDS) break;
+    fallbackBeforeHard = phraseBreak;
 
-  for (let end = Math.min(start + TARGET_MAX_WORDS, tokens.length); end > minEnd; end -= 1) {
-    if (chunkText(tokens, start, end).length > HARD_MAX_CHARS) continue;
-    if (end < tokens.length && isConnector(tokens[end])) return avoidTinyTail(tokens, start, end);
-    if (isConnector(tokens[end - 1]) && end - start > TARGET_MIN_WORDS) {
-      return avoidTinyTail(tokens, start, end);
+    if (phraseBreak.kind === 'strong' && count >= SHORT_CONNECTOR_MIN_WORDS) {
+      return phraseBreak.index;
+    }
+    if (count >= TARGET_PHRASE_MIN_WORDS && count <= TARGET_PHRASE_MAX_WORDS) {
+      return phraseBreak.index;
+    }
+    if (
+      count >= SHORT_CONNECTOR_MIN_WORDS &&
+      nextChunkStartsWithConnector(text, phraseBreak.index)
+    ) {
+      return phraseBreak.index;
     }
   }
 
-  let end = Math.min(start + TARGET_MAX_WORDS, tokens.length);
-  while (end > minEnd && chunkText(tokens, start, end).length > HARD_MAX_CHARS) {
-    end -= 1;
-  }
-  if (end <= start) return Math.min(start + HARD_MAX_WORDS, tokens.length);
-  return avoidTinyTail(tokens, start, end);
+  if (fallbackBeforeHard) return fallbackBeforeHard.index;
+  return wordBoundaryAfterWords(text, start, TARGET_PHRASE_MAX_WORDS);
 }
 
-function avoidTinyTail(tokens: string[], start: number, end: number): number {
-  const tailWords = tokens.length - end;
-  if (tailWords === 0 || tailWords >= MIN_TAIL_WORDS) return end;
-
-  const expandedText = chunkText(tokens, start, tokens.length);
-  if (tokens.length - start <= HARD_MAX_WORDS + 2 && expandedText.length <= HARD_MAX_CHARS + 16) {
-    return tokens.length;
-  }
-
-  const shortened = Math.max(start + TARGET_MIN_WORDS, end - (MIN_TAIL_WORDS - tailWords));
-  return shortened > start ? shortened : end;
-}
-
-function mergeTinyChunks(chunks: string[]): string[] {
-  const merged: string[] = [];
-  chunks.forEach((chunk) => {
-    if (merged.length > 0 && words(chunk).length < MIN_TAIL_WORDS) {
-      const previous = merged.pop() ?? '';
-      const joined = `${previous} ${chunk}`.trim();
-      if (words(joined).length <= HARD_MAX_WORDS + 2 && joined.length <= HARD_MAX_CHARS + 16) {
-        merged.push(joined);
-        return;
-      }
-      merged.push(previous, chunk);
-      return;
+function phraseBreaks(text: string, start: number): PhraseBreak[] {
+  const breaks: PhraseBreak[] = [];
+  for (let index = start; index < text.length; index += 1) {
+    const ch = text[index];
+    if (ch === ';' || ch === ':' || ch === '—' || ch === '–') {
+      breaks.push({ index: consumeClosingPunctuation(text, index + 1), kind: 'strong' });
+      continue;
     }
-    merged.push(chunk);
-  });
-  return merged;
+    if (ch === ',' && !hasUnclosedDoubleQuote(text.slice(start, index + 1))) {
+      breaks.push({ index: consumeClosingPunctuation(text, index + 1), kind: 'comma' });
+    }
+  }
+  return breaks;
+}
+
+function consumeClosingPunctuation(text: string, index: number): number {
+  let cursor = index;
+  while (cursor < text.length && isClosingPunctuation(text[cursor])) {
+    cursor += 1;
+  }
+  return cursor;
+}
+
+function nextChunkStartsWithConnector(text: string, index: number): boolean {
+  const rest = text.slice(index).trimStart();
+  return /^(?:and|but|or|so|for|yet|then|because|while|when|as|though|although|which|who|that)\b/i.test(rest);
+}
+
+function wordBoundaryAfterWords(text: string, start: number, count: number): number {
+  const matches = [...text.slice(start).matchAll(/[A-Za-z][A-Za-z'’-]*(?:-[A-Za-z][A-Za-z'’-]*)*/g)];
+  if (matches.length <= count) return text.length;
+  const match = matches[count - 1];
+  const end = start + (match.index ?? 0) + match[0].length;
+  const nextSpace = text.indexOf(' ', end);
+  return nextSpace > end ? nextSpace : end;
 }
 
 function words(text: string): string[] {
   return text.split(/\s+/).map((token) => token.trim()).filter(Boolean);
-}
-
-function chunkText(tokens: string[], start: number, end: number): string {
-  return tokens.slice(start, end).join(' ');
 }
 
 function isSentenceEnd(ch: string): boolean {
@@ -250,11 +323,28 @@ function isProtectedPeriod(current: string): boolean {
   return ABBREVIATIONS.has(lastWord) || /^[a-z]$/.test(lastWord);
 }
 
-function isClauseBreak(token: string): boolean {
-  return /[,;:，；：]$/.test(token) || token.endsWith('—') || token.endsWith('–');
+function shouldKeepReadingThroughSentenceEnd(current: string, text: string, lookahead: number): boolean {
+  if (hasUnclosedDoubleQuote(current)) return true;
+
+  const next = nextNonWhitespace(text, lookahead);
+  if (next >= text.length) return false;
+
+  return /[a-z]/.test(text[next]);
 }
 
-function isConnector(token: string): boolean {
-  const normalized = token.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '').toLowerCase();
-  return CONNECTORS.has(normalized);
+function hasUnclosedDoubleQuote(text: string): boolean {
+  const straightQuotes = (text.match(/"/g) ?? []).length;
+  if (straightQuotes % 2 === 1) return true;
+
+  const openCurlyQuotes = (text.match(/“/g) ?? []).length;
+  const closeCurlyQuotes = (text.match(/”/g) ?? []).length;
+  return openCurlyQuotes > closeCurlyQuotes;
+}
+
+function nextNonWhitespace(text: string, start: number): number {
+  let index = start;
+  while (index < text.length && /\s/.test(text[index])) {
+    index += 1;
+  }
+  return index;
 }

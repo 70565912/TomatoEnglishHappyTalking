@@ -1,0 +1,807 @@
+import '../data/models/article_sentence_translation_model.dart';
+import 'nlp_service.dart';
+
+enum PracticeInputSourceKind {
+  english,
+  standardBilingual,
+  mixed,
+  chinese,
+}
+
+class PracticeParagraphPair {
+  const PracticeParagraphPair({
+    required this.englishParagraph,
+    required this.chineseParagraph,
+  });
+
+  final String englishParagraph;
+  final String chineseParagraph;
+}
+
+class ParsedPracticeInput {
+  const ParsedPracticeInput({
+    required this.sourceKind,
+    required this.titleCandidate,
+    required this.englishContent,
+    required this.paragraphPairs,
+    required this.translationNotes,
+  });
+
+  final PracticeInputSourceKind sourceKind;
+  final String titleCandidate;
+  final String englishContent;
+  final List<PracticeParagraphPair> paragraphPairs;
+  final String translationNotes;
+
+  bool get usesLocalEnglish =>
+      sourceKind == PracticeInputSourceKind.english ||
+      sourceKind == PracticeInputSourceKind.standardBilingual;
+
+  List<ArticleSentenceTranslation> buildSentenceTranslations({
+    required int articleId,
+    required List<String> sentences,
+    DateTime? now,
+  }) {
+    if (paragraphPairs.isEmpty || sentences.isEmpty) {
+      return const [];
+    }
+
+    final createdAt = now ?? DateTime.now();
+    final rows = <ArticleSentenceTranslation>[];
+    var sentenceCursor = 0;
+
+    for (final pair in paragraphPairs) {
+      if (sentenceCursor >= sentences.length) {
+        break;
+      }
+
+      final localEnglishSentences = NlpService.splitSentences(
+        pair.englishParagraph,
+      );
+      if (localEnglishSentences.isEmpty) {
+        continue;
+      }
+
+      final span = _sentenceSpanForParagraph(
+        sentences: sentences,
+        paragraph: pair.englishParagraph,
+        cursor: sentenceCursor,
+      );
+      if (span == null || span.end <= span.start) {
+        continue;
+      }
+
+      final spanSentenceCount = span.end - span.start;
+      final chinesePieces = _splitChinesePieces(
+        pair.chineseParagraph,
+        targetCount: spanSentenceCount,
+      );
+      for (var i = 0; i < spanSentenceCount; i++) {
+        final globalIndex = span.start + i;
+        if (globalIndex >= sentences.length) {
+          break;
+        }
+
+        final chineseText = _translationForChunk(
+          chinesePieces: chinesePieces,
+          fullChinese: pair.chineseParagraph,
+          index: i,
+          count: spanSentenceCount,
+        );
+        if (chineseText.trim().isEmpty) {
+          continue;
+        }
+
+        rows.add(
+          ArticleSentenceTranslation(
+            articleId: articleId,
+            sentenceIndex: globalIndex,
+            englishSentence: sentences[globalIndex],
+            chineseText: _normalizeChineseTranslation(chineseText),
+            source: 'imported_bilingual',
+            createdAt: createdAt,
+            updatedAt: createdAt,
+          ),
+        );
+      }
+      sentenceCursor = span.end;
+    }
+
+    return _fillMissingImportedTranslations(
+      articleId: articleId,
+      sentences: sentences,
+      rows: rows,
+      paragraphPairs: paragraphPairs,
+      createdAt: createdAt,
+    );
+  }
+}
+
+class PracticeInputParser {
+  const PracticeInputParser._();
+
+  static ParsedPracticeInput parse(String rawContent) {
+    final normalized = normalizePracticeText(rawContent);
+    final trimmed = normalized.trim();
+    if (trimmed.isEmpty) {
+      return const ParsedPracticeInput(
+        sourceKind: PracticeInputSourceKind.english,
+        titleCandidate: '',
+        englishContent: '',
+        paragraphPairs: [],
+        translationNotes: '',
+      );
+    }
+
+    final hasChinese = _containsChinese(trimmed);
+    final hasEnglish = _containsEnglish(trimmed);
+    if (!hasChinese) {
+      return ParsedPracticeInput(
+        sourceKind: PracticeInputSourceKind.english,
+        titleCandidate: '',
+        englishContent: _normalizeEnglishOnlyContent(trimmed),
+        paragraphPairs: const [],
+        translationNotes: '',
+      );
+    }
+    if (!hasEnglish) {
+      return const ParsedPracticeInput(
+        sourceKind: PracticeInputSourceKind.chinese,
+        titleCandidate: '',
+        englishContent: '',
+        paragraphPairs: [],
+        translationNotes: '',
+      );
+    }
+
+    final englishOriginalSection = _tryParseEnglishOriginalSection(trimmed);
+    if (englishOriginalSection != null) {
+      return englishOriginalSection;
+    }
+
+    final bilingual = _tryParseStandardBilingual(trimmed);
+    if (bilingual != null) {
+      return bilingual;
+    }
+
+    return const ParsedPracticeInput(
+      sourceKind: PracticeInputSourceKind.mixed,
+      titleCandidate: '',
+      englishContent: '',
+      paragraphPairs: [],
+      translationNotes: '',
+    );
+  }
+
+  static String normalizePracticeText(String text) {
+    var normalized = text
+        .replaceAll('\u00A0', ' ')
+        .replaceAll(RegExp(r'[“”]'), '"')
+        .replaceAll(RegExp(r'[‘’]'), "'")
+        .replaceAll(RegExp(r'\r\n?'), '\n');
+    normalized = _normalizeEnglishJoiners(normalized);
+    normalized = normalized
+        .split('\n')
+        .map((line) => line.replaceAll(RegExp(r'[ \t]+'), ' ').trim())
+        .join('\n');
+    return normalized.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+  }
+
+  static ParsedPracticeInput? _tryParseStandardBilingual(String text) {
+    final rawLines = text.split('\n');
+    final pairs = <PracticeParagraphPair>[];
+    final notes = <String>[];
+    String? pendingEnglish;
+    var titleCandidate = '';
+    var bodyStarted = false;
+    var skippedEnglishTitle = false;
+
+    for (final rawLine in rawLines) {
+      final line = rawLine.trim();
+      if (line.isEmpty) {
+        continue;
+      }
+      if (_isTranslationNoteLine(line)) {
+        notes.add(line);
+        continue;
+      }
+
+      final isEnglish = _isEnglishLine(line);
+      final isChinese = _isChineseLine(line);
+
+      if (!bodyStarted && isEnglish) {
+        if (_isChapterHeading(line)) {
+          continue;
+        }
+        if (titleCandidate.isEmpty && _looksLikeEnglishTitle(line)) {
+          titleCandidate = _cleanTitleCandidate(line);
+          skippedEnglishTitle = true;
+          continue;
+        }
+      }
+
+      if (!bodyStarted && isChinese) {
+        if (_isChineseTitleOrChapter(line) || skippedEnglishTitle) {
+          skippedEnglishTitle = false;
+          continue;
+        }
+      }
+
+      if (isEnglish) {
+        if (pendingEnglish != null && _isLikelyStoryEnglish(pendingEnglish)) {
+          pairs.add(
+            PracticeParagraphPair(
+              englishParagraph: pendingEnglish,
+              chineseParagraph: '',
+            ),
+          );
+          bodyStarted = true;
+        }
+        pendingEnglish = _cleanEnglishParagraph(line);
+        continue;
+      }
+
+      if (isChinese && pendingEnglish != null) {
+        pairs.add(
+          PracticeParagraphPair(
+            englishParagraph: pendingEnglish,
+            chineseParagraph: _cleanChineseParagraph(line),
+          ),
+        );
+        pendingEnglish = null;
+        bodyStarted = true;
+      }
+    }
+
+    if (pendingEnglish != null && bodyStarted) {
+      pairs.add(
+        PracticeParagraphPair(
+          englishParagraph: pendingEnglish,
+          chineseParagraph: '',
+        ),
+      );
+    }
+
+    final translatedPairs =
+        pairs.where((pair) => pair.chineseParagraph.trim().isNotEmpty).length;
+    if (translatedPairs < 2) {
+      return null;
+    }
+
+    final englishParagraphs = pairs
+        .map((pair) => pair.englishParagraph.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    if (englishParagraphs.length < translatedPairs) {
+      return null;
+    }
+
+    return ParsedPracticeInput(
+      sourceKind: PracticeInputSourceKind.standardBilingual,
+      titleCandidate: titleCandidate,
+      englishContent: englishParagraphs.join('\n\n'),
+      paragraphPairs: pairs,
+      translationNotes: notes.join('\n'),
+    );
+  }
+
+  static ParsedPracticeInput? _tryParseEnglishOriginalSection(String text) {
+    final lines = text.split('\n');
+    final startIndex = lines.indexWhere((line) {
+      final compact = line.replaceAll(RegExp(r'\s+'), '');
+      return compact == '英文原文' ||
+          compact == '英语原文' ||
+          compact == '英文故事' ||
+          compact == '原文';
+    });
+    if (startIndex < 0) {
+      return null;
+    }
+
+    final englishLines = <String>[];
+    for (var index = startIndex + 1; index < lines.length; index += 1) {
+      final line = lines[index].trim();
+      if (line.isEmpty) {
+        if (englishLines.isNotEmpty && englishLines.last.isNotEmpty) {
+          englishLines.add('');
+        }
+        continue;
+      }
+      if (_isEnglishOriginalSectionStop(line)) {
+        break;
+      }
+      if (_isEnglishLine(line) && _isLikelyStoryEnglish(line)) {
+        englishLines.add(_cleanEnglishParagraph(line));
+      }
+    }
+
+    while (englishLines.isNotEmpty && englishLines.last.isEmpty) {
+      englishLines.removeLast();
+    }
+    final paragraphs = englishLines
+        .join('\n')
+        .split(RegExp(r'\n\s*\n+'))
+        .map((paragraph) => paragraph
+            .split('\n')
+            .map(_cleanEnglishParagraph)
+            .where((line) => line.isNotEmpty)
+            .join(' '))
+        .where((paragraph) => paragraph.isNotEmpty)
+        .toList(growable: false);
+    final wordCount = paragraphs
+        .join(' ')
+        .split(RegExp(r'\s+'))
+        .where((word) => RegExp(r'[A-Za-z]').hasMatch(word))
+        .length;
+    if (paragraphs.isEmpty || wordCount < 20) {
+      return null;
+    }
+
+    return ParsedPracticeInput(
+      sourceKind: PracticeInputSourceKind.english,
+      titleCandidate: '',
+      englishContent: paragraphs.join('\n\n'),
+      paragraphPairs: const [],
+      translationNotes: '',
+    );
+  }
+
+  static bool _isEnglishOriginalSectionStop(String line) {
+    final compact = line.replaceAll(RegExp(r'\s+'), '');
+    if (compact.startsWith('【') || compact.endsWith('】')) {
+      return true;
+    }
+    const exactHeadings = {
+      '文化卡片',
+      '生词好句',
+      '重点词汇',
+      '词汇讲解',
+      '中文译文',
+      '课程导读',
+      '参考译文',
+      '拓展',
+      '注释',
+    };
+    if (exactHeadings.contains(compact)) {
+      return true;
+    }
+    if (RegExp(r'^\d+[.、]').hasMatch(line)) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool _containsChinese(String text) =>
+      RegExp(r'[\u3400-\u9FFF]').hasMatch(text);
+
+  static bool _containsEnglish(String text) =>
+      RegExp(r'[A-Za-z]').hasMatch(text);
+
+  static bool _isEnglishLine(String line) {
+    if (!_containsEnglish(line)) {
+      return false;
+    }
+    final chineseCount = RegExp(r'[\u3400-\u9FFF]').allMatches(line).length;
+    final englishWordCount =
+        RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(line).length;
+    return chineseCount == 0 || englishWordCount >= chineseCount;
+  }
+
+  static bool _isChineseLine(String line) {
+    if (!_containsChinese(line)) {
+      return false;
+    }
+    final chineseCount = RegExp(r'[\u3400-\u9FFF]').allMatches(line).length;
+    final englishWordCount =
+        RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(line).length;
+    return chineseCount > englishWordCount;
+  }
+
+  static bool _isTranslationNoteLine(String line) => RegExp(
+        r'^\s*[\(（]?\s*(注|译注|说明|备注)\s*[:：]',
+      ).hasMatch(line);
+
+  static bool _isChapterHeading(String line) => RegExp(
+        "^(chapter|episode|part|book)\\b[\\w\\s\\-'\".,:]*\$",
+        caseSensitive: false,
+      ).hasMatch(line.trim());
+
+  static bool _isChineseTitleOrChapter(String line) {
+    if (!_containsChinese(line)) {
+      return false;
+    }
+    final compact = line.replaceAll(RegExp(r'\s+'), '');
+    if (RegExp(r'^第.+[章节回篇]').hasMatch(compact)) {
+      return true;
+    }
+    return compact.length <= 18 && !RegExp(r'[。！？!?；;，,]').hasMatch(compact);
+  }
+
+  static bool _looksLikeEnglishTitle(String line) {
+    final cleaned = line
+        .replaceAll(RegExp("^\\s*[\"']|[\"']\\s*\$"), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (cleaned.isEmpty || _isChapterHeading(cleaned)) {
+      return false;
+    }
+    if (RegExp(r'[.!?;:]$').hasMatch(cleaned)) {
+      return false;
+    }
+    final wordCount =
+        RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(cleaned).length;
+    if (wordCount < 2 || wordCount > 10) {
+      return false;
+    }
+    final lower = cleaned.toLowerCase();
+    return !lower.startsWith('by ');
+  }
+
+  static bool _isLikelyStoryEnglish(String line) {
+    final wordCount = RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(line).length;
+    return wordCount >= 5 || RegExp(r'[.!?;:,"—–]$').hasMatch(line.trim());
+  }
+
+  static String _cleanTitleCandidate(String line) =>
+      _tightenSpaceBeforePunctuation(
+        _cleanEnglishParagraph(line).replaceAll(RegExp(r'\s+'), ' '),
+      ).trim();
+
+  static String _cleanEnglishParagraph(String line) =>
+      _tightenSpaceBeforePunctuation(
+        _normalizeEnglishJoiners(line).replaceAll(RegExp(r'\s+'), ' '),
+      ).trim();
+
+  static String _cleanChineseParagraph(String line) =>
+      line.replaceAll(RegExp(r'\s+'), '').trim();
+
+  static String _normalizeEnglishOnlyContent(String text) {
+    final paragraphs = text
+        .split(RegExp(r'\n\s*\n+'))
+        .map((paragraph) => paragraph
+            .split('\n')
+            .map((line) => _cleanEnglishParagraph(line))
+            .where((line) => line.isNotEmpty)
+            .join(' '))
+        .where((paragraph) => paragraph.isNotEmpty)
+        .toList(growable: false);
+    return paragraphs.join('\n\n');
+  }
+
+  static String _normalizeEnglishJoiners(String text) {
+    var normalized = text.replaceAllMapped(
+      RegExp(
+        r"\b([A-Za-z]+)\s+'\s*(s|t|re|ve|ll|d|m)\b",
+        caseSensitive: false,
+      ),
+      (match) => "${match.group(1)}'${match.group(2)}",
+    );
+    normalized = normalized.replaceAllMapped(
+      RegExp(r'([A-Za-z])\s*-\s*([A-Za-z])'),
+      (match) => '${match.group(1)}-${match.group(2)}',
+    );
+    return normalized;
+  }
+
+  static String _tightenSpaceBeforePunctuation(String text) =>
+      text.replaceAllMapped(
+        RegExp(r'\s+([:;,.!?])'),
+        (match) => match.group(1) ?? '',
+      );
+}
+
+List<String> _splitChinesePieces(String text, {int targetCount = 1}) {
+  final trimmed = text.trim();
+  if (trimmed.isEmpty) {
+    return const [];
+  }
+
+  final strongPieces = _splitChineseByPunctuation(
+    trimmed,
+    RegExp(r'[。！？!?；;]'),
+  );
+  if (targetCount <= 1 || strongPieces.length >= targetCount) {
+    return strongPieces;
+  }
+  final softPieces = _splitChineseByPunctuation(
+    trimmed,
+    RegExp(r'[。！？!?；;：:，,]'),
+  );
+  return softPieces.length > strongPieces.length ? softPieces : strongPieces;
+}
+
+List<String> _splitChineseByPunctuation(String text, RegExp punctuation) {
+  final pieces = <String>[];
+  final buffer = StringBuffer();
+
+  void addPiece(String value) {
+    final piece = value.trim();
+    if (piece.isEmpty) {
+      return;
+    }
+    if (_isOnlyQuoteMarks(piece) && pieces.isNotEmpty) {
+      pieces[pieces.length - 1] = '${pieces.last}$piece';
+      return;
+    }
+    pieces.add(piece);
+  }
+
+  for (final rune in text.runes) {
+    final char = String.fromCharCode(rune);
+    buffer.write(char);
+    if (punctuation.hasMatch(char)) {
+      addPiece(buffer.toString());
+      buffer.clear();
+    }
+  }
+  addPiece(buffer.toString());
+  return pieces.isEmpty ? [text] : pieces;
+}
+
+bool _isOnlyQuoteMarks(String text) => RegExp(r'''^["']+$''').hasMatch(text);
+
+String _translationForChunk({
+  required List<String> chinesePieces,
+  required String fullChinese,
+  required int index,
+  required int count,
+}) {
+  if (fullChinese.trim().isEmpty) {
+    return '';
+  }
+  if (count <= 1 || chinesePieces.length <= 1) {
+    return _normalizeChineseTranslation(fullChinese);
+  }
+  if (chinesePieces.length == count) {
+    return _normalizeChineseTranslation(chinesePieces[index]);
+  }
+  if (chinesePieces.length < count) {
+    return _normalizeChineseTranslation(fullChinese);
+  }
+
+  final start = (index * chinesePieces.length / count).floor();
+  var end = ((index + 1) * chinesePieces.length / count).floor();
+  if (end <= start) {
+    end = start + 1;
+  }
+  final safeStart = start.clamp(0, chinesePieces.length).toInt();
+  final safeEnd = end.clamp(0, chinesePieces.length).toInt();
+  return _normalizeChineseTranslation(
+    chinesePieces.sublist(safeStart, safeEnd).join(''),
+  );
+}
+
+String _normalizeChineseTranslation(String text) {
+  final trimmed = text.trim();
+  if (trimmed.length > 1 && trimmed.startsWith('"')) {
+    final quoteCount = '"'.allMatches(trimmed).length;
+    if (quoteCount == 1) {
+      return trimmed.substring(1).trimLeft();
+    }
+  }
+  return trimmed;
+}
+
+({int start, int end})? _sentenceSpanForParagraph({
+  required List<String> sentences,
+  required String paragraph,
+  required int cursor,
+}) {
+  final paragraphCompact = _compactEnglishForAlignment(paragraph);
+  if (paragraphCompact.isEmpty || sentences.isEmpty) {
+    return null;
+  }
+
+  final safeCursor = cursor.clamp(0, sentences.length).toInt();
+  var start = safeCursor;
+  var foundStart = false;
+  final maxSearch = (safeCursor + 8).clamp(0, sentences.length).toInt();
+  for (var candidate = safeCursor; candidate < maxSearch; candidate++) {
+    final sentenceCompact = _compactEnglishForAlignment(sentences[candidate]);
+    if (sentenceCompact.isEmpty) {
+      continue;
+    }
+    if (_alignmentOverlaps(paragraphCompact, sentenceCompact)) {
+      start = candidate;
+      foundStart = true;
+      break;
+    }
+  }
+  if (!foundStart) {
+    return null;
+  }
+
+  var end = start;
+  var combined = '';
+  while (end < sentences.length) {
+    final sentenceCompact = _compactEnglishForAlignment(sentences[end]);
+    if (sentenceCompact.isEmpty) {
+      end++;
+      continue;
+    }
+
+    final nextCombined = combined + sentenceCompact;
+    if (combined.isNotEmpty &&
+        !_alignmentOverlaps(paragraphCompact, nextCombined)) {
+      break;
+    }
+
+    combined = nextCombined;
+    end++;
+    if (combined.length >= paragraphCompact.length ||
+        combined == paragraphCompact ||
+        combined.contains(paragraphCompact) ||
+        (paragraphCompact.startsWith(combined) &&
+            paragraphCompact.length - combined.length < 8)) {
+      break;
+    }
+  }
+
+  return end > start ? (start: start, end: end) : null;
+}
+
+String _compactEnglishForAlignment(String text) =>
+    text.toLowerCase().replaceAll(RegExp(r"[^a-z0-9]+"), '').trim();
+
+bool _alignmentOverlaps(String paragraphCompact, String sentenceCompact) =>
+    paragraphCompact.startsWith(sentenceCompact) ||
+    paragraphCompact.contains(sentenceCompact) ||
+    sentenceCompact.contains(paragraphCompact);
+
+List<ArticleSentenceTranslation> _fillMissingImportedTranslations({
+  required int articleId,
+  required List<String> sentences,
+  required List<ArticleSentenceTranslation> rows,
+  required List<PracticeParagraphPair> paragraphPairs,
+  required DateTime createdAt,
+}) {
+  final byIndex = <int, ArticleSentenceTranslation>{
+    for (final row in rows) row.sentenceIndex: row,
+  };
+
+  for (var index = 0; index < sentences.length; index++) {
+    if (byIndex.containsKey(index)) {
+      continue;
+    }
+
+    final fallback = _fallbackChineseForSentence(
+      sentence: sentences[index],
+      paragraphPairs: paragraphPairs,
+    );
+    if (fallback == null || fallback.trim().isEmpty) {
+      continue;
+    }
+
+    byIndex[index] = ArticleSentenceTranslation(
+      articleId: articleId,
+      sentenceIndex: index,
+      englishSentence: sentences[index],
+      chineseText: _normalizeChineseTranslation(fallback),
+      source: 'imported_bilingual',
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+  }
+
+  final filledRows = byIndex.values.toList(growable: false)
+    ..sort((a, b) => a.sentenceIndex.compareTo(b.sentenceIndex));
+  return filledRows;
+}
+
+String? _fallbackChineseForSentence({
+  required String sentence,
+  required List<PracticeParagraphPair> paragraphPairs,
+}) {
+  final sentenceCompact = _compactEnglishForAlignment(sentence);
+  if (sentenceCompact.isEmpty) {
+    return null;
+  }
+
+  final exactMatches = <String>[];
+  for (final pair in paragraphPairs) {
+    final chinese = pair.chineseParagraph.trim();
+    if (chinese.isEmpty) {
+      continue;
+    }
+
+    final paragraphCompact = _compactEnglishForAlignment(pair.englishParagraph);
+    if (paragraphCompact.isEmpty) {
+      continue;
+    }
+    if (_alignmentOverlaps(paragraphCompact, sentenceCompact)) {
+      exactMatches.add(chinese);
+    }
+  }
+  if (exactMatches.isNotEmpty) {
+    return _joinUniqueChineseTranslations(exactMatches);
+  }
+
+  final tokenMatches = <String>[];
+  final sentenceTokens = _englishTokenSetForAlignment(sentence);
+  if (sentenceTokens.length < 2) {
+    return null;
+  }
+  for (final pair in paragraphPairs) {
+    final chinese = pair.chineseParagraph.trim();
+    if (chinese.isEmpty) {
+      continue;
+    }
+
+    final paragraphTokens = _englishTokenSetForAlignment(pair.englishParagraph);
+    final overlapCount =
+        sentenceTokens.where(paragraphTokens.contains).take(2).length;
+    if (overlapCount >= 2) {
+      tokenMatches.add(chinese);
+      if (tokenMatches.length >= 2) {
+        break;
+      }
+    }
+  }
+  if (tokenMatches.isNotEmpty) {
+    return _joinUniqueChineseTranslations(tokenMatches);
+  }
+
+  return null;
+}
+
+Set<String> _englishTokenSetForAlignment(String text) {
+  const stopWords = {
+    'a',
+    'an',
+    'and',
+    'are',
+    'as',
+    'at',
+    'be',
+    'but',
+    'for',
+    'from',
+    'had',
+    'has',
+    'he',
+    'her',
+    'him',
+    'his',
+    'i',
+    'if',
+    'in',
+    'is',
+    'it',
+    'its',
+    'of',
+    'on',
+    'or',
+    'she',
+    'that',
+    'the',
+    'their',
+    'them',
+    'they',
+    'this',
+    'to',
+    'was',
+    'were',
+    'what',
+    'who',
+    'with',
+    'you',
+  };
+  return RegExp(r"[a-z][a-z'\-]*")
+      .allMatches(text.toLowerCase())
+      .map((match) => match.group(0) ?? '')
+      .where((token) => token.length > 1 && !stopWords.contains(token))
+      .toSet();
+}
+
+String _joinUniqueChineseTranslations(List<String> values) {
+  final seen = <String>{};
+  final joined = <String>[];
+  for (final value in values) {
+    final normalized = value.trim();
+    if (normalized.isEmpty || !seen.add(normalized)) {
+      continue;
+    }
+    joined.add(normalized);
+  }
+  return joined.join('');
+}

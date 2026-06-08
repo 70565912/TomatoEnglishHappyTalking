@@ -7,6 +7,7 @@ import 'package:record/record.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../../shared/models/playback_visual_state.dart';
+import '../../../services/chat_chapter_guide_service.dart';
 import '../../../services/database_service.dart';
 import '../../../services/realtime_voice_service.dart';
 import '../../../services/streaming_asr_service.dart';
@@ -25,7 +26,7 @@ enum ChatStep {
   userIdle, // Waiting for user input
   recording, // User is recording
   processing, // STT + AI call in progress
-  completed, // Max rounds reached
+  completed, // Chapter practice completed
   error,
 }
 
@@ -79,6 +80,9 @@ class ChatState {
   final String? error;
   final int questionCount;
   final String articleTitle;
+  final bool isChapterComplete;
+  final String? abilityLevel;
+  final String? practiceSummary;
 
   const ChatState({
     this.messages = const [],
@@ -86,6 +90,9 @@ class ChatState {
     this.error,
     this.questionCount = 0,
     this.articleTitle = '',
+    this.isChapterComplete = false,
+    this.abilityLevel,
+    this.practiceSummary,
   });
 
   ChatState copyWith({
@@ -95,6 +102,11 @@ class ChatState {
     bool clearError = false,
     int? questionCount,
     String? articleTitle,
+    bool? isChapterComplete,
+    String? abilityLevel,
+    String? practiceSummary,
+    bool clearAbilityLevel = false,
+    bool clearPracticeSummary = false,
   }) =>
       ChatState(
         messages: messages ?? this.messages,
@@ -102,6 +114,12 @@ class ChatState {
         error: clearError ? null : (error ?? this.error),
         questionCount: questionCount ?? this.questionCount,
         articleTitle: articleTitle ?? this.articleTitle,
+        isChapterComplete: isChapterComplete ?? this.isChapterComplete,
+        abilityLevel:
+            clearAbilityLevel ? null : (abilityLevel ?? this.abilityLevel),
+        practiceSummary: clearPracticeSummary
+            ? null
+            : (practiceSummary ?? this.practiceSummary),
       );
 }
 
@@ -111,6 +129,8 @@ class ChatState {
 
 @riverpod
 class Chat extends _$Chat {
+  static const _maxQuestions = 8;
+
   static const _audioTraceEnabled = bool.fromEnvironment(
     'TOMATO_AUDIO_TRACE',
     defaultValue: false,
@@ -139,21 +159,31 @@ class Chat extends _$Chat {
 
       state = state.copyWith(articleTitle: article.title);
 
+      final guideReply = await ChatChapterGuideService.prepareGuide(
+        articleTitle: article.title,
+        articleContent: article.content,
+        sentences: article.sentences,
+        articleId: articleId,
+      );
+      final chapterGuide = guideReply.text.trim();
+
       // Call AI for the first question
       final aiReply = await RealtimeVoiceService.startSession(
-        articleContent: article.content,
+        chapterGuide: chapterGuide,
         articleTitle: article.title,
+        articleId: articleId,
       );
-      final aiText = aiReply.text;
+      final parsedReply = _parseAiReply(aiReply.text);
+      final aiText = parsedReply.displayText;
       final aiMessageId = _newMessageId();
 
       // Build history for subsequent reply() calls:
       // [system, initialUserPrompt(article), firstAiResponse]
       _history = [
-        const RealtimeChatTurn(
-          role: 'system',
-          content:
-              'You are a friendly and encouraging English teacher named Emma. Ask one question at a time.',
+        RealtimeVoiceService.conversationSystemTurn(),
+        RealtimeVoiceService.chapterGuideTurn(
+          chapterGuide: chapterGuide,
+          articleTitle: article.title,
         ),
         RealtimeChatTurn(
           role: 'assistant',
@@ -174,6 +204,9 @@ class Chat extends _$Chat {
         step: ChatStep.aiSpeaking,
         questionCount: 1,
         articleTitle: article.title,
+        isChapterComplete: parsedReply.chapterDone,
+        abilityLevel: parsedReply.abilityLevel,
+        practiceSummary: parsedReply.practiceSummary,
         error: _mapAiFallbackMessage(aiReply),
         clearError: _mapAiFallbackMessage(aiReply) == null,
       );
@@ -184,7 +217,7 @@ class Chat extends _$Chat {
         messageId: aiMessageId,
       );
       state = state.copyWith(
-        step: ChatStep.userIdle,
+        step: parsedReply.chapterDone ? ChatStep.completed : ChatStep.userIdle,
         error: ttsError,
         clearError: ttsError == null,
       );
@@ -227,8 +260,10 @@ class Chat extends _$Chat {
       final audioBytes = await File(path).readAsBytes();
 
       // Volc BigASR streaming STT for chat mode.
-      final userText =
-          await StreamingAsrService.recognizeSafe(audioBytes: audioBytes);
+      final userText = await StreamingAsrService.recognizeSafe(
+        audioBytes: audioBytes,
+        articleId: articleId,
+      );
       final displayText = userText.isNotEmpty ? userText : '(未能识别语音，请重试)';
       final userMessageId = _newMessageId();
 
@@ -281,15 +316,20 @@ class Chat extends _$Chat {
   Future<void> _sendToAi(String userText) async {
     try {
       final newCount = state.questionCount + 1;
+      final forceCompletion = newCount >= _maxQuestions;
 
       // history does NOT include the new userText yet — AiService.reply() adds it internally
       final aiReply = await RealtimeVoiceService.reply(
         history: _history,
         userMessage: userText,
         questionCount: newCount,
+        forceChapterCompletion: forceCompletion,
+        articleId: articleId,
       );
-      final aiText = aiReply.text;
+      final parsedReply = _parseAiReply(aiReply.text);
+      final aiText = parsedReply.displayText;
       final aiMessageId = _newMessageId();
+      final chapterComplete = parsedReply.chapterDone || forceCompletion;
 
       // Now update local history
       _history
@@ -310,6 +350,10 @@ class Chat extends _$Chat {
         messages: newMsgs,
         step: ChatStep.aiSpeaking,
         questionCount: newCount,
+        isChapterComplete: chapterComplete,
+        abilityLevel: parsedReply.abilityLevel,
+        practiceSummary: parsedReply.practiceSummary ??
+            (chapterComplete ? _summaryFromFinalMessage(aiText) : null),
         error: _mapAiFallbackMessage(aiReply),
         clearError: _mapAiFallbackMessage(aiReply) == null,
       );
@@ -321,7 +365,7 @@ class Chat extends _$Chat {
       );
 
       state = state.copyWith(
-        step: newCount >= 8 ? ChatStep.completed : ChatStep.userIdle,
+        step: chapterComplete ? ChatStep.completed : ChatStep.userIdle,
         error: ttsError,
         clearError: ttsError == null,
       );
@@ -355,10 +399,63 @@ class Chat extends _$Chat {
     final playbackError =
         await _playTts(text: target.text, messageId: messageId);
     state = state.copyWith(
-      step: state.questionCount >= 8 ? ChatStep.completed : ChatStep.userIdle,
+      step: state.isChapterComplete ? ChatStep.completed : ChatStep.userIdle,
       error: playbackError,
       clearError: playbackError == null,
     );
+  }
+
+  _ParsedAiReply _parseAiReply(String rawText) {
+    final doneMatch = RegExp(
+      r'\[\[\s*TOMATO_CHAPTER_DONE\s*:\s*(yes|no|true|false)\s*\]\]',
+      caseSensitive: false,
+    ).firstMatch(rawText);
+    final abilityMatch = RegExp(
+      r'\[\[\s*TOMATO_ABILITY_LEVEL\s*:\s*([^\]]*?)\s*\]\]',
+      caseSensitive: false,
+    ).firstMatch(rawText);
+    final summaryMatch = RegExp(
+      r'\[\[\s*TOMATO_SUMMARY\s*:\s*([^\]]*?)\s*\]\]',
+      caseSensitive: false,
+      dotAll: true,
+    ).firstMatch(rawText);
+
+    var displayText = rawText
+        .replaceAll(
+          RegExp(
+            r'\[\[\s*TOMATO_[A-Z_]+\s*:\s*.*?\s*\]\]',
+            caseSensitive: false,
+            dotAll: true,
+          ),
+          '',
+        )
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
+    if (displayText.isEmpty) {
+      displayText =
+          'Great work! Practice summary: you discussed this chapter and can keep practicing with short answers.';
+    }
+
+    final doneValue = doneMatch?.group(1)?.toLowerCase().trim();
+    final abilityLevel = abilityMatch?.group(1)?.trim();
+    final practiceSummary = summaryMatch?.group(1)?.trim();
+    return _ParsedAiReply(
+      displayText: displayText,
+      chapterDone: doneValue == 'yes' || doneValue == 'true',
+      abilityLevel:
+          abilityLevel == null || abilityLevel.isEmpty ? null : abilityLevel,
+      practiceSummary: practiceSummary == null || practiceSummary.isEmpty
+          ? null
+          : practiceSummary,
+    );
+  }
+
+  String _summaryFromFinalMessage(String text) {
+    final normalized = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (normalized.length <= 180) {
+      return normalized;
+    }
+    return '${normalized.substring(0, 180).trim()}...';
   }
 
   Future<String?> _playTts({
@@ -370,20 +467,12 @@ class Chat extends _$Chat {
     StreamSubscription<PlaybackEvent>? playbackEventSub;
     StreamSubscription<Duration>? positionSub;
     try {
-      final bytes = await TtsService.synthesize(text: text);
-      if (bytes == null || bytes.isEmpty) {
-        _updateMessagePlayback(
-          messageId,
-          PlaybackVisualState.failed,
-          error: 'TTS 未返回音频数据',
-        );
-        return '语音合成失败：TTS 未返回音频数据';
-      }
-
-      final tmpPath =
-          '${Directory.systemTemp.path}/chat_tts_${DateTime.now().millisecondsSinceEpoch}.mp3';
-      await File(tmpPath).writeAsBytes(bytes);
-      _trace('playTts bytes=${bytes.length} path=$tmpPath');
+      final tmpPath = await TtsService.synthesizeToCachedFile(
+        text: text,
+        articleId: articleId,
+        cachePurpose: 'chat_tts',
+      );
+      _trace('playTts path=$tmpPath');
 
       player = AudioPlayer();
       await player.setFilePath(tmpPath).timeout(const Duration(seconds: 10));
@@ -536,7 +625,8 @@ class Chat extends _$Chat {
   }
 
   String? _mapAiFallbackMessage(RealtimeReply reply) {
-    if (reply.source == RealtimeReplySource.remote) {
+    if (reply.source == RealtimeReplySource.remote ||
+        reply.source == RealtimeReplySource.cached) {
       return null;
     }
 
@@ -623,7 +713,11 @@ class Chat extends _$Chat {
   }
 
   Future<void> _translateMessage(String messageId, String text) async {
-    final translated = await TranslationService.toChinese(text);
+    final translated = await TranslationService.toChinese(
+      text,
+      articleId: articleId,
+      cachePurpose: 'chat_translation',
+    );
     if (_disposed || translated.trim().isEmpty) {
       return;
     }
@@ -670,4 +764,18 @@ class Chat extends _$Chat {
     }
     debugPrint('[ChatTrace] $message');
   }
+}
+
+class _ParsedAiReply {
+  const _ParsedAiReply({
+    required this.displayText,
+    required this.chapterDone,
+    this.abilityLevel,
+    this.practiceSummary,
+  });
+
+  final String displayText;
+  final bool chapterDone;
+  final String? abilityLevel;
+  final String? practiceSummary;
 }

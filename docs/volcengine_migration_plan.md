@@ -19,8 +19,10 @@ This document records the confirmed migration direction for replacing the curren
 
   - Doubao TTS 2.0 playback migration is complete and remains on HTTP Chunked.
   - Realtime chat is no longer a plan item only: `RealtimeVoiceService` now speaks the official V3 binary WebSocket protocol.
-  - Realtime authentication prefers API-key mode (`X-Api-Key`) and falls back to legacy `App ID + Access Key + App Key` only when API-key mode fails and `App ID` is available.
-  - `AppConfig.volcRealtimeApiKey` and `AppConfig.volcBigAsrApiKey` both support unified-key fallback to `AppConfig.volcTtsApiKey`.
+  - One-shot text generation has been split out of `RealtimeVoiceService`; Ark Chat Completions now handles practice article generation, titles, translation, word lookup, and picture-book prompts.
+  - Realtime authentication uses API-key mode (`X-Api-Key`) only; legacy `App ID + Access Key + App Key` fallback has been removed.
+  - `AppConfig.volcTtsApiKey`, `AppConfig.volcRealtimeApiKey`, and `AppConfig.volcBigAsrApiKey` all resolve to `AppConfig.volcSpeechApiKey`.
+  - `AppConfig.volcArkTextApiKey` and `AppConfig.volcArkTextModel` resolve Ark HTTP text generation config separately from the speech key.
   - Chat and follow-read now share sentence playback states (`idle`, `waitingStart`, `playing`, `success`, `failed`) and a unified replay / failure / ellipsis UI.
   - On Windows, playback start / completion is now inferred from actual playback position progression instead of trusting `just_audio_windows` state transitions alone.
 
@@ -28,30 +30,28 @@ This document records the confirmed migration direction for replacing the curren
 
 - This document records the required credential fields and attachment points only.
 - Do not place any real API key value in this repository or in this document.
-- Real secrets must stay in `flutter_secure_storage` and, if needed for backup, in the team's private password manager outside the repo.
+- Real secrets must stay in local credential files outside source control, `flutter_secure_storage`, or the team's private password manager outside the repo.
 
 ### Implemented local bootstrap path
 
 - The app now calls `AppConfig.seedSecureStorageFromEnvironment()` during startup.
 - This bootstrap reads compile-time `--dart-define` values and writes any non-empty secret to `FlutterSecureStorage`.
+- Runtime lookup also searches for `security/speech-api-key.txt` and `security/ark.txt` near the executable / working directory.
 - The write path is local-machine only and is meant as a transitional no-backend solution.
 - This avoids committing real API keys to the repository, but it does not make an app-owned key safe for public distribution.
 
 ### Supported bootstrap keys
 
-- Legacy TTS:
-  - `TOMATO_VOLC_TTS_APP_ID`
-  - `TOMATO_VOLC_TTS_TOKEN`
-  - `TOMATO_VOLC_ACCESS_KEY`
-  - `TOMATO_VOLC_SECRET_KEY`
-- Unified Volcengine API Key:
-  - `TOMATO_VOLC_API_KEY`
+- Speech API Key:
+  - `TOMATO_VOLC_SPEECH_API_KEY`
+- Ark bearer fallback:
+  - `TOMATO_VOLC_ARK_API_KEY`
+- Ark text model fallback:
+  - `TOMATO_VOLC_ARK_TEXT_MODEL`
 - Doubao TTS 2.0:
   - `TOMATO_VOLC_TTS_RESOURCE_ID`
   - `TOMATO_VOLC_TTS_SPEAKER_ID`
-- Realtime voice:
-  - `TOMATO_VOLC_REALTIME_APP_ID`
-- Legacy dedicated key fields (`TOMATO_VOLC_TTS_API_KEY`, `TOMATO_VOLC_REALTIME_API_KEY`, `TOMATO_VOLC_BIGASR_API_KEY`) are compatibility-only and are merged into `volc_api_key` when present.
+- Legacy unified and per-service speech key fields are no longer used as fallbacks.
 
 ### Runtime usage contract
 
@@ -62,8 +62,8 @@ This document records the confirmed migration direction for replacing the curren
 
 ### Recommended next-step refactor
 
-- Keep this bootstrap path as a local transitional solution.
-- For TTS 2.0 / realtime voice / BigASR, service calls use the unified API-key-based `AppConfig.volcApiKey` getter instead of service-specific key fields.
+- Keep the local file + environment bootstrap path as a local transitional solution.
+- For TTS 2.0 / realtime voice / BigASR, service calls use the speech API-key-based `AppConfig.volcSpeechApiKey` getter through service-specific accessors.
 - Root PowerShell scripts now support `-DartDefine` passthrough for Windows debug, Android debug, and Android release workflows.
 - If a future local workflow needs less command-line exposure, consider adding a local-only bootstrap helper that writes secure storage without embedding long-lived secrets into a distributable build.
 
@@ -75,20 +75,23 @@ This document records the confirmed migration direction for replacing the curren
   - planned default value: `seed-tts-2.0`
   - optional header: `X-Api-Request-Id`
 - Realtime voice chat
-  - preferred header: `X-Api-Key`
-  - fallback legacy headers: `X-Api-App-ID`, `X-Api-Access-Key`, `X-Api-App-Key`
+  - header: `X-Api-Key`
   - required resource header: `X-Api-Resource-Id: volc.speech.dialog`
 - BigASR recognition
-  - dedicated API key recommended for production separation
-  - current runtime may reuse the TTS API key for local development convenience
+  - header: `X-Api-Key`
+  - current runtime uses `volc_speech_api_key`
+- Ark Chat Completions text generation
+  - header: `Authorization: Bearer <key>`
+  - endpoint: `https://ark.cn-beijing.volces.com/api/v3/chat/completions`
+  - default model: `doubao-seed-2-0-lite-260215`
+  - runtime uses `volc_ark_api_key` / `TOMATO_VOLC_ARK_API_KEY` plus `volc_ark_text_model` / `TOMATO_VOLC_ARK_TEXT_MODEL`
 
 ### Required credential fields for the preferred target architecture
 
 - Realtime voice chat
-  - keep a dedicated Volcengine realtime voice API key field in secure storage
-  - keep any model / app / resource identifier field separate from the TTS resource id if the final API contract requires it
+  - keep using the speech API key unless the official contract later requires product-specific separation
 - BigASR-based follow-read evaluation
-  - keep a dedicated ASR API key field in secure storage if the selected BigASR endpoint does not share the TTS credential scope
+  - keep using the speech API key unless the official contract later requires product-specific separation
   - do not assume the TTS `seed-tts-2.0` resource id is reusable for ASR
 
 ## Why HTTP Chunked Still Fits Follow-Read Playback

@@ -1,15 +1,7 @@
-import 'dart:math' as math;
-
 // NLP 服务 — Dart 本地分句处理
 // 无需网络请求，直接在本地通过正则处理英文文章朗读块
 
 class NlpService {
-  static const _targetMinWords = 8;
-  static const _targetMaxWords = 14;
-  static const _hardMaxWords = 16;
-  static const _hardMaxChars = 90;
-  static const _minTailWords = 4;
-
   // Common abbreviations that end with a period (should NOT trigger sentence split)
   static const _abbreviations = {
     'mr',
@@ -47,20 +39,24 @@ class NlpService {
     'st',
   };
 
-  /// Split [text] into short read-aloud chunks.
+  static const _targetPhraseMinWords = 8;
+  static const _targetPhraseMaxWords = 16;
+  static const _hardPhraseMaxWords = 22;
+  static const _shortConnectorMinWords = 5;
+
+  /// Split [text] into natural read-aloud sentences.
   ///
-  /// The splitter keeps natural sentence boundaries first, then breaks long
-  /// sentences into standard follow-reading chunks of roughly 8-14 words.
+  /// Keep sentence-end boundaries first, then split long Alice-style compound
+  /// sentences into shorter read-aloud phrase chunks.
   static List<String> splitSentences(String text) {
     final cleaned = _normalizeArticleText(text);
     if (cleaned.isEmpty) return [];
 
-    final chunks = <String>[];
-    for (final sentence in _splitSentenceCandidates(cleaned)) {
-      chunks.addAll(_splitReadingChunks(sentence));
-    }
-
-    return chunks.where((chunk) => chunk.trim().isNotEmpty).toList();
+    return _splitSentenceCandidates(cleaned)
+        .expand(_splitLongReadAloudChunk)
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
   }
 
   static String _normalizeArticleText(String text) {
@@ -74,14 +70,20 @@ class NlpService {
       }
       line = _stripCjkPrefix(line);
       if (line.isNotEmpty && !_isImportedHeadingLine(line)) {
-        keptLines.add(line);
+        keptLines.add(_normalizeInWordHyphens(line));
       }
     }
 
-    final normalized =
-        keptLines.join(' ').replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim();
+    final normalized = _normalizeInWordHyphens(
+      keptLines.join(' ').replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim(),
+    );
     return normalized;
   }
+
+  static String _normalizeInWordHyphens(String text) => text.replaceAllMapped(
+        RegExp(r'([A-Za-z])\s*-\s*([A-Za-z])'),
+        (match) => '${match.group(1)!}-${match.group(2)!}',
+      );
 
   static bool _isImportedHeadingLine(String line) {
     final normalized = line.trim();
@@ -125,7 +127,55 @@ class NlpService {
       return true;
     }
 
-    return false;
+    return _looksLikeStandaloneTitle(normalized, words, isSentenceLike);
+  }
+
+  static bool _looksLikeStandaloneTitle(
+    String line,
+    int wordCount,
+    bool isSentenceLike,
+  ) {
+    if (isSentenceLike || wordCount < 2 || wordCount > 7) {
+      return false;
+    }
+    if (RegExp(r'[,;:!?。！？]').hasMatch(line)) {
+      return false;
+    }
+
+    final tokens = RegExp(r"[A-Za-z][A-Za-z'’-]*(?:-[A-Za-z][A-Za-z'’-]*)*")
+        .allMatches(line)
+        .map((match) => match.group(0)!)
+        .toList(growable: false);
+    if (tokens.length != wordCount) {
+      return false;
+    }
+
+    return tokens.every(_isTitleWord);
+  }
+
+  static bool _isTitleWord(String token) {
+    final normalized = token.toLowerCase();
+    const smallTitleWords = {
+      'a',
+      'an',
+      'and',
+      'as',
+      'at',
+      'by',
+      'for',
+      'from',
+      'in',
+      'of',
+      'on',
+      'or',
+      'the',
+      'to',
+      'with',
+    };
+    if (smallTitleWords.contains(normalized)) {
+      return true;
+    }
+    return RegExp(r'^[A-Z]').hasMatch(token);
   }
 
   static String _stripCjkPrefix(String line) {
@@ -169,8 +219,17 @@ class NlpService {
         lookahead++;
       }
 
+      final currentWithClosers = buffer.toString().trim();
+      if (_shouldKeepReadingThroughSentenceEnd(
+        currentWithClosers,
+        cleaned,
+        lookahead,
+      )) {
+        continue;
+      }
+
       if (lookahead >= cleaned.length || _isWhitespace(cleaned[lookahead])) {
-        final sentence = buffer.toString().trim();
+        final sentence = currentWithClosers;
         if (sentence.isNotEmpty) {
           candidates.add(sentence);
         }
@@ -190,118 +249,190 @@ class NlpService {
     return candidates.isEmpty ? [cleaned] : candidates;
   }
 
-  static List<String> _splitReadingChunks(String sentence) {
-    final tokens = sentence
-        .split(RegExp(r'\s+'))
-        .map((token) => token.trim())
-        .where((token) => token.isNotEmpty)
-        .toList(growable: false);
-
-    if (tokens.isEmpty) {
-      return [];
-    }
-    if (_isReadableLength(tokens, sentence)) {
-      return [sentence.trim()];
+  static List<String> _splitLongReadAloudChunk(String sentence) {
+    final trimmed = sentence.trim();
+    if (trimmed.isEmpty) {
+      return [trimmed];
     }
 
     final chunks = <String>[];
     var start = 0;
-    while (start < tokens.length) {
-      final end = _chooseChunkEnd(tokens, start);
-      chunks.add(tokens.sublist(start, end).join(' ').trim());
-      start = end;
+
+    while (start < trimmed.length) {
+      final restStart = _nextNonWhitespace(trimmed, start);
+      start = restStart;
+      final rest = trimmed.substring(start).trim();
+      if (rest.isEmpty) {
+        break;
+      }
+
+      final restWordCount = _wordCount(rest);
+      final optionalBreak = _chooseOptionalPhraseBreak(trimmed, start);
+      if (restWordCount <= _hardPhraseMaxWords && optionalBreak == null) {
+        chunks.add(rest);
+        break;
+      }
+
+      final breakIndex =
+          restWordCount <= _hardPhraseMaxWords && optionalBreak != null
+              ? optionalBreak
+              : _choosePhraseBreak(trimmed, start);
+      if (breakIndex <= start || breakIndex >= trimmed.length) {
+        chunks.add(rest);
+        break;
+      }
+
+      final chunk = trimmed.substring(start, breakIndex).trim();
+      if (chunk.isNotEmpty) {
+        chunks.add(chunk);
+      }
+      start = breakIndex;
     }
 
-    return _mergeTinyChunks(chunks);
+    return chunks.isEmpty ? [trimmed] : chunks;
   }
 
-  static int _chooseChunkEnd(List<String> tokens, int start) {
-    final remaining = tokens.length - start;
-    final remainingText = tokens.sublist(start).join(' ');
-    if (remaining <= _hardMaxWords && remainingText.length <= _hardMaxChars) {
-      return tokens.length;
-    }
-
-    final hardEnd = math.min(start + _hardMaxWords, tokens.length);
-    final minEnd = math.min(start + _targetMinWords, tokens.length);
-
-    for (var end = hardEnd; end > minEnd; end--) {
-      if (_chunkText(tokens, start, end).length > _hardMaxChars) {
+  static int? _chooseOptionalPhraseBreak(String text, int start) {
+    for (final phraseBreak in _phraseBreaks(text, start)) {
+      final current = text.substring(start, phraseBreak.index).trim();
+      final count = _wordCount(current);
+      final remaining = _wordCount(text.substring(phraseBreak.index).trim());
+      if (remaining < 4) {
         continue;
       }
-      if (_isClauseBreak(tokens[end - 1])) {
-        return _avoidTinyTail(tokens, start, end);
+
+      if (phraseBreak.kind == _PhraseBreakKind.strong &&
+          count >= _shortConnectorMinWords) {
+        return phraseBreak.index;
+      }
+      if (count >= _targetPhraseMinWords && count <= _targetPhraseMaxWords) {
+        return phraseBreak.index;
+      }
+      if (count >= _shortConnectorMinWords &&
+          _nextChunkStartsWithConnector(text, phraseBreak.index)) {
+        return phraseBreak.index;
+      }
+    }
+    return null;
+  }
+
+  static int _choosePhraseBreak(String text, int start) {
+    final breaks = _phraseBreaks(text, start);
+    _PhraseBreak? fallbackBeforeHard;
+
+    for (final phraseBreak in breaks) {
+      final current = text.substring(start, phraseBreak.index).trim();
+      final count = _wordCount(current);
+      if (count > _hardPhraseMaxWords) {
+        break;
+      }
+      fallbackBeforeHard = phraseBreak;
+
+      if (phraseBreak.kind == _PhraseBreakKind.strong &&
+          count >= _shortConnectorMinWords) {
+        return phraseBreak.index;
+      }
+      if (count >= _targetPhraseMinWords && count <= _targetPhraseMaxWords) {
+        return phraseBreak.index;
+      }
+      if (count >= _shortConnectorMinWords &&
+          _nextChunkStartsWithConnector(text, phraseBreak.index)) {
+        return phraseBreak.index;
       }
     }
 
-    for (var end = math.min(start + _targetMaxWords, tokens.length);
-        end > minEnd;
-        end--) {
-      if (_chunkText(tokens, start, end).length > _hardMaxChars) {
+    if (fallbackBeforeHard != null) {
+      return fallbackBeforeHard.index;
+    }
+    return _wordBoundaryAfterWords(text, start, _targetPhraseMaxWords);
+  }
+
+  static List<_PhraseBreak> _phraseBreaks(String text, int start) {
+    final breaks = <_PhraseBreak>[];
+    for (var index = start; index < text.length; index++) {
+      final ch = text[index];
+      if (ch == ';' || ch == ':' || ch == '—' || ch == '–') {
+        breaks.add(_PhraseBreak(
+          index: _consumeClosingPunctuation(text, index + 1),
+          kind: _PhraseBreakKind.strong,
+        ));
         continue;
       }
-      if (end < tokens.length && _isConnector(tokens[end])) {
-        return _avoidTinyTail(tokens, start, end);
-      }
-      if (_isConnector(tokens[end - 1]) && end - start > _targetMinWords) {
-        return _avoidTinyTail(tokens, start, end);
-      }
-    }
-
-    var end = math.min(start + _targetMaxWords, tokens.length);
-    while (
-        end > minEnd && _chunkText(tokens, start, end).length > _hardMaxChars) {
-      end--;
-    }
-    if (end <= start) {
-      return math.min(start + _hardMaxWords, tokens.length);
-    }
-    return _avoidTinyTail(tokens, start, end);
-  }
-
-  static int _avoidTinyTail(List<String> tokens, int start, int end) {
-    final tailWords = tokens.length - end;
-    if (tailWords == 0 || tailWords >= _minTailWords) {
-      return end;
-    }
-
-    final expandedText = _chunkText(tokens, start, tokens.length);
-    if (tokens.length - start <= _hardMaxWords + 2 &&
-        expandedText.length <= _hardMaxChars + 16) {
-      return tokens.length;
-    }
-
-    final shortened =
-        math.max(start + _targetMinWords, end - (_minTailWords - tailWords));
-    return shortened > start ? shortened : end;
-  }
-
-  static List<String> _mergeTinyChunks(List<String> chunks) {
-    final merged = <String>[];
-    for (final chunk in chunks) {
-      if (merged.isNotEmpty && _wordCount(chunk) < _minTailWords) {
-        final previous = merged.removeLast();
-        final joined = '$previous $chunk'.trim();
-        if (_wordCount(joined) <= _hardMaxWords + 2 &&
-            joined.length <= _hardMaxChars + 16) {
-          merged.add(joined);
-          continue;
-        }
-        merged
-          ..add(previous)
-          ..add(chunk);
+      if (ch == ',' &&
+          !_hasUnclosedDoubleQuote(text.substring(start, index + 1))) {
+        breaks.add(_PhraseBreak(
+          index: _consumeClosingPunctuation(text, index + 1),
+          kind: _PhraseBreakKind.comma,
+        ));
         continue;
       }
-      merged.add(chunk);
+      if ((ch == '"' || ch == '“') &&
+          _shouldBreakBeforeDirectQuote(text, start, index)) {
+        breaks.add(_PhraseBreak(
+          index: index,
+          kind: _PhraseBreakKind.strong,
+        ));
+      }
     }
-    return merged;
+    return breaks;
   }
 
-  static bool _isReadableLength(List<String> tokens, String text) =>
-      tokens.length <= _hardMaxWords && text.length <= _hardMaxChars;
+  static bool _shouldBreakBeforeDirectQuote(
+    String text,
+    int start,
+    int index,
+  ) {
+    if (index <= start) {
+      return false;
+    }
 
-  static String _chunkText(List<String> tokens, int start, int end) =>
-      tokens.sublist(start, end).join(' ');
+    final current = text.substring(start, index).trim();
+    if (_wordCount(current) < _shortConnectorMinWords) {
+      return false;
+    }
+
+    final previous = _previousNonWhitespace(text, index - 1);
+    if (previous < start ||
+        !RegExp(r'[A-Za-z0-9,;:]').hasMatch(text[previous])) {
+      return false;
+    }
+
+    final next = _nextNonWhitespace(text, index + 1);
+    if (next >= text.length) {
+      return false;
+    }
+    return RegExp(r'[A-Z]').hasMatch(text[next]);
+  }
+
+  static int _consumeClosingPunctuation(String text, int index) {
+    var cursor = index;
+    while (cursor < text.length && _isClosingPunctuation(text[cursor])) {
+      cursor++;
+    }
+    return cursor;
+  }
+
+  static bool _nextChunkStartsWithConnector(String text, int index) {
+    final rest = text.substring(index).trimLeft();
+    return RegExp(
+      r'^(?:and|but|or|so|for|yet|then|because|while|when|as|though|although|which|who|that)\b',
+      caseSensitive: false,
+    ).hasMatch(rest);
+  }
+
+  static int _wordBoundaryAfterWords(String text, int start, int count) {
+    final matches = RegExp(r"[A-Za-z][A-Za-z'’-]*(?:-[A-Za-z][A-Za-z'’-]*)*")
+        .allMatches(text.substring(start))
+        .toList(growable: false);
+    if (matches.length <= count) {
+      return text.length;
+    }
+
+    final match = matches[count - 1];
+    final end = start + match.start + match.group(0)!.length;
+    final nextSpace = text.indexOf(' ', end);
+    return nextSpace > end ? nextSpace : end;
+  }
 
   static int _wordCount(String text) => text
       .split(RegExp(r'\s+'))
@@ -341,30 +472,59 @@ class NlpService {
         RegExp(r'^[a-z]$').hasMatch(lastWord);
   }
 
-  static bool _isClauseBreak(String token) =>
-      RegExp(r'[,;:，；：]$').hasMatch(token) ||
-      token.endsWith('—') ||
-      token.endsWith('–');
+  static bool _shouldKeepReadingThroughSentenceEnd(
+    String current,
+    String text,
+    int lookahead,
+  ) {
+    if (_hasUnclosedDoubleQuote(current)) {
+      return true;
+    }
 
-  static bool _isConnector(String token) {
-    final normalized =
-        token.replaceAll(RegExp(r'^[^A-Za-z]+|[^A-Za-z]+$'), '').toLowerCase();
-    return {
-      'and',
-      'but',
-      'or',
-      'so',
-      'then',
-      'because',
-      'when',
-      'while',
-      'after',
-      'before',
-      'if',
-      'that',
-      'which',
-      'who',
-      'where',
-    }.contains(normalized);
+    final next = _nextNonWhitespace(text, lookahead);
+    if (next >= text.length) {
+      return false;
+    }
+
+    return RegExp(r'[a-z]').hasMatch(text[next]);
   }
+
+  static bool _hasUnclosedDoubleQuote(String text) {
+    final straightQuotes = '"'.allMatches(text).length;
+    if (straightQuotes.isOdd) {
+      return true;
+    }
+
+    final openCurlyQuotes = '“'.allMatches(text).length;
+    final closeCurlyQuotes = '”'.allMatches(text).length;
+    return openCurlyQuotes > closeCurlyQuotes;
+  }
+
+  static int _nextNonWhitespace(String text, int start) {
+    var index = start;
+    while (index < text.length && _isWhitespace(text[index])) {
+      index++;
+    }
+    return index;
+  }
+
+  static int _previousNonWhitespace(String text, int start) {
+    var index = start;
+    while (index >= 0 && _isWhitespace(text[index])) {
+      index--;
+    }
+    return index;
+  }
+}
+
+enum _PhraseBreakKind { strong, comma }
+
+class _PhraseBreak {
+  const _PhraseBreak({
+    required this.index,
+    required this.kind,
+  });
+
+  final int index;
+  final _PhraseBreakKind kind;
 }

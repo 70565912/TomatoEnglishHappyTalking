@@ -2,23 +2,58 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import 'realtime_voice_service.dart';
+import 'database_service.dart';
+import 'practice_text_service.dart';
 
 class TranslationService {
   static final Map<String, Future<String>> _cache = {};
 
-  static Future<String> toChinese(String text) {
+  static Future<String> toChinese(
+    String text, {
+    int? articleId,
+    int? sentenceIndex,
+    String cachePurpose = 'translate_to_chinese',
+  }) {
     final key = _cacheKey(text);
     if (key.isEmpty) {
       return Future.value('');
     }
-    return _cache.putIfAbsent(key, () => _translate(key));
+    final memoryKey =
+        '$cachePurpose:${articleId ?? 'global'}:${sentenceIndex ?? 'any'}:$key';
+    return _cache.putIfAbsent(
+      memoryKey,
+      () => _translate(
+        key,
+        articleId: articleId,
+        sentenceIndex: sentenceIndex,
+        cachePurpose: cachePurpose,
+      ),
+    );
   }
 
-  static Future<String> _translate(String text) async {
+  static Future<String> _translate(
+    String text, {
+    int? articleId,
+    int? sentenceIndex,
+    required String cachePurpose,
+  }) async {
     try {
-      final reply = await RealtimeVoiceService.translateToChinese(text: text)
-          .timeout(const Duration(seconds: 8));
+      if (articleId != null && sentenceIndex != null) {
+        final imported = await DatabaseService.getArticleSentenceTranslation(
+          articleId,
+          sentenceIndex,
+          text,
+        );
+        if (imported != null && imported.trim().isNotEmpty) {
+          return imported.trim();
+        }
+      }
+
+      final reply = await PracticeTextService.translateToChinese(
+        text: text,
+        articleId: articleId,
+        cachePurpose: cachePurpose,
+      ).timeout(const Duration(seconds: 8));
       final translated = reply.text.trim();
       if (translated.isEmpty) {
         return '中文翻译暂不可用。';

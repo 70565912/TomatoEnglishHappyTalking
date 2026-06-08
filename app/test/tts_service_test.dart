@@ -24,5 +24,13 @@ void main() {
 
       expect(candidates, ['Tom finds a bright snack box.']);
     });
+
+    test('keeps hyphenated words joined before synthesis', () {
+      final candidates = TtsService.synthesisTextCandidatesForTest(
+        'A well - known mother - in - law arrives.',
+      );
+
+      expect(candidates, ['A well-known mother-in-law arrives.']);
+    });
   });
 }

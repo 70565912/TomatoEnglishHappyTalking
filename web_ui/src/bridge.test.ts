@@ -1,8 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emitNativeEvent, onNativeEvent, sendNative } from './bridge';
 import type { SettingsState } from './types';
 
 describe('bridge client', () => {
+  afterEach(() => {
+    delete window.flutter_inappwebview;
+    delete window.chrome;
+    vi.useRealTimers();
+  });
+
   it('delivers native events to listeners', () => {
     const listener = vi.fn();
     const off = onNativeEvent('avatar.state', listener);
@@ -21,6 +27,35 @@ describe('bridge client', () => {
 
     expect(response.articles.length).toBeGreaterThan(0);
   });
+
+  it('waits for a delayed Flutter bridge in embedded WebView', async () => {
+    vi.useFakeTimers();
+    window.chrome = { webview: {} };
+    const callHandler = vi.fn().mockResolvedValue({
+      id: 'native_1',
+      ok: true,
+      type: 'article.list.result',
+      payload: { articles: [{ id: 7, title: 'Native Article' }] },
+    });
+
+    const pending = sendNative<{ articles: Array<{ id: number }> }>(
+      'article.list',
+    );
+    window.setTimeout(() => {
+      window.flutter_inappwebview = { callHandler };
+      window.dispatchEvent(new Event('flutterInAppWebViewPlatformReady'));
+    }, 25);
+
+    await vi.advanceTimersByTimeAsync(30);
+    const response = await pending;
+
+    expect(callHandler).toHaveBeenCalledWith(
+      'tomatoBridge',
+      expect.objectContaining({ type: 'article.list' }),
+    );
+    expect(response.articles[0].id).toBe(7);
+  });
+
 
   it('does not expose secret or non-voice config fields in settings payload', async () => {
     const response = await sendNative<SettingsState>('settings.load');

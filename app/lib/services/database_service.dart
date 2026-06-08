@@ -1,50 +1,51 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as path_lib;
 import '../data/models/article_model.dart';
+import '../data/models/article_sentence_translation_model.dart';
 import '../data/models/learning_record_model.dart';
+import '../data/models/picture_book_model.dart';
 
 /// 本地 SQLite 数据库服务（静态单例，使用前需在 main() 中初始化 databaseFactory）
 class DatabaseService {
+  static const _desktopDataRootDefine =
+      String.fromEnvironment('TOMATO_DESKTOP_DATA_ROOT');
+  static const _desktopDataRootEnvKey = 'TOMATO_DESKTOP_DATA_ROOT';
   static Database? _db;
+  static String? _databaseDirectoryOverrideForTest;
 
   static Future<Database> get _database async {
     return _db ??= await _open();
   }
 
+  static Future<Database> get database async => _database;
+
+  static Future<String> get databaseDirectory async =>
+      _resolveDatabaseDirectory();
+
+  static Future<void> resetForTest() async {
+    await _db?.close();
+    _db = null;
+  }
+
+  static void setDatabaseDirectoryOverrideForTest(String? directory) {
+    _databaseDirectoryOverrideForTest = directory;
+  }
+
   static Future<Database> _open() async {
-    final dir = await getDatabasesPath();
-    final dbPath = path_lib.join(dir, 'english_love.db');
+    final dbPath = await _resolveDatabasePath();
+    await _copyCurrentLegacyDatabaseIfNeeded(dbPath);
     return openDatabase(
       dbPath,
-      version: 2,
+      version: 6,
       onCreate: (db, _) async {
-        await db.execute('''
-          CREATE TABLE articles (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            title     TEXT    NOT NULL,
-            content   TEXT    NOT NULL,
-            sentences TEXT    NOT NULL,
-            created_at TEXT   NOT NULL
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE learning_records (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            article_id          INTEGER NOT NULL,
-            sentence            TEXT    NOT NULL,
-            overall_score       REAL    NOT NULL,
-            accuracy_score      REAL    NOT NULL,
-            fluency_score       REAL    NOT NULL,
-            completeness_score  REAL    NOT NULL,
-            prosody_score       REAL    NOT NULL,
-            token_scores_json   TEXT,
-            evaluation_meta_json TEXT,
-            created_at          TEXT    NOT NULL,
-            FOREIGN KEY (article_id) REFERENCES articles (id)
-          )
-        ''');
+        await _createCoreTables(db);
+        await _createApiCacheTables(db);
+        await _createPictureBookTables(db);
+        await _createArticleSentenceTranslationTables(db);
+        await _createContentSafetyTables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -55,8 +56,364 @@ class DatabaseService {
             'ALTER TABLE learning_records ADD COLUMN evaluation_meta_json TEXT',
           );
         }
+        if (oldVersion < 3) {
+          await _createApiCacheTables(db);
+        }
+        if (oldVersion < 4) {
+          await _createPictureBookTables(db);
+        }
+        if (oldVersion < 5) {
+          await _createArticleSentenceTranslationTables(db);
+        }
+        if (oldVersion < 6) {
+          await _createContentSafetyTables(db);
+        }
       },
     );
+  }
+
+  static Future<String> _resolveDatabasePath() async {
+    final dir = await _resolveDatabaseDirectory();
+    await Directory(dir).create(recursive: true);
+    return path_lib.join(dir, 'english_love.db');
+  }
+
+  static Future<String> _resolveDatabaseDirectory() async {
+    final override = _databaseDirectoryOverrideForTest;
+    if (override != null) {
+      return override;
+    }
+
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      return path_lib.join(
+        _resolveDesktopDataRoot(),
+        '.dart_tool',
+        'sqflite_common_ffi',
+        'databases',
+      );
+    }
+
+    return getDatabasesPath();
+  }
+
+  static String _resolveDesktopDataRoot() {
+    final explicitRoot = _desktopDataRootDefine.trim().isNotEmpty
+        ? _desktopDataRootDefine.trim()
+        : (Platform.environment[_desktopDataRootEnvKey] ?? '').trim();
+    if (explicitRoot.isNotEmpty) {
+      return path_lib.normalize(path_lib.absolute(explicitRoot));
+    }
+
+    final executableDir = File(Platform.resolvedExecutable).parent.path;
+    final releaseDataRoot = _findWorkspaceReleaseDataRoot(executableDir);
+    return releaseDataRoot ?? executableDir;
+  }
+
+  static String? _findWorkspaceReleaseDataRoot(String startDirectory) {
+    var current = Directory(startDirectory);
+    for (var depth = 0; depth < 10; depth++) {
+      final candidate = Directory(
+        path_lib.join(
+          current.path,
+          'release',
+          'windows',
+          'tomato_english_happy_talking',
+        ),
+      );
+      final appPubspec =
+          File(path_lib.join(current.path, 'app', 'pubspec.yaml'));
+      if (candidate.existsSync() && appPubspec.existsSync()) {
+        return path_lib.normalize(candidate.absolute.path);
+      }
+
+      final parent = current.parent;
+      if (path_lib.equals(
+        path_lib.normalize(parent.path),
+        path_lib.normalize(current.path),
+      )) {
+        break;
+      }
+      current = parent;
+    }
+    return null;
+  }
+
+  static Future<void> _copyCurrentLegacyDatabaseIfNeeded(
+    String targetPath,
+  ) async {
+    final target = File(targetPath);
+    if (await target.exists()) {
+      return;
+    }
+
+    final legacyPath =
+        path_lib.join(await getDatabasesPath(), 'english_love.db');
+    if (path_lib.equals(
+        path_lib.normalize(legacyPath), path_lib.normalize(targetPath))) {
+      return;
+    }
+
+    final legacy = File(legacyPath);
+    if (!await legacy.exists()) {
+      return;
+    }
+
+    await target.parent.create(recursive: true);
+    await legacy.copy(targetPath);
+  }
+
+  static Future<void> _createCoreTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE articles (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        title     TEXT    NOT NULL,
+        content   TEXT    NOT NULL,
+        sentences TEXT    NOT NULL,
+        created_at TEXT   NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE learning_records (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        article_id          INTEGER NOT NULL,
+        sentence            TEXT    NOT NULL,
+        overall_score       REAL    NOT NULL,
+        accuracy_score      REAL    NOT NULL,
+        fluency_score       REAL    NOT NULL,
+        completeness_score  REAL    NOT NULL,
+        prosody_score       REAL    NOT NULL,
+        token_scores_json   TEXT,
+        evaluation_meta_json TEXT,
+        created_at          TEXT    NOT NULL,
+        FOREIGN KEY (article_id) REFERENCES articles (id)
+      )
+    ''');
+  }
+
+  static Future<void> _createApiCacheTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS api_cache_entries (
+        cache_key    TEXT PRIMARY KEY,
+        kind         TEXT NOT NULL,
+        purpose      TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        text_value   TEXT,
+        json_value   TEXT,
+        file_path    TEXT,
+        content_type TEXT,
+        byte_length  INTEGER,
+        source       TEXT NOT NULL,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT NOT NULL,
+        last_used_at TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS api_cache_article_refs (
+        article_id INTEGER NOT NULL,
+        cache_key  TEXT NOT NULL,
+        purpose    TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (article_id, cache_key, purpose),
+        FOREIGN KEY (article_id) REFERENCES articles (id),
+        FOREIGN KEY (cache_key) REFERENCES api_cache_entries (cache_key)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_api_cache_refs_key '
+      'ON api_cache_article_refs (cache_key)',
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS latest_sentence_recordings (
+        article_id      INTEGER NOT NULL,
+        sentence_index  INTEGER NOT NULL,
+        sentence        TEXT NOT NULL,
+        recording_path  TEXT NOT NULL,
+        audio_hash      TEXT NOT NULL,
+        recognized_text TEXT NOT NULL,
+        result_json     TEXT NOT NULL,
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL,
+        PRIMARY KEY (article_id, sentence_index),
+        FOREIGN KEY (article_id) REFERENCES articles (id)
+      )
+    ''');
+  }
+
+  static Future<void> _createPictureBookTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS story_series (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        title            TEXT    NOT NULL,
+        style_guide_json TEXT    NOT NULL,
+        bible_json       TEXT    NOT NULL,
+        cover_image_path TEXT,
+        created_at       TEXT    NOT NULL,
+        updated_at       TEXT    NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS story_chapters (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        series_id     INTEGER NOT NULL,
+        article_id    INTEGER NOT NULL UNIQUE,
+        chapter_order INTEGER NOT NULL,
+        chapter_title TEXT    NOT NULL,
+        summary_json  TEXT    NOT NULL,
+        created_at    TEXT    NOT NULL,
+        updated_at    TEXT    NOT NULL,
+        FOREIGN KEY (series_id) REFERENCES story_series (id),
+        FOREIGN KEY (article_id) REFERENCES articles (id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_story_chapters_series '
+      'ON story_chapters (series_id, chapter_order)',
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS picture_book_pages (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        article_id           INTEGER NOT NULL,
+        series_id            INTEGER,
+        page_index           INTEGER NOT NULL,
+        sentence_start_index INTEGER NOT NULL,
+        sentence_end_index   INTEGER NOT NULL,
+        paragraph_text       TEXT    NOT NULL,
+        prompt_json          TEXT    NOT NULL,
+        image_cache_key      TEXT,
+        image_path           TEXT,
+        status               TEXT    NOT NULL,
+        error_message        TEXT,
+        created_at           TEXT    NOT NULL,
+        updated_at           TEXT    NOT NULL,
+        UNIQUE (article_id, page_index),
+        FOREIGN KEY (article_id) REFERENCES articles (id),
+        FOREIGN KEY (series_id) REFERENCES story_series (id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_picture_book_pages_article '
+      'ON picture_book_pages (article_id, page_index)',
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS story_reference_assets (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        series_id   INTEGER NOT NULL,
+        kind        TEXT    NOT NULL,
+        name        TEXT    NOT NULL,
+        file_path   TEXT    NOT NULL,
+        prompt_json TEXT    NOT NULL,
+        cache_key   TEXT,
+        created_at  TEXT    NOT NULL,
+        updated_at  TEXT    NOT NULL,
+        FOREIGN KEY (series_id) REFERENCES story_series (id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_story_reference_assets_series '
+      'ON story_reference_assets (series_id, kind)',
+    );
+  }
+
+  static Future<void> _createArticleSentenceTranslationTables(
+    Database db,
+  ) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS article_sentence_translations (
+        article_id       INTEGER NOT NULL,
+        sentence_index   INTEGER NOT NULL,
+        english_sentence TEXT    NOT NULL,
+        chinese_text     TEXT    NOT NULL,
+        source           TEXT    NOT NULL,
+        created_at       TEXT    NOT NULL,
+        updated_at       TEXT    NOT NULL,
+        PRIMARY KEY (article_id, sentence_index),
+        FOREIGN KEY (article_id) REFERENCES articles (id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_article_sentence_translations_article '
+      'ON article_sentence_translations (article_id, sentence_index)',
+    );
+  }
+
+  static Future<void> _createContentSafetyTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS content_safety_failures (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        service_kind  TEXT    NOT NULL,
+        purpose       TEXT    NOT NULL,
+        article_id    INTEGER,
+        failed_text   TEXT    NOT NULL,
+        failed_hash   TEXT    NOT NULL,
+        error_code    TEXT,
+        error_message TEXT,
+        created_at    TEXT    NOT NULL,
+        resolved_at   TEXT,
+        FOREIGN KEY (article_id) REFERENCES articles (id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_content_safety_failures_lookup '
+      'ON content_safety_failures '
+      '(service_kind, purpose, article_id, resolved_at, created_at)',
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS content_safety_rules (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_term       TEXT    NOT NULL,
+        replacement       TEXT    NOT NULL,
+        service_kind      TEXT    NOT NULL,
+        purpose_scope     TEXT    NOT NULL,
+        match_type        TEXT    NOT NULL,
+        confidence        REAL    NOT NULL,
+        enabled           INTEGER NOT NULL,
+        source_failure_id INTEGER,
+        created_at        TEXT    NOT NULL,
+        updated_at        TEXT    NOT NULL,
+        UNIQUE (service_kind, purpose_scope, source_term, replacement)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_content_safety_rules_enabled '
+      'ON content_safety_rules (service_kind, purpose_scope, enabled)',
+    );
+    await _seedBuiltInContentSafetyRules(db);
+  }
+
+  static Future<void> _seedBuiltInContentSafetyRules(Database db) async {
+    final now = DateTime.now().toIso8601String();
+    final rules = <(String, String)>[
+      ('execution', 'exe-cution'),
+      ('beheading', 'be-heading'),
+      ('beheaded', 'be-headed'),
+      ('behead', 'be-head'),
+      ('heads', 'he-ads'),
+      ('head', 'he-ad'),
+      ('killing', 'ki-lling'),
+      ('killed', 'ki-lled'),
+      ('kills', 'ki-lls'),
+      ('kill', 'ki-ll'),
+      ('violent', 'vio-lent'),
+    ];
+    for (final rule in rules) {
+      await db.insert(
+        'content_safety_rules',
+        {
+          'source_term': rule.$1,
+          'replacement': rule.$2,
+          'service_kind': '*',
+          'purpose_scope': '*',
+          'match_type': 'word',
+          'confidence': 0.55,
+          'enabled': 1,
+          'source_failure_id': null,
+          'created_at': now,
+          'updated_at': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+    }
   }
 
   // ===== Articles =====
@@ -92,12 +449,261 @@ class DatabaseService {
     );
   }
 
+  static Future<void> updateArticleContentAndSentences(
+    int id,
+    String content,
+    List<String> sentences,
+  ) async {
+    final db = await _database;
+    await db.update(
+      'articles',
+      {
+        'content': content,
+        'sentences': jsonEncode(sentences),
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   static Future<void> deleteArticle(int id) async {
     final db = await _database;
-    await db.delete('articles', where: 'id = ?', whereArgs: [id]);
+    final cacheRows = await db.query(
+      'api_cache_article_refs',
+      columns: ['cache_key'],
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    final cacheKeys = cacheRows
+        .map((row) => row['cache_key']?.toString() ?? '')
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    final recordingRows = await db.query(
+      'latest_sentence_recordings',
+      columns: ['recording_path'],
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    final recordingPaths = recordingRows
+        .map((row) => row['recording_path']?.toString() ?? '')
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+    final pictureRows = await db.query(
+      'picture_book_pages',
+      columns: ['image_path', 'image_cache_key'],
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    final pictureFilePaths = pictureRows
+        .map((row) => row['image_path']?.toString() ?? '')
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+    cacheKeys.addAll(
+      pictureRows
+          .map((row) => row['image_cache_key']?.toString() ?? '')
+          .where((key) => key.isNotEmpty),
+    );
+    final chapterRows = await db.query(
+      'story_chapters',
+      columns: ['series_id'],
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    final affectedSeriesIds = chapterRows
+        .map((row) => (row['series_id'] as num?)?.toInt())
+        .whereType<int>()
+        .toSet();
+
     await db
         .delete('learning_records', where: 'article_id = ?', whereArgs: [id]);
+    await deleteArticleSentenceTranslations(id);
+    await db.delete(
+      'picture_book_pages',
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    await db.delete(
+      'story_chapters',
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    await db.delete(
+      'latest_sentence_recordings',
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    await db.delete(
+      'content_safety_failures',
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    await db.delete(
+      'api_cache_article_refs',
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    await db.delete('articles', where: 'id = ?', whereArgs: [id]);
+
+    final cacheFilePaths = <String>[];
+    for (final cacheKey in cacheKeys) {
+      final refCount = Sqflite.firstIntValue(
+            await db.rawQuery(
+              'SELECT COUNT(*) FROM api_cache_article_refs WHERE cache_key = ?',
+              [cacheKey],
+            ),
+          ) ??
+          0;
+      if (refCount > 0) {
+        continue;
+      }
+
+      final entries = await db.query(
+        'api_cache_entries',
+        columns: ['file_path'],
+        where: 'cache_key = ?',
+        whereArgs: [cacheKey],
+      );
+      if (entries.isNotEmpty) {
+        final filePath = entries.first['file_path']?.toString() ?? '';
+        if (filePath.isNotEmpty) {
+          cacheFilePaths.add(filePath);
+        }
+      }
+      await db.delete(
+        'api_cache_entries',
+        where: 'cache_key = ?',
+        whereArgs: [cacheKey],
+      );
+    }
+
+    final referenceFilePaths = <String>[];
+    for (final seriesId in affectedSeriesIds) {
+      final remainingChapterCount = Sqflite.firstIntValue(
+            await db.rawQuery(
+              'SELECT COUNT(*) FROM story_chapters WHERE series_id = ?',
+              [seriesId],
+            ),
+          ) ??
+          0;
+      if (remainingChapterCount > 0) {
+        continue;
+      }
+
+      final referenceRows = await db.query(
+        'story_reference_assets',
+        columns: ['file_path', 'cache_key'],
+        where: 'series_id = ?',
+        whereArgs: [seriesId],
+      );
+      referenceFilePaths.addAll(
+        referenceRows
+            .map((row) => row['file_path']?.toString() ?? '')
+            .where((path) => path.isNotEmpty),
+      );
+      for (final row in referenceRows) {
+        final cacheKey = row['cache_key']?.toString() ?? '';
+        if (cacheKey.isEmpty) {
+          continue;
+        }
+        await db.delete(
+          'api_cache_entries',
+          where: 'cache_key = ?',
+          whereArgs: [cacheKey],
+        );
+      }
+      await db.delete(
+        'story_reference_assets',
+        where: 'series_id = ?',
+        whereArgs: [seriesId],
+      );
+      await db.delete(
+        'story_series',
+        where: 'id = ?',
+        whereArgs: [seriesId],
+      );
+    }
+
+    for (final filePath in [
+      ...recordingPaths,
+      ...pictureFilePaths,
+      ...cacheFilePaths,
+      ...referenceFilePaths,
+    ]) {
+      try {
+        final file = File(filePath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {
+        // Cache cleanup is best effort; database rows are already removed.
+      }
+    }
   }
+
+  // ===== Imported sentence translations =====
+
+  static Future<void> saveArticleSentenceTranslations(
+    int articleId,
+    List<ArticleSentenceTranslation> translations,
+  ) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      await txn.delete(
+        'article_sentence_translations',
+        where: 'article_id = ?',
+        whereArgs: [articleId],
+      );
+      for (final translation in translations) {
+        await txn.insert(
+          'article_sentence_translations',
+          translation.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
+  static Future<String?> getArticleSentenceTranslation(
+    int articleId,
+    int sentenceIndex,
+    String sentence,
+  ) async {
+    final db = await _database;
+    final maps = await db.query(
+      'article_sentence_translations',
+      where: 'article_id = ? AND sentence_index = ?',
+      whereArgs: [articleId, sentenceIndex],
+      limit: 1,
+    );
+    if (maps.isEmpty) {
+      return null;
+    }
+
+    final row = ArticleSentenceTranslation.fromMap(maps.first);
+    final storedSentence = _normalizeSentenceForTranslationLookup(
+      row.englishSentence,
+    );
+    final requestedSentence = _normalizeSentenceForTranslationLookup(sentence);
+    if (storedSentence.isNotEmpty &&
+        requestedSentence.isNotEmpty &&
+        storedSentence != requestedSentence) {
+      return null;
+    }
+    final translated = row.chineseText.trim();
+    return translated.isEmpty ? null : translated;
+  }
+
+  static Future<void> deleteArticleSentenceTranslations(int articleId) async {
+    final db = await _database;
+    await db.delete(
+      'article_sentence_translations',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+    );
+  }
+
+  static String _normalizeSentenceForTranslationLookup(String text) =>
+      text.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim();
 
   // ===== Learning Records =====
 
@@ -126,5 +732,129 @@ class DatabaseService {
       [articleId],
     );
     return (result.first['avg'] as num?)?.toDouble() ?? 0.0;
+  }
+
+  // ===== Story series and picture-book pages =====
+
+  static Future<List<StorySeries>> getStorySeries() async {
+    final db = await _database;
+    final maps = await db.query('story_series', orderBy: 'updated_at DESC');
+    return maps.map(StorySeries.fromMap).toList(growable: false);
+  }
+
+  static Future<StorySeries?> getStorySeriesById(int id) async {
+    final db = await _database;
+    final maps = await db.query(
+      'story_series',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (maps.isEmpty) {
+      return null;
+    }
+    return StorySeries.fromMap(maps.first);
+  }
+
+  static Future<int> saveStorySeries(StorySeries series) async {
+    final db = await _database;
+    return db.insert('story_series', series.toMap());
+  }
+
+  static Future<void> updateStorySeries(StorySeries series) async {
+    final id = series.id;
+    if (id == null) {
+      return;
+    }
+    final db = await _database;
+    await db.update(
+      'story_series',
+      series.toMap()..remove('id'),
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  static Future<StoryChapter?> getStoryChapterForArticle(int articleId) async {
+    final db = await _database;
+    final maps = await db.query(
+      'story_chapters',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+      limit: 1,
+    );
+    if (maps.isEmpty) {
+      return null;
+    }
+    return StoryChapter.fromMap(maps.first);
+  }
+
+  static Future<int> nextStoryChapterOrder(int seriesId) async {
+    final db = await _database;
+    final result = await db.rawQuery(
+      'SELECT MAX(chapter_order) AS max_order FROM story_chapters '
+      'WHERE series_id = ?',
+      [seriesId],
+    );
+    final maxOrder = (result.first['max_order'] as num?)?.toInt() ?? 0;
+    return maxOrder + 1;
+  }
+
+  static Future<int> saveStoryChapter(StoryChapter chapter) async {
+    final db = await _database;
+    return db.insert(
+      'story_chapters',
+      chapter.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<List<PictureBookPage>> getPictureBookPages(
+    int articleId,
+  ) async {
+    final db = await _database;
+    final maps = await db.query(
+      'picture_book_pages',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+      orderBy: 'page_index ASC',
+    );
+    return maps.map(PictureBookPage.fromMap).toList(growable: false);
+  }
+
+  static Future<void> upsertPictureBookPage(PictureBookPage page) async {
+    final db = await _database;
+    await db.insert(
+      'picture_book_pages',
+      page.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<void> deletePictureBookPagesForArticle(int articleId) async {
+    final db = await _database;
+    await db.delete(
+      'picture_book_pages',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+    );
+  }
+
+  static Future<List<StoryReferenceAsset>> getStoryReferenceAssets(
+    int seriesId,
+  ) async {
+    final db = await _database;
+    final maps = await db.query(
+      'story_reference_assets',
+      where: 'series_id = ?',
+      whereArgs: [seriesId],
+      orderBy: 'created_at ASC',
+    );
+    return maps.map(StoryReferenceAsset.fromMap).toList(growable: false);
+  }
+
+  static Future<int> saveStoryReferenceAsset(StoryReferenceAsset asset) async {
+    final db = await _database;
+    return db.insert('story_reference_assets', asset.toMap());
   }
 }

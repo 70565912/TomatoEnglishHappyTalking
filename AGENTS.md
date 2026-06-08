@@ -212,6 +212,74 @@ ExampleService exampleService(ExampleServiceRef ref) {
 }
 ```
 
+## API 成本、缓存与内容解析优先级
+
+火山语音、Realtime、BigASR、图片生成等云 API 都会产生费用。新增或修改任何会触发云调用的功能时，必须优先考虑“本地解析、本地缓存、复用已有结果”，不要把 AI 请求作为第一选择。
+
+总体原则：
+
+- 所有云 API 调用必须先查本地持久缓存或已有业务数据；只有缓存未命中且本地无法确定结果时，才请求远程。
+- 只缓存成功的真实远程结果；不要缓存 API Key、请求 Header、失败响应、异常文本或 mock fallback。
+- 同一输入、同一模型/声音/资源 ID/尺寸/参考图/提示词版本应生成稳定缓存 key，避免同内容重复计费。
+- 删除文章时只清理文章独占缓存和引用；全局声音预览、共享 TTS、共享图片参考等不要误删。
+- 新增测试时要覆盖二次调用命中缓存、不重复远程请求、删除文章不误删共享缓存。
+- “省 API”约束主要针对正式运行流程和重复调用：正式功能必须最大化复用本地解析、数据库、文件缓存和成功远程结果。
+- 开发验证不能为了省一次测试调用而跳过关键链路；涉及新增文章、方舟提取/翻译、标题、绘本生成、TTS/听力、跟读录音/识别等端到端改动时，必须做足够完整的回归测试。绘本验证要跑全量文章流程，不能只测第一页或只测 prompt 预览。
+- 绘本生成策略为“每篇文章/每章一张图”，不是每段或每句多图。`picture_book_pages` 表继续复用，但正常生成只写入 `pageIndex=0`，`sentenceStartIndex=0`，`sentenceEndIndex` 覆盖整章最后一句。
+- 章节图 prompt 必须基于书籍名、章节标题和当前章节故事内容，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。
+- Web UI 中“书籍”就是 `story_series`；新增文章页不再展示绘本开关，保存时默认生成一张绘本图。只有内部测试或显式 payload 才可以传 `pictureBookEnabled=false` 跳过生成。
+- 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
+- 绘本 prompt 默认使用本地安全模板和系列设定，不要每章都调用方舟文本模型润色；AI prompt 润色只在显式打开 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS=true` 时启用。
+- 系列设定集默认本地合并章节摘要；AI 更新系列 bible 只在显式打开 `TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE=true` 时启用。
+- 自动生成风格/角色参考图默认关闭以节省费用；只有显式打开 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true` 时才创建或使用自动参考图。正式冷缓存流程应尽量保持每章一次图片调用。
+- Seedream 组图 `sequential_image_generation` 目前作为实验能力保留，默认关闭；2026-06-07 Alice 全量测试中 4 页组图请求超过 120 秒超时并回退单图，可能造成无效调用。只有显式打开 `TOMATO_VOLC_IMAGE_GROUP_PAGES=true` 时才使用组图。
+- 对话练习提纲应由方舟根据完整章节内容做语义切分和总结，程序不要固定为 8 条。程序内部的 `ChatChapterGuideService.buildLocalGuide` 只作为无 key/远程失败 fallback，允许用最多 8 条本地均分覆盖点保证可用；远程成功时必须以 AI 按场景/事件/冲突/结尾自然划分的提纲为准，并缓存结果，后续聊天轮次只复用提纲，不重复提交完整章节。
+
+内容安全失败与敏感词规则：
+
+- 统一使用 `app/lib/services/content_safety_service.dart` 处理平台安全拒绝、失败快照、用户修正后的规则学习和提交前替换。不要在各个 service 里各写一套临时敏感词替换。
+- 正式运行中遇到疑似安全拒绝后，不做二分探测、不反复试探 API。记录 `content_safety_failures`，提示用户修改相关表达后重试。
+- 用户修改后同一用途提交成功时，用失败文本和成功文本做词级 diff，只有像 `heads -> he-ads`、`beheaded -> be-headed` 这种短词/短语拆分才写入 `content_safety_rules`；整句改写只能作为样例，不要泛化成规则。
+- 规则只应用到提交给云 API 的文本，不修改文章正文、字幕、跟读文本和数据库原文。TTS 请求文本也要先套用安全规则；如果替换后仍然 400，记录失败并把失败原因交给 UI，不再继续自动猜测。
+- 替换优先使用连字符或空格，例如 `he-ads` / `he ads`；避免优先使用 `*`，因为语音引擎可能把星号读出来。
+- 400 不一定是安全拒绝。明显的参数、尺寸、鉴权、额度、Resource/Speaker 配置错误不能记录为敏感词规则。
+- 更重要：开发/测试里的 HTTP 400 经常是沙箱网络拦截或 `flutter_test` 默认 `HttpClient` override 造成的假 400，不是火山真实返回。任何 live API 结论前必须确认测试已 `HttpOverrides.global = null`、必要时在沙箱外/已授权网络环境重跑，并看到真实远程响应或缓存命中；不要把测试环境假 400 写进 `content_safety_failures` 或学习成敏感词规则。
+- 安全失败、成功远程结果和 mock fallback 分开处理：失败快照进 `content_safety_failures`，成功远程结果才进 `api_cache_entries`，mock/fallback 不入成功缓存。
+
+新增文章内容处理顺序：
+
+1. 纯英文输入：本地规范化连字符、撇号、空白和标题行后直接使用，不调用 AI 提取或翻译。
+2. 标准中英对照输入：优先本地解析英文原文和中文对照，不调用 AI 提取英文。典型格式是英文段落/中文翻译交替，前面有 `Chapter ...`、英文标题、中文标题，末尾可能有“注：”。英文原文应保留段落边界；中文对照应保存为可复用的字幕/翻译映射；译注不进入正文。
+3. 中英混杂但不是标准对照：不要把本地启发式结果直接当最终正文；这类输入必须调用方舟提取英文故事原文。
+4. 纯中文故事：才调用 AI 转成英文练习文。
+5. 用户未输入标题：优先从导入文本的英文标题行、章节标题或系列信息本地生成；无法确定时再调用 AI 生成短标题。
+
+标准中英对照故事的特殊要求：
+
+- 不要把整篇标准中英对照内容直接送给方舟或 Realtime 做“提取英文原文”，这会浪费费用，还可能因为 prompt 截断导致只保存前半篇。
+- 如果必须用 AI 处理长文本，必须分块且保证全量覆盖；不要只取前 `1600` 或 `2200` 字符后把结果当完整文章。
+- 跟读/听力的中文对照应优先复用导入时解析出的中文翻译；不要再逐句调用 `translate_to_chinese` 生成一份可能风格不同的新译文。
+- 绘本生成现在是一章一图；解析出的英文段落只用于构造整章故事内容/摘要提示词，不再决定图片页数。
+
+Alice 回归测试用例：
+
+- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；除默认一张绘本图外，不应因正文提取/中文对照再产生无谓 AI 调用，`listening.open` 返回 75 项且没有空中文。
+- 数据库中旧 Alice 文章要作为回归样本保留：`Alice's Adventures in Wonderland - Episod 56`、`爱丽丝梦游仙境（原著领读版）- E61` 以及新导入的 `The Queen's Croquet-Ground`。这些文章都必须挂到同一本书籍 `Alice's Adventures in Wonderland` 下。
+- 对旧 Alice 混合正文不要重新整篇提交给 `article.create` 做 AI 提取；旧数据中已保存的英文句子/正文可以用于 `article.list`、`follow.open`、`pictureBook.state`、系列归属测试。若需要重新导入旧内容，优先使用已经提取出的纯英文内容，避免触发 mixed -> 方舟提取。
+- 整理已有文章的书籍归属时使用 `series.attachArticle`，不要用 `pictureBook.generate` 代替；`series.attachArticle` 只创建或更新 `story_chapters` 关系，不触发图片生成和其它云 API。
+- Alice 系列验证至少检查：`article.list` 中相关文章的 `seriesTitle` 均为 `Alice's Adventures in Wonderland`；`story_chapters` 中同系列包含这些文章；旧两篇若没有导入译文，使用 `pictureBook.state` / `article.list` 验证归属和程序状态，不要调用会补翻译的打开流程；标准中英对照样例的 `listening.open` 能直接使用导入译文。
+
+相关实现入口：
+
+- 文章保存入口：`app/lib/features/web_shell/web_shell_screen.dart` 的 `article.create` / `_englishPracticeContent` / `_resolveArticleTitle`。
+- 本地输入解析：`app/lib/services/practice_input_parser.dart`，标准中英对照必须从这里本地解析直用。
+- 方舟文本处理：`app/lib/services/practice_text_service.dart` / `app/lib/services/text_generation_service.dart`，只用于非标准 mixed、纯中文和必要标题生成。
+- 持久缓存：`app/lib/services/api_cache_service.dart`。
+- 内容安全规则：`app/lib/services/content_safety_service.dart`，负责提交前替换、疑似安全失败记录和用户成功修正规则学习。
+- 分句：`app/lib/services/nlp_service.dart` 与 `web_ui/src/sentenceSplitter.ts`。
+- 绘本段落和提示词：`app/lib/services/picture_book_service.dart`。
+- Web UI 只能通过 `web_bridge_protocol.dart` / `bridge.ts` 协议提交原始内容，不要绕过 Flutter 直接访问云 API。
+
 ### 云服务端点
 
 Doubao TTS 2.0：
@@ -225,7 +293,7 @@ Realtime V3 AI 对话：
 
 - 端点：`wss://openspeech.bytedance.com/api/v3/realtime/dialogue`
 - 推荐鉴权：`X-Api-Key`、`X-Api-Resource-Id: volc.speech.dialog`、`X-Api-Connect-Id`
-- 兼容回退鉴权：`X-Api-App-ID`、`X-Api-Access-Key`、`X-Api-App-Key`
+- 不再回退旧鉴权头；语音链路只使用新版 `X-Api-Key`
 - 当前客户端使用文本 query 模式：`StartConnection` -> `StartSession` -> `ChatTextQuery` -> `FinishSession` -> `FinishConnection`
 - AI 回复文本交给本地 TTS 2.0 播放
 
@@ -245,10 +313,17 @@ BigASR：
 
 配置与密钥：
 
-- 统一火山引擎密钥字段：`volc_api_key` / `TOMATO_VOLC_API_KEY`
-- 推荐本机注入：`security/api-key.txt` + `security/api-key.key.txt`，由 `AppConfig.seedSecureStorageFromEncryptedFile()` 启动时解密到运行时配置
-- 调试兼容注入：`--dart-define TOMATO_VOLC_API_KEY=...`
-- 旧字段 `TOMATO_VOLC_TTS_API_KEY`、`TOMATO_VOLC_REALTIME_API_KEY`、`TOMATO_VOLC_BIGASR_API_KEY` 只做兼容读取，新配置不要再拆分填写
+- 语音密钥字段：`volc_speech_api_key` / `TOMATO_VOLC_SPEECH_API_KEY`
+- 推荐本机注入：`security/speech-api-key.txt`
+- 方舟密钥文件：`security/ark.txt`，保存火山方舟 Bearer API Key，可写成裸 key、`Bearer ...` 或 `ARK_API_KEY=...`；这是方舟文本处理和方舟图片生成的唯一本地 key 文件。
+- 绘本图片只使用方舟 `/api/v3/images/generations`；不要恢复旧 Visual / AK-SK 图片备用链路。
+- 方舟组图、参考图、Seedream 图片能力只在成功读取到 `ark.txt` / `TOMATO_VOLC_ARK_API_KEY` 时启用；没有方舟 Bearer key 时应跳过图片生成，不调用其它图片模型。
+- 绘本图片默认使用方舟 `doubao-seedream-5-0-260128`。用户侧展示按产品需求使用 16:9 `1280x720` 体验，但真实方舟网络探针已确认远程 `1280x720` 会返回 `InvalidParameter: image size must be at least 3686400 pixels`；因此远程请求使用最小满足限制的 16:9 `2560x1440`。下载后保存远程原图，UI 负责缩小显示；不要为了缩放再调用一次图片生成 API。
+- 注意 `flutter_test` 默认会拦截 `HttpClient` 并让 HTTP 请求本地返回 400；任何 live API 测试都必须先清除测试框架的 HTTP override，否则 400 不能当作火山接口真实错误。
+- 如果 live probe 在普通测试环境里返回空 body 的 HTTP 400，先按“测试环境拦截”处理：检查 `HttpOverrides.global = null`、网络权限/沙箱授权、API Key 是否真实读取，再讨论内容安全。不要先猜敏感词。
+- Seedream 图片 API 笔记放在 `docs/volc_ark_seedream_image_api_notes.md`；涉及模型、endpoint、鉴权、组图、参考图、尺寸、缓存 key 的改动时先看这份文档。
+- 调试兼容注入：`--dart-define TOMATO_VOLC_SPEECH_API_KEY=...`
+- 旧的统一语音 key 和分服务语音 key 字段不再作为兜底
 - 设置页只展示运行时读取状态，不提供手动录入 API Key 的表单
 
 ## Android 原生目录规范
@@ -334,6 +409,7 @@ Manifest 与入口约束：
 - 涉及 Android 调试脚本时，优先复用 `build_android.ps1 -Run`，不要复制一套新的 Flutter 启动逻辑。
 - 修改 Web UI 后，保持 `tools/build_windows.ps1`、`tools/build_android.ps1` 自动执行 `npm ci` / `npm install` 与 `npm run build`，确保 `app\assets\web\` 随 EXE/APK 更新。
 - 新增 Web UI 依赖时同步更新 `web_ui\package.json` 与 `web_ui\package-lock.json`，不要提交 `node_modules`。
+- Windows Debug 和 Release 可以是两套可执行程序，但桌面运行数据必须共用；Debug 构建默认通过 `TOMATO_DESKTOP_DATA_ROOT` 复用 `release\windows\tomato_english_happy_talking` 下的数据库和 API 缓存，不要让 Debug 写到 `app\build\windows\...\Debug` 旁边形成第二套数据。
 
 ## 构建、运行与发布
 
@@ -382,6 +458,10 @@ cd f:\TomatoEnglishHappyTalking
 - Android 构建输出：`app\build\app\outputs\flutter-apk\app-release.apk`
 - Android 发布 APK：`release\android\tomato_english_happy_talking-android-release.apk`
 - Web UI 构建输出 / App 内置资源：`app\assets\web\`（由 `web_ui/vite.config.ts` 的 `outDir` 指定）
+
+- 桌面数据固定跟随发布目录：Windows Debug 和 Release 可以是两套程序，但数据库、`tomato_api_cache/`、绘本图片、TTS、录音等运行数据应共用 `release\windows\tomato_english_happy_talking\` 下的数据根，不要让 Debug 写到 `app\build\windows\...\Debug` 旁边形成第二套数据。
+- `tools/build_windows.ps1` 不得清空用户运行数据；如果需要清理发布目录，只能清理程序构建产物，必须保留数据库、`tomato_api_cache/`、录音、绘本图片和配置密钥文件。
+- `D:\DevTools\flutter\bin\flutter.bat analyze`、`flutter.bat --version` 或 `flutter test` 若长时间无输出，优先怀疑 Flutter SDK cache lockfile / sandbox 权限问题；必须设置明确超时，必要时用已批准的 SDK cache 路径/提权方式重跑，不要无限等待。
 
 只有在怀疑脚本本身有问题时，才退回到底层 `flutter build`、`flutter run`、`gradlew`、`adb` 或 `emulator` 命令定位。
 
@@ -504,6 +584,8 @@ Service 必须满足：
 - 不要随意修改 `pubspec.yaml` 中已有依赖版本。
 - 不要把 Ark 文本补全重新作为聊天主链路。
 - 不要重新引入 Azure Speech 配置、依赖或 Pronunciation Assessment 调用。
+- 不要把标准中英对照故事整篇直接送给 AI 做英文提取/翻译；必须先本地解析并复用英文原文、中文对照和标题信息。
+- 不要对已经有本地缓存或导入译文的数据重复调用 TTS、Realtime、BigASR、图片生成或翻译接口。
 - 不要移除 Android 构建稳定性相关配置：
   - `android.overridePathCheck=true`
   - `kotlin.compiler.execution.strategy=in-process`

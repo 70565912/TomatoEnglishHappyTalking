@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 import '../core/config/app_config.dart';
+import 'api_cache_service.dart';
 
 enum AsrFailureType {
   emptyAudio,
@@ -36,6 +37,8 @@ class StreamingAsrService {
   // BigASR SAUC (stream upload) endpoint from docs/大模型流式语音识别API.md.
   static const _endpoint =
       'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream';
+  static const _liveEndpoint =
+      'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel';
   static const _chunkSize = 8 * 1024;
 
   static const _protocolVersionAndHeader = 0x11; // v1 + 4-byte header
@@ -60,16 +63,39 @@ class StreamingAsrService {
 
   static Future<String> recognize({
     required List<int> audioBytes,
+    int? articleId,
+    String cachePurpose = 'asr_recognize',
   }) async {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '录音为空，无法识别');
     }
 
-    final apiKey = await AppConfig.volcApiKey;
+    final audioHash = await ApiCacheService.hashBytes(audioBytes);
+    final cacheRequest = {
+      'service': 'bigasr',
+      'endpoint': _endpoint,
+      'audioFormat': 'wav',
+      'sampleRate': 16000,
+      'bits': 16,
+      'channel': 1,
+      'language': 'en-US',
+      'audioHash': audioHash,
+    };
+    final cacheKey = await ApiCacheService.keyForJson('asr', cacheRequest);
+    final cachedText = await ApiCacheService.getText(
+      cacheKey,
+      articleId: articleId,
+      purpose: cachePurpose,
+    );
+    if (cachedText != null && cachedText.trim().isNotEmpty) {
+      return cachedText.trim();
+    }
+
+    final apiKey = await AppConfig.volcBigAsrApiKey;
     if (apiKey.trim().isEmpty) {
       throw const AsrException(
         AsrFailureType.missingApiKey,
-        '本机加密配置未读取到火山引擎 API Key',
+        '未读取到 speech-api-key.txt 里的新版语音 API Key',
       );
     }
 
@@ -78,11 +104,12 @@ class StreamingAsrService {
     try {
       _trace('connect requestId=$requestId bytes=${audioBytes.length}');
       socket = await _connectSocket(
+        endpoint: _endpoint,
         apiKey: apiKey,
         requestId: requestId,
       );
 
-      socket.add(_buildFullClientRequestFrame());
+      socket.add(_buildFullClientRequestFrame(audioFormat: 'wav'));
 
       var offset = 0;
       while (offset < audioBytes.length) {
@@ -163,7 +190,16 @@ class StreamingAsrService {
 
         _trace(
             'success requestId=$requestId textLen=${recognized.trim().length}');
-        return recognized.trim();
+        final trimmedRecognized = recognized.trim();
+        await ApiCacheService.putText(
+          cacheKey: cacheKey,
+          kind: 'asr',
+          purpose: cachePurpose,
+          request: cacheRequest,
+          textValue: trimmedRecognized,
+          articleId: articleId,
+        );
+        return trimmedRecognized;
       } finally {
         await subscription.cancel();
       }
@@ -186,17 +222,165 @@ class StreamingAsrService {
     }
   }
 
+  static Future<String> recognizeLive({
+    required Stream<List<int>> audioChunks,
+    void Function(String text)? onPartial,
+  }) async {
+    final apiKey = await AppConfig.volcBigAsrApiKey;
+    if (apiKey.trim().isEmpty) {
+      throw const AsrException(
+        AsrFailureType.missingApiKey,
+        '未读取到 speech-api-key.txt 里的新版语音 API Key',
+      );
+    }
+
+    WebSocket? socket;
+    final requestId = _newRequestId();
+    var sentAudio = false;
+    try {
+      _trace('live connect requestId=$requestId');
+      socket = await _connectSocket(
+        endpoint: _liveEndpoint,
+        apiKey: apiKey,
+        requestId: requestId,
+      );
+
+      socket.add(_buildFullClientRequestFrame(audioFormat: 'pcm'));
+
+      final completer = Completer<String>();
+      final textBuffer = StringBuffer();
+      final subscription = socket.listen((dynamic event) {
+        final packet = _parseServerPacket(event);
+        if (packet == null) {
+          return;
+        }
+
+        if (packet.messageType == _messageTypeError) {
+          if (!completer.isCompleted) {
+            completer.completeError(
+              AsrException(
+                AsrFailureType.unknown,
+                packet.errorMessage ?? 'BigASR 返回协议错误',
+              ),
+            );
+          }
+          return;
+        }
+
+        final delta = _extractText(packet.payloadMap);
+        if (delta != null && delta.trim().isNotEmpty) {
+          final text = delta.trim();
+          textBuffer
+            ..clear()
+            ..write(text);
+          onPartial?.call(text);
+          _trace('live delta requestId=$requestId textLen=${text.length}');
+        }
+
+        if (packet.isTerminal && !completer.isCompleted) {
+          _trace('live terminalFrame requestId=$requestId');
+          completer.complete(textBuffer.toString());
+        }
+      }, onDone: () {
+        if (!completer.isCompleted) {
+          completer.complete(textBuffer.toString());
+        }
+      }, onError: (Object error) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            AsrException(
+              AsrFailureType.unknown,
+              'BigASR 连接中断：$error',
+            ),
+          );
+        }
+      });
+
+      try {
+        List<int>? pendingChunk;
+        await for (final chunk in audioChunks) {
+          if (chunk.isEmpty) {
+            continue;
+          }
+          if (pendingChunk != null) {
+            socket.add(_buildAudioOnlyFrame(
+              audioChunk: pendingChunk,
+              isLast: false,
+            ));
+            sentAudio = true;
+          }
+          pendingChunk = chunk;
+        }
+
+        if (pendingChunk != null) {
+          socket.add(_buildAudioOnlyFrame(
+            audioChunk: pendingChunk,
+            isLast: true,
+          ));
+          sentAudio = true;
+        }
+
+        if (!sentAudio) {
+          throw const AsrException(AsrFailureType.emptyAudio, '录音为空，无法识别');
+        }
+
+        final recognized = await completer.future.timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => throw const AsrException(
+            AsrFailureType.timeout,
+            'BigASR 识别超时，请稍后重试',
+          ),
+        );
+
+        if (recognized.trim().isEmpty) {
+          throw const AsrException(
+            AsrFailureType.emptyResult,
+            'BigASR 未返回识别结果，请检查网络或本机语音配置',
+          );
+        }
+
+        _trace(
+          'live success requestId=$requestId textLen=${recognized.trim().length}',
+        );
+        return recognized.trim();
+      } finally {
+        await subscription.cancel();
+      }
+    } on AsrException {
+      rethrow;
+    } on WebSocketException catch (e) {
+      _trace('live websocketError requestId=$requestId error=$e');
+      throw AsrException(
+        AsrFailureType.connectFailed,
+        'BigASR 连接失败：$e',
+      );
+    } catch (e) {
+      _trace('live unknownError requestId=$requestId error=$e');
+      throw AsrException(
+        AsrFailureType.unknown,
+        'BigASR 识别失败：$e',
+      );
+    } finally {
+      await socket?.close();
+    }
+  }
+
   static Future<String> recognizeSafe({
     required List<int> audioBytes,
+    int? articleId,
   }) async {
     try {
-      return await recognize(audioBytes: audioBytes);
+      return await recognize(
+        audioBytes: audioBytes,
+        articleId: articleId,
+      );
     } catch (_) {
       return '';
     }
   }
 
   static Future<WebSocket> _connectSocket({
+    required String endpoint,
     required String apiKey,
     required String requestId,
   }) async {
@@ -208,7 +392,7 @@ class StreamingAsrService {
           'connect try requestId=$requestId resourceId=$resourceId auth=X-Api-Key',
         );
         return await WebSocket.connect(
-          _endpoint,
+          endpoint,
           headers: <String, String>{
             'X-Api-Key': apiKey,
             'X-Api-Resource-Id': resourceId,
@@ -229,13 +413,15 @@ class StreamingAsrService {
     );
   }
 
-  static List<int> _buildFullClientRequestFrame() {
+  static List<int> _buildFullClientRequestFrame({
+    required String audioFormat,
+  }) {
     final payloadMap = <String, dynamic>{
       'user': {
         'uid': 'tomato_app',
       },
       'audio': {
-        'format': 'wav',
+        'format': audioFormat,
         'rate': 16000,
         'bits': 16,
         'channel': 1,

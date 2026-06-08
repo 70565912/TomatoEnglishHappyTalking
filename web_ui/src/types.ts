@@ -30,6 +30,45 @@ export interface Article {
   sentenceCount: number;
   createdAt: string;
   averageScore: number;
+  coverImagePath?: string | null;
+  coverImageUri?: string | null;
+  pictureBookEnabled?: boolean;
+  seriesId?: number | null;
+  seriesTitle?: string;
+  chapterOrder?: number | null;
+}
+
+export interface StorySeries {
+  id: number;
+  title: string;
+  styleGuide?: Record<string, unknown>;
+  bible?: Record<string, unknown>;
+  coverImagePath?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PictureBookPage {
+  id?: number;
+  articleId: number;
+  seriesId?: number | null;
+  pageIndex: number;
+  sentenceStartIndex: number;
+  sentenceEndIndex: number;
+  paragraphText: string;
+  imagePath?: string | null;
+  imageUri?: string | null;
+  status: 'queued' | 'prompting' | 'generating' | 'ready' | 'skipped' | 'error' | string;
+  errorMessage?: string | null;
+}
+
+export interface PictureBookState {
+  articleId: number;
+  enabled: boolean;
+  status: 'empty' | 'generating' | 'ready' | 'partial' | 'skipped' | 'error' | string;
+  series?: StorySeries | null;
+  chapter?: Record<string, unknown> | null;
+  pages: PictureBookPage[];
 }
 
 export interface WordScore {
@@ -60,9 +99,52 @@ export interface FollowState {
   step?: string;
   playbackState?: string;
   playbackError?: string | null;
+  hasRecording?: boolean;
+  liveRecognizedText?: string;
   result?: PronunciationResult | null;
   error?: string | null;
   avatar?: AvatarState;
+}
+
+export type ListeningMode = 'english' | 'bilingual';
+
+export interface ListeningItem {
+  index: number;
+  english: string;
+  chinese: string;
+}
+
+export interface ListeningOpenPayload {
+  article: Article;
+  items: ListeningItem[];
+}
+
+export interface ListeningTranslationsPayload {
+  articleId: number;
+  translations: Array<{
+    index: number;
+    chinese: string;
+  }>;
+}
+
+export interface ListeningPausePayload {
+  paused: boolean;
+}
+
+export interface ListeningResumePayload {
+  resumed: boolean;
+}
+
+export interface WordLookupPayload {
+  word: string;
+  phonetic: string;
+  meaning: string;
+  sentenceMeaning: string;
+  source?: string;
+}
+
+export interface WordPlaybackPayload {
+  playbackState: 'success';
 }
 
 export interface ChatMessage {
@@ -80,6 +162,9 @@ export interface ChatState {
   error?: string | null;
   questionCount: number;
   maxQuestions: number;
+  isChapterComplete?: boolean;
+  abilityLevel?: string | null;
+  practiceSummary?: string | null;
   messages: ChatMessage[];
   avatar?: AvatarState;
 }
@@ -92,12 +177,41 @@ export interface VoiceOption {
   scene: string;
 }
 
+export interface ContentSafetyRule {
+  id: number;
+  sourceTerm: string;
+  replacement: string;
+  serviceKind: string;
+  purposeScope: string;
+  matchType: string;
+  confidence: number;
+  enabled: boolean;
+  sourceFailureId?: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface SettingsState {
   tts: {
     resourceId: string;
     speakerId: string;
   };
   voices: VoiceOption[];
+  contentSafety?: {
+    rules: ContentSafetyRule[];
+  };
+}
+
+export interface GeneratedTitlePayload {
+  title: string;
+}
+
+export interface EnglishArticlePayload {
+  content: string;
+}
+
+export interface VoicePreviewPayload {
+  playbackState: 'success';
 }
 
 export interface NativeEvent<T = unknown> {

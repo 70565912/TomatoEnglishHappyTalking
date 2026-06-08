@@ -88,6 +88,47 @@ function Get-FlutterDartDefineArgs {
     return $dartDefineOptions
 }
 
+function Test-DartDefineKeyPresent {
+    param(
+        [string[]]$Values,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    foreach ($value in @($Values)) {
+        if ([string]::IsNullOrWhiteSpace($value)) {
+            continue
+        }
+
+        $trimmedValue = $value.Trim()
+        $normalizedValue = $trimmedValue
+        if ($normalizedValue.StartsWith("--dart-define=")) {
+            $normalizedValue = $normalizedValue.Substring("--dart-define=".Length)
+        }
+
+        if ($normalizedValue.StartsWith("$Key=", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Add-DebugDesktopDataRootDefine {
+    param(
+        [string[]]$Values
+    )
+
+    if (Test-DartDefineKeyPresent -Values $Values -Key "TOMATO_DESKTOP_DATA_ROOT") {
+        return @($Values)
+    }
+
+    $debugDataRoot = Join-Path $releaseRoot "windows\tomato_english_happy_talking"
+    New-Item -ItemType Directory -Path $debugDataRoot -Force | Out-Null
+    Write-Host "Debug 将复用发布目录运行数据: $debugDataRoot" -ForegroundColor DarkGray
+    return @($Values) + "TOMATO_DESKTOP_DATA_ROOT=$debugDataRoot"
+}
+
 function Get-OptionalFileHash {
     param(
         [Parameter(Mandatory = $true)]
@@ -274,6 +315,123 @@ function Invoke-WebUiBuild {
     }
 }
 
+function Assert-PathInsideDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$ParentPath
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $resolvedParent = [System.IO.Path]::GetFullPath($ParentPath).TrimEnd('\', '/')
+    $prefix = $resolvedParent + [System.IO.Path]::DirectorySeparatorChar
+
+    if (-not ($resolvedPath.Equals($resolvedParent, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $resolvedPath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw "路径不在预期目录内，拒绝操作: $resolvedPath"
+    }
+}
+
+function New-WindowsReleasePackageBackup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir,
+        [Parameter(Mandatory = $true)]
+        [string]$BackupRoot
+    )
+
+    if (-not (Test-Path $PackageDir)) {
+        return $null
+    }
+
+    New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
+    $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
+    $suffix = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
+    $backupDir = Join-Path $BackupRoot ("tomato_english_happy_talking-$timestamp-$suffix")
+
+    Copy-Item -LiteralPath $PackageDir -Destination $backupDir -Recurse -Force
+    return $backupDir
+}
+
+function Restore-WindowsRuntimeData {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BackupDir,
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir
+    )
+
+    if (-not (Test-Path $BackupDir)) {
+        return @()
+    }
+
+    $restoredItems = @()
+    $runtimeDirectories = @(
+        ".dart_tool",
+        "tomato_api_cache",
+        "downloads",
+        "recordings",
+        "picture_book",
+        "runtime",
+        "user_data",
+        "logs",
+        "security",
+        "data\downloads",
+        "data\tomato_api_cache",
+        "data\recordings",
+        "data\picture_book",
+        "data\user_data",
+        "data\databases"
+    )
+
+    foreach ($relativePath in $runtimeDirectories) {
+        $sourcePath = Join-Path $BackupDir $relativePath
+        if (-not (Test-Path $sourcePath)) {
+            continue
+        }
+
+        $destinationPath = Join-Path $PackageDir $relativePath
+        Assert-PathInsideDirectory -Path $destinationPath -ParentPath $PackageDir
+        $destinationParent = Split-Path -Parent $destinationPath
+        New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        if (Test-Path $destinationPath) {
+            Remove-Item -LiteralPath $destinationPath -Recurse -Force
+        }
+        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+        $restoredItems += $relativePath
+    }
+
+    $runtimeFiles = @(
+        "AccessKey.txt",
+        "speech-api-key.txt",
+        "settings.json"
+    )
+
+    foreach ($relativePath in $runtimeFiles) {
+        $sourcePath = Join-Path $BackupDir $relativePath
+        if (-not (Test-Path $sourcePath)) {
+            continue
+        }
+
+        $destinationPath = Join-Path $PackageDir $relativePath
+        Assert-PathInsideDirectory -Path $destinationPath -ParentPath $PackageDir
+        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+        $restoredItems += $relativePath
+    }
+
+    Get-ChildItem -LiteralPath $BackupDir -File -Force | Where-Object {
+        $_.Name -match '\.(db|sqlite|sqlite3)(-wal|-shm)?$'
+    } | ForEach-Object {
+        $destinationPath = Join-Path $PackageDir $_.Name
+        Assert-PathInsideDirectory -Path $destinationPath -ParentPath $PackageDir
+        Copy-Item -LiteralPath $_.FullName -Destination $destinationPath -Force
+        $restoredItems += $_.Name
+    }
+
+    return $restoredItems
+}
+
 function Publish-WindowsReleaseArtifacts {
     param(
         [Parameter(Mandatory = $true)]
@@ -287,27 +445,31 @@ function Publish-WindowsReleaseArtifacts {
     $releaseWindowsDir = Join-Path $releaseRoot "windows"
     $packageDir = Join-Path $releaseWindowsDir "tomato_english_happy_talking"
     $legacyPackageDir = Join-Path $releaseWindowsDir "english_love_reading"
-    $runtimeDataBackupDir = $null
+    $runtimeBackupRoot = Join-Path $releaseWindowsDir ".runtime_backups"
+    $packageBackupDir = $null
 
     if (Test-Path $legacyPackageDir) {
-        Remove-Item -Path $legacyPackageDir -Recurse -Force
+        Assert-PathInsideDirectory -Path $legacyPackageDir -ParentPath $releaseWindowsDir
+        Remove-Item -LiteralPath $legacyPackageDir -Recurse -Force
     }
 
     if (Test-Path $packageDir) {
-        $runtimeDataDir = Join-Path $packageDir ".dart_tool"
-        if (Test-Path $runtimeDataDir) {
-            $runtimeDataBackupDir = Join-Path ([System.IO.Path]::GetTempPath()) ("tomato-runtime-data-" + [System.Guid]::NewGuid().ToString("N"))
-            Copy-Item -Path $runtimeDataDir -Destination $runtimeDataBackupDir -Recurse -Force
+        Assert-PathInsideDirectory -Path $packageDir -ParentPath $releaseWindowsDir
+        $packageBackupDir = New-WindowsReleasePackageBackup -PackageDir $packageDir -BackupRoot $runtimeBackupRoot
+        if ($null -ne $packageBackupDir) {
+            Write-Host "已备份发布目录: $packageBackupDir" -ForegroundColor Yellow
         }
-        Remove-Item -Path $packageDir -Recurse -Force
+        Remove-Item -LiteralPath $packageDir -Recurse -Force
     }
 
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
     Copy-Item -Path (Join-Path $BuildOutputDir "*") -Destination $packageDir -Recurse -Force
-    if ($null -ne $runtimeDataBackupDir -and (Test-Path $runtimeDataBackupDir)) {
-        Copy-Item -Path $runtimeDataBackupDir -Destination (Join-Path $packageDir ".dart_tool") -Recurse -Force
-        Remove-Item -Path $runtimeDataBackupDir -Recurse -Force
-        Write-Host "已保留发布目录运行数据: .dart_tool" -ForegroundColor Yellow
+    if ($null -ne $packageBackupDir -and (Test-Path $packageBackupDir)) {
+        $restoredItems = @(Restore-WindowsRuntimeData -BackupDir $packageBackupDir -PackageDir $packageDir)
+        if ($restoredItems.Count -gt 0) {
+            Write-Host "已恢复发布目录运行数据: $($restoredItems -join ', ')" -ForegroundColor Yellow
+        }
+        Write-Host "发布前完整备份保留在: $packageBackupDir" -ForegroundColor DarkGray
     }
 
     Write-Host "发布目录已更新: $packageDir" -ForegroundColor Green
@@ -346,21 +508,24 @@ try {
     Invoke-WebUiBuild
     Clear-StaleWindowsBuildCache -AppRoot (Get-Location).Path -ExpectedBinaryName "tomato_english_happy_talking"
 
-    $dartDefineArgs = Get-FlutterDartDefineArgs -Values $DartDefine
-
     if ($Release) {
+        $dartDefineArgs = Get-FlutterDartDefineArgs -Values $DartDefine
         Write-Host "`n=== 构建 Windows Release ===" -ForegroundColor Cyan
         $buildArgs = @("build", "windows", "--release") + $dartDefineArgs
         & $flutterExe @buildArgs
         Assert-LastExitCode -CommandName "flutter build windows --release"
         $exePath = "build\windows\x64\runner\Release\tomato_english_happy_talking.exe"
         Publish-WindowsReleaseArtifacts -BuildOutputDir (Join-Path (Get-Location) "build\windows\x64\runner\Release")
-        Write-Host "`n构建完成: $exePath" -ForegroundColor Green
+        $releasePackageDir = Join-Path $releaseRoot "windows\tomato_english_happy_talking"
+        $releaseExePath = Join-Path $releasePackageDir "tomato_english_happy_talking.exe"
+        Write-Host "`n构建完成: $releaseExePath" -ForegroundColor Green
         if ($Run) {
             Write-Host "`n=== 启动应用 ===" -ForegroundColor Cyan
-            Start-Process $exePath
+            Start-Process -FilePath $releaseExePath -WorkingDirectory $releasePackageDir
         }
     } else {
+        $debugDartDefine = Add-DebugDesktopDataRootDefine -Values $DartDefine
+        $dartDefineArgs = Get-FlutterDartDefineArgs -Values $debugDartDefine
         Write-Host "`n=== 构建或运行 Windows Debug ===" -ForegroundColor Cyan
         if ($Run) {
             $runArgs = @("run", "-d", "windows") + $dartDefineArgs

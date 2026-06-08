@@ -1,31 +1,89 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:tomato_english_happy_talking/core/config/app_config.dart';
+import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/realtime_voice_service.dart';
+import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
 import 'package:tomato_english_happy_talking/services/tts_service.dart';
 
 void main() {
   group('live service check', () {
+    late Directory tempDir;
+
     setUpAll(() async {
-      await AppConfig.seedSecureStorageFromEncryptedFile();
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+      tempDir =
+          await Directory.systemTemp.createTemp('tomato_live_cache_test_');
+      await databaseFactory.setDatabasesPath(tempDir.path);
+      DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
+      await DatabaseService.resetForTest();
+    });
+
+    tearDownAll(() async {
+      await DatabaseService.resetForTest();
+      DatabaseService.setDatabaseDirectoryOverrideForTest(null);
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
     });
 
     test('loads runtime configuration summary', () async {
-      final volcApiKey = await AppConfig.volcApiKey;
+      final speechApiKey = await AppConfig.volcSpeechApiKey;
+      final arkApiKey = await AppConfig.volcArkTextApiKey;
+      final arkTextModel = await AppConfig.volcArkTextModel;
       final ttsResourceId = await AppConfig.volcTtsResourceId;
       final ttsSpeakerId = await AppConfig.volcTtsSpeakerId;
 
       // Print redacted runtime status so the test log can confirm which path is active.
       // Do not print secret values.
       debugPrint(
-        'CONFIG volcApiKey=${volcApiKey.isNotEmpty} '
+        'CONFIG speechApiKey=${speechApiKey.isNotEmpty} '
+        'arkApiKey=${arkApiKey.isNotEmpty} '
+        'arkTextModel=$arkTextModel '
         'ttsResourceId=${ttsResourceId.isNotEmpty ? ttsResourceId : '(empty)'} '
         'ttsSpeakerId=${ttsSpeakerId.isNotEmpty ? ttsSpeakerId : '(empty)'}',
       );
 
       expect(ttsResourceId, isNotEmpty);
     });
+
+    test('validates Ark text generation smoke path (skippable)', () async {
+      final arkApiKey = await AppConfig.volcArkTextApiKey;
+
+      if (arkApiKey.isEmpty) {
+        debugPrint('Ark text validation skipped: Ark api key is empty.');
+        return;
+      }
+
+      final reply = await TextGenerationService.generate(
+        turns: const [
+          TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
+        ],
+        cachePurpose: 'ark_live_smoke',
+        fallbackText: 'OK',
+        maxTokens: 8,
+      );
+
+      debugPrint(
+        'Ark smoke source=${reply.source.name} '
+        'replyPreview=${reply.text.length > 80 ? reply.text.substring(0, 80) : reply.text} '
+        'error=${reply.errorMessage ?? '(none)'}',
+      );
+
+      expect(
+        reply.source,
+        isIn([
+          TextGenerationReplySource.remote,
+          TextGenerationReplySource.cached
+        ]),
+      );
+      expect(reply.text.trim(), isNotEmpty);
+    }, timeout: const Timeout(Duration(seconds: 60)));
 
     test('validates tts success path', () async {
       final bytes = await TtsService.synthesize(
@@ -39,19 +97,19 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 60)));
 
     test('validates realtime service smoke path (non-blocking)', () async {
-      final volcApiKey = await AppConfig.volcApiKey;
+      final speechApiKey = await AppConfig.volcSpeechApiKey;
 
-      if (volcApiKey.isEmpty) {
-        debugPrint('Realtime validation skipped: volc_api_key is empty.');
+      if (speechApiKey.isEmpty) {
+        debugPrint('Realtime validation skipped: speech api key is empty.');
         return;
       }
 
-      debugPrint('Unified Volcengine API key configured=true');
+      debugPrint('Speech API key configured=true');
 
       final reply = await RealtimeVoiceService.startSession(
         articleTitle: 'Realtime smoke check',
-        articleContent:
-            'Tomato English Happy Talking helps learners speak English.',
+        chapterGuide:
+            'Chapter summary: Tomato English Happy Talking helps learners speak English. Ordered coverage points: 1. The app supports practice. 2. The learner can answer a simple question. Completion rubric: ask about the app purpose.',
       );
 
       debugPrint(
@@ -65,7 +123,10 @@ void main() {
         return;
       }
 
-      expect(reply.source, RealtimeReplySource.remote);
+      expect(
+        reply.source,
+        isIn([RealtimeReplySource.remote, RealtimeReplySource.cached]),
+      );
       expect(reply.text.trim(), isNotEmpty);
     }, timeout: const Timeout(Duration(seconds: 60)));
 

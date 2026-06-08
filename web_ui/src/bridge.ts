@@ -3,8 +3,11 @@ import type {
   BridgeResponse,
   ChatState,
   FollowState,
+  ListeningOpenPayload,
   NativeEvent,
+  PictureBookState,
   SettingsState,
+  StorySeries,
   VoiceOption,
 } from './types';
 import { splitSentences } from './sentenceSplitter';
@@ -19,11 +22,16 @@ declare global {
         message: Record<string, unknown>,
       ) => Promise<BridgeResponse>;
     };
+    chrome?: {
+      webview?: unknown;
+    };
     __tomatoNativeEvent?: (event: NativeEvent) => void;
   }
 }
 
 const listeners = new Map<string, Set<NativeListener>>();
+const FLUTTER_BRIDGE_WAIT_MS = 1800;
+const FLUTTER_BRIDGE_POLL_MS = 50;
 
 export function onNativeEvent<T>(
   type: string,
@@ -61,14 +69,65 @@ export async function sendNative<T>(
     payload,
   };
 
-  const response = window.flutter_inappwebview
-    ? await window.flutter_inappwebview.callHandler('tomatoBridge', message)
+  const flutterBridge = await resolveFlutterBridge();
+  const response = flutterBridge
+    ? await flutterBridge.callHandler('tomatoBridge', message)
     : await mockNativeResponse(type, payload, message.id);
 
   if (!response.ok) {
     throw new Error(response.error?.message ?? `Native command failed: ${type}`);
   }
   return (response.payload ?? {}) as T;
+}
+
+async function resolveFlutterBridge(): Promise<Window['flutter_inappwebview']> {
+  if (window.flutter_inappwebview) {
+    return window.flutter_inappwebview;
+  }
+
+  if (!isLikelyEmbeddedWebView()) {
+    return undefined;
+  }
+
+  return waitForFlutterBridge(FLUTTER_BRIDGE_WAIT_MS);
+}
+
+function isLikelyEmbeddedWebView(): boolean {
+  return Boolean(window.flutter_inappwebview || window.chrome?.webview);
+}
+
+function waitForFlutterBridge(timeoutMs: number): Promise<Window['flutter_inappwebview']> {
+  if (window.flutter_inappwebview) {
+    return Promise.resolve(window.flutter_inappwebview);
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let pollTimer: number | undefined;
+
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.removeEventListener('flutterInAppWebViewPlatformReady', finish);
+      if (pollTimer !== undefined) {
+        window.clearInterval(pollTimer);
+      }
+      resolve(window.flutter_inappwebview);
+    };
+
+    pollTimer = window.setInterval(() => {
+      if (window.flutter_inappwebview) {
+        finish();
+      }
+    }, FLUTTER_BRIDGE_POLL_MS);
+
+    window.addEventListener('flutterInAppWebViewPlatformReady', finish, {
+      once: true,
+    });
+    window.setTimeout(finish, timeoutMs);
+  });
 }
 
 function makeRequestId(): string {
@@ -92,31 +151,125 @@ async function mockNativeResponse(
 
 function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'article.list' || type === 'app.ready') {
-    return { articles: mockArticles };
+    return { articles: mockArticles, series: mockSeries };
   }
   if (type === 'article.create') {
-    const content = String(payload.content ?? '');
+    const content = normalizePracticeContent(String(payload.content ?? ''));
     const sentences = splitSentences(content);
+    const pictureBookEnabled = payload.pictureBookEnabled !== false;
+    const requestedTitle = String(payload.title ?? '').trim();
+    const resolvedTitle = requestedTitle || mockSuggestTitle(content);
+    const seriesTitle = String(payload.seriesTitle ?? '').trim() || resolvedTitle || 'Space Story Series';
+    const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
     const article: Article = {
       id: 99,
-      title: String(payload.title ?? 'New Quest'),
+      title: resolvedTitle || 'New Quest',
       content,
       sentences,
       sentenceCount: sentences.length,
       createdAt: new Date().toISOString(),
       averageScore: 0,
+      pictureBookEnabled,
+      seriesId: pictureBookEnabled ? seriesId : null,
+      seriesTitle: pictureBookEnabled ? seriesTitle : '',
+      chapterOrder: pictureBookEnabled ? 2 : null,
     };
-    return { article, articles: [article, ...mockArticles] };
+    return { article, articles: [article, ...mockArticles], series: mockSeries };
+  }
+  if (type === 'article.suggestTitle') {
+    return { title: mockSuggestTitle(String(payload.content ?? '')) };
+  }
+  if (type === 'article.translateToEnglish') {
+    return {
+      content: normalizePracticeContent(
+        mockTranslateToEnglish(String(payload.content ?? '')),
+      ),
+    };
   }
   if (type === 'follow.open') {
     return mockFollow;
   }
-  if (type === 'follow.play' || type === 'follow.replay') {
+  if (type === 'series.list') {
+    return { series: mockSeries };
+  }
+  if (type === 'series.create') {
+    const series: StorySeries = {
+      id: 12,
+      title: String(payload.title ?? 'New Story Series'),
+      styleGuide: {},
+      bible: {},
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    return { series: [series, ...mockSeries] };
+  }
+  if (type === 'series.attachArticle') {
+    const articleId = Number(payload.articleId ?? mockArticles[0].id);
+    const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
+    const seriesTitle = String(payload.seriesTitle ?? mockSeries[0].title);
+    const article = {
+      ...(mockArticles.find((item) => item.id === articleId) ??
+        mockArticles[0]),
+      pictureBookEnabled: true,
+      seriesId,
+      seriesTitle,
+      chapterOrder: 1,
+    };
+    return {
+      article,
+      chapter: {
+        articleId,
+        seriesId,
+        chapterOrder: 1,
+        chapterTitle: article.title,
+      },
+      articles: mockArticles.map((item) =>
+        item.id === articleId ? article : item,
+      ),
+      series: mockSeries,
+    };
+  }
+  if (type === 'pictureBook.state') {
+    return mockPictureBook(Number(payload.articleId ?? 1));
+  }
+  if (type === 'pictureBook.generate' || type === 'pictureBook.retryPage') {
+    return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
+  }
+  if (type === 'listening.open') {
+    return mockListening;
+  }
+  if (type === 'listening.prepare') {
+    return { prepared: true };
+  }
+  if (type === 'listening.play') {
+    return { playbackState: 'success' };
+  }
+  if (type === 'listening.stop') {
+    return { stopped: true };
+  }
+  if (type === 'listening.pause') {
+    return { paused: true };
+  }
+  if (type === 'listening.resume') {
+    return { resumed: true };
+  }
+  if (type === 'word.lookup') {
+    return mockWordLookup(String(payload.word ?? ''), String(payload.sentence ?? ''));
+  }
+  if (type === 'word.play') {
+    return { playbackState: 'success' };
+  }
+  if (type === 'word.stop') {
+    return { stopped: true };
+  }
+  if (type === 'follow.play' || type === 'follow.replay' || type === 'follow.recordReplay') {
     return {
       ...mockFollow,
       step: 'idle',
       playbackState: 'success',
-      result: null,
+      result: type === 'follow.recordReplay' ? mockResult : null,
+      hasRecording: type === 'follow.recordReplay',
     };
   }
   if (type === 'follow.next') {
@@ -131,6 +284,12 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       result: null,
     };
   }
+  if (type === 'follow.pause') {
+    return { paused: true };
+  }
+  if (type === 'follow.resume') {
+    return { resumed: true };
+  }
   if (type === 'follow.retry') {
     return {
       ...mockFollow,
@@ -140,10 +299,31 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     };
   }
   if (type.startsWith('follow.')) {
+    if (type === 'follow.recordStart') {
+      return {
+        ...mockFollow,
+        step: 'recording',
+        playbackState: 'idle',
+        result: null,
+        hasRecording: false,
+        liveRecognizedText: 'Tom finds...',
+      };
+    }
+    if (type === 'follow.recordStop') {
+      return {
+        ...mockFollow,
+        step: 'result',
+        playbackState: 'success',
+        result: mockResult,
+        hasRecording: true,
+        liveRecognizedText: mockResult.recognizedText,
+      };
+    }
     return {
       ...mockFollow,
-      step: type === 'follow.recordStop' ? 'result' : 'idle',
-      result: type === 'follow.recordStop' ? mockResult : null,
+      step: 'idle',
+      result: null,
+      hasRecording: false,
     };
   }
   if (type === 'chat.open') {
@@ -167,8 +347,153 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     };
     return mockSettings;
   }
+  if (type === 'settings.previewVoice') {
+    return { playbackState: 'success' };
+  }
+  if (type === 'contentSafety.setRuleEnabled') {
+    const id = Number(payload.id ?? 0);
+    const enabled = Boolean(payload.enabled);
+    mockSettings = {
+      ...mockSettings,
+      contentSafety: {
+        rules: (mockSettings.contentSafety?.rules ?? []).map((rule) =>
+          rule.id === id ? { ...rule, enabled } : rule,
+        ),
+      },
+    };
+    return mockSettings;
+  }
+  if (type === 'contentSafety.deleteRule') {
+    const id = Number(payload.id ?? 0);
+    mockSettings = {
+      ...mockSettings,
+      contentSafety: {
+        rules: (mockSettings.contentSafety?.rules ?? []).filter((rule) => rule.id !== id),
+      },
+    };
+    return mockSettings;
+  }
   return {};
 }
+
+function mockSuggestTitle(content: string): string {
+  if (/[\u3400-\u9FFF]/.test(content)) {
+    if (content.includes('母') || content.includes('妈')) return "A Mother's Choice";
+    return 'English Practice';
+  }
+  const lowerContent = content.toLowerCase();
+  if (lowerContent.includes('mother') && lowerContent.includes('choice')) {
+    return "A Mother's Choice";
+  }
+  const words = content
+    .toLowerCase()
+    .replace(/[^a-z\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 3 && !mockTitleStopWords.has(word));
+  const uniqueWords = Array.from(new Set(words)).slice(0, 3);
+  if (uniqueWords.length === 0) return 'English Practice';
+  return uniqueWords.map((word) => word[0].toUpperCase() + word.slice(1)).join(' ');
+}
+
+function mockTranslateToEnglish(content: string): string {
+  if (/[\u3400-\u9FFF]/.test(content) && /[A-Za-z]/.test(content)) {
+    return mockExtractEnglishStory(content);
+  }
+  if (content.includes('母') || content.includes('妈') || content.includes('选择')) {
+    return 'A mother makes a choice for her child. She thinks about love, family, and the future.';
+  }
+  if (/[\u3400-\u9FFF]/.test(content)) {
+    return 'This is a short English practice story. The people make a choice and learn something important.';
+  }
+  return content;
+}
+
+function normalizePracticeContent(content: string): string {
+  const normalized = content.replace(/([A-Za-z])\s*-\s*([A-Za-z])/g, '$1-$2').trim();
+  if (/[\u3400-\u9FFF]/.test(normalized) && /[A-Za-z]/.test(normalized)) {
+    return mockExtractEnglishStory(normalized);
+  }
+  if (/[\u3400-\u9FFF]/.test(normalized)) {
+    return mockTranslateToEnglish(normalized).replace(/([A-Za-z])\s*-\s*([A-Za-z])/g, '$1-$2').trim();
+  }
+  return normalized;
+}
+
+function mockExtractEnglishStory(content: string): string {
+  const lines = content
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .split(/\r?\n|(?<=[。！？；;])\s*/);
+  const kept = lines
+    .map((line) => line.trim())
+    .filter((line) => {
+      const englishWords = line.match(/[A-Za-z][A-Za-z'-]*/g) ?? [];
+      const chineseChars = line.match(/[\u3400-\u9FFF]/g) ?? [];
+      if (englishWords.length < 3) return false;
+      if (/^(title|标题|中文|翻译|词汇|vocabulary|notes?|注释|讲解)\s*[:：]/i.test(line)) return false;
+      return chineseChars.length <= englishWords.length;
+    })
+    .map((line) => line.replace(/[\u3400-\u9FFF]+/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  return kept.join(' ').trim() || content.replace(/[\u3400-\u9FFF]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function mockWordLookup(word: string, sentence: string): Record<string, string> {
+  const normalized = word.trim() || 'word';
+  const lower = normalized.toLowerCase();
+  const dictionary: Record<string, { phonetic: string; meaning: string; sentenceMeaning: string }> = {
+    bright: {
+      phonetic: '/brait/',
+      meaning: '明亮的；聪明的；鲜艳的',
+      sentenceMeaning: '在本句中表示“明亮的”。',
+    },
+    snack: {
+      phonetic: '/snak/',
+      meaning: '零食；小吃',
+      sentenceMeaning: '在本句中表示“零食”。',
+    },
+    finds: {
+      phonetic: '/faindz/',
+      meaning: '找到；发现',
+      sentenceMeaning: '在本句中表示“发现”。',
+    },
+    shares: {
+      phonetic: '/sherz/',
+      meaning: '分享；分给',
+      sentenceMeaning: '在本句中表示“分享”。',
+    },
+  };
+  const fallback = dictionary[lower] ?? {
+    phonetic: '/.../',
+    meaning: '这个单词的中文含义暂不可用。',
+    sentenceMeaning: sentence.trim()
+      ? '请结合本句理解这个单词。'
+      : '请结合原句理解这个单词。',
+  };
+
+  return {
+    word: normalized,
+    phonetic: fallback.phonetic,
+    meaning: fallback.meaning,
+    sentenceMeaning: fallback.sentenceMeaning,
+    source: 'mock',
+  };
+}
+
+const mockTitleStopWords = new Set([
+  'about',
+  'after',
+  'again',
+  'bright',
+  'little',
+  'looks',
+  'slowly',
+  'that',
+  'their',
+  'there',
+  'this',
+  'with',
+]);
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -188,8 +513,62 @@ const mockArticles: Article[] = [
     sentenceCount: 2,
     createdAt: new Date().toISOString(),
     averageScore: 86,
+    coverImageUri: assetUrl('card-space-snacks.png'),
+    coverImagePath: null,
+    pictureBookEnabled: true,
+    seriesId: 1,
+    seriesTitle: 'Space Story Series',
+    chapterOrder: 1,
   },
 ];
+
+const mockSeries: StorySeries[] = [
+  {
+    id: 1,
+    title: 'Space Story Series',
+    styleGuide: {},
+    bible: {},
+    coverImagePath: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+];
+
+function mockPictureBook(
+  articleId: number,
+  status: PictureBookState['status'] = 'ready',
+): PictureBookState {
+  return {
+    articleId,
+    enabled: true,
+    status,
+    series: mockSeries[0],
+    chapter: {
+      articleId,
+      seriesId: mockSeries[0].id,
+      chapterOrder: 1,
+      chapterTitle: 'Space Snacks',
+    },
+    pages: [
+      {
+        articleId,
+        seriesId: mockSeries[0].id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 1,
+        paragraphText: mockArticles[0].content,
+        imageUri: assetUrl('card-space-snacks.png'),
+        imagePath: assetUrl('card-space-snacks.png'),
+        status: status === 'generating' ? 'generating' : 'ready',
+        errorMessage: null,
+      },
+    ],
+  };
+}
+
+function assetUrl(name: string): string {
+  return `assets/ui/${name}`;
+}
 
 const mockResult = {
   overallScore: 88,
@@ -216,6 +595,8 @@ const mockFollow: FollowState = {
   isLastSentence: false,
   step: 'idle',
   playbackState: 'idle',
+  hasRecording: false,
+  liveRecognizedText: '',
   result: null,
   avatar: {
     mode: 'idle',
@@ -223,6 +604,22 @@ const mockFollow: FollowState = {
     mouth: 'closed',
     volume: 0,
   },
+};
+
+const mockListening: ListeningOpenPayload = {
+  article: mockArticles[0],
+  items: [
+    {
+      index: 0,
+      english: mockArticles[0].sentences[0],
+      chinese: '汤姆发现了一个明亮的零食盒。',
+    },
+    {
+      index: 1,
+      english: mockArticles[0].sentences[1],
+      chinese: '他把它分享给自己的队友。',
+    },
+  ],
 };
 
 const mockChat: ChatState = {
@@ -376,4 +773,34 @@ let mockSettings: SettingsState = {
     speakerId: 'en_female_dacey_uranus_bigtts',
   },
   voices: mockVoiceOptions,
+  contentSafety: {
+    rules: [
+      {
+        id: 1,
+        sourceTerm: 'heads',
+        replacement: 'he-ads',
+        serviceKind: '*',
+        purposeScope: '*',
+        matchType: 'word',
+        confidence: 0.55,
+        enabled: true,
+        sourceFailureId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 2,
+        sourceTerm: 'beheaded',
+        replacement: 'be-headed',
+        serviceKind: '*',
+        purposeScope: '*',
+        matchType: 'word',
+        confidence: 0.55,
+        enabled: true,
+        sourceFailureId: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+  },
 };

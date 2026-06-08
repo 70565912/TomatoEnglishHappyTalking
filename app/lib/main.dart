@@ -20,7 +20,6 @@ void main() async {
     databaseFactory = databaseFactoryFfi;
   }
 
-  await AppConfig.seedSecureStorageFromEncryptedFile();
   await AppConfig.seedSecureStorageFromEnvironment();
   await initializeTomatoWebViewEnvironment();
   await initializeTomatoWebUiServer();

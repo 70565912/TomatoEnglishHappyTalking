@@ -1,0 +1,754 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+
+import '../core/config/app_config.dart';
+import 'api_cache_service.dart';
+import 'content_safety_service.dart';
+
+enum VolcImageResultSource {
+  remote,
+  cached,
+  skippedNoKey,
+  failed,
+}
+
+class VolcImageResult {
+  const VolcImageResult({
+    required this.source,
+    this.pageIndex,
+    this.filePath,
+    this.cacheKey,
+    this.errorMessage,
+  });
+
+  final VolcImageResultSource source;
+  final int? pageIndex;
+  final String? filePath;
+  final String? cacheKey;
+  final String? errorMessage;
+
+  bool get hasImage => filePath != null && filePath!.trim().isNotEmpty;
+}
+
+class VolcImageBatchRequest {
+  const VolcImageBatchRequest({
+    required this.pageIndex,
+    required this.prompt,
+    required this.promptMetadata,
+  });
+
+  final int pageIndex;
+  final String prompt;
+  final Map<String, dynamic> promptMetadata;
+}
+
+typedef VolcImagePostOverride = Future<Object?> Function({
+  required String endpoint,
+  required Map<String, String> headers,
+  required Map<String, dynamic> body,
+});
+
+class VolcImageService {
+  static const supportsReferenceImages = true;
+  static const _missingArkImageKeyMessage =
+      '缺少 Ark 图片 Bearer Key，已跳过绘本图片生成。请配置 security/ark.txt 或 TOMATO_VOLC_ARK_API_KEY。';
+
+  static const _arkEndpoint =
+      'https://ark.cn-beijing.volces.com/api/v3/images/generations';
+  static const _arkModel = String.fromEnvironment(
+    'TOMATO_VOLC_ARK_IMAGE_MODEL',
+    defaultValue: 'doubao-seedream-5-0-260128',
+  );
+  static const _arkSize = String.fromEnvironment(
+    'TOMATO_VOLC_ARK_IMAGE_SIZE',
+    defaultValue: '2560x1440',
+  );
+  static const _arkResponseFormat = String.fromEnvironment(
+    'TOMATO_VOLC_ARK_IMAGE_RESPONSE_FORMAT',
+    defaultValue: 'url',
+  );
+  static const _arkSequentialEnabled = bool.fromEnvironment(
+    'TOMATO_VOLC_IMAGE_GROUP_PAGES',
+    defaultValue: false,
+  );
+  static const _arkSequentialMaxImages = int.fromEnvironment(
+    'TOMATO_VOLC_IMAGE_GROUP_MAX_IMAGES',
+    defaultValue: 4,
+  );
+  static const _outputFormat = String.fromEnvironment(
+    'TOMATO_VOLC_IMAGE_OUTPUT_FORMAT',
+    defaultValue: 'png',
+  );
+  static const _watermark = bool.fromEnvironment(
+    'TOMATO_VOLC_IMAGE_WATERMARK',
+    defaultValue: false,
+  );
+
+  static final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 12),
+      receiveTimeout: const Duration(seconds: 120),
+      sendTimeout: const Duration(seconds: 30),
+    ),
+  );
+
+  static VolcImagePostOverride? _postOverrideForTest;
+
+  @visibleForTesting
+  static void setPostOverrideForTest(VolcImagePostOverride? override) {
+    _postOverrideForTest = override;
+  }
+
+  static Future<VolcImageResult> generatePictureBookImage({
+    required String prompt,
+    required Map<String, dynamic> promptMetadata,
+    int? articleId,
+    int? seriesId,
+    int? pageIndex,
+    List<String> referenceImagePaths = const [],
+    String cachePurpose = 'picture_book_image',
+  }) async {
+    final trimmedPrompt = prompt.trim();
+    if (trimmedPrompt.isEmpty) {
+      return const VolcImageResult(
+        source: VolcImageResultSource.failed,
+        errorMessage: '图片提示词为空',
+      );
+    }
+
+    final referenceImages = await _referenceImages(referenceImagePaths);
+    final preparedPrompt = await ContentSafetyService.prepareTextForApi(
+      trimmedPrompt,
+      serviceKind: ContentSafetyService.servicePictureBookImage,
+      purpose: cachePurpose,
+    );
+    final arkApiKey = await AppConfig.volcArkImageApiKey;
+    if (arkApiKey.trim().isNotEmpty) {
+      return _generateArkPictureBookImage(
+        apiKey: arkApiKey,
+        prompt: preparedPrompt,
+        promptMetadata: promptMetadata,
+        articleId: articleId,
+        seriesId: seriesId,
+        pageIndex: pageIndex,
+        referenceImages: referenceImages,
+        cachePurpose: cachePurpose,
+      );
+    }
+
+    return VolcImageResult(
+      source: VolcImageResultSource.skippedNoKey,
+      pageIndex: pageIndex,
+      errorMessage: _missingArkImageKeyMessage,
+    );
+  }
+
+  static Future<List<VolcImageResult>> generatePictureBookImageGroup({
+    required List<VolcImageBatchRequest> requests,
+    int? articleId,
+    int? seriesId,
+    List<String> referenceImagePaths = const [],
+    String cachePurpose = 'picture_book_image',
+    bool useSequential = false,
+  }) async {
+    final cleaned = requests
+        .where((request) => request.prompt.trim().isNotEmpty)
+        .toList(growable: false);
+    if (cleaned.isEmpty) {
+      return const [];
+    }
+    if ((!_arkSequentialEnabled && !useSequential) || cleaned.length == 1) {
+      return Future.wait(
+        cleaned.map(
+          (request) => generatePictureBookImage(
+            prompt: request.prompt,
+            promptMetadata: request.promptMetadata,
+            articleId: articleId,
+            seriesId: seriesId,
+            pageIndex: request.pageIndex,
+            referenceImagePaths: referenceImagePaths,
+            cachePurpose: cachePurpose,
+          ),
+        ),
+      );
+    }
+
+    final apiKey = await AppConfig.volcArkImageApiKey;
+    if (apiKey.trim().isEmpty) {
+      return [
+        for (final request in cleaned)
+          VolcImageResult(
+            source: VolcImageResultSource.skippedNoKey,
+            pageIndex: request.pageIndex,
+            errorMessage: _missingArkImageKeyMessage,
+          ),
+      ];
+    }
+
+    final referenceImages = await _referenceImages(referenceImagePaths);
+    final groupPrompt = await ContentSafetyService.prepareTextForApi(
+      _groupPrompt(cleaned),
+      serviceKind: ContentSafetyService.servicePictureBookImage,
+      purpose: cachePurpose,
+    );
+    final groupMetadata = {
+      'kind': 'picture_book_group',
+      'page_count': cleaned.length,
+      'pages': cleaned
+          .map(
+            (request) => {
+              'page_index': request.pageIndex,
+              'prompt_metadata': request.promptMetadata,
+            },
+          )
+          .toList(growable: false),
+    };
+    final cacheRequests = <Map<String, dynamic>>[
+      for (var index = 0; index < cleaned.length; index += 1)
+        _arkCacheRequest(
+          prompt: groupPrompt,
+          promptMetadata: groupMetadata,
+          seriesId: seriesId,
+          pageIndex: cleaned[index].pageIndex,
+          referenceImages: referenceImages,
+          sequential: true,
+          maxImages: cleaned.length,
+          outputIndex: index,
+        ),
+    ];
+    final cacheKeys = <String>[
+      for (final request in cacheRequests)
+        await ApiCacheService.keyForJson('picture_book_image', request),
+    ];
+
+    final cachedResults = <int, VolcImageResult>{};
+    final missingRequests = <VolcImageBatchRequest>[];
+    for (var index = 0; index < cleaned.length; index += 1) {
+      final cachedPath = await ApiCacheService.getFilePath(
+        cacheKeys[index],
+        articleId: articleId,
+        purpose: cachePurpose,
+      );
+      if (cachedPath == null || cachedPath.trim().isEmpty) {
+        missingRequests.add(cleaned[index]);
+        continue;
+      }
+      cachedResults[cleaned[index].pageIndex] = VolcImageResult(
+        source: VolcImageResultSource.cached,
+        pageIndex: cleaned[index].pageIndex,
+        filePath: cachedPath,
+        cacheKey: cacheKeys[index],
+      );
+    }
+    if (missingRequests.isEmpty) {
+      return [
+        for (final request in cleaned) cachedResults[request.pageIndex]!,
+      ];
+    }
+    if (cachedResults.isNotEmpty) {
+      final generated = await generatePictureBookImageGroup(
+        requests: missingRequests,
+        articleId: articleId,
+        seriesId: seriesId,
+        referenceImagePaths: referenceImagePaths,
+        cachePurpose: cachePurpose,
+      );
+      final byPage = <int, VolcImageResult>{
+        ...cachedResults,
+        for (final result in generated)
+          if (result.pageIndex != null) result.pageIndex!: result,
+      };
+      return [
+        for (final request in cleaned)
+          byPage[request.pageIndex] ??
+              VolcImageResult(
+                source: VolcImageResultSource.failed,
+                pageIndex: request.pageIndex,
+                errorMessage: '组图缓存缺失且未返回该页图片',
+              ),
+      ];
+    }
+
+    try {
+      final body = _arkRequestBody(
+        prompt: groupPrompt,
+        referenceImages: referenceImages,
+        sequential: true,
+        maxImages: cleaned.length,
+      );
+      final responseData = await _postArkImages(apiKey: apiKey, body: body);
+      final images = await _extractAllImageBytes(responseData);
+      if (images.isEmpty) {
+        throw const _VolcImageRemoteException('组图接口未返回可保存的图片');
+      }
+
+      final output = <VolcImageResult>[];
+      for (var index = 0; index < cleaned.length; index += 1) {
+        if (index >= images.length || images[index].isEmpty) {
+          output.add(
+            VolcImageResult(
+              source: VolcImageResultSource.failed,
+              pageIndex: cleaned[index].pageIndex,
+              cacheKey: cacheKeys[index],
+              errorMessage: '组图接口未返回第 ${index + 1} 张图片',
+            ),
+          );
+          continue;
+        }
+        final filePath = await ApiCacheService.putFileBytes(
+          cacheKey: cacheKeys[index],
+          kind: 'file',
+          purpose: cachePurpose,
+          request: cacheRequests[index],
+          bytes: images[index],
+          subdirectory: 'picture_book',
+          extension: _outputFormat,
+          contentType: _contentTypeFor(_outputFormat),
+          articleId: articleId,
+        );
+        output.add(
+          VolcImageResult(
+            source: VolcImageResultSource.remote,
+            pageIndex: cleaned[index].pageIndex,
+            filePath: filePath,
+            cacheKey: cacheKeys[index],
+          ),
+        );
+      }
+      await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
+        serviceKind: ContentSafetyService.servicePictureBookImage,
+        purpose: cachePurpose,
+        articleId: articleId,
+        successfulText: groupPrompt,
+      );
+      return output;
+    } catch (error) {
+      final message = _failureMessage(error);
+      final safety = ContentSafetyService.classifyFailure(error);
+      if (safety.suspectedSafetyBlock) {
+        await ContentSafetyService.recordFailure(
+          serviceKind: ContentSafetyService.servicePictureBookImage,
+          purpose: cachePurpose,
+          articleId: articleId,
+          failedText: groupPrompt,
+          errorCode: safety.errorCode,
+          errorMessage: safety.message,
+        );
+      }
+      debugPrint(
+          '[VolcImageService] picture group generation failed: $message');
+      return [
+        for (var index = 0; index < cleaned.length; index += 1)
+          VolcImageResult(
+            source: VolcImageResultSource.failed,
+            pageIndex: cleaned[index].pageIndex,
+            cacheKey: cacheKeys[index],
+            errorMessage: message,
+          )
+      ];
+    }
+  }
+
+  static Future<VolcImageResult> _generateArkPictureBookImage({
+    required String apiKey,
+    required String prompt,
+    required Map<String, dynamic> promptMetadata,
+    required int? articleId,
+    required int? seriesId,
+    required int? pageIndex,
+    required List<_ReferenceImage> referenceImages,
+    required String cachePurpose,
+  }) async {
+    final requestForCache = _arkCacheRequest(
+      prompt: prompt,
+      promptMetadata: promptMetadata,
+      seriesId: seriesId,
+      pageIndex: pageIndex,
+      referenceImages: referenceImages,
+      sequential: false,
+    );
+    final cacheKey = await ApiCacheService.keyForJson(
+      'picture_book_image',
+      requestForCache,
+    );
+    final cachedPath = await ApiCacheService.getFilePath(
+      cacheKey,
+      articleId: articleId,
+      purpose: cachePurpose,
+    );
+    if (cachedPath != null && cachedPath.trim().isNotEmpty) {
+      return VolcImageResult(
+        source: VolcImageResultSource.cached,
+        pageIndex: pageIndex,
+        filePath: cachedPath,
+        cacheKey: cacheKey,
+      );
+    }
+
+    try {
+      final responseData = await _postArkImages(
+        apiKey: apiKey,
+        body: _arkRequestBody(
+          prompt: prompt,
+          referenceImages: referenceImages,
+          sequential: false,
+        ),
+      );
+      final imageBytes = await _extractImageBytes(responseData);
+      if (imageBytes.isEmpty) {
+        return VolcImageResult(
+          source: VolcImageResultSource.failed,
+          pageIndex: pageIndex,
+          cacheKey: cacheKey,
+          errorMessage: '图片接口未返回可保存的图片',
+        );
+      }
+      final filePath = await ApiCacheService.putFileBytes(
+        cacheKey: cacheKey,
+        kind: 'file',
+        purpose: cachePurpose,
+        request: requestForCache,
+        bytes: imageBytes,
+        subdirectory: 'picture_book',
+        extension: _outputFormat,
+        contentType: _contentTypeFor(_outputFormat),
+        articleId: articleId,
+      );
+      await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
+        serviceKind: ContentSafetyService.servicePictureBookImage,
+        purpose: cachePurpose,
+        articleId: articleId,
+        successfulText: prompt,
+      );
+      return VolcImageResult(
+        source: VolcImageResultSource.remote,
+        pageIndex: pageIndex,
+        filePath: filePath,
+        cacheKey: cacheKey,
+      );
+    } catch (error) {
+      final message = _failureMessage(error);
+      final safety = ContentSafetyService.classifyFailure(error);
+      if (safety.suspectedSafetyBlock) {
+        await ContentSafetyService.recordFailure(
+          serviceKind: ContentSafetyService.servicePictureBookImage,
+          purpose: cachePurpose,
+          articleId: articleId,
+          failedText: prompt,
+          errorCode: safety.errorCode,
+          errorMessage: safety.message,
+        );
+      }
+      debugPrint(
+          '[VolcImageService] picture image generation failed: $message');
+      return VolcImageResult(
+        source: VolcImageResultSource.failed,
+        pageIndex: pageIndex,
+        cacheKey: cacheKey,
+        errorMessage: message,
+      );
+    }
+  }
+
+  static Map<String, dynamic> _arkCacheRequest({
+    required String prompt,
+    required Map<String, dynamic> promptMetadata,
+    required int? seriesId,
+    required int? pageIndex,
+    required List<_ReferenceImage> referenceImages,
+    required bool sequential,
+    int? maxImages,
+    int? outputIndex,
+  }) =>
+      {
+        'engine': 'ark_images_generations',
+        'endpoint': _arkEndpoint,
+        'model': _arkModel,
+        'size': _arkSize,
+        'response_format': _arkResponseFormat,
+        'output_format': _outputFormat,
+        'watermark': _watermark,
+        'sequential_image_generation': sequential ? 'auto' : 'disabled',
+        if (sequential)
+          'sequential_image_generation_options': {
+            'max_images': maxImages?.clamp(1, 15) ?? _arkSequentialMaxImages,
+          },
+        if (outputIndex != null) 'output_index': outputIndex,
+        'prompt': prompt,
+        'prompt_metadata': promptMetadata,
+        'series_id': seriesId,
+        'page_index': pageIndex,
+        'reference_image_hashes':
+            referenceImages.map((image) => image.hash).toList(growable: false),
+      };
+
+  static Map<String, dynamic> _arkRequestBody({
+    required String prompt,
+    required List<_ReferenceImage> referenceImages,
+    required bool sequential,
+    int? maxImages,
+  }) {
+    final body = <String, dynamic>{
+      'model': _arkModel,
+      'prompt': prompt,
+      'size': _arkSize,
+      'response_format': _arkResponseFormat,
+      'output_format': _outputFormat,
+      'watermark': _watermark,
+      'sequential_image_generation': sequential ? 'auto' : 'disabled',
+    };
+    if (referenceImages.isNotEmpty) {
+      body['image'] =
+          referenceImages.map((image) => image.dataUri).toList(growable: false);
+    }
+    if (sequential) {
+      body['sequential_image_generation_options'] = {
+        'max_images': maxImages?.clamp(1, 15) ?? _arkSequentialMaxImages,
+      };
+    }
+    return body;
+  }
+
+  static Future<Object?> _postArkImages({
+    required String apiKey,
+    required Map<String, dynamic> body,
+  }) async {
+    final headers = <String, String>{
+      'Authorization': 'Bearer $apiKey',
+      'Content-Type': 'application/json',
+    };
+    final override = _postOverrideForTest;
+    if (override != null) {
+      return override(
+        endpoint: _arkEndpoint,
+        headers: headers,
+        body: body,
+      );
+    }
+    final response = await _dio.post<Object?>(
+      _arkEndpoint,
+      data: body,
+      options: Options(
+        headers: headers,
+        responseType: ResponseType.json,
+        validateStatus: (_) => true,
+      ),
+    );
+    final statusCode = response.statusCode ?? 0;
+    if (statusCode < 200 || statusCode >= 300) {
+      throw _VolcImageRemoteException(
+        'HTTP $statusCode ${_extractRemoteErrorMessage(response.data)}',
+      );
+    }
+    return response.data;
+  }
+
+  static String _groupPrompt(List<VolcImageBatchRequest> requests) {
+    final buffer = StringBuffer()
+      ..writeln(
+        'Generate exactly ${requests.length} separate 16:9 English picture-book illustrations as a coherent visual sequence.',
+      )
+      ..writeln(
+        'Keep the same book title, character appearances, costumes, color palette, and picture-book style across all images.',
+      )
+      ..writeln(
+        'Use any reference images only for character and style consistency. Natural story text, signs, playing-card marks, or book-title lettering may appear when useful, but the image sequence should stay visual and readable without relying on text alone.',
+      );
+    for (var index = 0; index < requests.length; index += 1) {
+      buffer
+        ..writeln()
+        ..writeln('Image ${index + 1}:')
+        ..writeln(requests[index].prompt.trim());
+    }
+    return buffer.toString().trim();
+  }
+
+  static Future<List<int>> _extractImageBytes(Object? responseData) async {
+    final data = responseData;
+    if (data is! Map) {
+      return const [];
+    }
+
+    final list = data['data'];
+    if (list is! List || list.isEmpty) {
+      return const [];
+    }
+    final first = list.first;
+    if (first is! Map) {
+      return const [];
+    }
+    final b64 = first['b64_json']?.toString() ?? '';
+    if (b64.trim().isNotEmpty) {
+      return base64Decode(_stripDataUriPrefix(b64.trim()));
+    }
+    final url = first['url']?.toString() ?? '';
+    if (url.trim().isEmpty) {
+      return const [];
+    }
+    return _downloadImage(url.trim());
+  }
+
+  static Future<List<List<int>>> _extractAllImageBytes(
+    Object? responseData,
+  ) async {
+    final decoded =
+        responseData is String ? jsonDecode(responseData) : responseData;
+    if (decoded is! Map) {
+      return const [];
+    }
+
+    final list = decoded['data'];
+    if (list is List && list.isNotEmpty) {
+      final images = <List<int>>[];
+      for (final item in list) {
+        if (item is! Map) {
+          continue;
+        }
+        final b64 = item['b64_json']?.toString().trim() ?? '';
+        if (b64.isNotEmpty) {
+          images.add(base64Decode(_stripDataUriPrefix(b64)));
+          continue;
+        }
+        final url = item['url']?.toString().trim() ?? '';
+        if (url.isNotEmpty) {
+          images.add(await _downloadImage(url));
+        }
+      }
+      return images;
+    }
+
+    final first = await _extractImageBytes(decoded);
+    return first.isEmpty ? const [] : [first];
+  }
+
+  static Future<List<int>> _downloadImage(String url) async {
+    final download = await _dio.get<List<int>>(
+      url,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return download.data ?? const [];
+  }
+
+  static String _failureMessage(Object error) {
+    if (error is _VolcImageRemoteException) {
+      return '绘本图片生成失败：${error.message}';
+    }
+    if (error is DioException) {
+      final response = error.response;
+      final status = response?.statusCode;
+      final body = response?.data;
+      final remoteMessage = _extractRemoteErrorMessage(body);
+      final details = <String>[
+        if (status != null) 'HTTP $status',
+        if (remoteMessage.isNotEmpty) remoteMessage,
+        if (remoteMessage.isEmpty) error.message ?? error.type.name,
+      ].where((part) => part.trim().isNotEmpty).join(' - ');
+      return details.isEmpty ? '绘本图片生成失败' : '绘本图片生成失败：$details';
+    }
+    final text = error.toString().trim();
+    if (text.isEmpty) {
+      return '绘本图片生成失败';
+    }
+    return '绘本图片生成失败：$text';
+  }
+
+  static String _extractRemoteErrorMessage(Object? body) {
+    if (body is Map) {
+      final values = <String>[
+        body['code']?.toString() ?? '',
+        body['status']?.toString() ?? '',
+        body['message']?.toString() ?? '',
+        body['request_id'] == null ? '' : 'request_id=${body['request_id']}',
+        body['error'] is Map
+            ? _extractRemoteErrorMessage(body['error'])
+            : body['error']?.toString() ?? '',
+      ];
+      return values
+          .map((value) => value.trim())
+          .where((value) => value.isNotEmpty)
+          .join(' ');
+    }
+    final text = body?.toString().trim() ?? '';
+    return text.length <= 240 ? text : '${text.substring(0, 240)}...';
+  }
+
+  static Future<List<_ReferenceImage>> _referenceImages(
+    List<String> paths,
+  ) async {
+    final images = <_ReferenceImage>[];
+    for (final path in paths) {
+      final filePath = path.trim();
+      if (filePath.isEmpty) {
+        continue;
+      }
+      final file = File(filePath);
+      if (!await file.exists()) {
+        continue;
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        continue;
+      }
+      final extension = _extensionForPath(filePath);
+      final hash = await ApiCacheService.hashBytes(bytes);
+      images.add(
+        _ReferenceImage(
+          hash: hash,
+          dataUri:
+              'data:${_contentTypeFor(extension)};base64,${base64Encode(bytes)}',
+        ),
+      );
+    }
+    return images;
+  }
+
+  static String _stripDataUriPrefix(String value) {
+    final index = value.indexOf(',');
+    if (value.startsWith('data:image/') && index >= 0) {
+      return value.substring(index + 1);
+    }
+    return value;
+  }
+
+  static String _extensionForPath(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'jpeg';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'webp';
+    }
+    return 'png';
+  }
+
+  static String _contentTypeFor(String extension) {
+    final normalized = extension.toLowerCase().replaceFirst('.', '');
+    return switch (normalized) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'webp' => 'image/webp',
+      _ => 'image/png',
+    };
+  }
+}
+
+class _VolcImageRemoteException implements Exception {
+  const _VolcImageRemoteException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class _ReferenceImage {
+  const _ReferenceImage({
+    required this.hash,
+    required this.dataUri,
+  });
+
+  final String hash;
+  final String dataUri;
+}

@@ -23,6 +23,12 @@ class RecognitionBasedAssessmentEngine implements SpeechAssessmentEngine {
   Future<String> recognizeSpeech({required List<int> audioBytes}) async =>
       StreamingAsrService.recognize(audioBytes: audioBytes);
 
+  PronunciationResult assessRecognizedText({
+    required String referenceText,
+    required String recognizedText,
+  }) =>
+      _computeScores(referenceText, recognizedText);
+
   PronunciationResult _computeScores(String refText, String recognized) {
     final refWords = refText.toLowerCase().split(RegExp(r'\s+'));
     final recWords = recognized.toLowerCase().split(RegExp(r'\s+'));

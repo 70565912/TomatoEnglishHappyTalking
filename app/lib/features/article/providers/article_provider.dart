@@ -2,6 +2,8 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../data/models/article_model.dart';
 import '../../../services/database_service.dart';
 import '../../../services/nlp_service.dart';
+import '../../../services/practice_input_parser.dart';
+import '../../../services/practice_text_service.dart';
 
 part 'article_provider.g.dart';
 
@@ -45,10 +47,6 @@ class ArticleForm extends _$ArticleForm {
       state = state.copyWith(content: value, clearError: true);
 
   Future<bool> save() async {
-    if (state.title.trim().isEmpty) {
-      state = state.copyWith(error: '请填写文章标题');
-      return false;
-    }
     if (state.content.trim().isEmpty) {
       state = state.copyWith(error: '请填写文章内容');
       return false;
@@ -56,15 +54,50 @@ class ArticleForm extends _$ArticleForm {
 
     state = state.copyWith(isSaving: true, clearError: true);
 
-    final sentences = NlpService.splitSentences(state.content);
+    final parsedInput = PracticeInputParser.parse(state.content);
+    final englishContent = parsedInput.usesLocalEnglish
+        ? parsedInput.englishContent
+        : (await PracticeTextService.translateToEnglishForPractice(
+            content: state.content,
+          ))
+            .text
+            .trim();
+    final sentences = NlpService.splitSentences(englishContent);
+    if (sentences.isEmpty) {
+      state = state.copyWith(
+        isSaving: false,
+        error: '文章内容需要能转换为英文练习句子',
+      );
+      return false;
+    }
+
+    final requestedTitle = state.title.trim();
+    final title = requestedTitle.isNotEmpty
+        ? requestedTitle
+        : parsedInput.titleCandidate.trim().isNotEmpty
+            ? parsedInput.titleCandidate.trim()
+            : (await PracticeTextService.suggestArticleTitle(
+                content: englishContent,
+              ))
+                .text
+                .trim();
     final article = Article(
-      title: state.title.trim(),
-      content: state.content.trim(),
+      title: title.isEmpty ? 'English Story' : title,
+      content: englishContent,
       sentences: sentences,
       createdAt: DateTime.now(),
     );
 
-    await DatabaseService.saveArticle(article);
+    final articleId = await DatabaseService.saveArticle(article);
+    if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
+      await DatabaseService.saveArticleSentenceTranslations(
+        articleId,
+        parsedInput.buildSentenceTranslations(
+          articleId: articleId,
+          sentences: sentences,
+        ),
+      );
+    }
     state = const ArticleFormState(); // reset form
     return true;
   }

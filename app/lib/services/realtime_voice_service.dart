@@ -7,9 +7,11 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 import '../core/config/app_config.dart';
+import 'api_cache_service.dart';
 
 enum RealtimeReplySource {
   remote,
+  cached,
   mockNoKey,
   mockOnError,
 }
@@ -49,7 +51,6 @@ class RealtimeVoiceService {
       'wss://openspeech.bytedance.com/api/v3/realtime/dialogue';
 
   static const _resourceId = 'volc.speech.dialog';
-  static const _fixedAppKey = 'PlgvMymc7f3tQnJ6';
   static const _modelVersion = '1.2.1.1';
 
   static const _protocolVersionAndHeader = 0x11;
@@ -66,7 +67,16 @@ class RealtimeVoiceService {
 
   static const String _systemPrompt =
       'You are a friendly and encouraging English teacher named Emma. '
-      'Ask one question at a time and keep each response concise.';
+      'Use the cached compact chapter teaching guide as the source. Ask one '
+      'question at a time and keep each response concise. Guide the learner '
+      'through the chapter from beginning to end. When the learner has '
+      'discussed the main events, ending, and meaning of the chapter, stop '
+      'asking new questions and give a short practice summary plus an English '
+      'ability level. Every assistant response must end with these metadata '
+      'lines exactly: '
+      '[[TOMATO_CHAPTER_DONE: yes/no]] '
+      '[[TOMATO_ABILITY_LEVEL: Starter|Beginner|Elementary|Pre-Intermediate|Intermediate|Upper-Intermediate]] '
+      '[[TOMATO_SUMMARY: one short summary when done, otherwise empty]].';
 
   // Client event IDs
   static const _eventStartConnection = 1;
@@ -88,87 +98,122 @@ class RealtimeVoiceService {
   static const _eventDialogCommonError = 599;
 
   static Future<RealtimeReply> startSession({
-    required String articleContent,
+    required String chapterGuide,
     String articleTitle = '',
+    int? articleId,
   }) async {
+    final chapterContext = chapterGuideTurn(
+      chapterGuide: chapterGuide,
+      articleTitle: articleTitle,
+    );
     final turns = <RealtimeChatTurn>[
-      const RealtimeChatTurn(role: 'system', content: _systemPrompt),
-      RealtimeChatTurn(
+      conversationSystemTurn(),
+      chapterContext,
+      const RealtimeChatTurn(
         role: 'user',
         content:
-            'Article title: $articleTitle\n\nArticle:\n$articleContent\n\nPlease greet me and ask your first question.',
+            'Please greet me briefly and ask your first question about the beginning of this chapter.',
       ),
     ];
 
-    return _query(turns);
+    return _query(
+      turns,
+      cachePurpose: 'chat_start',
+      articleId: articleId,
+    );
   }
 
   static Future<RealtimeReply> reply({
     required List<RealtimeChatTurn> history,
     required String userMessage,
     required int questionCount,
+    bool forceChapterCompletion = false,
+    int? articleId,
   }) async {
     final turns = <RealtimeChatTurn>[
       ...history,
       RealtimeChatTurn(role: 'user', content: userMessage),
-      if (questionCount >= 8)
+      if (forceChapterCompletion)
         const RealtimeChatTurn(
           role: 'user',
           content:
-              'Please summarize what we discussed and give me encouragement to keep practicing.',
+              'This is the final turn. If any chapter part is still uncovered, briefly cover it now. Then end the practice with a summary, an ability level, and TOMATO_CHAPTER_DONE: yes.',
+        )
+      else
+        const RealtimeChatTurn(
+          role: 'user',
+          content:
+              'Decide whether the learner has now discussed the chapter beginning, key events, ending, and meaning. If yes, finish with a practice summary and ability level. If no, ask exactly one next question about an uncovered part.',
         ),
     ];
 
-    return _query(turns);
-  }
-
-  static Future<RealtimeReply> translateToChinese({
-    required String text,
-  }) async {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      return const RealtimeReply(text: '', source: RealtimeReplySource.remote);
-    }
-    if (RegExp(r'[\u3400-\u9FFF]').hasMatch(trimmed) &&
-        !RegExp(r'[A-Za-z]').hasMatch(trimmed)) {
-      return RealtimeReply(text: trimmed, source: RealtimeReplySource.remote);
-    }
-
-    final turns = <RealtimeChatTurn>[
-      const RealtimeChatTurn(
-        role: 'system',
-        content:
-            'You are a precise English-to-Chinese translation engine. Return only natural Simplified Chinese. Do not explain.',
-      ),
-      RealtimeChatTurn(
-        role: 'user',
-        content:
-            'Translate this English learning text into natural Simplified Chinese. Keep names readable and return only the translation:\n\n$trimmed',
-      ),
-    ];
-
-    final reply = await _query(
+    return _query(
       turns,
-      fallbackText: _mockTranslation(trimmed),
-    );
-    return RealtimeReply(
-      text: _cleanTranslation(reply.text),
-      source: reply.source,
-      errorMessage: reply.errorMessage,
+      cachePurpose: 'chat_reply',
+      articleId: articleId,
     );
   }
+
+  static RealtimeChatTurn conversationSystemTurn() =>
+      const RealtimeChatTurn(role: 'system', content: _systemPrompt);
+
+  static RealtimeChatTurn chapterGuideTurn({
+    required String chapterGuide,
+    String articleTitle = '',
+  }) {
+    final title =
+        articleTitle.trim().isEmpty ? 'Untitled chapter' : articleTitle.trim();
+    final guide = _normalizeChapterGuide(chapterGuide);
+    return RealtimeChatTurn(
+      role: 'user',
+      content:
+          'Chapter title: $title\n\nCached compact teaching guide:\n$guide\n\nConversation goal: help the learner understand and retell the whole chapter using this guide. Cover the story in order: beginning, important events, character choices, ending, and meaning. Do not invent events outside the guide. Do not finish until the guide coverage points have been discussed or the final-turn instruction is given.',
+    );
+  }
+
+  @visibleForTesting
+  static String chapterGuidePromptForTest({
+    required String chapterGuide,
+    String articleTitle = '',
+  }) =>
+      chapterGuideTurn(
+        chapterGuide: chapterGuide,
+        articleTitle: articleTitle,
+      ).content;
 
   static Future<RealtimeReply> _query(
     List<RealtimeChatTurn> turns, {
     String? fallbackText,
+    required String cachePurpose,
+    int? articleId,
   }) async {
-    final appId = await AppConfig.volcRealtimeAppId;
-    final apiKey = await AppConfig.volcApiKey;
+    final textQuery = _buildTextQuery(turns);
+    final cacheRequest = _cacheRequest(
+      textQuery: textQuery,
+      purpose: cachePurpose,
+    );
+    final cacheKey = await ApiCacheService.keyForJson(
+      'realtime',
+      cacheRequest,
+    );
+    final cachedText = await ApiCacheService.getText(
+      cacheKey,
+      articleId: articleId,
+      purpose: cachePurpose,
+    );
+    if (cachedText != null && cachedText.trim().isNotEmpty) {
+      return RealtimeReply(
+        text: cachedText,
+        source: RealtimeReplySource.cached,
+      );
+    }
+
+    final apiKey = await AppConfig.volcRealtimeApiKey;
     if (apiKey.trim().isEmpty) {
       return RealtimeReply(
         text: fallbackText ?? _mockResponse(),
         source: RealtimeReplySource.mockNoKey,
-        errorMessage: 'volc_api_key is empty',
+        errorMessage: 'speech api key is empty',
       );
     }
 
@@ -176,11 +221,9 @@ class RealtimeVoiceService {
     StreamSubscription<dynamic>? subscription;
     final connectId = _newConnectId();
     final sessionId = _newSessionId();
-    final textQuery = _buildTextQuery(turns);
     try {
       socket = await _connectSocket(
-        appId: appId,
-        accessKey: apiKey,
+        apiKey: apiKey,
         connectId: connectId,
       );
       _trace('connect success connectId=$connectId sessionId=$sessionId');
@@ -335,6 +378,14 @@ class RealtimeVoiceService {
             'Realtime response has no text payload (lastEvent=$lastEventId, payload=$lastPayloadSummary, trail=${eventTrail.join(' -> ')})',
           );
         }
+        await ApiCacheService.putText(
+          cacheKey: cacheKey,
+          kind: 'realtime',
+          purpose: cachePurpose,
+          request: cacheRequest,
+          textValue: result,
+          articleId: articleId,
+        );
         return RealtimeReply(text: result, source: RealtimeReplySource.remote);
       } finally {
         try {
@@ -368,44 +419,29 @@ class RealtimeVoiceService {
     }
   }
 
+  static Map<String, dynamic> _cacheRequest({
+    required String textQuery,
+    required String purpose,
+  }) =>
+      {
+        'service': 'realtime_dialogue',
+        'endpoint': _endpoint,
+        'resourceId': _resourceId,
+        'model': _modelVersion,
+        'purpose': purpose,
+        'textQuery': textQuery,
+      };
+
   static Future<WebSocket> _connectSocket({
-    required String appId,
-    required String accessKey,
+    required String apiKey,
     required String connectId,
   }) async {
-    WebSocketException? newConsoleError;
-
-    try {
-      // New-console compatible mode: API key only.
-      _trace('connect try auth=X-Api-Key connectId=$connectId');
-      return await WebSocket.connect(
-        _endpoint,
-        headers: <String, String>{
-          'X-Api-Key': accessKey,
-          'X-Api-Resource-Id': _resourceId,
-          'X-Api-Connect-Id': connectId,
-        },
-      );
-    } on WebSocketException catch (e) {
-      newConsoleError = e;
-      _trace('connect fail auth=X-Api-Key connectId=$connectId error=$e');
-    }
-
-    // Legacy mode requires App ID and fixed App Key.
-    if (appId.trim().isEmpty) {
-      throw WebSocketException(
-        'Realtime connect failed in API-key mode and appId is empty for legacy mode: $newConsoleError',
-      );
-    }
-
-    _trace('connect try auth=legacy connectId=$connectId');
+    _trace('connect try auth=X-Api-Key connectId=$connectId');
     return await WebSocket.connect(
       _endpoint,
       headers: <String, String>{
-        'X-Api-App-ID': appId,
-        'X-Api-Access-Key': accessKey,
         'X-Api-Resource-Id': _resourceId,
-        'X-Api-App-Key': _fixedAppKey,
+        'X-Api-Key': apiKey,
         'X-Api-Connect-Id': connectId,
       },
     );
@@ -756,6 +792,9 @@ class RealtimeVoiceService {
     return buffer.toString().trim();
   }
 
+  static String _normalizeChapterGuide(String text) =>
+      text.replaceAll(RegExp(r'[ \t]+'), ' ').trim();
+
   static String _newSessionId() {
     final time = DateTime.now().microsecondsSinceEpoch;
     final rand = Random().nextInt(1 << 20);
@@ -777,35 +816,6 @@ class RealtimeVoiceService {
 
   static String _mockResponse() =>
       "That's interesting! What do you think is the most important idea in this article?";
-
-  static String _mockTranslation(String text) {
-    final normalized = text.trim();
-    if (normalized.isEmpty) {
-      return '';
-    }
-
-    final lower = normalized.toLowerCase();
-    if (lower.contains('tom finds a bright snack box')) {
-      return '汤姆发现了一个明亮的零食盒。';
-    }
-    if (lower.contains('he shares it with his team')) {
-      return '他把它分享给自己的队友。';
-    }
-    if (lower.contains('alice')) {
-      return '这是一句关于爱丽丝故事的英文，请结合上方英文理解。';
-    }
-    return '中文翻译暂不可用，请先参考英文原句。';
-  }
-
-  static String _cleanTranslation(String text) {
-    var cleaned = text.trim();
-    cleaned = cleaned.replaceAll(
-      RegExp(r'^(中文翻译|翻译|译文)\s*[:：]\s*'),
-      '',
-    );
-    cleaned = cleaned.replaceAll(RegExp(r'^["“]|["”]$'), '').trim();
-    return cleaned;
-  }
 }
 
 class _RealtimeServerPacket {

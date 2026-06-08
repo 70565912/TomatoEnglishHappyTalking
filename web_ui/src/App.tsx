@@ -5,7 +5,19 @@ import type {
   Article,
   ChatState,
   FollowState,
+  ListeningItem,
+  ListeningMode,
+  ListeningOpenPayload,
+  ListeningPausePayload,
+  ListeningResumePayload,
+  ListeningTranslationsPayload,
+  PictureBookPage,
+  PictureBookState,
+  VoicePreviewPayload,
+  WordLookupPayload,
+  WordPlaybackPayload,
   SettingsState,
+  StorySeries,
 } from './types';
 import './styles.css';
 
@@ -49,8 +61,10 @@ function App() {
   const [route, setRoute] = useHashRoute();
   const [articles, setArticles] = useState<Article[]>([]);
   const [followState, setFollowState] = useState<FollowState | null>(null);
+  const [pictureBookState, setPictureBookState] = useState<PictureBookState | null>(null);
   const [chatState, setChatState] = useState<ChatState | null>(null);
   const [settings, setSettings] = useState<SettingsState | null>(null);
+  const [series, setSeries] = useState<StorySeries[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
 
   const navigate = (path: string) => {
@@ -61,14 +75,20 @@ function App() {
 
   useEffect(() => {
     let isMounted = true;
-    const offArticles = onNativeEvent<{ articles: Article[] }>(
+    const offArticles = onNativeEvent<{ articles: Article[]; series?: StorySeries[] }>(
       'article.state',
       (payload) => {
-        if (isMounted) setArticles(payload.articles);
+        if (isMounted) {
+          setArticles(payload.articles);
+          if (payload.series) setSeries(payload.series);
+        }
       },
     );
     const offFollow = onNativeEvent<FollowState>('follow.state', (payload) => {
       if (isMounted) setFollowState(payload);
+    });
+    const offPictureBook = onNativeEvent<PictureBookState>('pictureBook.state', (payload) => {
+      if (isMounted) setPictureBookState(payload);
     });
     const offChat = onNativeEvent<ChatState>('chat.state', (payload) => {
       if (isMounted) setChatState(payload);
@@ -77,9 +97,12 @@ function App() {
       if (isMounted) setSettings(payload);
     });
 
-    sendNative<{ articles: Article[] }>('app.ready')
+    sendNative<{ articles: Article[]; series?: StorySeries[] }>('app.ready')
       .then((payload) => {
-        if (isMounted) setArticles(payload.articles);
+        if (isMounted) {
+          setArticles(payload.articles);
+          if (payload.series) setSeries(payload.series);
+        }
       })
       .catch((error) => {
         if (isMounted) setNotice(error.message);
@@ -89,6 +112,7 @@ function App() {
       isMounted = false;
       offArticles();
       offFollow();
+      offPictureBook();
       offChat();
       offSettings();
     };
@@ -113,15 +137,17 @@ function App() {
           <span className="brand-copy">
             <b>
               <span>Tomato</span>
+              {' '}
               <span>English</span>
+              {' '}
+              <span>Happy Talking</span>
             </b>
-            <small>Happy Talking</small>
           </span>
         </button>
         <NavButton label="大厅" icon="home" active={route === '/'} onClick={() => navigate('/')} />
         <NavButton
-          label="新增"
-          icon="plus"
+          label="任务"
+          icon="task"
           active={route === '/article/new'}
           onClick={() => navigate('/article/new')}
         />
@@ -145,6 +171,7 @@ function App() {
         {parsedRoute.kind === 'home' && (
           <HomePage
             articles={articles}
+            series={series}
             latestArticle={latestArticle}
             onNavigate={navigate}
             onDelete={async (articleId) => {
@@ -159,12 +186,24 @@ function App() {
 
         {parsedRoute.kind === 'article' && (
           <ArticlePage
+            series={series}
+            onSeriesUpdated={setSeries}
             onCancel={() => navigate('/')}
             onSaved={(payload) => {
               setArticles(payload.articles);
+              if (payload.series) setSeries(payload.series);
               navigate('/');
               setNotice('任务卡已加入大厅');
             }}
+          />
+        )}
+
+        {parsedRoute.kind === 'listen' && (
+          <ListeningPage
+            articleId={parsedRoute.articleId}
+            pictureBookState={pictureBookState?.articleId === parsedRoute.articleId ? pictureBookState : null}
+            onNavigate={navigate}
+            onPictureBookLoaded={setPictureBookState}
           />
         )}
 
@@ -172,8 +211,10 @@ function App() {
           <FollowPage
             articleId={parsedRoute.articleId}
             state={followState}
+            pictureBookState={pictureBookState?.articleId === parsedRoute.articleId ? pictureBookState : null}
             onNavigate={navigate}
             onLoaded={setFollowState}
+            onPictureBookLoaded={setPictureBookState}
           />
         )}
 
@@ -196,15 +237,20 @@ function App() {
 
 function HomePage({
   articles,
+  series,
   latestArticle,
   onNavigate,
   onDelete,
 }: {
   articles: Article[];
+  series: StorySeries[];
   latestArticle?: Article;
   onNavigate: (path: string) => void;
   onDelete: (articleId: number) => Promise<void>;
 }) {
+  const [selectedBookKey, setSelectedBookKey] = useState<string | null>(null);
+  const [chapterPage, setChapterPage] = useState(0);
+  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const totalSentences = articles.reduce((sum, article) => sum + article.sentenceCount, 0);
   const averageScore =
     articles.length === 0
@@ -213,6 +259,29 @@ function HomePage({
           articles.reduce((sum, article) => sum + article.averageScore, 0) /
             articles.length,
         );
+  const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
+  const selectedBook =
+    selectedBookKey == null
+      ? null
+      : books.find((book) => book.key === selectedBookKey) ?? null;
+  const orderedChapters = useMemo(
+    () => (selectedBook ? sortBookChapters(selectedBook.articles, chapterOrder) : []),
+    [selectedBook, chapterOrder],
+  );
+  const totalChapterPages = Math.max(1, Math.ceil(orderedChapters.length / 10));
+  const safeChapterPage = Math.min(chapterPage, totalChapterPages - 1);
+  const visibleChapters = orderedChapters.slice(safeChapterPage * 10, safeChapterPage * 10 + 10);
+
+  useEffect(() => {
+    if (selectedBookKey && !books.some((book) => book.key === selectedBookKey)) {
+      setSelectedBookKey(null);
+      setChapterPage(0);
+    }
+  }, [books, selectedBookKey]);
+
+  useEffect(() => {
+    setChapterPage((current) => Math.min(current, totalChapterPages - 1));
+  }, [totalChapterPages]);
 
   return (
     <section className="page home-page">
@@ -220,7 +289,7 @@ function HomePage({
         <div className="hero-copy">
           <p className="eyebrow">Level 12 · Speaking Quest</p>
           <h1>今天也要快乐开口说英语！</h1>
-          <p>把文章变成闯关卡：先听、再跟读、最后和番茄伙伴对话。</p>
+          <p>把文章变成闯关卡：先跟读、再对话，也可以随时听全文。</p>
           <div className="hero-actions">
             <button className="primary-action" onClick={() => onNavigate(latestArticle ? `/follow/${latestArticle.id}` : '/article/new')}>
               <Icon name="play" /> 开始闯关
@@ -246,7 +315,7 @@ function HomePage({
           </div>
           {latestArticle ? (
             <div className="latest-content">
-              <img src={asset(cardArtForArticle(latestArticle, 0))} alt="" />
+              <img src={articleCoverSource(latestArticle, 0)} alt="" />
               <div>
                 <span className="quest-tag">主线任务</span>
                 <h2>{latestArticle.title}</h2>
@@ -258,6 +327,9 @@ function HomePage({
                   </button>
                   <button className="purple-action" onClick={() => onNavigate(`/chat/${latestArticle.id}`)}>
                     <Icon name="chat" /> 对话
+                  </button>
+                  <button className="listen-action" onClick={() => onNavigate(`/listen/${latestArticle.id}`)}>
+                    <Icon name="sound" /> 听力
                   </button>
                 </div>
               </div>
@@ -279,55 +351,244 @@ function HomePage({
           <span>今日闯关路线</span>
         </div>
         <div className="map-steps">
-          <MapStep number="1" title="听原音" text="番茄伙伴先示范" active />
-          <MapStep number="2" title="开口读" text="录音跟读拿星星" />
-          <MapStep number="3" title="AI 对话" text="用文章内容聊天" />
-          <MapStep number="4" title="领奖励" text="收集番茄积木" />
+          <MapStep number="1" title="开口读" text="录音跟读拿星星" active />
+          <MapStep number="2" title="AI 对话" text="用文章内容聊天" />
+          <MapStep number="3" title="领奖励" text="收集番茄积木" />
+          <MapStep number="4" title="再复习" text="回到任务卡巩固" />
         </div>
       </section>
 
       <section className="mission-list-panel">
         <div className="section-heading with-action">
-          <span>我的文章任务</span>
+          <span>我的书籍</span>
           <button onClick={() => onNavigate('/article/new')}>
             <Icon name="plus" /> 新增任务
           </button>
         </div>
-        {articles.length === 0 ? (
+        {books.length === 0 ? (
           <EmptyMission onNavigate={onNavigate} />
         ) : (
-          <div className="mission-list">
-            {articles.map((article, index) => (
-              <MissionRow
-                key={article.id}
-                article={article}
-                art={cardArtForArticle(article, index)}
-                onFollow={() => onNavigate(`/follow/${article.id}`)}
-                onChat={() => onNavigate(`/chat/${article.id}`)}
-                onDelete={() => onDelete(article.id)}
-              />
-            ))}
-          </div>
+          <>
+            <div className="book-list" role="list" aria-label="书籍列表">
+              {books.map((book, index) => (
+                <button
+                  className={`book-card ${book.key === selectedBookKey ? 'active' : ''}`}
+                  key={book.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedBookKey(book.key);
+                    setChapterPage(0);
+                  }}
+                >
+                  <img src={bookCoverSource(book, index)} alt="" />
+                  <span>
+                    <b>{book.title}</b>
+                    <small>{book.articles.length} 篇章节 · {book.sentenceCount} 句子</small>
+                  </span>
+                  <Icon name="next" />
+                </button>
+              ))}
+            </div>
+
+            {selectedBook && (
+              <section className="chapter-list-panel" aria-label={`${selectedBook.title} 章节列表`}>
+                <div className="chapter-toolbar">
+                  <div>
+                    <span>章节列表</span>
+                    <b>{selectedBook.title}</b>
+                  </div>
+                  <div className="chapter-tools">
+                    <button
+                      className="ghost-action"
+                      type="button"
+                      onClick={() => {
+                        setChapterOrder((current) => (current === 'asc' ? 'desc' : 'asc'));
+                        setChapterPage(0);
+                      }}
+                    >
+                      <Icon name="swap" /> {chapterOrder === 'asc' ? '正序' : '倒序'}
+                    </button>
+                    <div className="pagination" aria-label="章节分页">
+                      <button
+                        type="button"
+                        onClick={() => setChapterPage((page) => Math.max(0, page - 1))}
+                        disabled={safeChapterPage === 0}
+                      >
+                        <Icon name="prev" /> 上一页
+                      </button>
+                      <span>第 {safeChapterPage + 1} / {totalChapterPages} 页 · 每页 10 篇</span>
+                      <button
+                        type="button"
+                        onClick={() => setChapterPage((page) => Math.min(totalChapterPages - 1, page + 1))}
+                        disabled={safeChapterPage >= totalChapterPages - 1}
+                      >
+                        下一页 <Icon name="next" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mission-list">
+                  {visibleChapters.map((article, index) => (
+                    <MissionRow
+                      key={article.id}
+                      article={article}
+                      imageSrc={articleCoverSource(article, safeChapterPage * 10 + index)}
+                      onListen={() => onNavigate(`/listen/${article.id}`)}
+                      onFollow={() => onNavigate(`/follow/${article.id}`)}
+                      onChat={() => onNavigate(`/chat/${article.id}`)}
+                      onDelete={() => onDelete(article.id)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+          </>
         )}
       </section>
     </section>
   );
 }
 
+type ChapterOrder = 'asc' | 'desc';
+
+type BookGroup = {
+  key: string;
+  title: string;
+  articles: Article[];
+  sentenceCount: number;
+  averageScore: number;
+  coverImagePath?: string | null;
+};
+
+function bookGroupsForArticles(articles: Article[], series: StorySeries[]): BookGroup[] {
+  const groups = new Map<string, BookGroup>();
+
+  for (const item of series) {
+    groups.set(`series:${item.id}`, {
+      key: `series:${item.id}`,
+      title: item.title,
+      articles: [],
+      sentenceCount: 0,
+      averageScore: 0,
+      coverImagePath: item.coverImagePath,
+    });
+  }
+
+  for (const article of articles) {
+    const seriesTitle = article.seriesTitle?.trim() ?? '';
+    const key =
+      article.seriesId != null
+        ? `series:${article.seriesId}`
+        : seriesTitle
+          ? `title:${seriesTitle.toLowerCase()}`
+          : `article:${article.id}`;
+    const fallbackTitle = seriesTitle || article.title || '未归档书籍';
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        title: fallbackTitle,
+        articles: [],
+        sentenceCount: 0,
+        averageScore: 0,
+      });
+    }
+    groups.get(key)?.articles.push(article);
+  }
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const sentenceCount = group.articles.reduce((sum, article) => sum + article.sentenceCount, 0);
+      const averageScore =
+        group.articles.length === 0
+          ? 0
+          : Math.round(group.articles.reduce((sum, article) => sum + article.averageScore, 0) / group.articles.length);
+      return {
+        ...group,
+        sentenceCount,
+        averageScore,
+      };
+    })
+    .filter((group) => group.articles.length > 0)
+    .sort((a, b) => latestArticleTime(b.articles) - latestArticleTime(a.articles));
+}
+
+function sortBookChapters(articles: Article[], order: ChapterOrder): Article[] {
+  const sorted = [...articles].sort((a, b) => {
+    const aOrder = chapterSortValue(a);
+    const bOrder = chapterSortValue(b);
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' });
+  });
+  return order === 'asc' ? sorted : sorted.reverse();
+}
+
+function chapterSortValue(article: Article): number {
+  if (typeof article.chapterOrder === 'number' && Number.isFinite(article.chapterOrder)) {
+    return article.chapterOrder;
+  }
+  const titleNumber = article.title.match(/(?:chapter|episode|ep|e|第)\s*(\d+)/i)?.[1];
+  if (titleNumber) return Number(titleNumber);
+  return article.id;
+}
+
+function latestArticleTime(articles: Article[]): number {
+  return Math.max(
+    0,
+    ...articles.map((article) => {
+      const time = Date.parse(article.createdAt);
+      return Number.isFinite(time) ? time : 0;
+    }),
+  );
+}
+
+function bookCoverSource(book: BookGroup, index: number): string {
+  const firstGenerated = book.articles.find(
+    (article) => directImageSource(article.coverImageUri) || directImageSource(article.coverImagePath),
+  );
+  if (firstGenerated) return articleCoverSource(firstGenerated, index);
+  const seriesCover = directImageSource(book.coverImagePath);
+  if (seriesCover) return seriesCover;
+  return articleCoverSource(book.articles[0], index);
+}
+
 function ArticlePage({
+  series,
+  onSeriesUpdated,
   onCancel,
   onSaved,
 }: {
+  series: StorySeries[];
+  onSeriesUpdated: (series: StorySeries[]) => void;
   onCancel: () => void;
-  onSaved: (payload: { article: Article; articles: Article[] }) => void;
+  onSaved: (payload: { article: Article; articles: Article[]; series?: StorySeries[] }) => void;
 }) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
+  const [selectedSeriesId, setSelectedSeriesId] = useState<string>(() => 'new');
+  const [newSeriesTitle, setNewSeriesTitle] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sentences = useMemo(() => splitSentences(content), [content]);
-  const canSave = Boolean(title.trim() && content.trim() && sentences.length > 0) && !saving;
+  const canSave = Boolean(content.trim()) && !saving;
+
+  useEffect(() => {
+    let isMounted = true;
+    sendNative<{ series: StorySeries[] }>('series.list')
+      .then((payload) => {
+        if (isMounted) {
+          onSeriesUpdated(payload.series);
+          if (payload.series.length > 0) {
+            setSelectedSeriesId((current) => (current === 'new' ? String(payload.series[0].id) : current));
+          }
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      isMounted = false;
+    };
+  }, [onSeriesUpdated]);
 
   const importFile = async (file: File | undefined) => {
     if (!file) return;
@@ -342,25 +603,36 @@ function ArticlePage({
       return;
     }
     setContent(cleaned.slice(0, 5000));
-    if (!title.trim()) {
-      setTitle(file.name.replace(/\.[^.]+$/, '').slice(0, 80));
-    }
     setError(null);
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!title.trim() || !content.trim() || sentences.length === 0) {
-      setError('请先填写标题和英文文章');
+    if (!content.trim()) {
+      setError('请先填写文章内容');
       return;
     }
 
     setSaving(true);
     setError(null);
     try {
-      const payload = await sendNative<{ article: Article; articles: Article[] }>(
+      const resolvedSeriesId =
+        selectedSeriesId !== 'new'
+          ? Number(selectedSeriesId)
+          : undefined;
+      const resolvedSeriesTitle =
+        selectedSeriesId === 'new'
+          ? (newSeriesTitle.trim() || title.trim())
+          : '';
+      const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
         'article.create',
-        { title, content },
+        {
+          title: title.trim(),
+          content,
+          pictureBookEnabled: true,
+          seriesId: resolvedSeriesId,
+          seriesTitle: resolvedSeriesTitle,
+        },
       );
       onSaved(payload);
     } catch (err) {
@@ -390,22 +662,54 @@ function ArticlePage({
 
       <form className="article-editor" onSubmit={submit}>
         <div className="article-form">
-          <label>
-            <span>文章标题</span>
+          <section className="book-picker-panel" aria-label="书籍设置">
+            <div className="series-picker">
+              <label htmlFor="series-select">书籍</label>
+              <select
+                id="series-select"
+                value={series.length === 0 ? 'new' : selectedSeriesId}
+                onChange={(event) => setSelectedSeriesId(event.target.value)}
+              >
+                {series.map((item) => (
+                  <option value={String(item.id)} key={item.id}>
+                    {item.title}
+                  </option>
+                ))}
+                <option value="new">新建书籍</option>
+              </select>
+              {(selectedSeriesId === 'new' || series.length === 0) && (
+                <input
+                  aria-label="新书籍名称"
+                  value={newSeriesTitle}
+                  maxLength={80}
+                  placeholder="例如 The Secret Garden"
+                  onChange={(event) => setNewSeriesTitle(event.target.value)}
+                />
+              )}
+            </div>
+            <small>保存后会自动生成一张适合本章内容的英语绘本图。</small>
+          </section>
+
+          <div className="article-field title-field">
+            <div className="field-label-row">
+              <label htmlFor="article-title">文章标题</label>
+            </div>
             <input
+              id="article-title"
               value={title}
               maxLength={80}
-              placeholder="给这张任务卡起个名字"
+              placeholder="不填则自动生成短标题"
               onChange={(event) => {
                 setTitle(event.target.value);
                 setError(null);
               }}
             />
             <small>{title.length}/80</small>
-          </label>
-          <label>
-            <span>文章内容</span>
+          </div>
+          <div className="article-field">
+            <label htmlFor="article-content">文章内容</label>
             <textarea
+              id="article-content"
               value={content}
               maxLength={5000}
               placeholder={sampleText}
@@ -415,16 +719,8 @@ function ArticlePage({
               }}
             />
             <small>{content.length}/5000</small>
-          </label>
-        </div>
-
-        <aside className="article-helper-card">
-          <MascotBlinker className="helper-tomato" />
-          <div className="helper-copy">
-            <b>任务编辑台</b>
-            <span>短句越清楚，闯关越顺滑。</span>
           </div>
-        </aside>
+        </div>
 
         <section className="sentence-board">
           <div className="section-heading">
@@ -441,7 +737,7 @@ function ArticlePage({
               ))}
             </div>
           ) : (
-            <p className="sentence-empty">输入英文短文后，这里会自动切成适合跟读的短句。</p>
+            <p className="sentence-empty">输入短文后，这里会自动切成适合跟读的英文短句。</p>
           )}
         </section>
 
@@ -459,30 +755,644 @@ function ArticlePage({
   );
 }
 
+type ListeningStatus = 'loading' | 'ready' | 'playing' | 'stopping' | 'done' | 'error';
+type ListeningPart = 'english' | 'chinese' | null;
+type WordCardState = {
+  word: string;
+  sentence: string;
+  resumeBackground: boolean;
+  loading: boolean;
+  playing: boolean;
+  position: WordCardPosition;
+  lookup?: WordLookupPayload;
+  error?: string | null;
+};
+type WordCardPosition = {
+  top: number;
+  left: number;
+  placement: 'above' | 'below';
+};
+type FollowControl = 'source' | 'record' | 'recording';
+
+function ListeningPage({
+  articleId,
+  pictureBookState,
+  onNavigate,
+  onPictureBookLoaded,
+}: {
+  articleId: number;
+  pictureBookState: PictureBookState | null;
+  onNavigate: (path: string) => void;
+  onPictureBookLoaded: (state: PictureBookState) => void;
+}) {
+  const [article, setArticle] = useState<Article | null>(null);
+  const [items, setItems] = useState<ListeningItem[]>([]);
+  const [mode, setMode] = useState<ListeningMode>('english');
+  const [status, setStatus] = useState<ListeningStatus>('loading');
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [activePart, setActivePart] = useState<ListeningPart>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [wordCard, setWordCard] = useState<WordCardState | null>(null);
+  const playbackTokenRef = useRef(0);
+  const wordCardTokenRef = useRef(0);
+
+  useEffect(() => {
+    let isMounted = true;
+    playbackTokenRef.current += 1;
+    setArticle(null);
+    setItems([]);
+    setStatus('loading');
+    setCurrentIndex(0);
+    setActivePart(null);
+    setError(null);
+    setWordCard(null);
+    wordCardTokenRef.current += 1;
+    onPictureBookLoaded({
+      articleId,
+      enabled: false,
+      status: 'empty',
+      pages: [],
+    });
+
+    sendNative<ListeningOpenPayload>('listening.open', { articleId })
+      .then((payload) => {
+        if (!isMounted) return;
+        setArticle(payload.article);
+        setItems(payload.items);
+        setStatus(payload.items.length > 0 ? 'ready' : 'error');
+        if (payload.items.length === 0) {
+          setError('这篇文章还没有可朗读的英文句子。');
+        }
+        sendNative<PictureBookState>('pictureBook.state', { articleId })
+          .then((picturePayload) => {
+            if (isMounted) onPictureBookLoaded(picturePayload);
+          })
+          .catch(() => undefined);
+      })
+      .catch((loadError) => {
+        if (!isMounted) return;
+        setStatus('error');
+        setError(loadError instanceof Error ? loadError.message : '听力任务打开失败');
+      });
+
+    return () => {
+      isMounted = false;
+      playbackTokenRef.current += 1;
+      wordCardTokenRef.current += 1;
+      void sendNative('listening.stop').catch(() => undefined);
+      void sendNative('word.stop').catch(() => undefined);
+    };
+  }, [articleId, onPictureBookLoaded]);
+
+  useEffect(() => {
+    return onNativeEvent<ListeningTranslationsPayload>('listening.translations', (payload) => {
+      if (payload.articleId !== articleId) return;
+      const translationMap = new Map(
+        payload.translations
+          .filter((item) => item.chinese.trim())
+          .map((item) => [item.index, item.chinese.trim()]),
+      );
+      if (translationMap.size === 0) return;
+
+      setItems((currentItems) =>
+        currentItems.map((item) => {
+          const translated = translationMap.get(item.index);
+          return translated ? { ...item, chinese: translated } : item;
+        }),
+      );
+    });
+  }, [articleId]);
+
+  useEffect(() => {
+    if (!wordCard) return undefined;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        void closeWordCard();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [wordCard]);
+
+  const prepareListeningPart = (
+    item: ListeningItem | undefined,
+    part: Exclude<ListeningPart, null>,
+  ) => {
+    if (!item) return;
+    const text = part === 'english' ? item.english : item.chinese;
+    if (!text.trim()) return;
+    void sendNative('listening.prepare', {
+      text,
+      index: item.index,
+      part,
+    }).catch(() => undefined);
+  };
+
+  const prepareListeningItem = (index: number, selectedMode: ListeningMode) => {
+    const item = items[index];
+    if (!item) return;
+    prepareListeningPart(item, 'english');
+    if (selectedMode === 'bilingual') {
+      prepareListeningPart(item, 'chinese');
+    }
+  };
+
+  const playFrom = async (startIndex: number, singleItem = false) => {
+    if (items.length === 0 || isListeningBusy(status)) return;
+
+    const token = ++playbackTokenRef.current;
+    const safeStart = Math.max(0, Math.min(startIndex, items.length - 1));
+    const finalIndex = singleItem ? safeStart : items.length - 1;
+    const selectedMode = mode;
+
+    setStatus('playing');
+    setError(null);
+    setActivePart(null);
+    prepareListeningItem(safeStart, selectedMode);
+    if (!singleItem) prepareListeningItem(safeStart + 1, selectedMode);
+
+    try {
+      for (let index = safeStart; index <= finalIndex; index += 1) {
+        const item = items[index];
+        if (!singleItem) prepareListeningItem(index + 1, selectedMode);
+        setCurrentIndex(index);
+        setActivePart('english');
+        await sendNative('listening.play', {
+          text: item.english,
+          index,
+          part: 'english',
+        });
+        if (playbackTokenRef.current !== token) return;
+
+        if (selectedMode === 'bilingual' && item.chinese.trim()) {
+          setActivePart('chinese');
+          await sendNative('listening.play', {
+            text: item.chinese,
+            index,
+            part: 'chinese',
+          });
+          if (playbackTokenRef.current !== token) return;
+        }
+      }
+
+      if (playbackTokenRef.current !== token) return;
+      setActivePart(null);
+      setStatus(singleItem ? 'ready' : 'done');
+    } catch (playError) {
+      if (playbackTokenRef.current !== token) return;
+      setActivePart(null);
+      setStatus('error');
+      setError(playError instanceof Error ? playError.message : '听力播放失败，请重试');
+    }
+  };
+
+  const stopPlayback = async () => {
+    if (!isListeningBusy(status)) return;
+    const token = ++playbackTokenRef.current;
+    setStatus('stopping');
+    setActivePart(null);
+    try {
+      await sendNative('listening.stop');
+    } finally {
+      if (playbackTokenRef.current === token) {
+        setStatus('ready');
+      }
+    }
+  };
+
+  const playWordAudio = async (word: string, token = wordCardTokenRef.current) => {
+    setWordCard((current) =>
+      current && wordCardTokenRef.current === token
+        ? { ...current, playing: true, error: null }
+        : current,
+    );
+    try {
+      await sendNative<WordPlaybackPayload>('word.play', { word });
+    } catch (playError) {
+      if (wordCardTokenRef.current === token) {
+        setWordCard((current) =>
+          current
+            ? {
+                ...current,
+                error: playError instanceof Error ? playError.message : '单词发音失败',
+              }
+            : current,
+        );
+      }
+    } finally {
+      if (wordCardTokenRef.current === token) {
+        setWordCard((current) => (current ? { ...current, playing: false } : current));
+      }
+    }
+  };
+
+  const openWordCard = async (word: string, sentence: string, anchor: DOMRect) => {
+    const normalizedWord = normalizeLookupWord(word);
+    if (!normalizedWord) return;
+
+    const token = ++wordCardTokenRef.current;
+    const shouldPauseListening = status === 'playing' && activePart !== null;
+    let resumeBackground = false;
+
+    setWordCard({
+      word: normalizedWord,
+      sentence,
+      resumeBackground: false,
+      loading: true,
+      playing: false,
+      position: wordCardPositionFor(anchor),
+      error: null,
+    });
+
+    try {
+      if (shouldPauseListening) {
+        const pausePayload = await sendNative<ListeningPausePayload>('listening.pause');
+        resumeBackground = Boolean(pausePayload.paused);
+        if (wordCardTokenRef.current !== token) return;
+        setWordCard((current) => (current ? { ...current, resumeBackground } : current));
+      }
+
+      void playWordAudio(normalizedWord, token);
+
+      const lookup = await sendNative<WordLookupPayload>('word.lookup', {
+        word: normalizedWord,
+        sentence,
+      });
+      if (wordCardTokenRef.current !== token) return;
+      setWordCard((current) =>
+        current
+          ? {
+              ...current,
+              lookup,
+              loading: false,
+              error: null,
+            }
+          : current,
+      );
+    } catch (lookupError) {
+      if (wordCardTokenRef.current !== token) return;
+      setWordCard((current) =>
+        current
+          ? {
+              ...current,
+              loading: false,
+              error: lookupError instanceof Error ? lookupError.message : '单词解释加载失败',
+            }
+          : current,
+      );
+    }
+  };
+
+  const closeWordCard = async () => {
+    const current = wordCard;
+    const shouldResume = Boolean(current?.resumeBackground);
+    wordCardTokenRef.current += 1;
+    setWordCard(null);
+    try {
+      await sendNative('word.stop');
+    } catch {
+      // Word playback cleanup is best effort.
+    }
+
+    if (shouldResume && status === 'playing') {
+      try {
+        await sendNative<ListeningResumePayload>('listening.resume');
+      } catch {
+        // If the original segment ended or was stopped, there is nothing to resume.
+      }
+    }
+  };
+
+  if (status === 'loading') {
+    return (
+      <section className="page listening-page">
+        <TopBar title="听力练习准备中" onBack={() => onNavigate('/')}>
+          <button className="ghost-action" onClick={() => onNavigate('/')}>
+            <Icon name="exit" /> 退出
+          </button>
+        </TopBar>
+        <LoadingPanel text="正在准备英文句子和中文对照" />
+      </section>
+    );
+  }
+
+  if (!article) {
+    return (
+      <section className="page listening-page">
+        <TopBar title="听力练习暂时打不开" onBack={() => onNavigate('/')}>
+          <button className="ghost-action" onClick={() => onNavigate('/')}>
+            <Icon name="exit" /> 退出
+          </button>
+        </TopBar>
+        <section className="loading-panel">
+          <img src={asset(legoMascot.idle)} alt="" />
+          <p>{error ?? '听力练习打开失败，请回到大厅后重试。'}</p>
+        </section>
+      </section>
+    );
+  }
+
+  const currentItem = items[currentIndex] ?? items[0];
+  const busy = isListeningBusy(status);
+  const progress =
+    items.length === 0
+      ? 0
+      : status === 'done'
+        ? 100
+        : Math.round(((currentIndex + (busy ? 0.5 : 0)) / items.length) * 100);
+  const playbackError = status === 'error' ? error : null;
+  const startLabel = status === 'done' ? '再听一遍' : '开始听全文';
+  const title = storyTitleFor(article, pictureBookState);
+  const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
+  const retryPicturePage = (page: PictureBookPage) => {
+    void sendNative<PictureBookState>('pictureBook.retryPage', {
+      articleId,
+      pageIndex: page.pageIndex,
+    })
+      .then(onPictureBookLoaded)
+      .catch(() => undefined);
+  };
+
+  return (
+    <section className="page listening-page">
+      <TopBar title={title || article.title} onBack={() => onNavigate('/')}>
+        <div className="listening-progress-summary">
+          <ProgressLine
+            value={progress}
+            label={`听力进度 ${Math.min(currentIndex + 1, Math.max(items.length, 1))} / ${Math.max(items.length, 1)}`}
+            compact
+          />
+        </div>
+        <button className="ghost-action" onClick={() => onNavigate('/')}>
+          <Icon name="exit" /> 退出
+        </button>
+      </TopBar>
+
+      <div className="listening-layout">
+        <main className="listening-main">
+          <PictureBookScene
+            state={pictureBookState}
+            page={picturePage}
+            english={currentItem?.english ?? '正在准备句子...'}
+            chinese={currentItem?.chinese}
+            englishActive={activePart === 'english'}
+            chineseActive={activePart === 'chinese'}
+            onWordClick={openWordCard}
+            onRetry={retryPicturePage}
+          />
+          {playbackError && <p className="playback-cue error">{playbackError}</p>}
+          <div className="listening-control-panel">
+            <div className="mode-dots listening-mode-dots" aria-label="听力播放模式">
+              <button
+                className={mode === 'english' ? 'active' : ''}
+                type="button"
+                aria-pressed={mode === 'english'}
+                disabled={busy}
+                onClick={() => setMode('english')}
+              >
+                <span aria-hidden="true" />
+                英文
+              </button>
+              <button
+                className={mode === 'bilingual' ? 'active' : ''}
+                type="button"
+                aria-pressed={mode === 'bilingual'}
+                disabled={busy}
+                onClick={() => setMode('bilingual')}
+              >
+                <span aria-hidden="true" />
+                中英对照
+              </button>
+            </div>
+            <div className="button-row">
+              {busy ? (
+                <button className="danger-light" onClick={stopPlayback}>
+                  <Icon name="stop" /> 停止
+                </button>
+              ) : (
+                <button className="primary-action" onClick={() => void playFrom(0)} disabled={items.length === 0}>
+                  <Icon name="play" /> {startLabel}
+                </button>
+              )}
+              <button
+                className="ghost-action"
+                onClick={() => void playFrom(currentIndex, true)}
+                disabled={busy || items.length === 0}
+              >
+                <Icon name="replay" /> 重听本句
+              </button>
+            </div>
+          </div>
+
+          <div className="listening-list" aria-label="听力句子列表">
+            {items.map((item) => {
+              const active = item.index === currentIndex;
+              return (
+                <div
+                  className={`listening-row ${active ? 'active' : ''}`}
+                  key={`${item.index}-${item.english}`}
+                  onClick={() => {
+                    if (!busy) setCurrentIndex(item.index);
+                  }}
+                  onKeyDown={(event) => {
+                    if (busy) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setCurrentIndex(item.index);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  aria-disabled={busy}
+                  aria-current={active ? 'true' : undefined}
+                >
+                  <b>{item.index + 1}</b>
+                  <span>
+                    <strong className={active && activePart === 'english' ? 'playing-text' : undefined}>
+                      {item.english}
+                    </strong>
+                    <small className={active && activePart === 'chinese' ? 'playing-text' : undefined}>
+                      {item.chinese}
+                    </small>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+      </div>
+      {wordCard && (
+        <WordTranslationCard
+          state={wordCard}
+          onClose={closeWordCard}
+          onReplay={() => void playWordAudio(wordCard.word)}
+        />
+      )}
+    </section>
+  );
+}
+
+function ClickableEnglishText({
+  text,
+  sentence,
+  onWordClick,
+  highlightFirst = false,
+}: {
+  text: string;
+  sentence: string;
+  onWordClick: (word: string, sentence: string, anchor: DOMRect) => void;
+  highlightFirst?: boolean;
+}) {
+  let highlighted = false;
+  return (
+    <>
+      {tokenizeEnglishText(text).map((token, index) => {
+        if (!token.word) {
+          return <span key={`${token.text}-${index}`}>{token.text}</span>;
+        }
+        const isFirstWord = highlightFirst && !highlighted;
+        highlighted = true;
+
+        return (
+          <button
+            className={`word-token ${isFirstWord ? 'first-word' : ''}`}
+            key={`${token.text}-${index}`}
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onWordClick(token.text, sentence, event.currentTarget.getBoundingClientRect());
+            }}
+          >
+            {token.text}
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+function WordTranslationCard({
+  state,
+  onClose,
+  onReplay,
+}: {
+  state: WordCardState;
+  onClose: () => void;
+  onReplay: () => void;
+}) {
+  const lookup = state.lookup;
+  const phonetic = lookup?.phonetic.trim() || '/.../';
+  const meaning = lookup?.meaning.trim();
+  const sentenceMeaning = lookup?.sentenceMeaning.trim();
+
+  return (
+    <>
+      <button
+        className="word-card-dismiss-layer"
+        type="button"
+        aria-label="关闭单词翻译浮层"
+        onClick={() => void onClose()}
+      />
+      <section
+        className={`word-card ${state.position.placement}`}
+        role="dialog"
+        aria-labelledby="word-card-title"
+        style={{
+          top: `${state.position.top}px`,
+          left: `${state.position.left}px`,
+        }}
+      >
+        <button className="word-card-close" type="button" aria-label="关闭单词翻译" onClick={() => void onClose()}>
+          <Icon name="exit" />
+        </button>
+        <p className="eyebrow">Word</p>
+        <h2 id="word-card-title">{lookup?.word || state.word}</h2>
+        <div className="word-phonetic-row">
+          <span>{phonetic}</span>
+          <button
+            className={`word-sound-button ${state.playing ? 'active' : ''}`}
+            type="button"
+            aria-label={`播放 ${state.word} 发音`}
+            onClick={() => onReplay()}
+          >
+            <Icon name="sound" />
+          </button>
+        </div>
+
+        {state.loading && (
+          <div className="word-card-loading">
+            <span />
+            <span />
+          </div>
+        )}
+
+        {state.error && <p className="word-card-error">{state.error}</p>}
+
+        {!state.loading && (
+          <dl className="word-meaning-list">
+            <div>
+              <dt>含义</dt>
+              <dd>{meaning || '这个单词的含义暂不可用。'}</dd>
+            </div>
+            <div>
+              <dt>本句中的含义</dt>
+              <dd>{sentenceMeaning || '请结合原句理解这个单词。'}</dd>
+            </div>
+          </dl>
+        )}
+      </section>
+    </>
+  );
+}
+
 function FollowPage({
   articleId,
   state,
+  pictureBookState,
   onNavigate,
   onLoaded,
+  onPictureBookLoaded,
 }: {
   articleId: number;
   state: FollowState | null;
+  pictureBookState: PictureBookState | null;
   onNavigate: (path: string) => void;
   onLoaded: (state: FollowState) => void;
+  onPictureBookLoaded: (state: PictureBookState) => void;
 }) {
   const [commandBusy, setCommandBusy] = useState(false);
+  const [activeFollowControl, setActiveFollowControl] = useState<FollowControl | null>(null);
+  const [wordCard, setWordCard] = useState<WordCardState | null>(null);
+  const wordCardTokenRef = useRef(0);
 
   useEffect(() => {
     let isMounted = true;
 
     setCommandBusy(false);
+    setWordCard(null);
+    wordCardTokenRef.current += 1;
     onLoaded({ status: 'loading' });
+    onPictureBookLoaded({
+      articleId,
+      enabled: false,
+      status: 'empty',
+      pages: [],
+    });
 
     const openAndPlay = async () => {
       try {
         const payload = await sendNative<FollowState>('follow.open', { articleId });
         if (!isMounted || !payload) return;
         onLoaded(payload);
+        sendNative<PictureBookState>('pictureBook.state', { articleId })
+          .then((picturePayload) => {
+            if (isMounted) onPictureBookLoaded(picturePayload);
+          })
+          .catch(() => undefined);
 
         if (payload.status === 'ready' && payload.step !== 'completed') {
           const played = await sendNative<FollowState>('follow.play');
@@ -502,11 +1412,32 @@ function FollowPage({
     void openAndPlay();
     return () => {
       isMounted = false;
+      wordCardTokenRef.current += 1;
+      void sendNative('word.stop').catch(() => undefined);
     };
-  }, [articleId, onLoaded]);
+  }, [articleId, onLoaded, onPictureBookLoaded]);
 
-  const runFollowCommand = async (type: string): Promise<FollowState | null> => {
+  useEffect(() => {
+    if (!wordCard) return undefined;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        void closeWordCard();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [wordCard]);
+
+  const runFollowCommand = async (
+    type: string,
+    activeControl?: FollowControl,
+  ): Promise<FollowState | null> => {
     setCommandBusy(true);
+    if (activeControl) setActiveFollowControl(activeControl);
     try {
       const payload = await sendNative<FollowState>(type);
       if (payload) onLoaded(payload);
@@ -521,19 +1452,128 @@ function FollowPage({
       return null;
     } finally {
       setCommandBusy(false);
+      if (activeControl) setActiveFollowControl(null);
     }
   };
 
   const playCurrent = () => {
-    void runFollowCommand('follow.play');
+    void runFollowCommand('follow.play', 'source');
   };
 
-  const replayCurrent = () => {
-    void runFollowCommand('follow.replay');
+  const playRecording = () => {
+    void runFollowCommand('follow.recordReplay', 'recording');
   };
 
-  const retryCurrent = () => {
-    void runFollowCommand('follow.retry');
+  const playWordAudio = async (word: string, token = wordCardTokenRef.current) => {
+    setWordCard((current) =>
+      current && wordCardTokenRef.current === token
+        ? { ...current, playing: true, error: null }
+        : current,
+    );
+    try {
+      await sendNative<WordPlaybackPayload>('word.play', { word });
+    } catch (playError) {
+      if (wordCardTokenRef.current === token) {
+        setWordCard((current) =>
+          current
+            ? {
+                ...current,
+                error: playError instanceof Error ? playError.message : '单词发音失败',
+              }
+            : current,
+        );
+      }
+    } finally {
+      if (wordCardTokenRef.current === token) {
+        setWordCard((current) => (current ? { ...current, playing: false } : current));
+      }
+    }
+  };
+
+  const openWordCard = async (word: string, sentence: string, anchor: DOMRect) => {
+    const normalizedWord = normalizeLookupWord(word);
+    if (!normalizedWord) return;
+
+    const token = ++wordCardTokenRef.current;
+    const shouldPauseFollow = state?.step === 'playing';
+    let resumeBackground = false;
+
+    setWordCard({
+      word: normalizedWord,
+      sentence,
+      resumeBackground: false,
+      loading: true,
+      playing: false,
+      position: wordCardPositionFor(anchor),
+      error: null,
+    });
+
+    try {
+      if (shouldPauseFollow) {
+        const pausePayload = await sendNative<ListeningPausePayload>('follow.pause');
+        resumeBackground = Boolean(pausePayload.paused);
+        if (wordCardTokenRef.current !== token) return;
+        setWordCard((current) => (current ? { ...current, resumeBackground } : current));
+      }
+
+      void playWordAudio(normalizedWord, token);
+
+      const lookup = await sendNative<WordLookupPayload>('word.lookup', {
+        word: normalizedWord,
+        sentence,
+      });
+      if (wordCardTokenRef.current !== token) return;
+      setWordCard((current) =>
+        current
+          ? {
+              ...current,
+              lookup,
+              loading: false,
+              error: null,
+            }
+          : current,
+      );
+    } catch (lookupError) {
+      if (wordCardTokenRef.current !== token) return;
+      setWordCard((current) =>
+        current
+          ? {
+              ...current,
+              loading: false,
+              error: lookupError instanceof Error ? lookupError.message : '单词解释加载失败',
+            }
+          : current,
+      );
+    }
+  };
+
+  const closeWordCard = async () => {
+    const current = wordCard;
+    const shouldResume = Boolean(current?.resumeBackground);
+    wordCardTokenRef.current += 1;
+    setWordCard(null);
+    try {
+      await sendNative('word.stop');
+    } catch {
+      // Word playback cleanup is best effort.
+    }
+
+    if (shouldResume) {
+      try {
+        await sendNative<ListeningResumePayload>('follow.resume');
+      } catch {
+        // If the original playback ended or was stopped, there is nothing to resume.
+      }
+    }
+  };
+
+  const stopRecordingAndAutoPlay = () => {
+    void (async () => {
+      const stopped = await runFollowCommand('follow.recordStop', 'record');
+      if (stopped?.status === 'ready' && stopped.step !== 'completed' && stopped.hasRecording) {
+        await runFollowCommand('follow.recordReplay', 'recording');
+      }
+    })();
   };
 
   const advanceSentence = () => {
@@ -594,26 +1634,45 @@ function FollowPage({
   const result = state?.result;
   const currentIndex = state?.currentIndex ?? 0;
   const totalSentences = state?.totalSentences ?? 0;
-  const playbackCue = followPlaybackCue(step, state?.playbackState, state?.playbackError);
+  const canInterruptRecordingPlayback =
+    commandBusy &&
+    activeFollowControl === 'recording' &&
+    Boolean(state?.hasRecording) &&
+    step !== 'recording' &&
+    step !== 'scoring';
   const bottomActionsDisabled = isFollowActionLocked(step) || commandBusy;
-  const canReplayCurrent =
-    !bottomActionsDisabled &&
-    step !== 'completed' &&
-    (['success', 'failed'].includes(state?.playbackState ?? '') || step === 'result' || Boolean(result));
-  const canRetryCurrent =
-    !bottomActionsDisabled &&
-    step !== 'completed' &&
-    Boolean(result || state?.error || state?.playbackError);
-  const canAdvanceSentence = !bottomActionsDisabled && step !== 'completed' && totalSentences > 0;
+  const canPlaySource = !bottomActionsDisabled && step !== 'completed';
+  const canPlayRecording = !bottomActionsDisabled && step !== 'completed' && Boolean(state?.hasRecording);
+  const canAdvanceSentence =
+    (!bottomActionsDisabled || canInterruptRecordingPlayback) && step !== 'completed' && totalSentences > 0;
   const advanceLabel = state?.isLastSentence ? '完成' : '下一句';
-  const activePartnerStatus = followPartnerStatus(step, state?.playbackState, result);
   const canRecordCurrent =
     !commandBusy &&
-    (step === 'recording' || (step === 'idle' && state?.playbackState === 'success'));
+    (step === 'recording' || step === 'result' || (step === 'idle' && state?.playbackState === 'success'));
+  const sourceActive = activeFollowControl === 'source' && ['loadingTts', 'playing'].includes(step);
+  const recordActive = step === 'recording' || step === 'scoring';
+  const recordingPlaybackActive = activeFollowControl === 'recording' && step === 'playing';
+  const liveTranscript = (state?.liveRecognizedText || result?.recognizedText || '').trim();
+  const transcriptHint =
+    step === 'recording'
+      ? liveTranscript || '正在听你朗读...'
+      : step === 'scoring'
+        ? liveTranscript || '正在整理识别结果...'
+      : liveTranscript;
+  const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
+  const title = storyTitleFor(state?.article, pictureBookState);
+  const retryPicturePage = (page: PictureBookPage) => {
+    void sendNative<PictureBookState>('pictureBook.retryPage', {
+      articleId,
+      pageIndex: page.pageIndex,
+    })
+      .then(onPictureBookLoaded)
+      .catch(() => undefined);
+  };
 
   return (
     <section className="page follow-page">
-      <TopBar title={state?.article?.title ?? 'Space Snacks'} onBack={() => onNavigate('/')}>
+      <TopBar title={title || '跟读任务'} onBack={() => onNavigate('/')}>
         <Pager current={currentIndex + 1} total={totalSentences || 2} />
         <button className="ghost-action" onClick={() => onNavigate('/')}>
           <Icon name="exit" /> 退出
@@ -622,62 +1681,160 @@ function FollowPage({
 
       <div className="follow-layout">
         <main className="follow-main">
-          <StepTrack step={step} />
-          <div className="sentence-card">
-            <div className="sentence-copy">
-              <h1>
-                <strong>{highlightFirstWord(currentSentence)}</strong>
-                {currentSentence.replace(highlightFirstWord(currentSentence), '')}
-              </h1>
-              {currentTranslation && <p className="sentence-translation">{currentTranslation}</p>}
-            </div>
-            <button className="ghost-action" onClick={playCurrent} disabled={isFollowBusy(step) || commandBusy}>
-              <Icon name="play" /> {followPlayButtonLabel(step)}
-            </button>
-            <p className={`playback-cue ${state?.playbackError ? 'error' : ''}`}>{playbackCue}</p>
-          </div>
-          <Waveform active={['playing', 'recording', 'scoring'].includes(step)} />
+          <PictureBookScene
+            state={pictureBookState}
+            page={picturePage}
+            english={currentSentence}
+            chinese={currentTranslation}
+            englishActive={sourceActive}
+            onWordClick={openWordCard}
+            onRetry={retryPicturePage}
+          />
           {state?.playbackError && <p className="error-text">{state.playbackError}</p>}
           {state?.error && <p className="error-text">{state.error}</p>}
-          <div className="record-console">
-            <div className="record-primary">
+          <div className="follow-control-panel">
+            <div className="follow-control-deck" aria-label="跟读控制">
               <button
-                className={step === 'recording' ? 'record-button active' : 'record-button'}
-                aria-label={step === 'recording' ? '停止录音' : '开始录音'}
+                className={`follow-control-button source ${sourceActive ? 'active' : ''}`}
+                type="button"
+                onClick={playCurrent}
+                disabled={!canPlaySource}
+              >
+                <Icon name={sourceActive ? 'sound' : 'play'} />
+                <span>播放原音</span>
+              </button>
+              <button
+                className={`follow-control-button record ${recordActive ? 'active' : ''}`}
+                type="button"
+                aria-label={step === 'recording' ? '停止录音' : step === 'scoring' ? '评分中' : '开始录音'}
                 onClick={() => {
-                  void runFollowCommand(step === 'recording' ? 'follow.recordStop' : 'follow.recordStart');
+                  if (step === 'recording') {
+                    stopRecordingAndAutoPlay();
+                  } else {
+                    void runFollowCommand('follow.recordStart', 'record');
+                  }
                 }}
                 disabled={!canRecordCurrent}
               >
                 <Icon name={step === 'recording' ? 'stop' : 'mic'} />
+                <span>{step === 'recording' ? '停止录音' : step === 'scoring' ? '评分中' : '录音'}</span>
               </button>
-              <span>{followRecordCue(step, state?.playbackState, state?.playbackError)}</span>
+              <button
+                className={`follow-control-button recording ${recordingPlaybackActive ? 'active' : ''}`}
+                type="button"
+                onClick={playRecording}
+                disabled={!canPlayRecording}
+              >
+                <Icon name={recordingPlaybackActive ? 'sound' : 'replay'} />
+                <span>播放录音</span>
+              </button>
+              {result && <FollowScoreBadge result={result} compact />}
             </div>
-            <div className="record-actions">
-              <button className="ghost-action" onClick={replayCurrent} disabled={!canReplayCurrent}>
-                <Icon name="replay" /> 重播
-              </button>
-              <button className="ghost-action" onClick={retryCurrent} disabled={!canRetryCurrent}>
-                <Icon name="refresh" /> 再试一次
-              </button>
-              <button className="primary-action" onClick={advanceSentence} disabled={!canAdvanceSentence}>
-                {advanceLabel} <Icon name="arrow" />
-              </button>
-            </div>
+            <button className="primary-action follow-next-action" onClick={advanceSentence} disabled={!canAdvanceSentence}>
+              {advanceLabel} <Icon name="arrow" />
+            </button>
           </div>
+          {transcriptHint && <p className="follow-live-transcript">{transcriptHint}</p>}
         </main>
 
-        <aside className="partner-status">
-          <h2>伙伴状态</h2>
-          <StatusItem image={pngAsset.legoListen} text="听原音" active={activePartnerStatus === 'listen'} />
-          <StatusItem image={pngAsset.legoRecord} text="跟读录音" active={activePartnerStatus === 'record'} />
-          <StatusItem image={pngAsset.legoScore} text="查看得分" active={activePartnerStatus === 'score'} />
-          {result && <FollowScoreBadge result={result} />}
-          <img className="status-monster" src={asset(pngAsset.legoMonster)} alt="" />
-        </aside>
       </div>
+      {wordCard && (
+        <WordTranslationCard
+          state={wordCard}
+          onClose={closeWordCard}
+          onReplay={() => void playWordAudio(wordCard.word)}
+        />
+      )}
     </section>
   );
+}
+
+function currentPictureBookPage(
+  state: PictureBookState | null,
+  currentIndex: number,
+): PictureBookPage | null {
+  if (!state?.pages.length) return null;
+  return (
+    state.pages.find(
+      (page) =>
+        currentIndex >= page.sentenceStartIndex &&
+        currentIndex <= page.sentenceEndIndex,
+    ) ?? state.pages[0]
+  );
+}
+
+function PictureBookScene({
+  state,
+  page,
+  english,
+  chinese,
+  englishActive = false,
+  chineseActive = false,
+  onWordClick,
+  onRetry,
+}: {
+  state: PictureBookState | null;
+  page: PictureBookPage | null;
+  english: string;
+  chinese?: string;
+  englishActive?: boolean;
+  chineseActive?: boolean;
+  onWordClick: (word: string, sentence: string, anchor: DOMRect) => void;
+  onRetry: (page: PictureBookPage) => void;
+}) {
+  const imageSrc = page?.imageUri || page?.imagePath || '';
+  const isReady = page?.status === 'ready' && imageSrc;
+  const isBusy =
+    state?.status === 'generating' ||
+    page?.status === 'queued' ||
+    page?.status === 'prompting' ||
+    page?.status === 'generating';
+  const isRetryable = Boolean(page && (page.status === 'error' || page.status === 'skipped'));
+  const placeholderText = isBusy
+    ? '绘本图生成中'
+    : page?.status === 'skipped'
+      ? '缺少图片引擎 Key'
+      : '绘本图暂不可用';
+
+  return (
+    <section className={`picture-book-scene ${isReady ? 'ready' : ''}`}>
+      {isReady ? (
+        <img src={imageSrc} alt="" />
+      ) : (
+        <div className={`picture-book-placeholder ${isBusy ? 'busy' : ''}`}>
+          <Icon name={isRetryable ? 'replay' : 'spark'} />
+          <span>{placeholderText}</span>
+        </div>
+      )}
+      {page && (state?.pages.length ?? 0) > 1 && (
+        <span className="picture-book-page-badge">{page.pageIndex + 1}</span>
+      )}
+      <div className="picture-book-subtitles">
+        <h1 className={englishActive ? 'playing-text' : undefined} aria-label={english}>
+          <ClickableEnglishText
+            text={english}
+            sentence={english}
+            onWordClick={onWordClick}
+          />
+        </h1>
+        {chinese && <p className={chineseActive ? 'playing-text' : undefined}>{chinese}</p>}
+      </div>
+      {isRetryable && page && (
+        <button className="picture-book-retry" type="button" onClick={() => onRetry(page)}>
+          <Icon name="replay" /> 重试
+        </button>
+      )}
+    </section>
+  );
+}
+
+function storyTitleFor(article?: Article | null, pictureBookState?: PictureBookState | null): string {
+  const articleTitle = article?.title?.trim() ?? '';
+  const seriesTitle = pictureBookState?.series?.title?.trim() || article?.seriesTitle?.trim() || '';
+  if (!seriesTitle) return articleTitle;
+  if (!articleTitle) return seriesTitle;
+  if (articleTitle.toLowerCase().includes(seriesTitle.toLowerCase())) return articleTitle;
+  return `${seriesTitle} · ${articleTitle}`;
 }
 
 function ChatPage({
@@ -788,7 +1945,7 @@ function ChatPage({
             {messages.length === 0 && (
               <div className="chat-empty">
                 <img src={asset(pngAsset.legoMonster)} alt="" />
-                <span>番茄伙伴正在准备第一个问题。</span>
+                <span>番茄助教正在准备第一个问题。</span>
               </div>
             )}
           </div>
@@ -825,6 +1982,17 @@ function ChatPage({
             <span>{chatCue}</span>
           </div>
           <ProgressLine value={chatProgress} label={`对话进度 ${questionCount} / ${maxQuestions}`} />
+          {step === 'completed' && (state?.abilityLevel || state?.practiceSummary) && (
+            <div className="chat-completion-card">
+              {state?.abilityLevel && (
+                <div>
+                  <span>能力级别</span>
+                  <b>{state.abilityLevel}</b>
+                </div>
+              )}
+              {state?.practiceSummary && <p>{state.practiceSummary}</p>}
+            </div>
+          )}
           <div className="reward-preview">
             <span>奖励预览</span>
             <img src={asset(pngAsset.star)} alt="" />
@@ -846,8 +2014,9 @@ function SettingsPage({
   const [current, setCurrent] = useState<SettingsState | null>(settings);
   const [selectedVoiceId, setSelectedVoiceId] = useState(settings?.tts.speakerId ?? '');
   const [saving, setSaving] = useState(false);
+  const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const selectedVoiceButtonRef = useRef<HTMLButtonElement | null>(null);
+  const selectedVoiceButtonRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -883,6 +2052,29 @@ function SettingsPage({
 
   const selectedVoice = current.voices.find((voice) => voice.id === selectedVoiceId);
   const unchanged = selectedVoiceId === current.tts.speakerId;
+  const safetyRules = current.contentSafety?.rules ?? [];
+
+  const selectVoice = (voiceId: string) => {
+    setSelectedVoiceId(voiceId);
+    setStatus(null);
+  };
+
+  const previewVoice = async (speakerId: string) => {
+    if (previewingVoiceId) return;
+
+    setPreviewingVoiceId(speakerId);
+    setStatus(null);
+    try {
+      await sendNative<VoicePreviewPayload>('settings.previewVoice', {
+        speakerId,
+      });
+      setStatus('声音预览已播放');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '声音预览失败');
+    } finally {
+      setPreviewingVoiceId(null);
+    }
+  };
 
   const saveVoice = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -905,13 +2097,42 @@ function SettingsPage({
     }
   };
 
+  const setSafetyRuleEnabled = async (id: number, enabled: boolean) => {
+    setStatus(null);
+    try {
+      const payload = await sendNative<SettingsState>('contentSafety.setRuleEnabled', {
+        id,
+        enabled,
+      });
+      setCurrent(payload);
+      onLoaded(payload);
+      setStatus(enabled ? '安全规则已启用' : '安全规则已停用');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '安全规则更新失败');
+    }
+  };
+
+  const deleteSafetyRule = async (id: number) => {
+    setStatus(null);
+    try {
+      const payload = await sendNative<SettingsState>('contentSafety.deleteRule', {
+        id,
+      });
+      setCurrent(payload);
+      onLoaded(payload);
+      setStatus('安全规则已删除');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '安全规则删除失败');
+    }
+  };
+
   return (
     <section className="page settings-page">
       <form className="settings-shell voice-settings-shell" onSubmit={saveVoice}>
         <main className="settings-main">
           <header className="settings-header">
             <p className="eyebrow">Voice</p>
-            <h1>选择番茄伙伴的发音</h1>
+            <h1>选择番茄助教的发音</h1>
             <p>选择一个适合孩子跟读和对话的声音，保存后会用于朗读和聊天。</p>
           </header>
 
@@ -924,16 +2145,21 @@ function SettingsPage({
               <div className="voice-list-scroll" role="listbox" aria-label="可选声音">
                 <div className="voice-list">
                   {current.voices.map((voice) => (
-                  <button
+                  <div
                     className={`voice-card ${voice.id === selectedVoiceId ? 'selected' : ''}`}
                     key={voice.id}
                     ref={voice.id === selectedVoiceId ? selectedVoiceButtonRef : undefined}
-                    type="button"
                     role="option"
+                    tabIndex={0}
                     aria-selected={voice.id === selectedVoiceId}
                     onClick={() => {
-                      setSelectedVoiceId(voice.id);
-                      setStatus(null);
+                      selectVoice(voice.id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        selectVoice(voice.id);
+                      }
                     }}
                   >
                     <span className="voice-avatar">{voice.name.slice(0, 1)}</span>
@@ -941,8 +2167,19 @@ function SettingsPage({
                       <b>{voice.name}</b>
                       <small>{displayVoiceLanguage(voice.lang)} · {voice.gender === 'female' ? '女声' : '男声'}</small>
                     </span>
-                    <WaveMini />
-                  </button>
+                    <button
+                      className="voice-preview-button"
+                      type="button"
+                      disabled={previewingVoiceId !== null}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void previewVoice(voice.id);
+                      }}
+                    >
+                      <Icon name="sound" />
+                      {previewingVoiceId === voice.id ? '试听中' : '预览'}
+                    </button>
+                  </div>
                 ))}
                 </div>
               </div>
@@ -958,6 +2195,48 @@ function SettingsPage({
             </aside>
           </div>
 
+          <FieldGroup title="内容安全规则">
+            <div className="safety-rule-header">
+              <span>提交给云 API 前自动替换</span>
+              <small>{safetyRules.length} 条规则</small>
+            </div>
+            <div className="safety-rule-list">
+              {safetyRules.length === 0 && (
+                <p className="empty-note">还没有记录到需要自动处理的安全规则。</p>
+              )}
+              {safetyRules.map((rule) => (
+                <div className={`safety-rule-row ${rule.enabled ? '' : 'disabled'}`} key={rule.id}>
+                  <span className="safety-rule-term">{rule.sourceTerm}</span>
+                  <Icon name="arrow" />
+                  <span className="safety-rule-replacement">{rule.replacement}</span>
+                  <small>
+                    {rule.serviceKind === '*' ? '全部服务' : rule.serviceKind}
+                    {' · '}
+                    {rule.purposeScope === '*' ? '全部用途' : rule.purposeScope}
+                  </small>
+                  <button
+                    className="ghost-action small"
+                    type="button"
+                    onClick={() => {
+                      void setSafetyRuleEnabled(rule.id, !rule.enabled);
+                    }}
+                  >
+                    {rule.enabled ? '停用' : '启用'}
+                  </button>
+                  <button
+                    className="danger-light small"
+                    type="button"
+                    onClick={() => {
+                      void deleteSafetyRule(rule.id);
+                    }}
+                  >
+                    删除
+                  </button>
+                </div>
+              ))}
+            </div>
+          </FieldGroup>
+
           <footer className="settings-footer">
             <button className="primary-action" disabled={saving || unchanged}>
               <Icon name="save" /> {saving ? '保存中' : '保存声音'}
@@ -970,9 +2249,15 @@ function SettingsPage({
   );
 }
 
-function FollowScoreBadge({ result }: { result: NonNullable<FollowState['result']> }) {
+function FollowScoreBadge({
+  result,
+  compact = false,
+}: {
+  result: NonNullable<FollowState['result']>;
+  compact?: boolean;
+}) {
   return (
-    <div className="follow-score-badge">
+    <div className={`follow-score-badge ${compact ? 'compact' : ''}`}>
       <span>总体评分</span>
       <b>{Math.round(result.overallScore)}</b>
       <small>{result.isMock ? '示例评分' : '本句得分'}</small>
@@ -1004,13 +2289,15 @@ function MapStep({
 
 function MissionRow({
   article,
-  art,
+  imageSrc,
+  onListen,
   onFollow,
   onChat,
   onDelete,
 }: {
   article: Article;
-  art: string;
+  imageSrc: string;
+  onListen: () => void;
   onFollow: () => void;
   onChat: () => void;
   onDelete: () => void;
@@ -1018,7 +2305,7 @@ function MissionRow({
   const score = article.averageScore > 0 ? Math.round(article.averageScore) : 40;
   return (
     <article className="mission-row">
-      <img src={asset(art)} alt="" />
+      <img src={imageSrc} alt="" />
       <div>
         <h3>{article.title}</h3>
         <p>{article.sentenceCount} 句子 · 最近学习 今天</p>
@@ -1026,6 +2313,7 @@ function MissionRow({
       <span className="ring-score">{score}%</span>
       <button className="primary-action" onClick={onFollow}><Icon name="mic" /> 跟读</button>
       <button className="purple-action" onClick={onChat}><Icon name="chat" /> 对话</button>
+      <button className="listen-action" onClick={onListen}><Icon name="sound" /> 听力</button>
       <button className="delete-action" onClick={onDelete}>删除</button>
     </article>
   );
@@ -1035,7 +2323,7 @@ function EmptyMission({ onNavigate }: { onNavigate: (path: string) => void }) {
   return (
     <div className="empty-mission">
       <img src={asset(legoMascot.idle)} alt="" />
-      <p>先放入一篇英文短文，番茄伙伴会把它变成闯关任务。</p>
+      <p>先放入一篇英文短文，番茄助教会把它变成闯关任务。</p>
       <button className="primary-action" onClick={() => onNavigate('/article/new')}>
         <Icon name="plus" /> 创建第一张任务卡
       </button>
@@ -1126,34 +2414,6 @@ function MascotBlinker({ className }: { className: string }) {
   );
 }
 
-function StepTrack({ step }: { step: string }) {
-  const items = [
-    { id: 'play', label: '播放', active: ['loadingTts', 'playing'].includes(step) },
-    { id: 'repeat', label: '跟读', active: step === 'recording' },
-    { id: 'recognize', label: '识别', active: ['scoring', 'result', 'completed'].includes(step) },
-  ];
-  return (
-    <div className="step-track">
-      {items.map((item, index) => (
-        <span className={item.active ? 'active' : ''} key={item.id}>
-          <b>{index + 1}</b>
-          {item.label}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function Waveform({ active }: { active: boolean }) {
-  return (
-    <div className={`waveform ${active ? 'active' : ''}`}>
-      {Array.from({ length: 36 }, (_, index) => (
-        <span key={index} style={{ animationDelay: `${index * 36}ms` }} />
-      ))}
-    </div>
-  );
-}
-
 function WaveMini() {
   return (
     <span className="wave-mini">
@@ -1165,7 +2425,9 @@ function WaveMini() {
 function StatTile({ label, value, icon }: { label: string; value: string; icon: string }) {
   return (
     <div className="stat-tile">
-      <span className={`stat-icon ${icon}`} />
+      <span className={`stat-icon ${icon}`}>
+        <Icon name={icon} />
+      </span>
       <span>{label}</span>
       <b>{value}</b>
     </div>
@@ -1236,8 +2498,188 @@ function NavButton({
   );
 }
 
+const iconPaths: Record<string, ReactNode> = {
+  home: (
+    <>
+      <path d="M4 11.5 12 5l8 6.5" />
+      <path d="M6.5 10.5V20h11v-9.5" />
+      <path d="M10 20v-5h4v5" />
+    </>
+  ),
+  task: (
+    <>
+      <path d="M8 5h8" />
+      <path d="M9 3h6l1 3H8l1-3Z" />
+      <path d="M6.5 6.5h11V21h-11z" />
+      <path d="m9 13 2 2 4-5" />
+      <path d="M9 18h6" />
+    </>
+  ),
+  plus: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v8" />
+      <path d="M8 12h8" />
+    </>
+  ),
+  gear: (
+    <>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 3.5v2.2" />
+      <path d="M12 18.3v2.2" />
+      <path d="M3.5 12h2.2" />
+      <path d="M18.3 12h2.2" />
+      <path d="m5.9 5.9 1.6 1.6" />
+      <path d="m16.5 16.5 1.6 1.6" />
+      <path d="m18.1 5.9-1.6 1.6" />
+      <path d="m7.5 16.5-1.6 1.6" />
+    </>
+  ),
+  play: <path d="M8 5.5v13l10-6.5-10-6.5Z" />,
+  stop: <path d="M7 7h10v10H7z" />,
+  mic: (
+    <>
+      <rect x="9" y="3.5" width="6" height="10" rx="3" />
+      <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0" />
+      <path d="M12 17v3.5" />
+      <path d="M9 20.5h6" />
+    </>
+  ),
+  chat: (
+    <>
+      <path d="M5 6.5h14v9H9l-4 3v-12Z" />
+      <path d="M8 10h8" />
+      <path d="M8 13h5" />
+    </>
+  ),
+  sound: (
+    <>
+      <path d="M4 10v4h4l5 4V6l-5 4H4Z" />
+      <path d="M16 9a4 4 0 0 1 0 6" />
+      <path d="M18.5 6.5a7.5 7.5 0 0 1 0 11" />
+    </>
+  ),
+  exit: (
+    <>
+      <path d="M10 5H6v14h4" />
+      <path d="M12.5 12h7" />
+      <path d="m16.5 8 4 4-4 4" />
+    </>
+  ),
+  replay: (
+    <>
+      <path d="M7 7h5a5 5 0 1 1-4.4 7.4" />
+      <path d="M7 7v5" />
+      <path d="M7 7h5" />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M18 8a7 7 0 0 0-12-1.5" />
+      <path d="M6 3.5v3h3" />
+      <path d="M6 16a7 7 0 0 0 12 1.5" />
+      <path d="M18 20.5v-3h-3" />
+    </>
+  ),
+  back: (
+    <>
+      <path d="M19 12H6" />
+      <path d="m11 7-5 5 5 5" />
+    </>
+  ),
+  arrow: (
+    <>
+      <path d="M5 12h13" />
+      <path d="m13 7 5 5-5 5" />
+    </>
+  ),
+  prev: (
+    <>
+      <path d="M19 12H6" />
+      <path d="m11 7-5 5 5 5" />
+    </>
+  ),
+  next: (
+    <>
+      <path d="M5 12h13" />
+      <path d="m13 7 5 5-5 5" />
+    </>
+  ),
+  swap: (
+    <>
+      <path d="M7 7h10" />
+      <path d="m14 4 3 3-3 3" />
+      <path d="M17 17H7" />
+      <path d="m10 14-3 3 3 3" />
+    </>
+  ),
+  save: (
+    <>
+      <path d="M5 4h11l3 3v13H5z" />
+      <path d="M8 4v6h7V4" />
+      <path d="M8 20v-6h8v6" />
+    </>
+  ),
+  upload: (
+    <>
+      <path d="M12 16V5" />
+      <path d="m8 9 4-4 4 4" />
+      <path d="M5 17v3h14v-3" />
+    </>
+  ),
+  keyboard: (
+    <>
+      <rect x="4" y="6" width="16" height="12" rx="2" />
+      <path d="M7 10h.1" />
+      <path d="M11 10h.1" />
+      <path d="M15 10h.1" />
+      <path d="M8 14h8" />
+    </>
+  ),
+  drag: (
+    <>
+      <path d="M9 6h.1" />
+      <path d="M15 6h.1" />
+      <path d="M9 12h.1" />
+      <path d="M15 12h.1" />
+      <path d="M9 18h.1" />
+      <path d="M15 18h.1" />
+    </>
+  ),
+  chevron: <path d="m14.5 6-6 6 6 6" />,
+  card: (
+    <>
+      <rect x="4" y="6" width="16" height="12" rx="2" />
+      <path d="M7 10h10" />
+      <path d="M7 14h6" />
+    </>
+  ),
+  sentence: (
+    <>
+      <path d="M5 7h14" />
+      <path d="M5 12h14" />
+      <path d="M5 17h10" />
+    </>
+  ),
+  star: (
+    <path d="m12 4 2.3 4.7 5.2.8-3.8 3.7.9 5.2-4.6-2.5-4.6 2.5.9-5.2-3.8-3.7 5.2-.8L12 4Z" />
+  ),
+  spark: (
+    <>
+      <path d="M12 3l1.5 5.5L19 10l-5.5 1.5L12 17l-1.5-5.5L5 10l5.5-1.5L12 3Z" />
+      <path d="M18 16l.7 2.3L21 19l-2.3.7L18 22l-.7-2.3L15 19l2.3-.7L18 16Z" />
+    </>
+  ),
+};
+
 function Icon({ name }: { name: string }) {
-  return <span className={`icon icon-${name}`} aria-hidden="true" />;
+  return (
+    <span className={`icon icon-${name}`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        {iconPaths[name] ?? iconPaths.card}
+      </svg>
+    </span>
+  );
 }
 
 function cardArtForArticle(article: Article, index: number): string {
@@ -1247,12 +2689,66 @@ function cardArtForArticle(article: Article, index: number): string {
   return fallbackCards[index % fallbackCards.length];
 }
 
-function highlightFirstWord(sentence: string): string {
-  return sentence.trim().split(/\s+/)[0] || '';
+function articleCoverSource(article: Article, index: number): string {
+  const generatedCover =
+    directImageSource(article.coverImageUri) ?? directImageSource(article.coverImagePath);
+  return generatedCover ?? asset(cardArtForArticle(article, index));
+}
+
+function directImageSource(source?: string | null): string | null {
+  const trimmed = source?.trim() ?? '';
+  if (!trimmed) return null;
+  if (/^(data:image\/|blob:|https?:\/\/|assets\/|\.\/|\/assets\/)/i.test(trimmed)) {
+    return trimmed;
+  }
+  return null;
 }
 
 function displayVoiceLanguage(lang: string): string {
   return lang.replaceAll('中文', '中文/英文');
+}
+
+function tokenizeEnglishText(text: string): Array<{ text: string; word: boolean }> {
+  const matches = text.match(/[A-Za-z]+(?:[-'][A-Za-z]+)*|[^A-Za-z]+/g);
+  if (!matches) {
+    return [{ text, word: false }];
+  }
+
+  return matches.map((part) => ({
+    text: part,
+    word: /^[A-Za-z]+(?:[-'][A-Za-z]+)*$/.test(part),
+  }));
+}
+
+function normalizeLookupWord(word: string): string {
+  return word
+    .replace(/[‘’]/g, "'")
+    .replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, '')
+    .trim();
+}
+
+function wordCardPositionFor(anchor: DOMRect): WordCardPosition {
+  const margin = 12;
+  const container = document.querySelector('.main-stage')?.getBoundingClientRect();
+  const containerLeft = container?.left ?? 0;
+  const containerTop = container?.top ?? 0;
+  const cardWidth = Math.min(360, Math.max(280, window.innerWidth - margin * 2));
+  const estimatedHeight = 320;
+  const centerLeft = anchor.left + anchor.width / 2 - cardWidth / 2;
+  const viewportLeft = Math.min(Math.max(centerLeft, margin), window.innerWidth - cardWidth - margin);
+  const belowTop = anchor.bottom + 10;
+  const canFitBelow = belowTop + estimatedHeight <= window.innerHeight - margin;
+  const preferredTop = canFitBelow
+    ? belowTop
+    : Math.max(margin, anchor.top - estimatedHeight - 10);
+  const maxTop = Math.max(margin, window.innerHeight - estimatedHeight - margin);
+  const viewportTop = Math.min(Math.max(preferredTop, margin), maxTop);
+
+  return {
+    top: Math.round(viewportTop - containerTop),
+    left: Math.round(viewportLeft - containerLeft),
+    placement: canFitBelow ? 'below' : 'above',
+  };
 }
 
 function useHashRoute(): [string, (path: string) => void] {
@@ -1276,6 +2772,7 @@ function useHashRoute(): [string, (path: string) => void] {
 function parseRoute(route: string):
   | { kind: 'home' }
   | { kind: 'article' }
+  | { kind: 'listen'; articleId: number }
   | { kind: 'follow'; articleId: number }
   | { kind: 'chat'; articleId: number }
   | { kind: 'settings' } {
@@ -1285,72 +2782,28 @@ function parseRoute(route: string):
   const follow = route.match(/^\/follow\/(\d+)/);
   if (follow) return { kind: 'follow', articleId: Number(follow[1]) };
 
+  const listen = route.match(/^\/listen\/(\d+)/);
+  if (listen) return { kind: 'listen', articleId: Number(listen[1]) };
+
   const chat = route.match(/^\/chat\/(\d+)/);
   if (chat) return { kind: 'chat', articleId: Number(chat[1]) };
 
   return { kind: 'home' };
 }
 
-function isFollowBusy(step: string): boolean {
-  return ['loadingTts', 'playing', 'scoring'].includes(step);
+function isListeningBusy(status: ListeningStatus): boolean {
+  return status === 'playing' || status === 'stopping';
 }
 
 function isFollowActionLocked(step: string): boolean {
   return ['loadingTts', 'playing', 'recording', 'scoring'].includes(step);
 }
 
-function followPlayButtonLabel(step: string): string {
-  if (step === 'loadingTts') return '准备原音';
-  if (step === 'playing') return '播放中';
-  return '播放原音';
-}
-
-function followPlaybackCue(
-  step: string,
-  playbackState?: string,
-  playbackError?: string | null,
-): string {
-  if (playbackError || playbackState === 'failed') return '原音播放失败，可以点重播再试。';
-  if (step === 'loadingTts' || playbackState === 'waitingStart') return '正在准备原音，请稍等一下。';
-  if (step === 'playing' || playbackState === 'playing') return '正在播放原音，听完再开始跟读。';
-  if (step === 'recording') return '认真读出来，番茄伙伴正在听。';
-  if (step === 'scoring') return '正在识别和评分，请稍等。';
-  if (step === 'result') return '看完得分后，可以重播、重试或进入下一句。';
-  if (step === 'completed') return '这篇文章已经完成啦。';
-  if (playbackState === 'success') return '原音播放完成，现在可以开始跟读。';
-  return '先听一遍原音，再点击录音跟读。';
-}
-
-function followRecordCue(
-  step: string,
-  playbackState?: string,
-  playbackError?: string | null,
-): string {
-  if (step === 'loadingTts') return '原音准备中，稍后再录音';
-  if (step === 'playing') return '原音播放中，听完再录音';
-  if (step === 'recording') return '正在录音，点击停止';
-  if (step === 'scoring') return '正在评分，请稍等';
-  if (playbackError || playbackState === 'failed') return '先重播原音，再开始跟读';
-  if (playbackState === 'success') return '点击录音，跟读这句话';
-  return '先听完原音，再开始录音';
-}
-
-function followPartnerStatus(
-  step: string,
-  playbackState?: string,
-  result?: FollowState['result'],
-): 'listen' | 'record' | 'score' {
-  if (['recording'].includes(step)) return 'record';
-  if (['scoring', 'result', 'completed'].includes(step) || result) return 'score';
-  if (playbackState === 'success' && step === 'idle') return 'record';
-  return 'listen';
-}
-
 function chatSideCue(step: string): string {
-  if (step === 'init') return '番茄伙伴正在准备问题...';
-  if (step === 'aiSpeaking') return '番茄伙伴正在说，认真听。';
+  if (step === 'init') return '番茄助教正在准备问题...';
+  if (step === 'aiSpeaking') return '番茄助教正在说，认真听。';
   if (step === 'recording') return '正在听你说英语。';
-  if (step === 'processing') return '番茄伙伴正在想答案。';
+  if (step === 'processing') return '番茄助教正在想答案。';
   if (step === 'completed') return '这轮对话完成啦。';
   if (step === 'error') return '对话暂时卡住了。';
   return '轮到你说英语啦。';
@@ -1358,9 +2811,9 @@ function chatSideCue(step: string): string {
 
 function chatInputCue(step: string): string {
   if (step === 'init') return '正在准备第一个问题';
-  if (step === 'aiSpeaking') return '先听番茄伙伴说完';
+  if (step === 'aiSpeaking') return '先听番茄助教说完';
   if (step === 'recording') return '正在录音';
-  if (step === 'processing') return '番茄伙伴思考中';
+  if (step === 'processing') return '番茄助教思考中';
   if (step === 'completed') return '这轮对话已经完成';
   if (step === 'error') return '可以返回后重新进入对话';
   return '输入或按住说英语';

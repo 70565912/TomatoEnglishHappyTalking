@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -9,10 +11,12 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../data/models/article_model.dart';
 import '../../../data/models/learning_record_model.dart';
 import '../../../shared/models/playback_visual_state.dart';
+import '../../../services/api_cache_service.dart';
 import '../../../services/database_service.dart';
 import '../../../services/nlp_service.dart';
 import '../../../services/recognition_based_assessment_service.dart';
 import '../../../services/scoring_service.dart';
+import '../../../services/streaming_asr_service.dart';
 import '../../../services/tts_service.dart';
 import '../../../services/translation_service.dart';
 
@@ -48,6 +52,8 @@ class FollowReadState {
   final PronunciationResult? lastResult;
   final String? error;
   final String currentTranslation;
+  final String? lastRecordingPath;
+  final String liveRecognizedText;
 
   const FollowReadState({
     required this.article,
@@ -58,6 +64,8 @@ class FollowReadState {
     this.lastResult,
     this.error,
     this.currentTranslation = '',
+    this.lastRecordingPath,
+    this.liveRecognizedText = '',
   });
 
   String get currentSentence => article.sentences[currentIndex];
@@ -74,6 +82,10 @@ class FollowReadState {
     String? currentTranslation,
     bool clearCurrentTranslation = false,
     String? error,
+    String? lastRecordingPath,
+    bool clearLastRecordingPath = false,
+    String? liveRecognizedText,
+    bool clearLiveRecognizedText = false,
     bool clearResult = false,
     bool clearError = false,
   }) =>
@@ -89,7 +101,25 @@ class FollowReadState {
             ? ''
             : (currentTranslation ?? this.currentTranslation),
         error: clearError ? null : (error ?? this.error),
+        lastRecordingPath: clearLastRecordingPath
+            ? null
+            : (lastRecordingPath ?? this.lastRecordingPath),
+        liveRecognizedText: clearLiveRecognizedText
+            ? ''
+            : (liveRecognizedText ?? this.liveRecognizedText),
       );
+}
+
+class _CachedFollowRecording {
+  const _CachedFollowRecording({
+    required this.path,
+    required this.recognizedText,
+    required this.result,
+  });
+
+  final String path;
+  final String recognizedText;
+  final PronunciationResult result;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,11 +135,17 @@ class FollowRead extends _$FollowRead {
 
   AudioPlayer? _player;
   AudioRecorder? _recorder;
+  String? _recordingPath;
+  BytesBuilder? _recordingPcmBuilder;
+  StreamController<List<int>>? _recordingAsrController;
+  StreamSubscription<Uint8List>? _recordingStreamSub;
+  Completer<void>? _recordingStreamDone;
+  Future<String>? _liveRecognitionFuture;
   StreamSubscription<PlayerState>? _playerStateSub;
   StreamSubscription<ProcessingState>? _processingStateSub;
   StreamSubscription<Object>? _playbackErrorSub;
-  final Map<String, String> _ttsPathCache = {};
   int _playbackToken = 0;
+  bool _pausedForWord = false;
   @override
   Future<FollowReadState> build(int articleId) async {
     ref.onDispose(_cleanup);
@@ -118,8 +154,15 @@ class FollowRead extends _$FollowRead {
     if (rawArticle == null) throw Exception('文章不存在（id=$articleId）');
     final article = await _articleWithCurrentSentences(rawArticle);
     final initialSentence = article.sentences.first;
-    final initialTranslation =
-        (await TranslationService.toChinese(initialSentence)).trim();
+    final initialTranslation = (await TranslationService.toChinese(
+      initialSentence,
+      articleId: article.id,
+      sentenceIndex: 0,
+      cachePurpose: 'follow_translation',
+    ))
+        .trim();
+    final initialRecording =
+        await _latestRecordingFor(index: 0, sentence: initialSentence);
 
     _recorder = AudioRecorder();
 
@@ -129,13 +172,17 @@ class FollowRead extends _$FollowRead {
       step: FollowReadStep.idle,
       playbackState: PlaybackVisualState.idle,
       currentTranslation: initialTranslation,
+      lastResult: initialRecording?.result,
+      lastRecordingPath: initialRecording?.path,
+      liveRecognizedText: initialRecording?.recognizedText ?? '',
     );
   }
 
   void _cleanup() {
     _playbackToken++;
-    _ttsPathCache.clear();
+    _pausedForWord = false;
     unawaited(_disposePlayer());
+    unawaited(_cleanupRecordingStream());
     final recorder = _recorder;
     _recorder = null;
     if (recorder != null) {
@@ -187,6 +234,7 @@ class FollowRead extends _$FollowRead {
     }
 
     final token = ++_playbackToken;
+    _pausedForWord = false;
     final index = _s.currentIndex;
     final sentence = _s.currentSentence;
     _trace(
@@ -270,21 +318,12 @@ class FollowRead extends _$FollowRead {
     required String sentence,
   }) async {
     final key = '${articleId}_${index}_${_stableTextHash(sentence)}';
-    final cachedPath = _ttsPathCache[key];
-    if (cachedPath != null && await File(cachedPath).exists()) {
-      _trace('tts cache hit key=$key path=$cachedPath');
-      return cachedPath;
-    }
-
-    final bytes = await TtsService.synthesize(text: sentence);
-    if (bytes == null || bytes.isEmpty) {
-      throw const TtsException('TTS 未返回音频数据');
-    }
-
-    final path = '${Directory.systemTemp.path}/tomato_follow_tts_$key.mp3';
-    _trace('tts bytes=${bytes.length} key=$key path=$path');
-    await File(path).writeAsBytes(bytes, flush: true);
-    _ttsPathCache[key] = path;
+    final path = await TtsService.synthesizeToCachedFile(
+      text: sentence,
+      articleId: articleId,
+      cachePurpose: 'follow_tts',
+    );
+    _trace('tts key=$key path=$path');
     return path;
   }
 
@@ -338,7 +377,6 @@ class FollowRead extends _$FollowRead {
     StreamSubscription<PlayerState>? stateSub;
     StreamSubscription<PlaybackEvent>? playbackEventSub;
     var playCommandIssued = false;
-    var progressObserved = false;
     Duration lastPosition = Duration.zero;
     Duration? mediaDuration;
 
@@ -374,6 +412,7 @@ class FollowRead extends _$FollowRead {
 
       stateSub = player.playerStateStream.listen((event) {
         if (!_isActivePlayback(token, index)) {
+          completeDone();
           return;
         }
         mediaDuration = player.duration ?? mediaDuration;
@@ -383,25 +422,20 @@ class FollowRead extends _$FollowRead {
         }
 
         if (event.processingState == ProcessingState.completed) {
-          progressObserved = true;
           completeDone();
           return;
-        }
-
-        if (playCommandIssued && progressObserved && !event.playing) {
-          completeDone();
         }
       });
 
       positionSub = player.positionStream.listen((position) {
         if (!_isActivePlayback(token, index)) {
+          completeDone();
           return;
         }
         lastPosition = position;
         mediaDuration = player.duration ?? mediaDuration;
 
         if (playCommandIssued && position > const Duration(milliseconds: 120)) {
-          progressObserved = true;
           completeStarted();
         }
 
@@ -409,7 +443,6 @@ class FollowRead extends _$FollowRead {
         if (duration != null &&
             duration > Duration.zero &&
             position >= duration - const Duration(milliseconds: 180)) {
-          progressObserved = true;
           completeDone();
         }
       });
@@ -461,6 +494,7 @@ class FollowRead extends _$FollowRead {
   }
 
   Future<void> _disposePlayer() async {
+    _pausedForWord = false;
     await _playerStateSub?.cancel();
     await _processingStateSub?.cancel();
     await _playbackErrorSub?.cancel();
@@ -529,7 +563,9 @@ class FollowRead extends _$FollowRead {
 
   // ---- Start microphone recording ----
   Future<void> startRecording() async {
-    if (_s.step != FollowReadStep.idle) return;
+    if (_s.step != FollowReadStep.idle && _s.step != FollowReadStep.result) {
+      return;
+    }
     _playbackToken++;
     unawaited(_disposePlayer());
 
@@ -539,40 +575,108 @@ class FollowRead extends _$FollowRead {
       return;
     }
 
-    final path = '${Directory.systemTemp.path}/rec_${_s.currentIndex}.wav';
-    await _recorder!.start(
+    final path =
+        '${Directory.systemTemp.path}/rec_${_s.currentIndex}_${DateTime.now().millisecondsSinceEpoch}.wav';
+    _recordingPath = path;
+    _recordingPcmBuilder = BytesBuilder(copy: false);
+
+    final asrController = StreamController<List<int>>();
+    _recordingAsrController = asrController;
+    _liveRecognitionFuture = StreamingAsrService.recognizeLive(
+      audioChunks: asrController.stream,
+      onPartial: _updateLiveRecognizedText,
+    ).catchError((Object error) {
+      debugPrint('[FollowRead] live recognition startup failed: $error');
+      return '';
+    });
+
+    final stream = await _recorder!.startStream(
       const RecordConfig(
-        encoder: AudioEncoder.wav,
+        encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
+        streamBufferSize: 3200,
       ),
-      path: path,
     );
 
-    _set(step: FollowReadStep.recording, clearError: true);
+    final done = Completer<void>();
+    _recordingStreamDone = done;
+    _recordingStreamSub = stream.listen(
+      (data) {
+        if (data.isEmpty) {
+          return;
+        }
+        _recordingPcmBuilder?.add(data);
+        _recordingAsrController?.add(data);
+      },
+      onDone: () {
+        _closeRecordingAsrInput();
+        if (!done.isCompleted) {
+          done.complete();
+        }
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        _recordingAsrController?.addError(error, stackTrace);
+        _closeRecordingAsrInput();
+        if (!done.isCompleted) {
+          done.completeError(error, stackTrace);
+        }
+      },
+    );
+
+    _set(
+      step: FollowReadStep.recording,
+      clearResult: true,
+      clearError: true,
+      clearLastRecordingPath: true,
+      clearLiveRecognizedText: true,
+    );
   }
 
   // ---- Stop recording and submit for scoring ----
   Future<void> stopRecordingAndScore() async {
     if (_s.step != FollowReadStep.recording) return;
 
-    final path = await _recorder!.stop();
+    final path = _recordingPath;
+    await _recorder!.stop();
+    await _waitRecordingStreamDone();
+    await _recordingStreamSub?.cancel();
+    _recordingStreamSub = null;
+    _recordingStreamDone = null;
+    _closeRecordingAsrInput();
     _set(step: FollowReadStep.scoring);
 
     try {
-      var audioBytes = <int>[];
-      if (path != null) {
-        final file = File(path);
-        if (await file.exists()) audioBytes = await file.readAsBytes();
+      final pcmBytes = _recordingPcmBuilder?.takeBytes() ?? Uint8List(0);
+      _recordingPcmBuilder = null;
+      final audioBytes = _wavBytesFromPcm(pcmBytes);
+      if (path != null && audioBytes.isNotEmpty) {
+        await File(path).writeAsBytes(audioBytes, flush: true);
       }
 
       final assessmentEngine = ref.read(followReadAssessmentEngineProvider);
-      final result = await assessmentEngine.assess(
-        audioBytes: audioBytes,
-        referenceText: _s.currentSentence,
-      );
+      final recognizedText = await _finishLiveRecognition();
+      late final PronunciationResult result;
+      if (assessmentEngine is RecognitionBasedAssessmentEngine) {
+        final resolvedRecognizedText = recognizedText.trim().isNotEmpty
+            ? recognizedText
+            : await StreamingAsrService.recognize(
+                audioBytes: audioBytes,
+                articleId: _s.article.id,
+              );
+        result = assessmentEngine.assessRecognizedText(
+          referenceText: _s.currentSentence,
+          recognizedText: resolvedRecognizedText,
+        );
+      } else {
+        result = await assessmentEngine.assess(
+          audioBytes: audioBytes,
+          referenceText: _s.currentSentence,
+        );
+      }
 
       final aid = _s.article.id;
+      var durableRecordingPath = path;
       if (aid != null) {
         await DatabaseService.saveLearningRecord(
           LearningRecord(
@@ -586,13 +690,30 @@ class FollowRead extends _$FollowRead {
             createdAt: DateTime.now(),
           ),
         );
+        durableRecordingPath =
+            await ApiCacheService.saveLatestSentenceRecording(
+          articleId: aid,
+          sentenceIndex: _s.currentIndex,
+          sentence: _s.currentSentence,
+          audioBytes: audioBytes,
+          recognizedText: result.recognizedText,
+          resultJson: jsonEncode(_resultToJson(result)),
+        );
       }
 
       state = AsyncValue.data(
-        _s.copyWith(step: FollowReadStep.result, lastResult: result),
+        _s.copyWith(
+          step: FollowReadStep.result,
+          lastResult: result,
+          lastRecordingPath: durableRecordingPath?.isNotEmpty == true
+              ? durableRecordingPath
+              : path,
+          liveRecognizedText: result.recognizedText,
+        ),
       );
     } catch (e) {
       debugPrint('[FollowRead] scoring failed: $e');
+      _recordingPcmBuilder = null;
       _set(step: FollowReadStep.idle, error: _friendlyScoringError(e));
     }
   }
@@ -614,6 +735,90 @@ class FollowRead extends _$FollowRead {
     return '这次评分没有成功，请再试一次。';
   }
 
+  Future<_CachedFollowRecording?> _latestRecordingFor({
+    required int index,
+    required String sentence,
+  }) async {
+    final aid = articleId;
+    final recording = await ApiCacheService.getLatestSentenceRecording(
+      articleId: aid,
+      sentenceIndex: index,
+    );
+    if (recording == null || recording.sentence.trim() != sentence.trim()) {
+      return null;
+    }
+
+    final result = _resultFromJson(recording.resultJson);
+    if (result == null) {
+      return null;
+    }
+    return _CachedFollowRecording(
+      path: recording.recordingPath,
+      recognizedText: recording.recognizedText,
+      result: result,
+    );
+  }
+
+  Map<String, dynamic> _resultToJson(PronunciationResult result) => {
+        'overallScore': result.overallScore,
+        'accuracyScore': result.accuracyScore,
+        'fluencyScore': result.fluencyScore,
+        'completenessScore': result.completenessScore,
+        'prosodyScore': result.prosodyScore,
+        'recognizedText': result.recognizedText,
+        'isMock': result.isMock,
+        'words': result.words
+            .map(
+              (word) => {
+                'word': word.word,
+                'score': word.score,
+                'errorType': word.errorType,
+              },
+            )
+            .toList(growable: false),
+      };
+
+  PronunciationResult? _resultFromJson(String text) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is! Map) {
+        return null;
+      }
+      final words = decoded['words'];
+      return PronunciationResult(
+        overallScore: _jsonDouble(decoded['overallScore']),
+        accuracyScore: _jsonDouble(decoded['accuracyScore']),
+        fluencyScore: _jsonDouble(decoded['fluencyScore']),
+        completenessScore: _jsonDouble(decoded['completenessScore']),
+        prosodyScore: _jsonDouble(decoded['prosodyScore']),
+        recognizedText: decoded['recognizedText']?.toString() ?? '',
+        isMock: decoded['isMock'] == true,
+        words: words is List
+            ? words
+                .whereType<Map>()
+                .map(
+                  (word) => WordScore(
+                    word: word['word']?.toString() ?? '',
+                    score: _jsonDouble(word['score']),
+                    errorType: word['errorType']?.toString() ?? 'None',
+                  ),
+                )
+                .where((word) => word.word.isNotEmpty)
+                .toList(growable: false)
+            : const [],
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  double _jsonDouble(Object? value) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
   // ---- Advance to next sentence ----
   Future<void> nextSentence() async {
     _playbackToken++;
@@ -623,16 +828,30 @@ class FollowRead extends _$FollowRead {
     } else {
       final nextIndex = _s.currentIndex + 1;
       final nextSentence = _s.article.sentences[nextIndex];
-      final nextTranslation =
-          (await TranslationService.toChinese(nextSentence)).trim();
+      final nextTranslation = (await TranslationService.toChinese(
+        nextSentence,
+        articleId: _s.article.id,
+        sentenceIndex: nextIndex,
+        cachePurpose: 'follow_translation',
+      ))
+          .trim();
+      final latestRecording = await _latestRecordingFor(
+        index: nextIndex,
+        sentence: nextSentence,
+      );
       state = AsyncValue.data(
         _s.copyWith(
           currentIndex: nextIndex,
           step: FollowReadStep.idle,
           playbackState: PlaybackVisualState.idle,
           clearPlaybackError: true,
-          clearResult: true,
+          lastResult: latestRecording?.result,
+          clearResult: latestRecording == null,
           clearError: true,
+          lastRecordingPath: latestRecording?.path,
+          clearLastRecordingPath: latestRecording == null,
+          liveRecognizedText: latestRecording?.recognizedText,
+          clearLiveRecognizedText: latestRecording == null,
           currentTranslation: nextTranslation,
         ),
       );
@@ -640,8 +859,42 @@ class FollowRead extends _$FollowRead {
   }
 
   // ---- Re-try current sentence ----
+  Future<bool> pauseCurrentPlayback() async {
+    final player = _player;
+    if (player == null || _s.step != FollowReadStep.playing) {
+      return false;
+    }
+    if (_pausedForWord) {
+      return true;
+    }
+
+    try {
+      await player.pause().timeout(const Duration(seconds: 2));
+      _pausedForWord = true;
+      return true;
+    } catch (error) {
+      _trace('pause playback failed error=$error');
+      return false;
+    }
+  }
+
+  Future<bool> resumeCurrentPlayback() async {
+    final player = _player;
+    if (player == null || !_pausedForWord) {
+      _pausedForWord = false;
+      return false;
+    }
+
+    _pausedForWord = false;
+    unawaited(player.play().catchError((Object error) {
+      _trace('resume playback failed error=$error');
+    }));
+    return true;
+  }
+
   void retry() {
     _playbackToken++;
+    _pausedForWord = false;
     unawaited(_disposePlayer());
     _set(
       step: FollowReadStep.idle,
@@ -649,6 +902,8 @@ class FollowRead extends _$FollowRead {
       clearPlaybackError: true,
       clearResult: true,
       clearError: true,
+      clearLastRecordingPath: true,
+      clearLiveRecognizedText: true,
     );
   }
 
@@ -657,6 +912,64 @@ class FollowRead extends _$FollowRead {
       return;
     }
     await playCurrent();
+  }
+
+  Future<void> replayLastRecording() async {
+    if (_s.step != FollowReadStep.idle && _s.step != FollowReadStep.result) {
+      return;
+    }
+
+    final path = _s.lastRecordingPath;
+    if (path == null || path.trim().isEmpty || !await File(path).exists()) {
+      _set(error: '还没有可播放的录音，请先录一句。');
+      return;
+    }
+
+    final token = ++_playbackToken;
+    _pausedForWord = false;
+    final index = _s.currentIndex;
+    _set(
+      step: FollowReadStep.playing,
+      playbackState: PlaybackVisualState.waitingStart,
+      clearPlaybackError: true,
+      clearError: true,
+    );
+
+    try {
+      await _playFileWithRecovery(path: path, token: token, index: index);
+      await _disposePlayer();
+      if (!_isActivePlayback(token, index)) {
+        return;
+      }
+      _set(
+        step: FollowReadStep.result,
+        playbackState: PlaybackVisualState.success,
+        clearPlaybackError: true,
+      );
+    } on TimeoutException {
+      await _disposePlayer();
+      if (!_isActivePlayback(token, index)) {
+        return;
+      }
+      _set(
+        step: FollowReadStep.result,
+        playbackState: PlaybackVisualState.failed,
+        playbackError: '录音播放超时，请重试',
+        error: '录音播放超时，请重试',
+      );
+    } catch (error) {
+      await _disposePlayer();
+      if (!_isActivePlayback(token, index)) {
+        return;
+      }
+      final message = _friendlyPlaybackError(error);
+      _set(
+        step: FollowReadStep.result,
+        playbackState: PlaybackVisualState.failed,
+        playbackError: message,
+        error: '录音播放失败：$message',
+      );
+    }
   }
 
   // ---- Internal helper ----
@@ -668,6 +981,10 @@ class FollowRead extends _$FollowRead {
     String? error,
     bool clearResult = false,
     bool clearError = false,
+    String? lastRecordingPath,
+    bool clearLastRecordingPath = false,
+    String? liveRecognizedText,
+    bool clearLiveRecognizedText = false,
   }) {
     if (_audioTraceEnabled) {
       _trace(
@@ -688,8 +1005,112 @@ class FollowRead extends _$FollowRead {
         error: error,
         clearResult: clearResult,
         clearError: clearError,
+        lastRecordingPath: lastRecordingPath,
+        clearLastRecordingPath: clearLastRecordingPath,
+        liveRecognizedText: liveRecognizedText,
+        clearLiveRecognizedText: clearLiveRecognizedText,
       ),
     );
+  }
+
+  void _updateLiveRecognizedText(String text) {
+    final normalized = text.trim();
+    if (normalized.isEmpty || !state.hasValue) {
+      return;
+    }
+
+    final current = _s;
+    if (current.step != FollowReadStep.recording &&
+        current.step != FollowReadStep.scoring) {
+      return;
+    }
+
+    state = AsyncValue.data(
+      current.copyWith(liveRecognizedText: normalized, clearError: true),
+    );
+  }
+
+  Future<String> _finishLiveRecognition() async {
+    final future = _liveRecognitionFuture;
+    _liveRecognitionFuture = null;
+    if (future == null) {
+      return '';
+    }
+
+    try {
+      return await future.timeout(const Duration(seconds: 10));
+    } catch (e) {
+      debugPrint('[FollowRead] live recognition failed: $e');
+      return '';
+    }
+  }
+
+  Future<void> _waitRecordingStreamDone() async {
+    final done = _recordingStreamDone;
+    if (done == null) {
+      return;
+    }
+
+    try {
+      await done.future.timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('[FollowRead] recording stream finish ignored: $e');
+    }
+  }
+
+  void _closeRecordingAsrInput() {
+    final controller = _recordingAsrController;
+    _recordingAsrController = null;
+    if (controller == null || controller.isClosed) {
+      return;
+    }
+    unawaited(controller.close());
+  }
+
+  Future<void> _cleanupRecordingStream() async {
+    await _recordingStreamSub?.cancel();
+    _recordingStreamSub = null;
+    _recordingStreamDone = null;
+    _closeRecordingAsrInput();
+    _recordingPcmBuilder = null;
+    _liveRecognitionFuture = null;
+  }
+
+  Uint8List _wavBytesFromPcm(
+    List<int> pcmBytes, {
+    int sampleRate = 16000,
+    int channels = 1,
+  }) {
+    final dataLength = pcmBytes.length;
+    final byteRate = sampleRate * channels * 2;
+    final blockAlign = channels * 2;
+    final header = ByteData(44);
+    final bytes = header.buffer.asUint8List();
+
+    void writeAscii(int offset, String value) {
+      for (var i = 0; i < value.length; i++) {
+        bytes[offset + i] = value.codeUnitAt(i);
+      }
+    }
+
+    writeAscii(0, 'RIFF');
+    header.setUint32(4, 36 + dataLength, Endian.little);
+    writeAscii(8, 'WAVE');
+    writeAscii(12, 'fmt ');
+    header.setUint32(16, 16, Endian.little);
+    header.setUint16(20, 1, Endian.little);
+    header.setUint16(22, channels, Endian.little);
+    header.setUint32(24, sampleRate, Endian.little);
+    header.setUint32(28, byteRate, Endian.little);
+    header.setUint16(32, blockAlign, Endian.little);
+    header.setUint16(34, 16, Endian.little);
+    writeAscii(36, 'data');
+    header.setUint32(40, dataLength, Endian.little);
+
+    final builder = BytesBuilder(copy: false)
+      ..add(bytes)
+      ..add(pcmBytes);
+    return builder.toBytes();
   }
 
   void _trace(String message) {
