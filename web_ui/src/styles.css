@@ -1121,6 +1121,69 @@ img {
   flex: 0 0 auto;
 }
 
+.song-dialog-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.song-dialog-tabs button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--soft-ink);
+  font-size: 13px;
+  font-weight: 1000;
+}
+
+.song-dialog-tabs button.active {
+  border-color: rgba(75, 121, 185, 0.34);
+  background: #f2f7ff;
+  color: #245a9f;
+  box-shadow: 0 0 0 3px rgba(75, 121, 185, 0.1);
+}
+
+.song-play-tab,
+.song-style-groups,
+.song-style-group {
+  display: grid;
+  gap: 10px;
+}
+
+.song-style-group {
+  padding: 10px 12px;
+  border: 1px solid rgba(201, 213, 228, 0.72);
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.song-style-group-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.song-style-group-heading span {
+  color: var(--soft-ink);
+  font-size: 12px;
+  font-weight: 1000;
+}
+
+.song-style-group-heading b {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.song-dialog-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .song-source-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

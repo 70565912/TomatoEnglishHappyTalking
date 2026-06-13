@@ -177,6 +177,8 @@ export interface ListeningSongStatePayload {
   manualActionMessage?: string | null;
   automationStatus?: string | null;
   creditsRemaining?: number | null;
+  downloadComplete?: boolean | null;
+  detectedSongUrls?: string[];
   versions?: Array<{
     id: string;
     audioPath: string;
@@ -184,6 +186,8 @@ export interface ListeningSongStatePayload {
     songUrl?: string | null;
     durationMs?: number | null;
     createdAt?: string | null;
+    stylePrompt?: string | null;
+    styleKey?: string | null;
   }>;
 }
 

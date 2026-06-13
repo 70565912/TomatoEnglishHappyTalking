@@ -1128,12 +1128,20 @@ type SentenceEditState = {
   saving: boolean;
   error: string | null;
 };
-type SongStyleDialogState = {
+type SongDialogTab = 'play' | 'settings';
+type SongDialogState = {
+  activeTab: SongDialogTab;
   source: SongSource;
   stylePrompt: string;
   suggesting: boolean;
   submitting: boolean;
   error: string | null;
+};
+type SongVersionPayload = NonNullable<ListeningSongStatePayload['versions']>[number];
+type SongVersionGroup = {
+  key: string;
+  label: string;
+  versions: SongVersionPayload[];
 };
 type PictureBookDecodeState = {
   total: number;
@@ -1204,7 +1212,7 @@ function ListeningPage({
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
-  const [songDialog, setSongDialog] = useState<SongStyleDialogState | null>(null);
+  const [songDialog, setSongDialog] = useState<SongDialogState | null>(null);
   const playbackTokenRef = useRef(0);
   const wordCardTokenRef = useRef(0);
   const fullscreenReadyTokenRef = useRef(0);
@@ -1354,8 +1362,32 @@ function ListeningPage({
       if (payload.articleId !== articleId) return;
       setSongState(payload);
       if (payload.status === 'ready') {
-        setSongDialog(null);
+        setSongDialog((current) =>
+          current
+            ? {
+                ...current,
+                activeTab: 'play',
+                submitting: false,
+                suggesting: false,
+                stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
+                error: null,
+              }
+            : current,
+        );
         onNotice(payload.lyricsCompressed ? '歌曲生成完成，歌词已按上限改写压缩' : '歌曲生成完成');
+      } else if (isSunoWaitingConfirm(payload)) {
+        setSongDialog((current) =>
+          current
+            ? {
+                ...current,
+                activeTab: 'play',
+                submitting: false,
+                suggesting: false,
+                stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
+                error: null,
+              }
+            : current,
+        );
       }
     });
   }, [articleId, onNotice]);
@@ -1652,9 +1684,11 @@ function ListeningPage({
   };
 
   const openSongDialog = () => {
-    if (busy || (songState?.status === 'generating' && !isSunoWaitingConfirm(songState))) return;
+    if (busy) return;
     const defaultSource = normalizeSongSource(songState?.source ?? songSettings?.defaultSource ?? 'suno');
+    const versions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
     setSongDialog({
+      activeTab: versions.length > 0 ? 'play' : 'settings',
       source: defaultSource,
       stylePrompt: songState?.stylePrompt?.trim() ?? '',
       suggesting: false,
@@ -1738,9 +1772,19 @@ function ListeningPage({
         lyrics,
       });
       setSongState(payload);
-      if (payload.status === 'generating') {
-        setSongDialog(null);
-      }
+      setSongDialog((current) =>
+        current
+          ? {
+              ...current,
+              activeTab: payload.status === 'ready' || isSunoWaitingConfirm(payload) ? 'play' : current.activeTab,
+              submitting:
+                songDialog.source !== 'suno' && payload.status === 'generating' && !isSunoWaitingConfirm(payload)
+                  ? current.submitting
+                  : false,
+              stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
+            }
+          : current,
+      );
     } catch (songError) {
       const message = songError instanceof Error ? songError.message : '歌曲生成提交失败';
       setSongState({
@@ -1825,21 +1869,20 @@ function ListeningPage({
     }
   };
 
-  const playOrCreateSong = async () => {
-    if (isSunoWaitingConfirm(songState)) {
-      await confirmSunoCreate();
-      return;
+  const stopSong = async () => {
+    try {
+      await sendNative('listening.songStop');
+      setSongState((current) => (current ? { ...current, status: current.status === 'playing' ? 'ready' : current.status } : current));
+    } catch (songError) {
+      setSongState((current) => ({
+        articleId,
+        status: 'error',
+        stylePrompt: current?.stylePrompt ?? '',
+        source: current?.source,
+        versions: current?.versions,
+        errorMessage: songError instanceof Error ? songError.message : '歌曲停止失败',
+      }));
     }
-    if (songState?.status === 'generating') return;
-    if (songState?.status === 'ready' || songState?.status === 'playing') {
-      await playSongVersion();
-      return;
-    }
-    if (canRetrySunoDownload) {
-      await retrySunoDownload();
-      return;
-    }
-    openSongDialog();
   };
 
   const playWordAudio = async (word: string, token = wordCardTokenRef.current) => {
@@ -2131,8 +2174,8 @@ function ListeningPage({
   const canRetrySunoDownload =
     songState?.source === 'suno' &&
     Boolean(songState?.songUrl?.trim()) &&
-    songState?.status !== 'ready' &&
     songState?.status !== 'playing' &&
+    (songState?.status !== 'ready' || songState.downloadComplete === false) &&
     !songWaitingConfirm &&
     !(songGenerating && songState?.automationStatus !== 'manualAction');
   const songButtonLabel = songWaitingConfirm
@@ -2234,8 +2277,8 @@ function ListeningPage({
               </button>
               <button
                 className={`ghost-action song-action ${songGenerating && !songWaitingConfirm ? 'loading' : ''}`}
-                onClick={() => void playOrCreateSong()}
-                disabled={busy || items.length === 0 || (songGenerating && !songWaitingConfirm)}
+                onClick={openSongDialog}
+                disabled={busy || items.length === 0}
                 title={songState?.status === 'error' ? songState.errorMessage?.trim() || '歌曲生成失败' : undefined}
               >
                 <Icon name={songGenerating && !songWaitingConfirm ? 'refresh' : songPlaying ? 'sound' : 'music'} /> {songButtonLabel}
@@ -2278,36 +2321,6 @@ function ListeningPage({
               <div className="suno-style-chip" aria-label="当前 Suno 自动风格">
                 <span>当前 Suno 自动风格</span>
                 <b>{songState.stylePrompt.trim()}</b>
-              </div>
-            )}
-            {songWaitingConfirm && (
-              <div className="song-confirm-row">
-                <button className="primary-action small" type="button" onClick={() => void confirmSunoCreate()} disabled={busy}>
-                  <Icon name="music" /> 确认创建歌曲
-                </button>
-              </div>
-            )}
-            {canRetrySunoDownload && (
-              <div className="song-confirm-row">
-                <button className="ghost-action small" type="button" onClick={() => void retrySunoDownload()} disabled={busy}>
-                  <Icon name="download" /> 重新检测下载
-                </button>
-              </div>
-            )}
-            {(songState?.status === 'ready' || songState?.status === 'playing') && songVersions.length > 0 && (
-              <div className="song-version-row" aria-label="歌曲版本">
-                {songVersions.map((version, index) => (
-                  <button
-                    className="ghost-action small"
-                    key={version.id}
-                    type="button"
-                    onClick={() => void playSongVersion(version.id)}
-                    disabled={busy}
-                    title={version.title?.trim() || `版本 ${index + 1}`}
-                  >
-                    <Icon name="sound" /> {version.title?.trim() || `版本 ${index + 1}`}
-                  </button>
-                ))}
               </div>
             )}
             {recordingError && <p className="playback-cue error">{recordingError}</p>}
@@ -2400,19 +2413,32 @@ function ListeningPage({
         />
       )}
       {songDialog && (
-        <SongStyleDialog
+        <SongDialog
           state={songDialog}
+          songState={songState}
+          songVersions={songVersions}
+          canRetrySunoDownload={canRetrySunoDownload}
+          songWaitingConfirm={songWaitingConfirm}
+          songGenerating={songGenerating}
+          songPlaying={songPlaying}
           onSourceChange={(source) =>
             setSongDialog((current) => (current ? { ...current, source, error: null } : current))
+          }
+          onTabChange={(activeTab) =>
+            setSongDialog((current) => (current ? { ...current, activeTab } : current))
           }
           onStyleChange={(stylePrompt) =>
             setSongDialog((current) => (current ? { ...current, stylePrompt, error: null } : current))
           }
           onSuggest={() => void suggestSongStyle()}
           onCancel={() => {
-            if (!songDialog.submitting && !songDialog.suggesting) setSongDialog(null);
+            setSongDialog(null);
           }}
           onConfirm={() => void generateSong()}
+          onConfirmSunoCreate={() => void confirmSunoCreate()}
+          onRetrySunoDownload={() => void retrySunoDownload()}
+          onPlayVersion={(versionId) => void playSongVersion(versionId)}
+          onStopSong={() => void stopSong()}
         />
       )}
       {fullscreenPlayerOpen && article && (
@@ -2508,27 +2534,52 @@ function SentenceEditDialog({
   );
 }
 
-function SongStyleDialog({
+function SongDialog({
   state,
+  songState,
+  songVersions,
+  canRetrySunoDownload,
+  songWaitingConfirm,
+  songGenerating,
+  songPlaying,
+  onTabChange,
   onSourceChange,
   onStyleChange,
   onSuggest,
   onCancel,
   onConfirm,
+  onConfirmSunoCreate,
+  onRetrySunoDownload,
+  onPlayVersion,
+  onStopSong,
 }: {
-  state: SongStyleDialogState;
+  state: SongDialogState;
+  songState: ListeningSongStatePayload | null;
+  songVersions: NonNullable<ListeningSongStatePayload['versions']>;
+  canRetrySunoDownload: boolean;
+  songWaitingConfirm: boolean;
+  songGenerating: boolean;
+  songPlaying: boolean;
+  onTabChange: (tab: SongDialogTab) => void;
   onSourceChange: (source: SongSource) => void;
   onStyleChange: (stylePrompt: string) => void;
   onSuggest: () => void;
   onCancel: () => void;
   onConfirm: () => void;
+  onConfirmSunoCreate: () => void;
+  onRetrySunoDownload: () => void;
+  onPlayVersion: (versionId?: string) => void;
+  onStopSong: () => void;
 }) {
   const styleRef = useRef<HTMLTextAreaElement | null>(null);
   const busy = state.suggesting || state.submitting;
+  const groupedVersions = useMemo(() => groupSongVersionsByStyle(songVersions), [songVersions]);
 
   useEffect(() => {
-    styleRef.current?.focus({ preventScroll: true });
-  }, []);
+    if (state.activeTab === 'settings') {
+      styleRef.current?.focus({ preventScroll: true });
+    }
+  }, [state.activeTab]);
 
   return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
@@ -2536,10 +2587,10 @@ function SongStyleDialog({
         <div className="edit-dialog-heading">
           <div>
             <b>歌曲风格设置</b>
-            <small>{state.source === 'suno' ? '已有 Suno 风格会复用；没有时由 Suno 根据歌词生成。' : '确认后会使用整篇文章生成歌曲。'}</small>
+            <small>{state.activeTab === 'play' ? '选择本地已下载的完整歌曲版本播放。' : state.source === 'suno' ? '已有 Suno 风格会复用；没有时由 Suno 根据歌词生成。' : '确认后会使用整篇文章生成歌曲。'}</small>
           </div>
           <div className="song-style-heading-actions">
-            {state.source === 'minimax' && (
+            {state.activeTab === 'settings' && state.source === 'minimax' && (
               <button
                 className={`icon-button small ${state.suggesting ? 'loading' : ''}`}
                 type="button"
@@ -2551,79 +2602,167 @@ function SongStyleDialog({
                 <Icon name={state.suggesting ? 'refresh' : 'wand'} />
               </button>
             )}
-            <button className="icon-button small" type="button" onClick={onCancel} disabled={busy} aria-label="关闭">
+            <button className="icon-button small" type="button" onClick={onCancel} aria-label="关闭">
               <Icon name="exit" />
             </button>
           </div>
         </div>
-        <div className="song-source-options" aria-label="生成来源">
+
+        <div className="song-dialog-tabs" role="tablist" aria-label="歌曲面板">
           <button
             type="button"
-            className={state.source === 'suno' ? 'active' : ''}
-            disabled={busy}
-            onClick={() => onSourceChange('suno')}
+            role="tab"
+            aria-selected={state.activeTab === 'play'}
+            className={state.activeTab === 'play' ? 'active' : ''}
+            onClick={() => onTabChange('play')}
           >
-            Suno 网页自动化
+            播放
           </button>
           <button
             type="button"
-            className={state.source === 'minimax' ? 'active' : ''}
-            disabled={busy}
-            onClick={() => onSourceChange('minimax')}
+            role="tab"
+            aria-selected={state.activeTab === 'settings'}
+            className={state.activeTab === 'settings' ? 'active' : ''}
+            onClick={() => onTabChange('settings')}
           >
-            MiniMax API
-          </button>
-          <button type="button" disabled>
-            其它方式
+            设置
           </button>
         </div>
-        {state.source === 'suno' ? (
-          <div className="song-source-note suno-style-preview">
-            <p>
-              将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，复用本篇文章上次 Suno 风格；没有已保存风格时，优先点击 Suno 自带的魔法棒根据歌词生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
-            </p>
-            <label>
-              <span>Suno 自动风格</span>
-              <textarea
-                ref={styleRef}
-                value={state.stylePrompt || '没有已保存风格，登录后由 Suno 蓝色魔法棒根据歌词自动生成'}
-                rows={3}
-                readOnly
-              />
-            </label>
+
+        {state.activeTab === 'play' ? (
+          <div className="song-play-tab" role="tabpanel" aria-label="歌曲播放">
+            {songState?.status === 'error' && songState.errorMessage?.trim() && (
+              <p className="edit-dialog-error">{songState.errorMessage}</p>
+            )}
+            {songState?.manualActionMessage?.trim() && (
+              <p className="song-source-note">{songState.manualActionMessage}</p>
+            )}
+            {songGenerating && !songWaitingConfirm && (
+              <p className="song-source-note">{songAutomationStatusText(songState!)}</p>
+            )}
+            {groupedVersions.length > 0 ? (
+              <div className="song-style-groups">
+                {groupedVersions.map((group) => (
+                  <div className="song-style-group" key={group.key}>
+                    <div className="song-style-group-heading">
+                      <span>风格</span>
+                      <b>{group.label}</b>
+                    </div>
+                    <div className="song-version-row" aria-label={`${group.label} 歌曲版本`}>
+                      {group.versions.map((version, index) => (
+                        <button
+                          className="ghost-action small"
+                          key={version.id}
+                          type="button"
+                          onClick={() => onPlayVersion(version.id)}
+                          disabled={busy || songGenerating}
+                          title={version.title?.trim() || `版本 ${index + 1}`}
+                        >
+                          <Icon name="sound" /> {version.title?.trim() || `版本 ${index + 1}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="song-source-note">还没有本地完整歌曲版本。</p>
+            )}
+            <div className="song-dialog-action-row">
+              {songPlaying && (
+                <button className="danger-light small" type="button" onClick={onStopSong}>
+                  <Icon name="stop" /> 停止播放
+                </button>
+              )}
+              {songWaitingConfirm && (
+                <button className="primary-action small" type="button" onClick={onConfirmSunoCreate} disabled={busy}>
+                  <Icon name="music" /> 确认创建歌曲
+                </button>
+              )}
+              {canRetrySunoDownload && (
+                <button className="ghost-action small" type="button" onClick={onRetrySunoDownload} disabled={busy}>
+                  <Icon name="download" /> 下载缺失版本
+                </button>
+              )}
+              <button className="ghost-action small" type="button" onClick={() => onTabChange('settings')} disabled={busy}>
+                <Icon name="music" /> 生成新版本
+              </button>
+            </div>
           </div>
         ) : (
-          <p className="song-source-note">
-            MiniMax 使用本机配置的 API Key 直接生成歌曲，长歌词会先询问是否压缩。
-          </p>
-        )}
-        {state.source !== 'suno' && (
-          <label>
-            <span>风格描述</span>
-            <textarea
-              ref={styleRef}
-              value={state.stylePrompt}
-              rows={5}
-              maxLength={2000}
-              placeholder="例如：明亮的儿童音乐剧, 奇幻冒险, 轻快节奏, 弦乐和木琴, 适合绘本故事"
-              onChange={(event) => onStyleChange(event.target.value)}
-              disabled={state.submitting}
-            />
-          </label>
+          <>
+            <div className="song-source-options" aria-label="生成来源">
+              <button
+                type="button"
+                className={state.source === 'suno' ? 'active' : ''}
+                disabled={busy}
+                onClick={() => onSourceChange('suno')}
+              >
+                Suno 网页自动化
+              </button>
+              <button
+                type="button"
+                className={state.source === 'minimax' ? 'active' : ''}
+                disabled={busy}
+                onClick={() => onSourceChange('minimax')}
+              >
+                MiniMax API
+              </button>
+              <button type="button" disabled>
+                其它方式
+              </button>
+            </div>
+            {state.source === 'suno' ? (
+              <div className="song-source-note suno-style-preview">
+                <p>
+                  将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，复用本篇文章上次 Suno 风格；没有已保存风格时，优先点击 Suno 自带的魔法棒根据歌词生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
+                </p>
+                <label>
+                  <span>Suno 自动风格</span>
+                  <textarea
+                    ref={styleRef}
+                    value={state.stylePrompt || '没有已保存风格，登录后由 Suno 蓝色魔法棒根据歌词自动生成'}
+                    rows={3}
+                    readOnly
+                  />
+                </label>
+              </div>
+            ) : (
+              <p className="song-source-note">
+                MiniMax 使用本机配置的 API Key 直接生成歌曲，长歌词会先询问是否压缩。
+              </p>
+            )}
+            {state.source !== 'suno' && (
+              <label>
+                <span>风格描述</span>
+                <textarea
+                  ref={styleRef}
+                  value={state.stylePrompt}
+                  rows={5}
+                  maxLength={2000}
+                  placeholder="例如：明亮的儿童音乐剧, 奇幻冒险, 轻快节奏, 弦乐和木琴, 适合绘本故事"
+                  onChange={(event) => onStyleChange(event.target.value)}
+                  disabled={state.submitting}
+                />
+              </label>
+            )}
+          </>
         )}
         {state.error && <p className="edit-dialog-error">{state.error}</p>}
         <div className="edit-dialog-actions">
-          <button className="ghost-action" type="button" onClick={onCancel} disabled={busy}>
+          <button className="ghost-action" type="button" onClick={onCancel}>
             取消
           </button>
-          <button
-            className="primary-action"
-            type="button"
-            onClick={onConfirm}
-            disabled={busy || (state.source !== 'suno' && !state.stylePrompt.trim())}
-          >
-            <Icon name={state.submitting ? 'refresh' : 'music'} /> {state.submitting ? '提交生成中' : '开始生成歌曲'}
-          </button>
+          {state.activeTab === 'settings' && (
+            <button
+              className="primary-action"
+              type="button"
+              onClick={onConfirm}
+              disabled={busy || (state.source !== 'suno' && !state.stylePrompt.trim())}
+            >
+              <Icon name={state.submitting ? 'refresh' : 'music'} /> {state.submitting ? '提交生成中' : '开始生成歌曲'}
+            </button>
+          )}
         </div>
       </section>
     </div>,
@@ -5466,6 +5605,22 @@ function normalizeSongSource(source?: string | null): SongSource {
   if (value === 'minimax') return 'minimax';
   if (value === 'other') return 'other';
   return 'suno';
+}
+
+function groupSongVersionsByStyle(versions: SongVersionPayload[]): SongVersionGroup[] {
+  const groups = new Map<string, SongVersionGroup>();
+  for (const version of versions) {
+    const stylePrompt = version.stylePrompt?.trim() ?? '';
+    const key = version.styleKey?.trim() || `legacy:${stylePrompt || 'unknown'}`;
+    const label = stylePrompt || '未命名风格';
+    const group = groups.get(key);
+    if (group) {
+      group.versions.push(version);
+    } else {
+      groups.set(key, { key, label, versions: [version] });
+    }
+  }
+  return Array.from(groups.values());
 }
 
 function isSunoWaitingConfirm(state?: ListeningSongStatePayload | null): boolean {

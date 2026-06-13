@@ -193,6 +193,19 @@ class ApiCacheService {
     required String purpose,
     int limit = 20,
   }) async {
+    final entries = await getEntriesForArticlePurpose(
+      articleId: articleId,
+      purpose: purpose,
+      limit: limit,
+    );
+    return entries.isEmpty ? null : entries.first;
+  }
+
+  static Future<List<ApiCacheEntry>> getEntriesForArticlePurpose({
+    required int articleId,
+    required String purpose,
+    int limit = 80,
+  }) async {
     final db = await DatabaseService.database;
     final rows = await db.rawQuery(
       '''
@@ -205,6 +218,7 @@ class ApiCacheService {
       ''',
       [articleId, purpose, purpose, limit],
     );
+    final entries = <ApiCacheEntry>[];
     for (final row in rows) {
       final cacheKey = row['cache_key']?.toString() ?? '';
       if (cacheKey.isEmpty) {
@@ -216,10 +230,10 @@ class ApiCacheService {
         purpose: purpose,
       );
       if (entry != null) {
-        return entry;
+        entries.add(entry);
       }
     }
-    return null;
+    return entries;
   }
 
   static Future<void> putText({

@@ -2616,7 +2616,7 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '歌曲' }));
+    fireEvent.click(screen.getByRole('button', { name: /下载歌曲|歌曲/ }));
     expect(await screen.findByRole('dialog', { name: '歌曲风格设置' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '生成合适的歌曲风格' }));
@@ -2711,7 +2711,7 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '歌曲' }));
+    fireEvent.click(screen.getByRole('button', { name: /下载歌曲|歌曲/ }));
     expect(await screen.findByText(/优先点击 Suno 自带的魔法棒/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '生成合适的歌曲风格' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('风格描述')).not.toBeInTheDocument();
@@ -2720,14 +2720,106 @@ describe('App', () => {
     await waitFor(() => expect(generatePayloads[0]?.source).toBe('suno'));
     expect(generatePayloads[0]?.stylePrompt).toBe('');
     expect(confirmSpy).toHaveBeenCalled();
-    expect(await screen.findByText('Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。')).toBeInTheDocument();
-    const confirmButtons = await screen.findAllByRole('button', { name: /确认创建歌曲/ });
-    expect(confirmButtons.length).toBeGreaterThan(0);
-    fireEvent.click(confirmButtons[0]!);
+    await waitFor(() =>
+      expect(
+        screen.getAllByText('Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。').length,
+      ).toBeGreaterThan(0),
+    );
+    const songDialog = await screen.findByRole('dialog', { name: '歌曲风格设置' });
+    fireEvent.click(within(songDialog).getByRole('button', { name: /确认创建歌曲/ }));
 
     await waitFor(() => expect(confirmPayloads[0]).toMatchObject({ articleId: 1 }));
-    expect(await screen.findByText('Suno 正在生成歌曲...')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText('Suno 正在生成歌曲...').length).toBeGreaterThan(0));
     expect(confirmSpy).toHaveBeenCalledTimes(2);
+    confirmSpy.mockRestore();
+  });
+
+  it('allows closing the song dialog when Suno needs manual action', async () => {
+    window.location.hash = '/listen/1';
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'settings.load') {
+          return ok(message.id, type, {
+            tts: { resourceId: 'seed-tts-2.0', speakerId: 'en_female_dacey_uranus_bigtts' },
+            song: { defaultSource: 'suno', sunoOutputDirectory: 'mock', sunoTimeoutMinutes: 20 },
+            voices: [],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'empty',
+            stylePrompt: 'Suno auto style',
+            audioPath: null,
+            errorMessage: '',
+            source: 'suno',
+            songUrl: 'https://suno.com/song/one',
+            automationStatus: 'manualAction',
+            manualActionMessage: 'Suno 歌曲已生成记录，但还没有本地音频文件。',
+          });
+        }
+        if (type === 'listening.songGenerate') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'generating',
+            source: 'suno',
+            stylePrompt: 'Suno auto style',
+            songUrl: 'https://suno.com/song/one',
+            automationStatus: 'manualAction',
+            manualActionMessage: 'Suno 生成结果已出现，但没有找到 Download 或 Audio 下载按钮。',
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /下载歌曲|歌曲/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /开始生成歌曲/ }));
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByText('Suno 生成结果已出现，但没有找到 Download 或 Audio 下载按钮。').length,
+      ).toBeGreaterThan(0),
+    );
+    const songDialog = screen.getByRole('dialog', { name: '歌曲风格设置' });
+    expect(within(songDialog).getByRole('button', { name: /开始生成歌曲/ })).not.toBeDisabled();
+    const closeButton = within(songDialog).getByRole('button', { name: '关闭' });
+    expect(closeButton).not.toBeDisabled();
+    fireEvent.click(closeButton);
+    expect(screen.queryByRole('dialog', { name: '歌曲风格设置' })).not.toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 
@@ -2807,10 +2899,14 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
-    fireEvent.click(await screen.findByRole('button', { name: /重新检测下载/ }));
+    fireEvent.click(screen.getByRole('button', { name: /下载歌曲|歌曲/ }));
+    fireEvent.click(await screen.findByRole('tab', { name: '播放' }));
+    fireEvent.click(await screen.findByRole('button', { name: /下载缺失版本/ }));
 
     await waitFor(() => expect(downloadPayloads[0]).toMatchObject({ articleId: 1 }));
-    expect(await screen.findByText('正在打开 Suno 已生成歌曲并尝试下载...')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getAllByText('正在打开 Suno 已生成歌曲并尝试下载...').length).toBeGreaterThan(0),
+    );
   });
 
   it('plays a selected downloaded song version', async () => {
@@ -2863,8 +2959,9 @@ describe('App', () => {
             errorMessage: '',
             source: 'suno',
             versions: [
-              { id: 'suno-v1', audioPath: 'suno-v1.mp3', title: 'Suno 版本 1', songUrl: 'https://suno.com/song/one' },
-              { id: 'suno-v2', audioPath: 'suno-v2.mp3', title: 'Suno 版本 2', songUrl: 'https://suno.com/song/two' },
+              { id: 'suno-v1', audioPath: 'suno-v1.mp3', title: 'Suno 版本 1', songUrl: 'https://suno.com/song/one', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style' },
+              { id: 'suno-v2', audioPath: 'suno-v2.mp3', title: 'Suno 版本 2', songUrl: 'https://suno.com/song/two', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style' },
+              { id: 'suno-v3', audioPath: 'suno-v3.mp3', title: 'Dreamy 版本', songUrl: 'https://suno.com/song/three', stylePrompt: 'Dreamy lullaby style', styleKey: 'suno:dreamy lullaby style' },
             ],
           });
         }
@@ -2880,6 +2977,10 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '歌曲' }));
+    expect(await screen.findByRole('tab', { name: '播放' })).toHaveAttribute('aria-selected', 'true');
+    await waitFor(() => expect(screen.getAllByText('Suno auto style').length).toBeGreaterThan(0));
+    expect(await screen.findByText('Dreamy lullaby style')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Suno 版本 2' }));
 
     await waitFor(() => expect(playPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
@@ -2967,7 +3068,7 @@ describe('App', () => {
     fireEvent.click(within(heading).getByRole('button', { name: 'bright' }));
 
     expect(await screen.findByRole('dialog', { name: 'bright' })).toBeInTheDocument();
-    expect(screen.getByText('/brait/')).toBeInTheDocument();
+    expect(await screen.findByText('/brait/')).toBeInTheDocument();
     expect(screen.getByText('明亮的；聪明的；鲜艳的')).toBeInTheDocument();
     expect(screen.getByText('在本句中表示“明亮的”。')).toBeInTheDocument();
     await waitFor(() => {

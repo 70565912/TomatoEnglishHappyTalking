@@ -38,6 +38,8 @@ class ArticleSongState {
     this.manualActionMessage,
     this.automationStatus,
     this.creditsRemaining,
+    this.downloadComplete,
+    this.detectedSongUrls = const [],
     this.versions = const [],
   });
 
@@ -53,6 +55,8 @@ class ArticleSongState {
   final String? manualActionMessage;
   final String? automationStatus;
   final int? creditsRemaining;
+  final bool? downloadComplete;
+  final List<String> detectedSongUrls;
   final List<ArticleSongVersion> versions;
 
   Map<String, dynamic> toJson() => {
@@ -69,6 +73,8 @@ class ArticleSongState {
           'manualActionMessage': manualActionMessage,
         if (automationStatus != null) 'automationStatus': automationStatus,
         if (creditsRemaining != null) 'creditsRemaining': creditsRemaining,
+        if (downloadComplete != null) 'downloadComplete': downloadComplete,
+        if (detectedSongUrls.isNotEmpty) 'detectedSongUrls': detectedSongUrls,
         if (versions.isNotEmpty)
           'versions': versions.map((version) => version.toJson()).toList(),
       };
@@ -85,6 +91,8 @@ class ArticleSongState {
     String? manualActionMessage,
     String? automationStatus,
     int? creditsRemaining,
+    bool? downloadComplete,
+    List<String>? detectedSongUrls,
     List<ArticleSongVersion>? versions,
   }) =>
       ArticleSongState(
@@ -100,6 +108,8 @@ class ArticleSongState {
         manualActionMessage: manualActionMessage ?? this.manualActionMessage,
         automationStatus: automationStatus ?? this.automationStatus,
         creditsRemaining: creditsRemaining ?? this.creditsRemaining,
+        downloadComplete: downloadComplete ?? this.downloadComplete,
+        detectedSongUrls: detectedSongUrls ?? this.detectedSongUrls,
         versions: versions ?? this.versions,
       );
 }
@@ -112,6 +122,8 @@ class ArticleSongVersion {
     this.songUrl,
     this.durationMs,
     this.createdAt,
+    this.stylePrompt,
+    this.styleKey,
   });
 
   final String id;
@@ -120,6 +132,8 @@ class ArticleSongVersion {
   final String? songUrl;
   final int? durationMs;
   final String? createdAt;
+  final String? stylePrompt;
+  final String? styleKey;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -128,6 +142,8 @@ class ArticleSongVersion {
         if (songUrl != null) 'songUrl': songUrl,
         if (durationMs != null) 'durationMs': durationMs,
         if (createdAt != null) 'createdAt': createdAt,
+        if (stylePrompt != null) 'stylePrompt': stylePrompt,
+        if (styleKey != null) 'styleKey': styleKey,
       };
 
   static ArticleSongVersion? fromJson(Object? value) {
@@ -146,12 +162,117 @@ class ArticleSongVersion {
       songUrl: _nonEmpty(value['songUrl']),
       durationMs: (value['durationMs'] as num?)?.toInt(),
       createdAt: _nonEmpty(value['createdAt']),
+      stylePrompt: _nonEmpty(value['stylePrompt']),
+      styleKey: _nonEmpty(value['styleKey']),
     );
   }
 
   static String? _nonEmpty(Object? value) {
     final text = value?.toString().trim() ?? '';
     return text.isEmpty ? null : text;
+  }
+}
+
+class SunoCachedSongGroup {
+  const SunoCachedSongGroup({
+    required this.stylePrompt,
+    required this.styleKey,
+    required this.versions,
+    required this.detectedSongUrls,
+    required this.songUrl,
+    required this.metadataPath,
+    required this.manualActionMessage,
+  });
+
+  final String stylePrompt;
+  final String styleKey;
+  final List<ArticleSongVersion> versions;
+  final List<String> detectedSongUrls;
+  final String? songUrl;
+  final String? metadataPath;
+  final String? manualActionMessage;
+
+  bool get hasKnownCompleteDownloads {
+    if (detectedSongUrls.isEmpty) {
+      return false;
+    }
+    final downloaded = versions
+        .map((version) => (version.songUrl ?? '').trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    return detectedSongUrls.every(downloaded.contains);
+  }
+
+  List<String> get missingSongUrls {
+    final downloaded = versions
+        .map((version) => (version.songUrl ?? '').trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    return detectedSongUrls
+        .where((url) => url.trim().isNotEmpty && !downloaded.contains(url))
+        .toList(growable: false);
+  }
+}
+
+class SunoCachedSongGroupBuilder {
+  SunoCachedSongGroupBuilder({
+    required this.stylePrompt,
+    required this.styleKey,
+  });
+
+  String stylePrompt;
+  final String styleKey;
+  String? songUrl;
+  String? metadataPath;
+  String? manualActionMessage;
+  final List<ArticleSongVersion> versions = <ArticleSongVersion>[];
+  final Set<String> detectedSongUrls = <String>{};
+
+  void addVersions(Iterable<ArticleSongVersion> nextVersions) {
+    for (final version in nextVersions) {
+      final versionSongUrl = (version.songUrl ?? '').trim();
+      final duplicateIndex = versions.indexWhere((item) {
+        final itemSongUrl = (item.songUrl ?? '').trim();
+        if (versionSongUrl.isNotEmpty && itemSongUrl == versionSongUrl) {
+          return true;
+        }
+        return item.audioPath == version.audioPath;
+      });
+      if (duplicateIndex >= 0) {
+        versions[duplicateIndex] = version;
+      } else {
+        versions.add(version);
+      }
+    }
+  }
+
+  SunoCachedSongGroup build() {
+    final mergedDetectedSongUrls = <String>{...detectedSongUrls};
+    if (mergedDetectedSongUrls.isNotEmpty) {
+      mergedDetectedSongUrls.addAll(
+        versions
+            .map((version) => (version.songUrl ?? '').trim())
+            .where((value) => value.isNotEmpty),
+      );
+    } else {
+      final knownSongUrl = (songUrl ?? '').trim();
+      final hasKnownDownloadedVersion = knownSongUrl.isNotEmpty &&
+          versions.any(
+            (version) => (version.songUrl ?? '').trim() == knownSongUrl,
+          );
+      if (hasKnownDownloadedVersion) {
+        mergedDetectedSongUrls.add(knownSongUrl);
+      }
+    }
+    return SunoCachedSongGroup(
+      stylePrompt: stylePrompt,
+      styleKey: styleKey,
+      versions: List<ArticleSongVersion>.unmodifiable(versions),
+      detectedSongUrls: List<String>.unmodifiable(mergedDetectedSongUrls),
+      songUrl: songUrl,
+      metadataPath: metadataPath,
+      manualActionMessage: manualActionMessage,
+    );
   }
 }
 

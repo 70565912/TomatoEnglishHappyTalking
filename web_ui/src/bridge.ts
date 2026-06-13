@@ -609,6 +609,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
           audioPath: 'mock-song.mp3',
           title: 'MiniMax 版本 1',
           durationMs: 32000,
+          stylePrompt: String(payload.stylePrompt ?? 'bright children musical'),
+          styleKey: 'minimax:bright children musical',
         },
       ],
     };
@@ -676,6 +678,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
               audioPath: 'mock-song.mp3',
               title: 'MiniMax 版本 1',
               durationMs: 32000,
+              stylePrompt: 'bright children musical',
+              styleKey: 'minimax:bright children musical',
             },
           ],
         },

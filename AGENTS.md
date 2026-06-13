@@ -109,6 +109,7 @@ web_ui/
 - Suno 网页自动化在 `WebShellScreen` 内执行：同一篇文章如果已经保存过上一次 Suno 自动生成的风格，再次进入时直接填入旧风格；没有旧风格时才点击 `Styles` 工具栏里的蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
 - Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词/风格达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
+- Suno 歌曲缓存必须按 `styleKey` 分组：`versions` 要带 `stylePrompt` / `styleKey`，`detectedSongUrls` 记录当前风格已检测到的完整歌曲链接，`downloadComplete=true` 只表示这些链接都有本地音频版本。重新检测下载时只下载缺失链接，不要重复下载已存在的同一 `songUrl`；同一风格已完整下载时只能进入已完成待命/播放状态，不能自动再次点击 Create 消耗 credits。
 
 ## Flutter / Dart 规范
 

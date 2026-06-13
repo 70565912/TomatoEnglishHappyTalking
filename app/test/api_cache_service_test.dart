@@ -242,6 +242,12 @@ void main() {
 
     expect(latest?.cacheKey, newerKey);
     expect(latest?.filePath, newerPath);
+
+    final entries = await ApiCacheService.getEntriesForArticlePurpose(
+      articleId: articleId,
+      purpose: 'article_song_audio_v1',
+    );
+    expect(entries.map((entry) => entry.cacheKey), [newerKey, olderKey]);
   });
 
   test('stores and removes the latest sentence recording with its article',
