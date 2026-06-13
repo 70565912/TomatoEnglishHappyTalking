@@ -73,7 +73,7 @@ class RecordingExportRequest {
   final int fps;
   final Map<int, String> subtitleTranslations;
 
-  bool get bilingual => mode == 'bilingual';
+  bool get bilingual => false;
 }
 
 class SongRecordingExportRequest {
@@ -856,34 +856,6 @@ class RecordingExportService {
           ));
         }
       }
-
-      if (request.bilingual && chinese.trim().isNotEmpty) {
-        requiredChinese += 1;
-        final chineseHandle = await _memoryHandleOrNull(
-          text: chinese,
-          voiceType: _chineseVoiceType,
-          preferRequestedVoice: true,
-          articleId: request.articleId,
-          requireMemory: requireMemoryAudio,
-        );
-        if (chineseHandle == null) {
-          reasons.add('第 ${index + 1} 句中文音频尚未完成内存预加载');
-        } else {
-          readyChinese += 1;
-          if (collectAudioBytes) {
-            audioClips.add(_RecordingAudioClip(
-              sentenceIndex: index,
-              part: 'chinese',
-              text: chinese,
-              filePath: chineseHandle.filePath,
-              bytes: chineseHandle.bytes,
-              durationMs: RecordingExportUtils.estimateMp3DurationMs(
-                chineseHandle.bytes,
-              ),
-            ));
-          }
-        }
-      }
     }
 
     if (collectAudioBytes) {
@@ -1046,12 +1018,7 @@ class RecordingExportService {
         (clip) => clip.part == 'english',
         orElse: () => _RecordingAudioClip.empty(item.index, 'english'),
       );
-      final chinese = request.bilingual
-          ? clips.firstWhere(
-              (clip) => clip.part == 'chinese',
-              orElse: () => _RecordingAudioClip.empty(item.index, 'chinese'),
-            )
-          : _RecordingAudioClip.empty(item.index, 'chinese');
+      final chinese = _RecordingAudioClip.empty(item.index, 'chinese');
       final englishStart = cursorMs;
       final englishDurationMs = english.durationMs < 0 ? 0 : english.durationMs;
       final chineseDurationMs = chinese.durationMs < 0 ? 0 : chinese.durationMs;
@@ -1986,8 +1953,6 @@ class RecordingExportService {
   static String? selectEncoderForTest(String codec, String encodersOutput) =>
       RecordingExportUtils.selectEncoder(codec, encodersOutput);
 }
-
-const _chineseVoiceType = 'zh_female_xiaoxue_uranus_bigtts';
 
 class _PreparedRecordingAssets {
   const _PreparedRecordingAssets({

@@ -9,7 +9,6 @@ import type {
   FollowState,
   ListeningItem,
   ListeningFullscreenReadyPayload,
-  ListeningMode,
   ListeningOpenPayload,
   ListeningPausePayload,
   ListeningPlaybackPayload,
@@ -63,6 +62,11 @@ type PreloadStateMap = Record<string, PreloadState>;
 function preloadKey(mode: string, articleId: number, scope?: string) {
   const normalizedScope = scope ?? (mode === 'listening' || mode === 'follow' ? 'english' : 'default');
   return `${mode}:${normalizedScope}:${articleId}`;
+}
+
+function isPreloadSettled(state?: PreloadState) {
+  if (!state) return false;
+  return state.status === 'complete' || state.status === 'partial' || state.status === 'error';
 }
 
 function preloadRunOrder(runId?: string): number {
@@ -460,7 +464,6 @@ function App() {
             onPictureBookLoaded={setPictureBookState}
             pictureBookRetryGate={pictureBookRetryGate}
             englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
-            chinesePreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'chinese')]}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={setRecordingSettings}
             songSettings={settings?.song ?? null}
@@ -1170,7 +1173,6 @@ function ListeningPage({
   onPictureBookLoaded,
   pictureBookRetryGate,
   englishPreloadState,
-  chinesePreloadState,
   recordingSettings,
   onRecordingSettingsLoaded,
   songSettings,
@@ -1183,7 +1185,6 @@ function ListeningPage({
   onPictureBookLoaded: PictureBookStateSetter;
   pictureBookRetryGate: PictureBookRetryGate;
   englishPreloadState?: PreloadState;
-  chinesePreloadState?: PreloadState;
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   songSettings: SettingsState['song'] | null;
@@ -1192,7 +1193,6 @@ function ListeningPage({
 }) {
   const [article, setArticle] = useState<Article | null>(null);
   const [items, setItems] = useState<ListeningItem[]>([]);
-  const [mode, setMode] = useState<ListeningMode>('english');
   const [status, setStatus] = useState<ListeningStatus>('loading');
   const [currentIndex, setCurrentIndex] = useState(0);
   const [activePart, setActivePart] = useState<ListeningPart>(null);
@@ -1219,8 +1219,17 @@ function ListeningPage({
   const wordCardTokenRef = useRef(0);
   const fullscreenReadyTokenRef = useRef(0);
   const recordingReadyTokenRef = useRef(0);
-  const chinesePreloadKeysRef = useRef<Set<string>>(new Set());
   const manualTranslationIndexesRef = useRef<Set<number>>(new Set());
+  const pictureBookRecordingReadinessKey = useMemo(() => {
+    if (pictureBookState?.articleId !== articleId) return 'none';
+    return [
+      pictureBookState.status,
+      pictureBookState.pages.length,
+      pictureBookState.pages
+        .map((page) => `${page.pageIndex}:${page.status}:${page.imagePath?.trim() ? 1 : 0}`)
+        .join('|'),
+    ].join(':');
+  }, [articleId, pictureBookState]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1252,11 +1261,10 @@ function ListeningPage({
     wordCardTokenRef.current += 1;
     fullscreenReadyTokenRef.current += 1;
     recordingReadyTokenRef.current += 1;
-    chinesePreloadKeysRef.current = new Set();
     manualTranslationIndexesRef.current = new Set();
     onPictureBookLoaded(loadingPictureBookState(articleId));
 
-    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId, includeImageUris: true })
+    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId, includeImageUris: false })
       .then((picturePayload) => {
         if (isMounted) {
           onPictureBookLoaded((current) => mergePictureBookState(current, picturePayload));
@@ -1280,13 +1288,7 @@ function ListeningPage({
         setError(loadError instanceof Error ? loadError.message : '听力任务打开失败');
       });
 
-    const songPromise = sendNative<ListeningSongStatePayload>('listening.songState', { articleId })
-      .then((payload) => {
-        if (isMounted) setSongState(payload);
-      })
-      .catch(() => undefined);
-
-    void Promise.allSettled([listeningPromise, picturePromise, songPromise]);
+    void Promise.allSettled([listeningPromise, picturePromise]);
 
     return () => {
       isMounted = false;
@@ -1413,27 +1415,15 @@ function ListeningPage({
   }, [articleId]);
 
   useEffect(() => {
-    if (mode !== 'bilingual') return;
-    const preloadItems = items.filter((item) => {
-      const chinese = item.chinese.trim();
-      if (!chinese) return false;
-      const key = `${item.index}:${chinese}`;
-      if (chinesePreloadKeysRef.current.has(key)) return false;
-      chinesePreloadKeysRef.current.add(key);
-      return true;
-    });
-    if (preloadItems.length === 0) return;
-
-    void sendNative('listening.preloadChinese', {
-      articleId,
-      items: preloadItems,
-    }).catch(() => undefined);
-  }, [articleId, items, mode]);
-
-  useEffect(() => {
     if (items.length === 0) {
       setFullscreenReady(null);
       setFullscreenReadyLoading(false);
+      return;
+    }
+    if (englishPreloadState && !isPreloadSettled(englishPreloadState)) {
+      fullscreenReadyTokenRef.current += 1;
+      setFullscreenReady(null);
+      setFullscreenReadyLoading(true);
       return;
     }
 
@@ -1441,7 +1431,9 @@ function ListeningPage({
     setFullscreenReadyLoading(true);
     sendNative<ListeningFullscreenReadyPayload>('listening.fullscreenReady', {
       articleId,
-      mode,
+      mode: 'english',
+      startIndex: currentIndex,
+      lookaheadCount: 2,
       items,
     })
       .then((payload) => {
@@ -1469,24 +1461,22 @@ function ListeningPage({
       });
   }, [
     articleId,
+    currentIndex,
     items,
-    mode,
     englishPreloadState?.runId,
     englishPreloadState?.status,
-    englishPreloadState?.completed,
-    englishPreloadState?.total,
-    englishPreloadState?.failed,
-    chinesePreloadState?.runId,
-    chinesePreloadState?.status,
-    chinesePreloadState?.completed,
-    chinesePreloadState?.total,
-      chinesePreloadState?.failed,
-    ]);
+  ]);
 
   useEffect(() => {
     if (items.length === 0 || !recordingSettings) {
       setRecordingReady(null);
       setRecordingReadyLoading(false);
+      return;
+    }
+    if (englishPreloadState && !isPreloadSettled(englishPreloadState)) {
+      recordingReadyTokenRef.current += 1;
+      setRecordingReady(null);
+      setRecordingReadyLoading(true);
       return;
     }
     const token = ++recordingReadyTokenRef.current;
@@ -1496,7 +1486,7 @@ function ListeningPage({
       .filter((item) => item.chinese.length > 0);
     sendNative<ListeningRecordingReadyPayload>('listening.recordingReady', {
       articleId,
-      mode,
+      mode: 'english',
       codec: recordingSettings.codec,
       resolution: recordingSettings.resolution,
       pageTransition: recordingSettings.pageTransition,
@@ -1532,20 +1522,10 @@ function ListeningPage({
   }, [
     articleId,
     items,
-    mode,
     recordingSettings,
     englishPreloadState?.runId,
     englishPreloadState?.status,
-    englishPreloadState?.completed,
-    englishPreloadState?.total,
-    englishPreloadState?.failed,
-    chinesePreloadState?.runId,
-    chinesePreloadState?.status,
-    chinesePreloadState?.completed,
-    chinesePreloadState?.total,
-    chinesePreloadState?.failed,
-    pictureBookState?.status,
-    pictureBookState?.pages,
+    pictureBookRecordingReadinessKey,
   ]);
 
   useEffect(() => {
@@ -1589,7 +1569,6 @@ function ListeningPage({
 
     const token = ++playbackTokenRef.current;
     const safeStart = Math.max(0, Math.min(startIndex, items.length - 1));
-    const selectedMode = mode;
 
     setStatus('playing');
     setError(null);
@@ -1598,7 +1577,7 @@ function ListeningPage({
     try {
       await sendNative('listening.playSequence', {
         startIndex: safeStart,
-        mode: selectedMode,
+        mode: 'english',
         singleItem,
         items,
       });
@@ -1647,7 +1626,7 @@ function ListeningPage({
     try {
       await sendNative<ListeningRecordingResultPayload>('listening.recordVideo', {
         articleId,
-        mode,
+        mode: 'english',
         codec: selectedSettings.codec,
         resolution: selectedSettings.resolution,
         pageTransition: selectedSettings.pageTransition,
@@ -1703,17 +1682,26 @@ function ListeningPage({
     }
   };
 
-  const openSongDialog = () => {
+  const openSongDialog = async () => {
     if (busy) return;
-    const defaultSource = normalizeSongSource(songState?.source ?? songSettings?.defaultSource ?? 'suno');
-    const versions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
+    let currentSongState = songState;
+    if (!currentSongState) {
+      try {
+        currentSongState = await sendNative<ListeningSongStatePayload>('listening.songState', { articleId });
+        setSongState(currentSongState);
+      } catch {
+        currentSongState = null;
+      }
+    }
+    const defaultSource = normalizeSongSource(currentSongState?.source ?? songSettings?.defaultSource ?? 'suno');
+    const versions = currentSongState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
     setSongDialog({
       activeTab: versions.length > 0 ? 'play' : 'settings',
       source: defaultSource,
-      stylePrompt: songState?.stylePrompt?.trim() ?? '',
+      stylePrompt: currentSongState?.stylePrompt?.trim() ?? '',
       suggesting: false,
       submitting: false,
-      error: songState?.status === 'error' ? songState.errorMessage?.trim() || null : null,
+      error: currentSongState?.status === 'error' ? currentSongState.errorMessage?.trim() || null : null,
     });
   };
 
@@ -2168,16 +2156,18 @@ function ListeningPage({
   };
 
   const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
-  useEnsureAllPictureBookPageImages({
-    articleId,
-    state: pictureBookState,
-    onPictureBookLoaded,
-  });
+  const nextPicturePage = nextPictureBookPage(pictureBookState, picturePage);
   const pictureDecodeState = usePredecodePictureBookImages(articleId, pictureBookState, picturePage);
   useEnsurePictureBookPageImage({
     articleId,
     state: pictureBookState,
     page: picturePage,
+    onPictureBookLoaded,
+  });
+  useEnsurePictureBookPageImage({
+    articleId,
+    state: pictureBookState,
+    page: nextPicturePage,
     onPictureBookLoaded,
   });
 
@@ -2223,8 +2213,7 @@ function ListeningPage({
   const playbackError = status === 'error' ? error : null;
   const startLabel = status === 'done' ? '重新播放' : '开始播放';
   const titleParts = storyTitlePartsFor(article, pictureBookState, article.title);
-  const visiblePreloadState =
-    mode === 'bilingual' && chinesePreloadState ? chinesePreloadState : englishPreloadState;
+  const visiblePreloadState = englishPreloadState;
   const fullscreenPictureReadiness = pictureBookFullscreenReadiness(
     pictureBookState,
     items,
@@ -2233,7 +2222,6 @@ function ListeningPage({
   const fullscreenAudioReadiness = listeningFullscreenAudioReadiness(
     fullscreenReady,
     fullscreenReadyLoading,
-    mode,
   );
   const fullscreenReadiness = combineFullscreenReadiness(
     fullscreenAudioReadiness,
@@ -2325,28 +2313,6 @@ function ListeningPage({
           />
           {playbackError && <p className="playback-cue error">{playbackError}</p>}
           <div className="listening-control-panel">
-            <div className="mode-dots listening-mode-dots" aria-label="听力播放模式">
-              <button
-                className={mode === 'english' ? 'active' : ''}
-                type="button"
-                aria-pressed={mode === 'english'}
-                disabled={busy}
-                onClick={() => setMode('english')}
-              >
-                <span aria-hidden="true" />
-                英文
-              </button>
-              <button
-                className={mode === 'bilingual' ? 'active' : ''}
-                type="button"
-                aria-pressed={mode === 'bilingual'}
-                disabled={busy}
-                onClick={() => setMode('bilingual')}
-              >
-                <span aria-hidden="true" />
-                中英对照
-              </button>
-            </div>
             <div className="button-row">
               {busy ? (
                 <button className="danger-light" onClick={stopPlayback}>
@@ -2366,7 +2332,7 @@ function ListeningPage({
               </button>
               <button
                 className={`ghost-action song-action ${songGenerating && !songWaitingConfirm ? 'loading' : ''}`}
-                onClick={openSongDialog}
+                onClick={() => void openSongDialog()}
                 disabled={busy || items.length === 0}
                 title={songState?.status === 'error' ? songState.errorMessage?.trim() || '歌曲生成失败' : undefined}
               >
@@ -2537,7 +2503,6 @@ function ListeningPage({
         <FullscreenListeningPlayer
           article={article}
           items={items}
-          mode={mode}
           pictureBookState={pictureBookState}
           onClose={() => setFullscreenPlayerOpen(false)}
         />
@@ -2896,13 +2861,11 @@ function SongDialog({
 function FullscreenListeningPlayer({
   article,
   items,
-  mode,
   pictureBookState,
   onClose,
 }: {
   article: Article;
   items: ListeningItem[];
-  mode: ListeningMode;
   pictureBookState: PictureBookState | null;
   onClose: () => void;
 }) {
@@ -2994,9 +2957,8 @@ function FullscreenListeningPlayer({
 
     sendNative('listening.playSequence', {
       startIndex: 0,
-      mode,
+      mode: 'english',
       singleItem: false,
-      strictPreloaded: true,
       items,
     })
       .then(() => {
@@ -3019,7 +2981,7 @@ function FullscreenListeningPlayer({
       cancelled = true;
       void sendNative('listening.stop').catch(() => undefined);
     };
-  }, [items, mode]);
+  }, [items]);
 
   useEffect(() => {
     if (keepControlsVisible) {
@@ -3723,13 +3685,27 @@ function currentPictureBookPage(
   );
 }
 
+function nextPictureBookPage(
+  state: PictureBookState | null,
+  currentPage: PictureBookPage | null,
+): PictureBookPage | null {
+  if (!state?.pages.length || !currentPage) return null;
+  const orderedPages = [...state.pages].sort((left, right) => left.pageIndex - right.pageIndex);
+  const currentPosition = orderedPages.findIndex(
+    (page) => page.pageIndex === currentPage.pageIndex,
+  );
+  if (currentPosition < 0 || currentPosition + 1 >= orderedPages.length) {
+    return null;
+  }
+  return orderedPages[currentPosition + 1];
+}
+
 function listeningFullscreenAudioReadiness(
   payload: ListeningFullscreenReadyPayload | null,
   loading: boolean,
-  mode: ListeningMode,
 ): FullscreenReadiness {
   if (loading && !payload?.ready) {
-    return { ready: false, reason: '正在确认音频是否已全部加载到内存...' };
+    return { ready: false, reason: '正在确认当前和下一句音频是否已加载...' };
   }
   if (!payload) {
     return { ready: false, reason: '正在等待音频预加载状态...' };
@@ -3742,24 +3718,16 @@ function listeningFullscreenAudioReadiness(
     : [];
   const readyEnglish = Number(payload.readyEnglish ?? 0);
   const requiredEnglish = Number(payload.requiredEnglish ?? 0);
-  const readyChinese = Number(payload.readyChinese ?? 0);
-  const requiredChinese = Number(payload.requiredChinese ?? 0);
   if (reasons.length > 0) {
     return { ready: false, reason: String(reasons[0]) };
   }
   if (readyEnglish < requiredEnglish) {
     return {
       ready: false,
-      reason: `英文音频正在预加载 ${readyEnglish} / ${requiredEnglish}`,
+      reason: `当前和下一句英文音频正在预热 ${readyEnglish} / ${requiredEnglish}`,
     };
   }
-  if (mode === 'bilingual' && readyChinese < requiredChinese) {
-    return {
-      ready: false,
-      reason: `中文音频正在预加载 ${readyChinese} / ${requiredChinese}`,
-    };
-  }
-  return { ready: false, reason: '音频还没有完成内存预加载' };
+  return { ready: false, reason: '当前和下一句音频还没有完成预热' };
 }
 
 function pictureBookFullscreenReadiness(
@@ -3805,7 +3773,7 @@ function pictureBookFullscreenReadiness(
     return { ready: false, reason: '绘本分镜还没有覆盖全部句子' };
   }
   if (decodeState.missingImagePages.length > 0) {
-    return { ready: false, reason: '正在下载绘本图片到内存...' };
+    return { ready: false, reason: '正在准备当前和下一张绘本图...' };
   }
   if (decodeState.failed > 0) {
     return { ready: false, reason: '有绘本图片载入失败，请退出后重试' };
@@ -3813,7 +3781,7 @@ function pictureBookFullscreenReadiness(
   if (!decodeState.ready) {
     return {
       ready: false,
-      reason: `正在载入绘本图片 ${decodeState.decoded} / ${decodeState.total}`,
+      reason: `正在载入当前和下一张绘本图 ${decodeState.decoded} / ${decodeState.total}`,
     };
   }
   return { ready: true, reason: '' };
@@ -3969,10 +3937,12 @@ function useEnsurePictureBookPageImage({
 function useEnsureAllPictureBookPageImages({
   articleId,
   state,
+  enabled,
   onPictureBookLoaded,
 }: {
   articleId: number;
   state: PictureBookState | null;
+  enabled: boolean;
   onPictureBookLoaded: PictureBookStateSetter;
 }) {
   const requestedRef = useRef<Set<string>>(new Set());
@@ -3981,7 +3951,7 @@ function useEnsureAllPictureBookPageImages({
     requestedRef.current = new Set();
   }, [articleId]);
 
-  const missing = state?.articleId === articleId
+  const missing = enabled && state?.articleId === articleId
     ? state.pages
         .filter((page) => page.status === 'ready')
         .filter((page) => !page.imageUri?.trim() && page.imagePath?.trim())
@@ -3999,7 +3969,7 @@ function useEnsureAllPictureBookPageImages({
     .join('|');
 
   useEffect(() => {
-    if (missing.length === 0) return;
+    if (!enabled || missing.length === 0) return;
     let cancelled = false;
     void (async () => {
       for (const page of missing) {
@@ -4023,7 +3993,7 @@ function useEnsureAllPictureBookPageImages({
     return () => {
       cancelled = true;
     };
-  }, [articleId, missingKey, onPictureBookLoaded]);
+  }, [articleId, enabled, missingKey, onPictureBookLoaded]);
 }
 
 function decodeImageSource(src: string): Promise<boolean> {
@@ -4065,18 +4035,18 @@ function usePredecodePictureBookImages(
     setDecodeVersion((version) => version + 1);
   }, [articleId]);
 
-  const activePageIndex = activePage?.pageIndex ?? 0;
-  const readyPages = state?.articleId === articleId
+  const activePageIndex = activePage?.pageIndex ?? null;
+  const allReadyPages = state?.articleId === articleId
     ? [...state.pages]
         .filter((page) => page.status === 'ready')
-        .sort((left, right) => {
-          const leftDistance = Math.abs(left.pageIndex - activePageIndex);
-          const rightDistance = Math.abs(right.pageIndex - activePageIndex);
-          return leftDistance === rightDistance
-            ? left.pageIndex - right.pageIndex
-            : leftDistance - rightDistance;
-        })
+        .sort((left, right) => left.pageIndex - right.pageIndex)
     : [];
+  const activeReadyPosition = activePageIndex === null
+    ? -1
+    : allReadyPages.findIndex((page) => page.pageIndex === activePageIndex);
+  const readyPages = activeReadyPosition >= 0
+    ? allReadyPages.slice(activeReadyPosition, activeReadyPosition + 2)
+    : allReadyPages.slice(0, 2);
   const imageItems = readyPages
     .map((page) => ({
       pageIndex: page.pageIndex,

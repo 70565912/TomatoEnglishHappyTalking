@@ -14,6 +14,7 @@ import '../../core/logging/tomato_logger.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/webview/webview_environment.dart';
 import '../../data/models/article_model.dart';
+import '../../data/models/article_sentence_translation_model.dart';
 import '../../data/models/picture_book_model.dart';
 import '../../services/api_cache_service.dart';
 import '../../services/asset_path_service.dart';
@@ -30,7 +31,6 @@ import '../../services/song_subtitle_timeline_service.dart';
 import '../../services/text_generation_service.dart';
 import '../../services/tts_memory_cache_service.dart';
 import '../../services/tts_service.dart';
-import '../../services/translation_service.dart';
 import '../chat/providers/chat_provider.dart';
 import '../follow_read/providers/follow_read_provider.dart';
 import 'web_bridge_protocol.dart';
@@ -55,7 +55,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           const int.fromEnvironment('TOMATO_QA_PORT', defaultValue: 39317);
   static final _qaRemoteToken = Platform.environment['TOMATO_QA_TOKEN'] ??
       const String.fromEnvironment('TOMATO_QA_TOKEN');
-  static const _listeningChineseVoiceType = 'zh_female_xiaoxue_uranus_bigtts';
   static const _articleContentMaxChars = 8000;
   static const _sunoSongPurpose = 'article_suno_song_v1';
   static const _englishVoicePreviewText =
@@ -631,15 +630,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       createdAt: DateTime.now(),
     );
     final id = await DatabaseService.saveArticle(article);
-    if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
-      await DatabaseService.saveArticleSentenceTranslations(
-        id,
-        parsedInput.buildSentenceTranslations(
-          articleId: id,
-          sentences: sentences,
-        ),
-      );
-    }
+    await _saveArticleTranslationsAtCreate(
+      articleId: id,
+      sentences: sentences,
+      parsedInput: parsedInput,
+    );
     if (!parsedInput.usesLocalEnglish) {
       await PracticeTextService.attachTranslateToEnglishForPracticeCache(
         content: content,
@@ -1078,9 +1073,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'listening',
         scope: 'english',
       );
-      unawaited(_pushListeningTranslations(article.id!, article.sentences));
       unawaited(
-        _preloadListeningArticle(article.id!, items, runId: preloadRunId),
+        _preloadListeningWindow(
+          article.id!,
+          items,
+          startIndex: 0,
+          runId: preloadRunId,
+        ),
       );
       unawaited(_pushSongState(article.id!));
     }
@@ -1094,23 +1093,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Future<List<Map<String, dynamic>>> _listeningItemsForArticle(
     Article article,
   ) async {
+    final translations = article.id == null
+        ? const <int, String>{}
+        : await DatabaseService.getArticleSentenceTranslationsForSentences(
+            articleId: article.id!,
+            sentences: article.sentences,
+          );
     final items = <Map<String, dynamic>>[];
     for (var i = 0; i < article.sentences.length; i++) {
       final sentence = article.sentences[i].trim();
       if (sentence.isEmpty) {
         continue;
       }
-      final importedTranslation = article.id == null
-          ? null
-          : await DatabaseService.getArticleSentenceTranslation(
-              article.id!,
-              i,
-              sentence,
-            );
       items.add({
         'index': i,
         'english': sentence,
-        'chinese': importedTranslation ?? '',
+        'chinese': translations[i] ?? '',
       });
     }
     return items;
@@ -1508,13 +1506,43 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return items.isEmpty ? null : items;
   }
 
-  Future<void> _preloadListeningArticle(
+  List<Map<String, dynamic>> _listeningWindowItems(
+    List<Map<String, dynamic>> items, {
+    required int startIndex,
+    int lookaheadCount = 2,
+  }) {
+    final cleanItems = items
+        .where((item) => (item['english'] ?? '').toString().trim().isNotEmpty)
+        .toList(growable: false);
+    if (cleanItems.isEmpty) {
+      return const <Map<String, dynamic>>[];
+    }
+    final exactPosition = cleanItems.indexWhere((item) {
+      final sentenceIndex = (item['index'] as num?)?.toInt();
+      return sentenceIndex == startIndex;
+    });
+    final startPosition = exactPosition >= 0
+        ? exactPosition
+        : startIndex.clamp(0, cleanItems.length - 1).toInt();
+    return cleanItems
+        .skip(startPosition)
+        .take(lookaheadCount.clamp(1, cleanItems.length).toInt())
+        .toList(growable: false);
+  }
+
+  Future<void> _preloadListeningWindow(
     int articleId,
     List<Map<String, dynamic>> items, {
+    required int startIndex,
     required String runId,
   }) async {
+    final windowItems = _listeningWindowItems(
+      items,
+      startIndex: startIndex,
+      lookaheadCount: 2,
+    );
     final requests = <TtsPreloadRequest>[
-      for (final item in items)
+      for (final item in windowItems)
         TtsPreloadRequest(
           text: (item['english'] ?? '').toString(),
           voiceType: TtsService.defaultVoiceType,
@@ -1527,31 +1555,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       articleId: articleId,
       mode: 'listening',
       scope: 'english',
-      requests: requests,
-      runId: runId,
-    );
-  }
-
-  Future<void> _preloadListeningChinese(
-    int articleId,
-    List<Map<String, dynamic>> items, {
-    required String runId,
-  }) async {
-    final requests = <TtsPreloadRequest>[
-      for (final item in items)
-        if ((item['chinese'] ?? '').toString().trim().isNotEmpty)
-          TtsPreloadRequest(
-            text: (item['chinese'] ?? '').toString(),
-            voiceType: _listeningChineseVoiceType,
-            preferRequestedVoice: true,
-            cachePurpose: 'listening_tts',
-            articleId: articleId,
-          ),
-    ];
-    await _preloadTtsRequests(
-      articleId: articleId,
-      mode: 'listening',
-      scope: 'chinese',
       requests: requests,
       runId: runId,
     );
@@ -1734,9 +1737,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
 
     final part = _payloadString(message.payload, 'part').trim();
+    if (part == 'chinese' || _containsChinese(text)) {
+      return {
+        'playbackState': 'skipped',
+        'reason': 'chinese_tts_disabled',
+      };
+    }
     await _playListeningText(
       text: text,
-      useChineseVoice: part == 'chinese' || _containsChinese(text),
     );
     return {'playbackState': 'success'};
   }
@@ -1756,24 +1764,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final items = _payloadListeningItems(message.payload) ??
         await _listeningItemsForArticle(article);
     final startIndex = _payloadOptionalInt(message.payload, 'startIndex') ?? 0;
-    final mode = _payloadString(message.payload, 'mode').trim();
     final singleItem = _payloadBool(
       message.payload,
       'singleItem',
-      fallback: false,
-    );
-    final strictPreloaded = _payloadBool(
-      message.payload,
-      'strictPreloaded',
       fallback: false,
     );
     await _playListeningSequence(
       articleId: articleId,
       items: items,
       startIndex: startIndex,
-      bilingual: mode == 'bilingual',
       singleItem: singleItem,
-      strictPreloaded: strictPreloaded,
     );
     return {'playbackState': 'success'};
   }
@@ -1804,18 +1804,26 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       };
     }
 
-    final mode = _payloadString(message.payload, 'mode').trim();
-    final bilingual = mode == 'bilingual';
     final article = await _articleWithCurrentSentences(rawArticle);
     final items = _payloadListeningItems(message.payload) ??
         await _listeningItemsForArticle(article);
+    final startIndex = _payloadOptionalInt(message.payload, 'startIndex') ?? 0;
+    final lookaheadCount =
+        (_payloadOptionalInt(message.payload, 'lookaheadCount') ?? 2)
+            .clamp(1, 4)
+            .toInt();
+    final readinessItems = _listeningWindowItems(
+      items,
+      startIndex: startIndex,
+      lookaheadCount: lookaheadCount,
+    );
     final missingEnglish = <int>[];
     final missingChinese = <int>[];
     var requiredEnglish = 0;
-    var requiredChinese = 0;
+    const requiredChinese = 0;
 
-    for (var position = 0; position < items.length; position += 1) {
-      final item = items[position];
+    for (var position = 0; position < readinessItems.length; position += 1) {
+      final item = readinessItems[position];
       final sentenceIndex = (item['index'] as num?)?.toInt() ?? position;
       final english = (item['english'] ?? '').toString().trim();
       if (english.isNotEmpty) {
@@ -1830,43 +1838,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           missingEnglish.add(sentenceIndex);
         }
       }
-
-      final chinese = (item['chinese'] ?? '').toString().trim();
-      if (bilingual && chinese.isNotEmpty) {
-        requiredChinese += 1;
-        final ready = await TtsMemoryCacheService.hasInMemory(
-          text: chinese,
-          voiceType: _listeningChineseVoiceType,
-          preferRequestedVoice: true,
-          cachePurpose: 'listening_tts',
-        );
-        if (!ready) {
-          missingChinese.add(sentenceIndex);
-        }
-      }
     }
 
     final englishFailed = _preloadAggregates[
                 _preloadAggregateKey(articleId, 'listening', 'english')]
             ?.failed ??
         0;
-    final chineseFailed = bilingual
-        ? _preloadAggregates[
-                    _preloadAggregateKey(articleId, 'listening', 'chinese')]
-                ?.failed ??
-            0
-        : 0;
+    const chineseFailed = 0;
     final reasons = <String>[];
     if (missingEnglish.isNotEmpty) {
-      reasons.add('英文音频还没有全部加载到内存');
-    }
-    if (missingChinese.isNotEmpty) {
-      reasons.add('中文音频还没有全部加载到内存');
+      reasons.add('当前和下一句英文音频还没有加载到内存');
     }
     final failed = englishFailed + chineseFailed;
     if (failed > 0 &&
         (missingEnglish.isNotEmpty || missingChinese.isNotEmpty)) {
-      reasons.add('有 $failed 项音频预加载失败');
+      reasons.add('有 $failed 项音频预热失败');
     }
 
     return {
@@ -5779,13 +5765,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
 
     final part = _payloadString(message.payload, 'part').trim();
-    final useChineseVoice = part == 'chinese' || _containsChinese(text);
+    final isChineseAudioRequest = part == 'chinese' || _containsChinese(text);
+    if (isChineseAudioRequest) {
+      return {
+        'prepared': false,
+        'reason': 'chinese_tts_disabled',
+      };
+    }
     await _cachedListeningPath(
       text: text,
-      voiceType: useChineseVoice
-          ? _listeningChineseVoiceType
-          : TtsService.defaultVoiceType,
-      preferRequestedVoice: useChineseVoice,
+      voiceType: TtsService.defaultVoiceType,
+      preferRequestedVoice: false,
       cachePurpose: 'listening_tts',
     );
     return {'prepared': true};
@@ -5793,29 +5783,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Future<Map<String, dynamic>> _handleListeningPreloadChinese(
     BridgeMessage message,
-  ) async {
-    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
-        _activeListeningArticleId;
-    if (articleId == null) {
-      return {'started': false, 'reason': 'listening_not_open'};
-    }
-    final rawArticle = await DatabaseService.getArticleById(articleId);
-    if (rawArticle == null) {
-      return {'started': false, 'reason': 'article_not_found'};
-    }
-    final article = await _articleWithCurrentSentences(rawArticle);
-    final items = _payloadListeningItems(message.payload) ??
-        await _listeningItemsForArticle(article);
-    final preloadRunId = _resetPreloadAggregate(
-      articleId,
-      'listening',
-      scope: 'chinese',
-    );
-    unawaited(
-      _preloadListeningChinese(articleId, items, runId: preloadRunId),
-    );
-    return {'started': true};
-  }
+  ) async =>
+      {'started': false, 'reason': 'chinese_tts_disabled'};
 
   Future<Map<String, dynamic>> _handleListeningUpdateSentence(
     BridgeMessage message,
@@ -5896,8 +5865,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       articleId: articleId,
       oldEnglish: oldEnglish,
       newEnglish: english,
-      oldChinese: oldChinese,
-      newChinese: chinese,
       refreshEnglish: englishChanged,
       refreshChinese: chineseChanged,
     );
@@ -5949,8 +5916,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       articleId: articleId,
       oldEnglish: english,
       newEnglish: english,
-      oldChinese: chinese,
-      newChinese: chinese,
       refreshEnglish: part == 'both' || part == 'english',
       refreshChinese: refreshChinese,
     );
@@ -6343,7 +6308,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Future<void> _playListeningText({
     required String text,
-    required bool useChineseVoice,
   }) async {
     final token = ++_listeningPlaybackToken;
     _listeningPausedForWord = false;
@@ -6354,10 +6318,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     try {
       final handle = await TtsMemoryCacheService.load(
         text: text,
-        voiceType: useChineseVoice
-            ? _listeningChineseVoiceType
-            : TtsService.defaultVoiceType,
-        preferRequestedVoice: useChineseVoice,
+        voiceType: TtsService.defaultVoiceType,
+        preferRequestedVoice: false,
         articleId: _activeArticleContextId,
         cachePurpose: 'listening_tts',
       );
@@ -6404,9 +6366,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required int articleId,
     required List<Map<String, dynamic>> items,
     required int startIndex,
-    required bool bilingual,
     required bool singleItem,
-    required bool strictPreloaded,
   }) async {
     await _stopSongPlayback();
     final cleanItems = items
@@ -6426,8 +6386,37 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final player = AudioPlayer();
     _listeningPlayer = player;
     var currentPlaybackIndex = safeStart;
+    final pendingHandles = <int, Future<TtsMemoryHandle>>{};
+
+    Future<TtsMemoryHandle> loadHandleAt(int itemIndex) {
+      final item = cleanItems[itemIndex];
+      final english = (item['english'] ?? '').toString().trim();
+      return TtsMemoryCacheService.load(
+        text: english,
+        voiceType: TtsService.defaultVoiceType,
+        preferRequestedVoice: false,
+        articleId: articleId,
+        cachePurpose: 'listening_tts',
+      );
+    }
+
+    void warmHandleAt(int itemIndex) {
+      if (itemIndex < safeStart || itemIndex > endIndex) {
+        return;
+      }
+      if (pendingHandles.containsKey(itemIndex)) {
+        return;
+      }
+      final future = loadHandleAt(itemIndex);
+      pendingHandles[itemIndex] = future;
+      unawaited(future.then<void>((_) {}, onError: (_, __) {}));
+    }
 
     try {
+      warmHandleAt(safeStart);
+      if (!singleItem) {
+        warmHandleAt(safeStart + 1);
+      }
       for (var index = safeStart; index <= endIndex; index += 1) {
         if (!_isActiveListeningPlayback(token)) {
           return;
@@ -6435,71 +6424,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         final item = cleanItems[index];
         final sentenceIndex = (item['index'] as num?)?.toInt() ?? index;
         currentPlaybackIndex = sentenceIndex;
-        final english = (item['english'] ?? '').toString().trim();
         await _pushEvent('listening.playback', {
           'articleId': articleId,
           'index': sentenceIndex,
           'part': 'english',
           'state': 'partStart',
         });
-        final englishHandle = strictPreloaded
-            ? await TtsMemoryCacheService.requireInMemory(
-                text: english,
-                voiceType: TtsService.defaultVoiceType,
-                preferRequestedVoice: false,
-                articleId: articleId,
-                cachePurpose: 'listening_tts',
-              )
-            : await TtsMemoryCacheService.load(
-                text: english,
-                voiceType: TtsService.defaultVoiceType,
-                preferRequestedVoice: false,
-                articleId: articleId,
-                cachePurpose: 'listening_tts',
-              );
+        final englishHandle =
+            await (pendingHandles.remove(index) ?? loadHandleAt(index));
         if (!_isActiveListeningPlayback(token)) {
           return;
+        }
+        if (!singleItem) {
+          warmHandleAt(index + 1);
         }
         await _playAudioSourceToEnd(
           player: player,
           source: englishHandle.toAudioSource(),
-          isActive: () => _isActiveListeningPlayback(token),
-        );
-
-        final chinese = (item['chinese'] ?? '').toString().trim();
-        if (!bilingual || chinese.isEmpty) {
-          continue;
-        }
-        if (!_isActiveListeningPlayback(token)) {
-          return;
-        }
-        await _pushEvent('listening.playback', {
-          'articleId': articleId,
-          'index': sentenceIndex,
-          'part': 'chinese',
-          'state': 'partStart',
-        });
-        final chineseHandle = strictPreloaded
-            ? await TtsMemoryCacheService.requireInMemory(
-                text: chinese,
-                voiceType: _listeningChineseVoiceType,
-                preferRequestedVoice: true,
-                articleId: articleId,
-                cachePurpose: 'listening_tts',
-              )
-            : await TtsMemoryCacheService.load(
-                text: chinese,
-                voiceType: _listeningChineseVoiceType,
-                preferRequestedVoice: true,
-                articleId: articleId,
-                cachePurpose: 'listening_tts',
-              );
-        if (!_isActiveListeningPlayback(token)) {
-          return;
-        }
-        await _playAudioSourceToEnd(
-          player: player,
-          source: chineseHandle.toAudioSource(),
           isActive: () => _isActiveListeningPlayback(token),
         );
       }
@@ -6518,8 +6459,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           'index': currentPlaybackIndex,
           'part': null,
           'state': 'error',
-          'error':
-              strictPreloaded ? '全屏播放需要先完成全部音频预加载：$error' : error.toString(),
+          'error': error.toString(),
         });
       }
       rethrow;
@@ -6575,27 +6515,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required int articleId,
     required String oldEnglish,
     required String newEnglish,
-    required String oldChinese,
-    required String newChinese,
     required bool refreshEnglish,
     required bool refreshChinese,
   }) async {
     final errors = <String>[];
     var englishStatus = refreshEnglish ? 'pending' : 'unchanged';
-    var chineseStatus = refreshChinese ? 'pending' : 'unchanged';
+    final chineseStatus = refreshChinese ? 'disabled' : 'unchanged';
 
     if (refreshEnglish) {
       try {
         await _evictListeningTtsForText(
           articleId: articleId,
           text: oldEnglish,
-          useChineseVoice: false,
           deleteDiskCache: true,
         );
         await _evictListeningTtsForText(
           articleId: articleId,
           text: newEnglish,
-          useChineseVoice: false,
           deleteDiskCache: true,
         );
         await TtsMemoryCacheService.load(
@@ -6613,39 +6549,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
 
-    if (refreshChinese) {
-      try {
-        await _evictListeningTtsForText(
-          articleId: articleId,
-          text: oldChinese,
-          useChineseVoice: true,
-          deleteDiskCache: true,
-        );
-        if (newChinese.trim().isEmpty) {
-          chineseStatus = 'cleared';
-        } else {
-          await _evictListeningTtsForText(
-            articleId: articleId,
-            text: newChinese,
-            useChineseVoice: true,
-            deleteDiskCache: true,
-          );
-          await TtsMemoryCacheService.load(
-            text: newChinese,
-            voiceType: _listeningChineseVoiceType,
-            preferRequestedVoice: true,
-            articleId: articleId,
-            cachePurpose: 'listening_tts',
-            forceRefresh: true,
-          );
-          chineseStatus = 'ready';
-        }
-      } catch (error) {
-        chineseStatus = 'error';
-        errors.add('中文语音合成失败：$error');
-      }
-    }
-
     return {
       'status': errors.isEmpty ? 'ready' : 'error',
       'english': englishStatus,
@@ -6657,7 +6560,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Future<void> _evictListeningTtsForText({
     required int articleId,
     required String text,
-    required bool useChineseVoice,
     required bool deleteDiskCache,
   }) async {
     if (text.trim().isEmpty) {
@@ -6665,10 +6567,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     await TtsMemoryCacheService.evictForText(
       text: text,
-      voiceType: useChineseVoice
-          ? _listeningChineseVoiceType
-          : TtsService.defaultVoiceType,
-      preferRequestedVoice: useChineseVoice,
+      voiceType: TtsService.defaultVoiceType,
+      preferRequestedVoice: false,
       articleId: articleId,
       cachePurpose: 'listening_tts',
       deleteDiskCache: deleteDiskCache,
@@ -6945,51 +6845,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         return;
       }
       rethrow;
-    }
-  }
-
-  Future<void> _pushListeningTranslations(
-    int articleId,
-    List<String> sentences,
-  ) async {
-    try {
-      const batchSize = 4;
-      final indexedSentences = <MapEntry<int, String>>[];
-      for (var i = 0; i < sentences.length; i++) {
-        final sentence = sentences[i].trim();
-        if (sentence.isNotEmpty) {
-          indexedSentences.add(MapEntry(i, sentence));
-        }
-      }
-
-      for (var start = 0; start < indexedSentences.length; start += batchSize) {
-        final batch = indexedSentences.skip(start).take(batchSize).toList();
-        final translations = await Future.wait(
-          batch.map((entry) async {
-            final translated = await TranslationService.toChinese(
-              entry.value,
-              articleId: articleId,
-              sentenceIndex: entry.key,
-              cachePurpose: 'listening_translation',
-            );
-            return {
-              'index': entry.key,
-              'chinese': translated.trim(),
-            };
-          }),
-        );
-        await _pushEvent('listening.translations', {
-          'articleId': articleId,
-          'translations': translations,
-        });
-      }
-    } catch (error) {
-      TomatoLogger.warn(
-        category: 'listening',
-        event: 'translations.failed',
-        articleId: articleId,
-        error: error,
-      );
     }
   }
 
@@ -7435,6 +7290,107 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         .join('-');
   }
 
+  Future<void> _saveArticleTranslationsAtCreate({
+    required int articleId,
+    required List<String> sentences,
+    required ParsedPracticeInput parsedInput,
+  }) async {
+    if (sentences.isEmpty) {
+      return;
+    }
+
+    final createdAt = DateTime.now();
+    final rowsByIndex = <int, ArticleSentenceTranslation>{};
+    if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
+      for (final row in parsedInput.buildSentenceTranslations(
+        articleId: articleId,
+        sentences: sentences,
+        now: createdAt,
+      )) {
+        rowsByIndex[row.sentenceIndex] = row;
+      }
+    }
+
+    const batchSize = 4;
+    for (var start = 0; start < sentences.length; start += batchSize) {
+      final futures = <Future<ArticleSentenceTranslation?>>[];
+      for (var offset = 0; offset < batchSize; offset += 1) {
+        final index = start + offset;
+        if (index >= sentences.length || rowsByIndex.containsKey(index)) {
+          continue;
+        }
+        futures.add(
+          _generatedArticleTranslationRow(
+            articleId: articleId,
+            sentenceIndex: index,
+            sentence: sentences[index],
+            createdAt: createdAt,
+          ),
+        );
+      }
+
+      for (final row in await Future.wait(futures)) {
+        if (row != null) {
+          rowsByIndex[row.sentenceIndex] = row;
+        }
+      }
+    }
+
+    final rows = rowsByIndex.values.toList(growable: false)
+      ..sort((a, b) => a.sentenceIndex.compareTo(b.sentenceIndex));
+    if (rows.isNotEmpty) {
+      await DatabaseService.saveArticleSentenceTranslations(articleId, rows);
+    }
+  }
+
+  Future<ArticleSentenceTranslation?> _generatedArticleTranslationRow({
+    required int articleId,
+    required int sentenceIndex,
+    required String sentence,
+    required DateTime createdAt,
+  }) async {
+    final english = sentence.trim();
+    if (english.isEmpty) {
+      return null;
+    }
+
+    try {
+      final reply = await PracticeTextService.translateToChinese(
+        text: english,
+        articleId: articleId,
+        cachePurpose: 'article_sentence_translation',
+      ).timeout(const Duration(seconds: 20));
+      if (reply.source != TextGenerationReplySource.remote &&
+          reply.source != TextGenerationReplySource.cached) {
+        return null;
+      }
+      final chinese = reply.text.trim();
+      if (chinese.isEmpty || chinese.startsWith('中文翻译暂不可用')) {
+        return null;
+      }
+      return ArticleSentenceTranslation(
+        articleId: articleId,
+        sentenceIndex: sentenceIndex,
+        englishSentence: english,
+        chineseText: chinese,
+        source: reply.source == TextGenerationReplySource.cached
+            ? 'cached_at_create'
+            : 'generated_at_create',
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+    } catch (error) {
+      TomatoLogger.warn(
+        category: 'article',
+        event: 'translation_at_create.failed',
+        articleId: articleId,
+        data: {'sentenceIndex': sentenceIndex},
+        error: error,
+      );
+      return null;
+    }
+  }
+
   Future<String> _englishPracticeContent(
     String content, {
     int? articleId,
@@ -7612,10 +7568,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final subtitleTranslations = _payloadSubtitleTranslations(payload);
     return RecordingExportRequest(
       articleId: articleId,
-      mode: _payloadString(payload, 'mode', fallback: 'english').trim() ==
-              'bilingual'
-          ? 'bilingual'
-          : 'english',
+      mode: 'english',
       codec: codecText == 'h265' || codecText == 'hevc'
           ? RecordingCodec.h265
           : RecordingCodec.h264,

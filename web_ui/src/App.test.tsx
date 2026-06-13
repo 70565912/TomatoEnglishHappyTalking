@@ -1060,7 +1060,7 @@ describe('App', () => {
     });
   });
 
-  it('opens listening practice and switches to bilingual playback mode', async () => {
+  it('opens listening practice with English-only playback while showing subtitles', async () => {
     window.location.hash = '/listen/1';
     const article = {
       id: 1,
@@ -1105,7 +1105,6 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByText('英文')).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'bright' })).toHaveLength(1);
     expect(screen.getAllByText('汤姆发现了一个明亮的零食盒。').length).toBeGreaterThan(0);
@@ -1114,10 +1113,7 @@ describe('App', () => {
     expect(document.querySelector('.picture-book-scene')).toBeInTheDocument();
     expect(document.querySelector('.listening-side')).not.toBeInTheDocument();
 
-    const bilingualButton = screen.getByRole('button', { name: '中英对照' });
-    fireEvent.click(bilingualButton);
-
-    expect(bilingualButton).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: '中英对照' })).not.toBeInTheDocument();
     expect(screen.queryByText('会按顺序播放英文，再播放中文对照。')).not.toBeInTheDocument();
     expect(screen.queryByText('中英对照听力')).not.toBeInTheDocument();
     expect(document.querySelector('.listening-page .waveform')).not.toBeInTheDocument();
@@ -1129,8 +1125,9 @@ describe('App', () => {
     await waitFor(() => {
       const playCalls = calls.filter((call) => call.type === 'listening.playSequence');
       expect(playCalls.length).toBeGreaterThan(0);
-      expect(playCalls[0]?.payload).toMatchObject({ startIndex: 1, mode: 'bilingual' });
+      expect(playCalls[0]?.payload).toMatchObject({ startIndex: 1, mode: 'english' });
     });
+    expect(calls.some((call) => call.type === 'listening.preloadChinese')).toBe(false);
   });
 
   it('keeps subtitle editing on listening rows but not on the picture subtitle overlay', async () => {
@@ -1331,7 +1328,7 @@ describe('App', () => {
         if (type === 'listening.fullscreenReady') {
           return ok(message.id, type, {
             ready: audioReady,
-            reasons: audioReady ? [] : ['英文音频还没有全部加载到内存'],
+            reasons: audioReady ? [] : ['当前和下一句英文音频还没有加载到内存'],
             requiredEnglish: 2,
             readyEnglish: audioReady ? 2 : 1,
             requiredChinese: 0,
@@ -1360,7 +1357,7 @@ describe('App', () => {
     expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
     const fullscreenButton = await screen.findByRole('button', { name: /全屏播放/ });
     await waitFor(() => expect(fullscreenButton).toBeDisabled());
-    expect(await screen.findByText('英文音频还没有全部加载到内存')).toBeInTheDocument();
+    expect(await screen.findByText('当前和下一句英文音频还没有加载到内存')).toBeInTheDocument();
 
     audioReady = true;
     act(() => {
@@ -1395,7 +1392,6 @@ describe('App', () => {
         startIndex: 0,
         mode: 'english',
         singleItem: false,
-        strictPreloaded: true,
       });
     });
 

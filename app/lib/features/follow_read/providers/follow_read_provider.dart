@@ -20,7 +20,6 @@ import '../../../services/scoring_service.dart';
 import '../../../services/streaming_asr_service.dart';
 import '../../../services/tts_memory_cache_service.dart';
 import '../../../services/tts_service.dart' show TtsException;
-import '../../../services/translation_service.dart';
 
 part 'follow_read_provider.g.dart';
 
@@ -156,13 +155,11 @@ class FollowRead extends _$FollowRead {
     if (rawArticle == null) throw Exception('文章不存在（id=$articleId）');
     final article = await _articleWithCurrentSentences(rawArticle);
     final initialSentence = article.sentences.first;
-    final initialTranslation = (await TranslationService.toChinese(
-      initialSentence,
+    final initialTranslation = await _savedTranslationFor(
       articleId: article.id,
       sentenceIndex: 0,
-      cachePurpose: 'follow_translation',
-    ))
-        .trim();
+      sentence: initialSentence,
+    );
     final initialRecording =
         await _latestRecordingFor(index: 0, sentence: initialSentence);
 
@@ -871,13 +868,11 @@ class FollowRead extends _$FollowRead {
     } else {
       final nextIndex = _s.currentIndex + 1;
       final nextSentence = _s.article.sentences[nextIndex];
-      final nextTranslation = (await TranslationService.toChinese(
-        nextSentence,
+      final nextTranslation = await _savedTranslationFor(
         articleId: _s.article.id,
         sentenceIndex: nextIndex,
-        cachePurpose: 'follow_translation',
-      ))
-          .trim();
+        sentence: nextSentence,
+      );
       final latestRecording = await _latestRecordingFor(
         index: nextIndex,
         sentence: nextSentence,
@@ -899,6 +894,22 @@ class FollowRead extends _$FollowRead {
         ),
       );
     }
+  }
+
+  Future<String> _savedTranslationFor({
+    required int? articleId,
+    required int sentenceIndex,
+    required String sentence,
+  }) async {
+    if (articleId == null) {
+      return '';
+    }
+    final translation = await DatabaseService.getArticleSentenceTranslation(
+      articleId,
+      sentenceIndex,
+      sentence,
+    );
+    return translation?.trim() ?? '';
   }
 
   // ---- Re-try current sentence ----

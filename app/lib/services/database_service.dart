@@ -728,6 +728,51 @@ class DatabaseService {
     return translated.isEmpty ? null : translated;
   }
 
+  static Future<Map<int, String>> getArticleSentenceTranslationsForSentences({
+    required int articleId,
+    required List<String> sentences,
+  }) async {
+    if (sentences.isEmpty) {
+      return const {};
+    }
+
+    final db = await _database;
+    final maps = await db.query(
+      'article_sentence_translations',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+      orderBy: 'sentence_index ASC',
+    );
+    if (maps.isEmpty) {
+      return const {};
+    }
+
+    final translations = <int, String>{};
+    for (final map in maps) {
+      final row = ArticleSentenceTranslation.fromMap(map);
+      final sentenceIndex = row.sentenceIndex;
+      if (sentenceIndex < 0 || sentenceIndex >= sentences.length) {
+        continue;
+      }
+      final storedSentence = _normalizeSentenceForTranslationLookup(
+        row.englishSentence,
+      );
+      final requestedSentence = _normalizeSentenceForTranslationLookup(
+        sentences[sentenceIndex],
+      );
+      if (storedSentence.isNotEmpty &&
+          requestedSentence.isNotEmpty &&
+          storedSentence != requestedSentence) {
+        continue;
+      }
+      final translated = row.chineseText.trim();
+      if (translated.isNotEmpty) {
+        translations[sentenceIndex] = translated;
+      }
+    }
+    return translations;
+  }
+
   static Future<void> upsertArticleSentenceTranslation({
     required int articleId,
     required int sentenceIndex,

@@ -767,18 +767,18 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return { playbackState: 'success' };
   }
   if (type === 'listening.fullscreenReady') {
-    const mode = String(payload.mode ?? 'english');
     const items = Array.isArray(payload.items) ? payload.items : mockListening.items;
-    const requiredChinese = mode === 'bilingual'
-      ? items.filter((item) => String((item as { chinese?: unknown }).chinese ?? '').trim()).length
-      : 0;
+    const startIndex = Number(payload.startIndex ?? 0);
+    const lookaheadCount = Math.max(1, Math.min(4, Number(payload.lookaheadCount ?? 2)));
+    const startPosition = Math.max(0, Math.min(items.length - 1, Number.isFinite(startIndex) ? startIndex : 0));
+    const requiredEnglish = items.slice(startPosition, startPosition + lookaheadCount).length;
     return {
       ready: true,
       reasons: [],
-      requiredEnglish: items.length,
-      readyEnglish: items.length,
-      requiredChinese,
-      readyChinese: requiredChinese,
+      requiredEnglish,
+      readyEnglish: requiredEnglish,
+      requiredChinese: 0,
+      readyChinese: 0,
       missingEnglish: [],
       missingChinese: [],
       failed: 0,
