@@ -49,15 +49,25 @@ void main() {
       songUrl: 'https://suno.com/song/one',
       stylePrompt: 'storybook pop',
       styleKey: 'suno:storybook pop',
+      lyricsHash: 'lyrics-hash',
+      timelinePath: r'F:\songs\suno-v1.timeline.json',
+      timelineStatus: 'ready',
+      timelineConfidence: 0.92,
     );
 
     final json = version.toJson();
     expect(json['stylePrompt'], 'storybook pop');
     expect(json['styleKey'], 'suno:storybook pop');
+    expect(json['timelineStatus'], 'ready');
+    expect(json['timelineConfidence'], 0.92);
 
     final decoded = ArticleSongVersion.fromJson(json);
     expect(decoded?.stylePrompt, 'storybook pop');
     expect(decoded?.styleKey, 'suno:storybook pop');
+    expect(decoded?.lyricsHash, 'lyrics-hash');
+    expect(decoded?.timelinePath, r'F:\songs\suno-v1.timeline.json');
+    expect(decoded?.timelineStatus, 'ready');
+    expect(decoded?.timelineConfidence, 0.92);
   });
 
   test('builds legacy and multi-style Suno cache groups', () {

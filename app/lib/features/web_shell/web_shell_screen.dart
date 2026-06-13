@@ -16,6 +16,7 @@ import '../../core/webview/webview_environment.dart';
 import '../../data/models/article_model.dart';
 import '../../data/models/picture_book_model.dart';
 import '../../services/api_cache_service.dart';
+import '../../services/asset_path_service.dart';
 import '../../services/database_service.dart';
 import '../../services/content_safety_service.dart';
 import '../../services/minimax_music_service.dart';
@@ -25,6 +26,7 @@ import '../../services/practice_input_parser.dart';
 import '../../services/practice_text_service.dart';
 import '../../services/recording_export_service.dart';
 import '../../services/scoring_service.dart';
+import '../../services/song_subtitle_timeline_service.dart';
 import '../../services/text_generation_service.dart';
 import '../../services/tts_memory_cache_service.dart';
 import '../../services/tts_service.dart';
@@ -71,6 +73,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   final Map<int, Future<ArticleSongGenerationResult>> _songGenerationTasks = {};
   final Map<int, String> _songGenerationStyles = {};
   final Map<int, String> _songErrors = {};
+  final Map<String, Future<ArticleSongVersion>> _songTimelineTasks = {};
+  final Map<String, String> _songTimelineErrors = {};
   InAppWebViewController? _sunoController;
   Timer? _sunoAutomationTimer;
   int? _sunoArticleId;
@@ -172,8 +176,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             _handleListeningSongConfirmSunoCreate,
         'listening.songDownloadSunoExisting':
             _handleListeningSongDownloadSunoExisting,
+        'listening.songTimelineGenerate': _handleListeningSongTimelineGenerate,
         'listening.songPlay': _handleListeningSongPlay,
         'listening.songStop': _handleListeningSongStop,
+        'listening.songRecordVideo': _handleListeningSongRecordVideo,
         'suno.debugInspect': _handleSunoDebugInspect,
         'suno.debugFill': _handleSunoDebugFill,
         'suno.debugRows': _handleSunoDebugRows,
@@ -1174,7 +1180,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       creditsRemaining: _sunoCreditsRemaining,
       downloadComplete: _currentSunoDownloadsComplete(),
       detectedSongUrls: _sunoDetectedSongUrls.toList(growable: false),
-      versions: List<ArticleSongVersion>.unmodifiable(_sunoVersions),
+      versions: _songVersionsForPayload(articleId, _sunoVersions),
     );
   }
 
@@ -1228,7 +1234,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final metadataPath = (metadata['metadataPath'] ?? '').toString().trim();
       final hasMetadataFile =
           metadataPath.isNotEmpty && await File(metadataPath).exists();
-      final audioPath = (metadata['audioPath'] ?? '').toString().trim();
+      final audioPath = await _migrateSunoAssetPathIfNeeded(
+        (metadata['audioPath'] ?? '').toString(),
+      );
       final hasAudio = audioPath.isNotEmpty && await File(audioPath).exists();
       if (!hasAudio &&
           metadataPath.isNotEmpty &&
@@ -1239,6 +1247,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final versions = await _sunoVersionsFromMetadata(
         metadata,
         fallbackStylePrompt: stylePrompt,
+      );
+      final resolvedMetadataPath = await _migrateSunoMetadataPathIfNeeded(
+        metadataPath: metadataPath,
+        metadata: metadata,
+        versions: versions,
       );
       builder.addVersions(versions);
       if (versions.isEmpty && hasAudio) {
@@ -1262,7 +1275,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             builder.versions.map((version) => version.songUrl),
           );
       builder.songUrl ??= songUrl;
-      builder.metadataPath ??= _nonEmptyString(metadataPath);
+      builder.metadataPath ??= _nonEmptyString(resolvedMetadataPath);
       builder.manualActionMessage ??=
           _nonEmptyString(metadata['manualActionMessage']);
     }
@@ -1285,8 +1298,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return null;
     }
     final latestGroup = groups.first;
-    final versions =
+    final rawVersions =
         groups.expand((group) => group.versions).toList(growable: false);
+    final versions = _songVersionsForPayload(articleId, rawVersions);
     final detectedSongUrls = groups
         .expand((group) => group.detectedSongUrls)
         .where((value) => value.trim().isNotEmpty)
@@ -1327,17 +1341,35 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         if (version == null) {
           continue;
         }
-        if (await File(version.audioPath).exists()) {
+        final audioPath = await _migrateSunoAssetPathIfNeeded(
+          version.audioPath,
+        );
+        if (await File(audioPath).exists()) {
+          final timelinePath = version.timelinePath == null
+              ? null
+              : await ApiCacheService.migrateLegacyCacheFileIfNeeded(
+                  version.timelinePath!,
+                );
+          final hasTimeline = timelinePath != null &&
+              timelinePath.trim().isNotEmpty &&
+              await File(timelinePath).exists();
           versions.add(
             ArticleSongVersion(
               id: version.id,
-              audioPath: version.audioPath,
+              audioPath: audioPath,
               title: version.title,
               songUrl: version.songUrl,
               durationMs: version.durationMs,
               createdAt: version.createdAt,
               stylePrompt: version.stylePrompt ?? fallbackStylePrompt,
               styleKey: version.styleKey ?? fallbackStyleKey,
+              lyricsHash: version.lyricsHash,
+              timelinePath: hasTimeline ? timelinePath : null,
+              timelineStatus:
+                  hasTimeline ? _versionTimelineStatus(version) : 'missing',
+              timelineConfidence:
+                  hasTimeline ? version.timelineConfidence : null,
+              timelineError: hasTimeline ? version.timelineError : null,
             ),
           );
         }
@@ -2079,6 +2111,81 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return _startExistingSunoDownload(article);
   }
 
+  Future<Map<String, dynamic>> _handleListeningSongTimelineGenerate(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final article = await _songArticle(articleId);
+    final version = await _selectedSongVersion(
+      articleId: articleId,
+      versionId: _payloadString(message.payload, 'versionId').trim(),
+    );
+    final key = _songTimelineKey(articleId, version.id);
+    final existing = _songTimelineTasks[key];
+    if (existing != null) {
+      await existing;
+      return _songStatePayload(articleId);
+    }
+    _songTimelineErrors.remove(key);
+    final task = _generateTimelineForVersion(article, version);
+    _songTimelineTasks[key] = task;
+    unawaited(_pushSongState(articleId));
+    Object? failure;
+    StackTrace? failureStack;
+    try {
+      await task;
+    } catch (error, stackTrace) {
+      _songTimelineErrors[key] = _displayError(error);
+      failure = error;
+      failureStack = stackTrace;
+    } finally {
+      _songTimelineTasks.remove(key);
+    }
+    await _pushSongState(articleId);
+    if (failure != null) {
+      Error.throwWithStackTrace(failure, failureStack ?? StackTrace.current);
+    }
+    return _songStatePayload(articleId);
+  }
+
+  Future<Map<String, dynamic>> _handleListeningSongRecordVideo(
+    BridgeMessage message,
+  ) async {
+    if (_recordingCancelToken != null) {
+      throw const FormatException('已有录制导出正在进行，请先取消或等待完成');
+    }
+    final request = await _songRecordingRequestFromPayload(message.payload);
+    final token = RecordingCancelToken();
+    _recordingCancelToken = token;
+    try {
+      final result = await RecordingExportService.exportSongVideo(
+        request,
+        cancelToken: token,
+        onProgress: (progress) {
+          unawaited(_pushEvent(
+            'listening.recording.progress',
+            progress.toJson(),
+          ));
+        },
+      );
+      await _pushEvent('listening.recording.completed', result.toJson());
+      return result.toJson();
+    } catch (error) {
+      final payload = {
+        'articleId': request.articleId,
+        'message': error.toString(),
+      };
+      await _pushEvent('listening.recording.error', payload);
+      rethrow;
+    } finally {
+      _recordingCancelToken = null;
+    }
+  }
+
   Future<Map<String, dynamic>> _handleListeningSongPlay(
     BridgeMessage message,
   ) async {
@@ -2135,7 +2242,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           .toList(growable: false),
       versions: versions,
     );
-    await _playSongFile(articleId: articleId, path: path, state: state);
+    await _playSongFile(
+      articleId: articleId,
+      path: path,
+      state: state,
+      versionId: selectedVersion?.id,
+      timelinePath: selectedVersion?.timelinePath,
+    );
     return {'playbackState': 'playing'};
   }
 
@@ -2144,6 +2257,193 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   ) async {
     await _stopSongPlayback();
     return {'stopped': true};
+  }
+
+  Future<ArticleSongVersion> _selectedSongVersion({
+    required int articleId,
+    required String versionId,
+  }) async {
+    final payload = await _songStatePayload(articleId);
+    final versions = ((payload['versions'] as List?) ?? const [])
+        .map(ArticleSongVersion.fromJson)
+        .whereType<ArticleSongVersion>()
+        .toList(growable: false);
+    if (versions.isEmpty) {
+      throw const FormatException('还没有可用的本地歌曲版本');
+    }
+    if (versionId.isEmpty) {
+      return versions.first;
+    }
+    for (final version in versions) {
+      if (version.id == versionId) {
+        return version;
+      }
+    }
+    throw FormatException('没有找到歌曲版本：$versionId');
+  }
+
+  Future<ArticleSongVersion> _generateTimelineForVersion(
+    Article article,
+    ArticleSongVersion version,
+  ) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      throw const FormatException('文章尚未保存，不能生成歌曲字幕');
+    }
+    final lyricLines = _articleSongLyrics(article)
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    final translations = <int, String>{};
+    for (var i = 0; i < lyricLines.length; i += 1) {
+      final translation = await DatabaseService.getArticleSentenceTranslation(
+        articleId,
+        i,
+        lyricLines[i],
+      );
+      if (translation != null && translation.trim().isNotEmpty) {
+        translations[i] = translation.trim();
+      }
+    }
+    final result = await SongSubtitleTimelineService.generate(
+      articleId: articleId,
+      audioPath: version.audioPath,
+      lyricLines: lyricLines,
+      translations: translations,
+      source: 'suno',
+    );
+    final updated = ArticleSongVersion(
+      id: version.id,
+      audioPath: version.audioPath,
+      title: version.title,
+      songUrl: version.songUrl,
+      durationMs: version.durationMs ?? result.timeline.durationMs,
+      createdAt: version.createdAt,
+      stylePrompt: version.stylePrompt,
+      styleKey: version.styleKey,
+      lyricsHash: result.lyricsHash,
+      timelinePath: result.timelinePath,
+      timelineStatus: 'ready',
+      timelineConfidence: result.timeline.confidence,
+      timelineError: null,
+    );
+    await _persistUpdatedSunoVersion(article, updated);
+    return updated;
+  }
+
+  Future<void> _persistUpdatedSunoVersion(
+    Article article,
+    ArticleSongVersion updated,
+  ) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      return;
+    }
+    final currentPayload = await _songStatePayload(articleId);
+    final currentVersions = ((currentPayload['versions'] as List?) ?? const [])
+        .map(ArticleSongVersion.fromJson)
+        .whereType<ArticleSongVersion>()
+        .toList();
+    var replaced = false;
+    for (var i = 0; i < currentVersions.length; i += 1) {
+      if (currentVersions[i].id == updated.id) {
+        currentVersions[i] = updated;
+        replaced = true;
+      }
+    }
+    if (!replaced) {
+      currentVersions.add(updated);
+    }
+    if (_sunoArticleId == articleId) {
+      _sunoVersions
+        ..clear()
+        ..addAll(currentVersions);
+    }
+    await _saveSunoMetadataForVersions(
+      article: article,
+      versions: currentVersions,
+      stylePrompt: updated.stylePrompt ?? _sunoStylePrompt,
+    );
+  }
+
+  Future<void> _saveSunoMetadataForVersions({
+    required Article article,
+    required List<ArticleSongVersion> versions,
+    required String stylePrompt,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      return;
+    }
+    final normalizedStylePrompt = stylePrompt.trim();
+    final styleKey = _sunoStyleKey(normalizedStylePrompt);
+    final currentVersions = versions
+        .where((version) => (version.styleKey ?? styleKey).trim() == styleKey)
+        .toList(growable: false);
+    final settings = await _songSettingsPayload();
+    final directory = Directory(
+      (settings['sunoOutputDirectory'] ?? _defaultSunoOutputDirectory())
+          .toString(),
+    );
+    await directory.create(recursive: true);
+    final metadataPath = path_lib.join(
+      directory.path,
+      'article_${articleId}_suno_${DateTime.now().millisecondsSinceEpoch}.json',
+    );
+    final detectedSongUrls = currentVersions
+        .map((version) => (version.songUrl ?? '').trim())
+        .where((value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value))
+        .toSet()
+        .toList(growable: false);
+    final currentAudioPath =
+        currentVersions.isNotEmpty ? currentVersions.first.audioPath : null;
+    final currentSongUrl = _firstNonEmptyString(
+      currentVersions.map((version) => version.songUrl),
+    );
+    final metadata = {
+      'provider': 'suno',
+      'articleId': articleId,
+      'articleTitle': article.title,
+      'stylePrompt': normalizedStylePrompt,
+      'styleKey': styleKey,
+      'songUrl': currentSongUrl,
+      'detectedSongUrls': detectedSongUrls,
+      'downloadComplete': detectedSongUrls.isNotEmpty,
+      'audioPath': currentAudioPath,
+      'metadataPath': metadataPath,
+      'versions': currentVersions.map((version) => version.toJson()).toList(),
+      'manualActionMessage': null,
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+    await File(metadataPath).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(metadata),
+      flush: true,
+    );
+    if (_sunoArticleId == articleId &&
+        styleKey == _sunoStyleKey(_sunoStylePrompt)) {
+      _sunoMetadataPath = metadataPath;
+    }
+    final request = {
+      'version': 1,
+      'provider': 'suno',
+      'articleId': articleId,
+      'articleTitle': article.title,
+      'contentHash': await _articleSongContentHash(article),
+      'stylePrompt': normalizedStylePrompt,
+    };
+    final cacheKey = await ApiCacheService.keyForJson(
+      'article_suno_song',
+      request,
+    );
+    await ApiCacheService.putJson(
+      cacheKey: cacheKey,
+      kind: 'suno_music',
+      purpose: _sunoSongPurpose,
+      request: request,
+      jsonValue: metadata,
+      articleId: articleId,
+    );
   }
 
   Future<Map<String, dynamic>> _startSunoAutomation({
@@ -5862,9 +6162,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         ) ??
         20;
 
+    final safeSunoOutputDirectory =
+        _sunoOutputDirectorySettingForSave(sunoOutputDirectory);
     await AppConfig.saveSongSettings(
       defaultSource: defaultSource,
-      sunoOutputDirectory: sunoOutputDirectory,
+      sunoOutputDirectory: safeSunoOutputDirectory,
       sunoTimeoutMinutes: timeout,
     );
     final payload = await _settingsPayload();
@@ -6377,6 +6679,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required int articleId,
     required String path,
     required ArticleSongState state,
+    String? versionId,
+    String? timelinePath,
   }) async {
     final token = ++_songPlaybackToken;
     await _stopListeningPlayback();
@@ -6386,6 +6690,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final player = AudioPlayer();
     _songPlayer = player;
     try {
+      final timeline = (timelinePath ?? '').trim().isEmpty
+          ? null
+          : await SongSubtitleTimelineService.readTimeline(timelinePath!);
       await player.setFilePath(path).timeout(const Duration(seconds: 10));
       await player.seek(Duration.zero).timeout(const Duration(seconds: 3));
       await player.setVolume(1.0);
@@ -6393,23 +6700,107 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'listening.song.state',
         state.copyWith(status: 'playing').toJson(),
       );
+      TomatoLogger.info(
+        category: 'listening',
+        event: 'song.play.start',
+        articleId: articleId,
+        data: {
+          'versionId': versionId,
+          'audioPath': path,
+          'durationMs': player.duration?.inMilliseconds ?? timeline?.durationMs,
+          'timelinePath': timelinePath,
+          'timelineCueCount': timeline?.cues.length,
+        },
+      );
 
       late StreamSubscription<PlayerState> stateSubscription;
+      StreamSubscription<Duration>? positionSubscription;
+      int? lastLoggedCueLineIndex;
       stateSubscription = player.playerStateStream.listen((event) {
         if (!_isActiveSongPlayback(token)) {
           unawaited(stateSubscription.cancel());
+          unawaited(positionSubscription?.cancel());
           return;
         }
         if (event.processingState == ProcessingState.completed) {
+          TomatoLogger.info(
+            category: 'listening',
+            event: 'song.play.completed',
+            articleId: articleId,
+            data: {
+              'versionId': versionId,
+              'positionMs': player.position.inMilliseconds,
+              'durationMs': player.duration?.inMilliseconds,
+              'timelineCueCount': timeline?.cues.length,
+              'lastCueLineIndex': lastLoggedCueLineIndex,
+            },
+          );
           unawaited(stateSubscription.cancel());
+          unawaited(positionSubscription?.cancel());
           unawaited(_pushEvent('listening.song.state', state.toJson()));
+          unawaited(_pushEvent('listening.song.position', {
+            'articleId': articleId,
+            'versionId': versionId,
+            'positionMs': player.duration?.inMilliseconds ?? 0,
+            'durationMs': player.duration?.inMilliseconds,
+            'cue': null,
+          }));
           unawaited(_disposeSongPlayer());
         }
       });
+      if (timeline != null) {
+        DateTime lastPush = DateTime.fromMillisecondsSinceEpoch(0);
+        positionSubscription = player.positionStream.listen((position) {
+          if (!_isActiveSongPlayback(token)) {
+            unawaited(positionSubscription?.cancel());
+            return;
+          }
+          final now = DateTime.now();
+          if (now.difference(lastPush).inMilliseconds < 120) {
+            return;
+          }
+          lastPush = now;
+          final positionMs = position.inMilliseconds;
+          final cue = _songCueAt(timeline, positionMs);
+          if (cue != null && cue.lineIndex != lastLoggedCueLineIndex) {
+            lastLoggedCueLineIndex = cue.lineIndex;
+            TomatoLogger.info(
+              category: 'listening',
+              event: 'song.play.cue',
+              articleId: articleId,
+              data: {
+                'versionId': versionId,
+                'positionMs': positionMs,
+                'lineIndex': cue.lineIndex,
+                'cueStartMs': cue.startMs,
+                'cueEndMs': cue.endMs,
+              },
+            );
+          }
+          unawaited(_pushEvent('listening.song.position', {
+            'articleId': articleId,
+            'versionId': versionId,
+            'positionMs': positionMs,
+            'durationMs':
+                player.duration?.inMilliseconds ?? timeline.durationMs,
+            'cue': cue?.toJson(),
+          }));
+        });
+      }
       unawaited(player.play().catchError((Object error) async {
         if (!_isActiveSongPlayback(token)) {
           return;
         }
+        TomatoLogger.error(
+          category: 'listening',
+          event: 'song.play.error',
+          articleId: articleId,
+          error: error,
+          data: {
+            'versionId': versionId,
+            'audioPath': path,
+          },
+        );
         final message = _displayError(error);
         _songErrors[articleId] = message;
         await _pushSongState(
@@ -6424,8 +6815,33 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (_isActiveSongPlayback(token)) {
         await _disposeSongPlayer();
       }
+      TomatoLogger.error(
+        category: 'listening',
+        event: 'song.play.start_failed',
+        articleId: articleId,
+        error: error,
+        data: {
+          'versionId': versionId,
+          'audioPath': path,
+        },
+      );
       rethrow;
     }
+  }
+
+  SongSubtitleCue? _songCueAt(SongSubtitleTimeline timeline, int positionMs) {
+    for (final cue in timeline.cues) {
+      if (positionMs >= cue.startMs && positionMs < cue.endMs) {
+        return cue;
+      }
+    }
+    if (timeline.cues.isEmpty) {
+      return null;
+    }
+    if (positionMs < timeline.cues.first.startMs) {
+      return null;
+    }
+    return timeline.cues.last;
   }
 
   Future<void> _playVoicePreview(String speakerId) async {
@@ -7210,6 +7626,55 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
   }
 
+  Future<SongRecordingExportRequest> _songRecordingRequestFromPayload(
+    Map<String, dynamic> payload,
+  ) async {
+    final settings = await RecordingExportService.settingsPayload();
+    final articleId =
+        _payloadOptionalInt(payload, 'articleId') ?? _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final version = await _selectedSongVersion(
+      articleId: articleId,
+      versionId: _payloadString(payload, 'versionId').trim(),
+    );
+    final timelinePath = (version.timelinePath ?? '').trim();
+    if (_versionTimelineStatus(version) != 'ready' || timelinePath.isEmpty) {
+      throw const FormatException('请先生成这首歌的字幕时间线');
+    }
+    final codecText = _payloadString(
+      payload,
+      'codec',
+      fallback: settings['codec']?.toString() ?? 'h264',
+    ).trim();
+    final resolutionText = _payloadString(
+      payload,
+      'resolution',
+      fallback: settings['resolution']?.toString() ?? '1920x1080',
+    ).trim();
+    final transitionText = _payloadString(
+      payload,
+      'pageTransition',
+      fallback: settings['pageTransition']?.toString() ?? 'none',
+    ).trim();
+    final fps = _payloadOptionalInt(payload, 'fps') ??
+        (settings['fps'] is num
+            ? (settings['fps'] as num).toInt()
+            : RecordingExportService.defaultFps);
+    return SongRecordingExportRequest(
+      articleId: articleId,
+      audioPath: version.audioPath,
+      timelinePath: timelinePath,
+      codec: codecText == 'h265' || codecText == 'hevc'
+          ? RecordingCodec.h265
+          : RecordingCodec.h264,
+      resolution: RecordingResolution.parse(resolutionText),
+      pageTransition: RecordingPageTransition.parse(transitionText),
+      fps: fps <= 0 ? RecordingExportService.defaultFps : fps,
+    );
+  }
+
   Map<int, String> _payloadSubtitleTranslations(Map<String, dynamic> payload) {
     final raw = payload['subtitleTranslations'];
     if (raw is! List) {
@@ -7269,14 +7734,29 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Future<Map<String, dynamic>> _songSettingsPayload() async {
     final settings = await AppConfig.songSettings;
     final source = _normalizeSongSource(settings['defaultSource'] ?? 'suno');
-    final outputDirectory = (settings['sunoOutputDirectory'] ?? '').trim();
+    final rawOutputDirectory = (settings['sunoOutputDirectory'] ?? '').trim();
     final timeout =
         int.tryParse((settings['sunoTimeoutMinutes'] ?? '').trim()) ?? 20;
+    final outputDirectory = _resolveSunoOutputDirectory(rawOutputDirectory);
+    if (rawOutputDirectory.isNotEmpty &&
+        AssetPathService.isTemporaryAssetDirectory(rawOutputDirectory)) {
+      await AppConfig.saveSongSettings(
+        defaultSource: source,
+        sunoOutputDirectory: '',
+        sunoTimeoutMinutes: timeout,
+      );
+      TomatoLogger.warn(
+        category: 'suno',
+        event: 'asset_directory.temporary_setting_ignored',
+        data: {
+          'configuredDirectory': rawOutputDirectory,
+          'resolvedDirectory': outputDirectory,
+        },
+      );
+    }
     return {
       'defaultSource': source,
-      'sunoOutputDirectory': outputDirectory.isEmpty
-          ? _defaultSunoOutputDirectory()
-          : outputDirectory,
+      'sunoOutputDirectory': outputDirectory,
       'sunoTimeoutMinutes': timeout.clamp(5, 120),
     };
   }
@@ -8146,6 +8626,43 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         .toList(growable: false);
   }
 
+  String _songTimelineKey(int articleId, String versionId) =>
+      '$articleId::$versionId';
+
+  String _versionTimelineStatus(ArticleSongVersion version) {
+    final explicit = (version.timelineStatus ?? '').trim();
+    if (explicit.isNotEmpty && explicit != 'generating') {
+      return explicit;
+    }
+    return (version.timelinePath ?? '').trim().isNotEmpty ? 'ready' : 'missing';
+  }
+
+  List<ArticleSongVersion> _songVersionsForPayload(
+    int articleId,
+    List<ArticleSongVersion> versions,
+  ) {
+    return versions.map((version) {
+      final key = _songTimelineKey(articleId, version.id);
+      if (_songTimelineTasks.containsKey(key)) {
+        return version.copyWith(
+          timelineStatus: 'generating',
+          timelineError: null,
+        );
+      }
+      final error = _songTimelineErrors[key];
+      if (error != null && error.trim().isNotEmpty) {
+        return version.copyWith(
+          timelineStatus: 'error',
+          timelineError: error,
+        );
+      }
+      return version.copyWith(
+        timelineStatus: _versionTimelineStatus(version),
+        timelineError: version.timelineError,
+      );
+    }).toList(growable: false);
+  }
+
   void _rememberCurrentStyleDownloadedSunoUrls() {
     _sunoDownloadedSongUrls
       ..clear()
@@ -8283,9 +8800,80 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   String _defaultSunoOutputDirectory() => path_lib.join(
-        RecordingExportService.programDirectory(),
+        AssetPathService.programDirectory(),
         'suno-music',
       );
+
+  String _resolveSunoOutputDirectory(String configured) =>
+      AssetPathService.resolvePersistentDirectory(
+        configured: configured,
+        defaultDirectory: _defaultSunoOutputDirectory(),
+      );
+
+  String _sunoOutputDirectorySettingForSave(String configured) {
+    final trimmed = configured.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    return AssetPathService.isTemporaryAssetDirectory(trimmed) ? '' : trimmed;
+  }
+
+  Future<String> _migrateSunoAssetPathIfNeeded(String audioPath) async {
+    final migrated = await AssetPathService.migrateTemporaryAssetFileIfNeeded(
+      sourcePath: audioPath,
+      targetDirectory: _defaultSunoOutputDirectory(),
+    );
+    if (migrated != audioPath.trim()) {
+      TomatoLogger.info(
+        category: 'suno',
+        event: 'asset.migrated_from_temporary_directory',
+        data: {
+          'oldPath': audioPath,
+          'newPath': migrated,
+        },
+      );
+    }
+    return migrated;
+  }
+
+  Future<String> _migrateSunoMetadataPathIfNeeded({
+    required String metadataPath,
+    required Map<String, dynamic> metadata,
+    required List<ArticleSongVersion> versions,
+  }) async {
+    final trimmed = metadataPath.trim();
+    if (trimmed.isEmpty ||
+        !AssetPathService.isTemporaryAssetDirectory(trimmed)) {
+      return trimmed;
+    }
+
+    final directory = Directory(_defaultSunoOutputDirectory());
+    await directory.create(recursive: true);
+    final filename = path_lib.basename(trimmed).trim().isEmpty
+        ? 'suno_metadata_${DateTime.now().millisecondsSinceEpoch}.json'
+        : path_lib.basename(trimmed);
+    final targetPath = path_lib.join(directory.path, filename);
+    final migratedMetadata = Map<String, dynamic>.from(metadata);
+    migratedMetadata['metadataPath'] = targetPath;
+    if (versions.isNotEmpty) {
+      migratedMetadata['audioPath'] = versions.first.audioPath;
+      migratedMetadata['versions'] =
+          versions.map((version) => version.toJson()).toList(growable: false);
+    }
+    await File(targetPath).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(migratedMetadata),
+      flush: true,
+    );
+    TomatoLogger.info(
+      category: 'suno',
+      event: 'metadata.migrated_from_temporary_directory',
+      data: {
+        'oldPath': trimmed,
+        'newPath': targetPath,
+      },
+    );
+    return targetPath;
+  }
 }
 
 class _PreloadAggregate {

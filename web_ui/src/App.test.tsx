@@ -2986,6 +2986,140 @@ describe('App', () => {
     await waitFor(() => expect(playPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
   });
 
+  it('generates song subtitles before recording a Suno song video', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const timelinePayloads: Array<Record<string, unknown>> = [];
+    const recordPayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'settings.load') {
+          return ok(message.id, type, {
+            tts: { resourceId: 'seed-tts-2.0', speakerId: 'en_female_dacey_uranus_bigtts' },
+            song: { defaultSource: 'suno', sunoOutputDirectory: 'mock', sunoTimeoutMinutes: 20 },
+            voices: [],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                pageNumber: 1,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                imagePath: 'page-1.png',
+                imageDataUrl: 'data:image/png;base64,PAGE',
+              },
+            ],
+          });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            stylePrompt: 'Suno auto style',
+            audioPath: 'suno-v1.mp3',
+            errorMessage: '',
+            source: 'suno',
+            versions: [
+              {
+                id: 'suno-v1',
+                audioPath: 'suno-v1.mp3',
+                title: 'Suno 版本 1',
+                stylePrompt: 'Suno auto style',
+                styleKey: 'suno:suno auto style',
+                timelineStatus: 'missing',
+              },
+            ],
+          });
+        }
+        if (type === 'listening.songTimelineGenerate') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          timelinePayloads.push(payload);
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            stylePrompt: 'Suno auto style',
+            audioPath: 'suno-v1.mp3',
+            errorMessage: '',
+            source: 'suno',
+            versions: [
+              {
+                id: 'suno-v1',
+                audioPath: 'suno-v1.mp3',
+                title: 'Suno 版本 1',
+                stylePrompt: 'Suno auto style',
+                styleKey: 'suno:suno auto style',
+                timelineStatus: 'ready',
+                timelinePath: 'timeline.json',
+                timelineConfidence: 0.92,
+              },
+            ],
+          });
+        }
+        if (type === 'listening.songRecordVideo') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          recordPayloads.push(payload);
+          return ok(message.id, type, {
+            outputPath: 'F:\\Tomato\\recording-export\\song.mp4',
+            srtPath: 'F:\\Tomato\\recording-export\\song.srt',
+            durationMs: 3200,
+            segments: 1,
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '歌曲' }));
+    const dialog = await screen.findByRole('dialog', { name: '歌曲风格设置' });
+    const recordButton = await within(dialog).findByRole('button', { name: '录制歌曲视频' });
+    expect(recordButton).toBeDisabled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '生成歌曲字幕' }));
+
+    await waitFor(() => expect(timelinePayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v1' }));
+    const readyDialog = await screen.findByRole('dialog', { name: '歌曲风格设置' });
+    expect(await within(readyDialog).findByRole('button', { name: '字幕已生成' })).toBeInTheDocument();
+    const enabledRecordButton = within(readyDialog).getByRole('button', { name: '录制歌曲视频' });
+    expect(enabledRecordButton).not.toBeDisabled();
+    fireEvent.click(enabledRecordButton);
+
+    await waitFor(() => expect(recordPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v1' }));
+  });
+
   it('opens a word translation card and resumes listening after closing it', async () => {
     window.location.hash = '/listen/1';
     const article = {

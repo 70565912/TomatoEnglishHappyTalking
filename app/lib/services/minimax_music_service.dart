@@ -124,6 +124,11 @@ class ArticleSongVersion {
     this.createdAt,
     this.stylePrompt,
     this.styleKey,
+    this.lyricsHash,
+    this.timelinePath,
+    this.timelineStatus,
+    this.timelineConfidence,
+    this.timelineError,
   });
 
   final String id;
@@ -134,6 +139,11 @@ class ArticleSongVersion {
   final String? createdAt;
   final String? stylePrompt;
   final String? styleKey;
+  final String? lyricsHash;
+  final String? timelinePath;
+  final String? timelineStatus;
+  final double? timelineConfidence;
+  final String? timelineError;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -144,7 +154,44 @@ class ArticleSongVersion {
         if (createdAt != null) 'createdAt': createdAt,
         if (stylePrompt != null) 'stylePrompt': stylePrompt,
         if (styleKey != null) 'styleKey': styleKey,
+        if (lyricsHash != null) 'lyricsHash': lyricsHash,
+        if (timelinePath != null) 'timelinePath': timelinePath,
+        if (timelineStatus != null) 'timelineStatus': timelineStatus,
+        if (timelineConfidence != null)
+          'timelineConfidence': timelineConfidence,
+        if (timelineError != null) 'timelineError': timelineError,
       };
+
+  ArticleSongVersion copyWith({
+    String? id,
+    String? audioPath,
+    String? title,
+    String? songUrl,
+    int? durationMs,
+    String? createdAt,
+    String? stylePrompt,
+    String? styleKey,
+    String? lyricsHash,
+    String? timelinePath,
+    String? timelineStatus,
+    double? timelineConfidence,
+    String? timelineError,
+  }) =>
+      ArticleSongVersion(
+        id: id ?? this.id,
+        audioPath: audioPath ?? this.audioPath,
+        title: title ?? this.title,
+        songUrl: songUrl ?? this.songUrl,
+        durationMs: durationMs ?? this.durationMs,
+        createdAt: createdAt ?? this.createdAt,
+        stylePrompt: stylePrompt ?? this.stylePrompt,
+        styleKey: styleKey ?? this.styleKey,
+        lyricsHash: lyricsHash ?? this.lyricsHash,
+        timelinePath: timelinePath ?? this.timelinePath,
+        timelineStatus: timelineStatus ?? this.timelineStatus,
+        timelineConfidence: timelineConfidence ?? this.timelineConfidence,
+        timelineError: timelineError,
+      );
 
   static ArticleSongVersion? fromJson(Object? value) {
     if (value is! Map) {
@@ -164,6 +211,11 @@ class ArticleSongVersion {
       createdAt: _nonEmpty(value['createdAt']),
       stylePrompt: _nonEmpty(value['stylePrompt']),
       styleKey: _nonEmpty(value['styleKey']),
+      lyricsHash: _nonEmpty(value['lyricsHash']),
+      timelinePath: _nonEmpty(value['timelinePath']),
+      timelineStatus: _nonEmpty(value['timelineStatus']),
+      timelineConfidence: (value['timelineConfidence'] as num?)?.toDouble(),
+      timelineError: _nonEmpty(value['timelineError']),
     );
   }
 

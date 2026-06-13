@@ -2686,6 +2686,14 @@ select:disabled {
   max-width: min(260px, 100%);
 }
 
+.song-version-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  padding: 6px;
+}
+
 .waveform {
   display: flex;
   align-items: center;

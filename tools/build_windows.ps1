@@ -362,6 +362,7 @@ function Get-WindowsRuntimeDirectories {
         "recordings",
         "recording-export",
         "picture_book",
+        "suno-music",
         "runtime",
         "user_data",
         "logs",
@@ -370,6 +371,7 @@ function Get-WindowsRuntimeDirectories {
         "data\tomato_api_cache",
         "data\recordings",
         "data\picture_book",
+        "data\suno-music",
         "data\user_data",
         "data\databases"
     )

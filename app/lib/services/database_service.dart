@@ -15,6 +15,7 @@ class DatabaseService {
   static const _desktopDataRootEnvKey = 'TOMATO_DESKTOP_DATA_ROOT';
   static Database? _db;
   static String? _databaseDirectoryOverrideForTest;
+  static String? _runtimeDataRootOverrideForTest;
 
   static Future<Database> get _database async {
     return _db ??= await _open();
@@ -25,6 +26,8 @@ class DatabaseService {
   static Future<String> get databaseDirectory async =>
       _resolveDatabaseDirectory();
 
+  static Future<String> get runtimeDataRoot async => _resolveRuntimeDataRoot();
+
   static Future<void> resetForTest() async {
     await _db?.close();
     _db = null;
@@ -32,6 +35,10 @@ class DatabaseService {
 
   static void setDatabaseDirectoryOverrideForTest(String? directory) {
     _databaseDirectoryOverrideForTest = directory;
+  }
+
+  static void setRuntimeDataRootOverrideForTest(String? directory) {
+    _runtimeDataRootOverrideForTest = directory;
   }
 
   static Future<Database> _open() async {
@@ -91,6 +98,24 @@ class DatabaseService {
         'sqflite_common_ffi',
         'databases',
       );
+    }
+
+    return getDatabasesPath();
+  }
+
+  static Future<String> _resolveRuntimeDataRoot() async {
+    final rootOverride = _runtimeDataRootOverrideForTest;
+    if (rootOverride != null) {
+      return rootOverride;
+    }
+
+    final override = _databaseDirectoryOverrideForTest;
+    if (override != null) {
+      return override;
+    }
+
+    if (Platform.isWindows || Platform.isMacOS || Platform.isLinux) {
+      return _resolveDesktopDataRoot();
     }
 
     return getDatabasesPath();

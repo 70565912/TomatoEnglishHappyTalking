@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as path_lib;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
 import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
@@ -37,6 +38,7 @@ void main() {
     VolcImageService.setPostOverrideForTest(null);
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
+    DatabaseService.setRuntimeDataRootOverrideForTest(null);
     Directory.current = previousDirectory;
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
@@ -162,6 +164,78 @@ void main() {
     final refs = await db.query('api_cache_article_refs');
     expect(entries, isEmpty);
     expect(refs, isEmpty);
+  });
+
+  test('stores cached asset files under the runtime data cache root', () async {
+    final request = {'service': 'unit', 'text': 'asset root'};
+    final cacheKey = await ApiCacheService.keyForJson('tts', request);
+
+    final filePath = await ApiCacheService.putFileBytes(
+      cacheKey: cacheKey,
+      kind: 'tts',
+      purpose: 'listening_tts',
+      request: request,
+      bytes: [1, 2, 3],
+      subdirectory: 'tts',
+      extension: 'mp3',
+      contentType: 'audio/mpeg',
+    );
+
+    final expectedRoot = path_lib.join(tempDir.path, 'tomato_api_cache');
+    expect(
+      path_lib.isWithin(expectedRoot, filePath),
+      isTrue,
+    );
+    expect(filePath, isNot(contains('.dart_tool')));
+  });
+
+  test('migrates legacy cached files from the database directory', () async {
+    final runtimeRoot = path_lib.join(tempDir.path, 'runtime-root');
+    DatabaseService.setRuntimeDataRootOverrideForTest(runtimeRoot);
+    const cacheKey = 'tts_legacy_asset';
+    final legacyPath = path_lib.join(
+      tempDir.path,
+      'tomato_api_cache',
+      'tts',
+      '$cacheKey.mp3',
+    );
+    await File(legacyPath).parent.create(recursive: true);
+    await File(legacyPath).writeAsBytes([7, 8, 9], flush: true);
+    final now = DateTime.now().toIso8601String();
+    final db = await DatabaseService.database;
+    await db.insert('api_cache_entries', {
+      'cache_key': cacheKey,
+      'kind': 'tts',
+      'purpose': 'listening_tts',
+      'request_json': '{}',
+      'text_value': null,
+      'json_value': null,
+      'file_path': legacyPath,
+      'content_type': 'audio/mpeg',
+      'byte_length': 3,
+      'source': 'remote',
+      'created_at': now,
+      'updated_at': now,
+      'last_used_at': now,
+    });
+
+    final migratedPath = await ApiCacheService.getFilePath(cacheKey);
+    final expectedPath = path_lib.join(
+      runtimeRoot,
+      'tomato_api_cache',
+      'tts',
+      '$cacheKey.mp3',
+    );
+
+    expect(migratedPath, expectedPath);
+    expect(await File(expectedPath).readAsBytes(), [7, 8, 9]);
+    final rows = await db.query(
+      'api_cache_entries',
+      columns: ['file_path'],
+      where: 'cache_key = ?',
+      whereArgs: [cacheKey],
+    );
+    expect(rows.single['file_path'], expectedPath);
   });
 
   test('shared cached files survive until the last article is deleted',

@@ -18,6 +18,7 @@ import type {
   ListeningRecordingResultPayload,
   ListeningResumePayload,
   ListeningSentenceUpdatePayload,
+  ListeningSongPositionPayload,
   ListeningSongStatePayload,
   ListeningTranslationsPayload,
   PictureBookPage,
@@ -1212,6 +1213,7 @@ function ListeningPage({
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
+  const [songCue, setSongCue] = useState<ListeningSongPositionPayload['cue']>(null);
   const [songDialog, setSongDialog] = useState<SongDialogState | null>(null);
   const playbackTokenRef = useRef(0);
   const wordCardTokenRef = useRef(0);
@@ -1245,6 +1247,7 @@ function ListeningPage({
     setRecordingDialogDraft(null);
     setRecordingDialogSaving(false);
     setSongState(null);
+    setSongCue(null);
     setSongDialog(null);
     wordCardTokenRef.current += 1;
     fullscreenReadyTokenRef.current += 1;
@@ -1361,6 +1364,9 @@ function ListeningPage({
     return onNativeEvent<ListeningSongStatePayload>('listening.song.state', (payload) => {
       if (payload.articleId !== articleId) return;
       setSongState(payload);
+      if (payload.status !== 'playing') {
+        setSongCue(null);
+      }
       if (payload.status === 'ready') {
         setSongDialog((current) =>
           current
@@ -1391,6 +1397,20 @@ function ListeningPage({
       }
     });
   }, [articleId, onNotice]);
+
+  useEffect(() => {
+    return onNativeEvent<ListeningSongPositionPayload>('listening.song.position', (payload) => {
+      if (payload.articleId !== articleId) return;
+      const cue = payload.cue ?? null;
+      setSongCue(cue);
+      if (cue) {
+        setCurrentIndex(cue.lineIndex);
+        setActivePart('english');
+      } else {
+        setActivePart(null);
+      }
+    });
+  }, [articleId]);
 
   useEffect(() => {
     if (mode !== 'bilingual') return;
@@ -1869,9 +1889,76 @@ function ListeningPage({
     }
   };
 
+  const generateSongTimeline = async (versionId: string) => {
+    if (!songState) return;
+    setSongState((current) =>
+      current
+        ? {
+            ...current,
+            versions: current.versions?.map((version) =>
+              version.id === versionId
+                ? { ...version, timelineStatus: 'generating', timelineError: null }
+                : version,
+            ),
+          }
+        : current,
+    );
+    try {
+      const payload = await sendNative<ListeningSongStatePayload>('listening.songTimelineGenerate', {
+        articleId,
+        versionId,
+      });
+      setSongState(payload);
+    } catch (songError) {
+      const message = songError instanceof Error ? songError.message : '歌曲字幕生成失败';
+      setSongState((current) =>
+        current
+          ? {
+              ...current,
+              versions: current.versions?.map((version) =>
+                version.id === versionId
+                  ? { ...version, timelineStatus: 'error', timelineError: message }
+                  : version,
+              ),
+            }
+          : current,
+      );
+    }
+  };
+
+  const recordSongVideo = async (versionId: string, selectedSettings = recordingSettings) => {
+    if (!selectedSettings || recordingBusy) return;
+    setRecordingBusy(true);
+    setRecordingError(null);
+    setRecordingResult(null);
+    setRecordingProgress({
+      articleId,
+      phase: 'preparing',
+      progress: 0,
+      completedFrames: 0,
+      totalFrames: 0,
+      message: '正在准备歌曲视频',
+    });
+    try {
+      await sendNative<ListeningRecordingResultPayload>('listening.songRecordVideo', {
+        articleId,
+        versionId,
+        codec: selectedSettings.codec,
+        resolution: selectedSettings.resolution,
+        pageTransition: selectedSettings.pageTransition,
+        fps: selectedSettings.fps || 25,
+      });
+    } catch (recordError) {
+      setRecordingError(recordError instanceof Error ? recordError.message : '录制歌曲视频失败');
+    } finally {
+      setRecordingBusy(false);
+    }
+  };
+
   const stopSong = async () => {
     try {
       await sendNative('listening.songStop');
+      setSongCue(null);
       setSongState((current) => (current ? { ...current, status: current.status === 'playing' ? 'ready' : current.status } : current));
     } catch (songError) {
       setSongState((current) => ({
@@ -2124,6 +2211,8 @@ function ListeningPage({
   }
 
   const currentItem = items[currentIndex] ?? items[0];
+  const sceneEnglish = songCue?.english?.trim() || currentItem?.english || '正在准备句子...';
+  const sceneChinese = songCue?.chinese?.trim() || currentItem?.chinese;
   const busy = isListeningBusy(status);
   const progress =
     items.length === 0
@@ -2226,8 +2315,8 @@ function ListeningPage({
           <PictureBookScene
             state={pictureBookState}
             page={picturePage}
-            english={currentItem?.english ?? '正在准备句子...'}
-            chinese={currentItem?.chinese}
+            english={sceneEnglish}
+            chinese={sceneChinese}
             englishActive={activePart === 'english'}
             chineseActive={activePart === 'chinese'}
             onWordClick={openWordCard}
@@ -2421,6 +2510,7 @@ function ListeningPage({
           songWaitingConfirm={songWaitingConfirm}
           songGenerating={songGenerating}
           songPlaying={songPlaying}
+          recordingBusy={recordingBusy}
           onSourceChange={(source) =>
             setSongDialog((current) => (current ? { ...current, source, error: null } : current))
           }
@@ -2438,6 +2528,8 @@ function ListeningPage({
           onConfirmSunoCreate={() => void confirmSunoCreate()}
           onRetrySunoDownload={() => void retrySunoDownload()}
           onPlayVersion={(versionId) => void playSongVersion(versionId)}
+          onGenerateTimeline={(versionId) => void generateSongTimeline(versionId)}
+          onRecordSongVideo={(versionId) => void recordSongVideo(versionId)}
           onStopSong={() => void stopSong()}
         />
       )}
@@ -2542,6 +2634,7 @@ function SongDialog({
   songWaitingConfirm,
   songGenerating,
   songPlaying,
+  recordingBusy,
   onTabChange,
   onSourceChange,
   onStyleChange,
@@ -2551,6 +2644,8 @@ function SongDialog({
   onConfirmSunoCreate,
   onRetrySunoDownload,
   onPlayVersion,
+  onGenerateTimeline,
+  onRecordSongVideo,
   onStopSong,
 }: {
   state: SongDialogState;
@@ -2560,6 +2655,7 @@ function SongDialog({
   songWaitingConfirm: boolean;
   songGenerating: boolean;
   songPlaying: boolean;
+  recordingBusy: boolean;
   onTabChange: (tab: SongDialogTab) => void;
   onSourceChange: (source: SongSource) => void;
   onStyleChange: (stylePrompt: string) => void;
@@ -2569,6 +2665,8 @@ function SongDialog({
   onConfirmSunoCreate: () => void;
   onRetrySunoDownload: () => void;
   onPlayVersion: (versionId?: string) => void;
+  onGenerateTimeline: (versionId: string) => void;
+  onRecordSongVideo: (versionId: string) => void;
   onStopSong: () => void;
 }) {
   const styleRef = useRef<HTMLTextAreaElement | null>(null);
@@ -2649,18 +2747,43 @@ function SongDialog({
                       <b>{group.label}</b>
                     </div>
                     <div className="song-version-row" aria-label={`${group.label} 歌曲版本`}>
-                      {group.versions.map((version, index) => (
-                        <button
-                          className="ghost-action small"
-                          key={version.id}
-                          type="button"
-                          onClick={() => onPlayVersion(version.id)}
-                          disabled={busy || songGenerating}
-                          title={version.title?.trim() || `版本 ${index + 1}`}
-                        >
-                          <Icon name="sound" /> {version.title?.trim() || `版本 ${index + 1}`}
-                        </button>
-                      ))}
+                      {group.versions.map((version, index) => {
+                        const title = version.title?.trim() || `版本 ${index + 1}`;
+                        const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
+                        const timelineReady = timelineStatus === 'ready';
+                        const timelineGenerating = timelineStatus === 'generating';
+                        return (
+                          <div className="song-version-actions" key={version.id}>
+                            <button
+                              className="ghost-action small"
+                              type="button"
+                              onClick={() => onPlayVersion(version.id)}
+                              disabled={busy || songGenerating}
+                              title={title}
+                            >
+                              <Icon name="sound" /> {title}
+                            </button>
+                            <button
+                              className="ghost-action small"
+                              type="button"
+                              onClick={() => onGenerateTimeline(version.id)}
+                              disabled={busy || songGenerating || timelineGenerating}
+                              title={version.timelineError?.trim() || undefined}
+                            >
+                              <Icon name={timelineGenerating ? 'refresh' : 'sentence'} /> {songTimelineLabel(timelineStatus)}
+                            </button>
+                            <button
+                              className="ghost-action small"
+                              type="button"
+                              onClick={() => onRecordSongVideo(version.id)}
+                              disabled={busy || songGenerating || recordingBusy || !timelineReady}
+                              title={timelineReady ? '录制歌曲视频' : '请先生成歌曲字幕'}
+                            >
+                              <Icon name="recordVideo" /> 录制歌曲视频
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
@@ -4899,7 +5022,7 @@ function SettingsPage({
                 <input
                   value={sunoOutputDirectory}
                   onChange={(event) => setSunoOutputDirectory(event.target.value)}
-                  placeholder="留空则使用程序目录下的 suno-music"
+                  placeholder="留空使用程序目录下的 suno-music；不要填写 .tmp 或系统临时目录"
                 />
               </label>
               <label className="settings-label">
@@ -5621,6 +5744,25 @@ function groupSongVersionsByStyle(versions: SongVersionPayload[]): SongVersionGr
     }
   }
   return Array.from(groups.values());
+}
+
+function normalizeTimelineStatus(status?: string | null, timelinePath?: string | null): string {
+  const value = (status ?? '').trim();
+  if (value) return value;
+  return timelinePath?.trim() ? 'ready' : 'missing';
+}
+
+function songTimelineLabel(status?: string | null): string {
+  switch ((status ?? '').trim()) {
+    case 'ready':
+      return '字幕已生成';
+    case 'generating':
+      return '字幕生成中';
+    case 'error':
+      return '重新生成字幕';
+    default:
+      return '生成歌曲字幕';
+  }
 }
 
 function isSunoWaitingConfirm(state?: ListeningSongStatePayload | null): boolean {

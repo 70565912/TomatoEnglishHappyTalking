@@ -13,6 +13,7 @@ import '../data/models/article_model.dart';
 import '../data/models/picture_book_model.dart';
 import 'database_service.dart';
 import 'recording_export_utils.dart';
+import 'song_subtitle_timeline_service.dart';
 import 'tts_memory_cache_service.dart';
 import 'tts_service.dart';
 
@@ -73,6 +74,26 @@ class RecordingExportRequest {
   final Map<int, String> subtitleTranslations;
 
   bool get bilingual => mode == 'bilingual';
+}
+
+class SongRecordingExportRequest {
+  const SongRecordingExportRequest({
+    required this.articleId,
+    required this.audioPath,
+    required this.timelinePath,
+    required this.codec,
+    required this.resolution,
+    required this.pageTransition,
+    this.fps = 25,
+  });
+
+  final int articleId;
+  final String audioPath;
+  final String timelinePath;
+  final RecordingCodec codec;
+  final RecordingResolution resolution;
+  final RecordingPageTransition pageTransition;
+  final int fps;
 }
 
 class RecordingReadiness {
@@ -476,6 +497,210 @@ class RecordingExportService {
     }
   }
 
+  static Future<RecordingReadiness> songReadiness(
+    SongRecordingExportRequest request,
+  ) async {
+    final reasons = <String>[];
+    final assets = await _prepareSongAssets(request, reasons: reasons);
+    final encoder = await _resolveEncoder(codec: request.codec);
+    if (!encoder.available) {
+      reasons.add(encoder.reason);
+    }
+    final directory = Directory(defaultOutputDirectory());
+    try {
+      await directory.create(recursive: true);
+      final probe = File(path_lib.join(
+        directory.path,
+        '.tomato_recording_write_probe',
+      ));
+      await probe.writeAsString('ok');
+      await probe.delete();
+    } catch (error) {
+      reasons.add('输出目录不可写：$error');
+    }
+    return RecordingReadiness(
+      ready: reasons.isEmpty,
+      reasons: reasons,
+      encoderName: encoder.encoderName,
+      codec: request.codec,
+      resolution: request.resolution,
+      pageTransition: request.pageTransition,
+      outputDirectory: directory.path,
+      requiredEnglish: assets.timeline.cues.length,
+      readyEnglish: reasons.isEmpty ? assets.timeline.cues.length : 0,
+      requiredChinese: 0,
+      readyChinese: 0,
+      picturePageCount: assets.pages.length,
+    );
+  }
+
+  static Future<RecordingExportResult> exportSongVideo(
+    SongRecordingExportRequest request, {
+    RecordingCancelToken? cancelToken,
+    void Function(RecordingExportProgress progress)? onProgress,
+  }) async {
+    final token = cancelToken ?? RecordingCancelToken();
+    token.throwIfCancelled();
+
+    final ready = await songReadiness(request);
+    if (!ready.ready) {
+      throw RecordingExportException(ready.reasons.join('\n'));
+    }
+    final reasons = <String>[];
+    final assets = await _prepareSongAssets(request, reasons: reasons);
+    if (reasons.isNotEmpty) {
+      throw RecordingExportException(reasons.join('\n'));
+    }
+    final encoder = await _resolveEncoder(codec: request.codec);
+    if (!encoder.available) {
+      throw RecordingExportException(encoder.reason);
+    }
+    final timeline = _buildSongTimeline(assets);
+    if (timeline.durationMs <= 0 || timeline.segments.isEmpty) {
+      throw const RecordingExportException('没有可导出的歌曲字幕时间轴');
+    }
+
+    final outputDirectory = Directory(defaultOutputDirectory());
+    await outputDirectory.create(recursive: true);
+    final baseName = await _availableOutputBaseName(
+      directory: outputDirectory,
+      article: assets.article,
+      series: assets.series,
+    );
+    final videoPath = path_lib.join(outputDirectory.path, '$baseName.mp4');
+    final subtitlePath = path_lib.join(outputDirectory.path, '$baseName.srt');
+    final frameCount = (timeline.durationMs / (1000 / request.fps))
+        .ceil()
+        .clamp(1, 1 << 31)
+        .toInt();
+    final tempDir = await Directory.systemTemp.createTemp(
+      'tomato_song_recording_${request.articleId}_',
+    );
+
+    try {
+      token.throwIfCancelled();
+      await File(subtitlePath).writeAsString(
+        SongSubtitleTimelineService.srtForTimeline(assets.timeline),
+        encoding: utf8,
+      );
+      onProgress?.call(RecordingExportProgress(
+        articleId: request.articleId,
+        phase: 'rendering',
+        progress: 0.02,
+        completedFrames: 0,
+        totalFrames: frameCount,
+        message: '正在渲染歌曲视频帧',
+      ));
+
+      final audioListPath = path_lib.join(tempDir.path, 'audio_concat.txt');
+      await File(audioListPath).writeAsString(
+        "file '${_ffmpegConcatPath(request.audioPath)}'",
+        encoding: utf8,
+      );
+
+      if (request.pageTransition == RecordingPageTransition.none) {
+        final videoListPath = await _renderStillSegments(
+          request: RecordingExportRequest(
+            articleId: request.articleId,
+            mode: 'english',
+            codec: request.codec,
+            resolution: request.resolution,
+            pageTransition: request.pageTransition,
+            fps: request.fps,
+          ),
+          assets: assets.toRecordingAssets(),
+          timeline: timeline,
+          frameCount: frameCount,
+          outputDirectory: tempDir,
+          cancelToken: token,
+          onProgress: onProgress,
+        );
+        await _runFfmpegEncodeStillSegments(
+          ffmpegPath: encoder.ffmpegExecutable,
+          encoderName: encoder.encoderName,
+          request: RecordingExportRequest(
+            articleId: request.articleId,
+            mode: 'english',
+            codec: request.codec,
+            resolution: request.resolution,
+            pageTransition: request.pageTransition,
+            fps: request.fps,
+          ),
+          videoListPath: videoListPath,
+          audioListPath: audioListPath,
+          outputPath: videoPath,
+          keyFrameTimes: timeline.pageChangeTimesMs,
+          frameCount: frameCount,
+          cancelToken: token,
+          onProgress: onProgress,
+        );
+      } else {
+        final recordingRequest = RecordingExportRequest(
+          articleId: request.articleId,
+          mode: 'english',
+          codec: request.codec,
+          resolution: request.resolution,
+          pageTransition: request.pageTransition,
+          fps: request.fps,
+        );
+        await _renderFrames(
+          request: recordingRequest,
+          assets: assets.toRecordingAssets(),
+          timeline: timeline,
+          frameCount: frameCount,
+          outputDirectory: tempDir,
+          cancelToken: token,
+          onProgress: onProgress,
+        );
+        await _runFfmpegEncode(
+          ffmpegPath: encoder.ffmpegExecutable,
+          encoderName: encoder.encoderName,
+          request: recordingRequest,
+          frameDirectory: tempDir,
+          audioListPath: audioListPath,
+          outputPath: videoPath,
+          keyFrameTimes: timeline.pageChangeTimesMs,
+          frameCount: frameCount,
+          cancelToken: token,
+          onProgress: onProgress,
+        );
+      }
+
+      onProgress?.call(RecordingExportProgress(
+        articleId: request.articleId,
+        phase: 'completed',
+        progress: 1,
+        completedFrames: frameCount,
+        totalFrames: frameCount,
+        message: '歌曲视频录制完成',
+      ));
+
+      final warnings = <String>[
+        ...assets.timeline.warnings,
+        if (encoder.softwareFallback) '当前使用软件编码器 ${encoder.encoderName}',
+      ];
+      return RecordingExportResult(
+        articleId: request.articleId,
+        videoPath: videoPath,
+        subtitlePath: subtitlePath,
+        durationMs: timeline.durationMs,
+        frameCount: frameCount,
+        droppedFrameCount: 0,
+        encoderName: encoder.encoderName,
+        codec: request.codec,
+        resolution: request.resolution,
+        pageTransition: request.pageTransition,
+        warnings: warnings,
+      );
+    } finally {
+      try {
+        await tempDir.delete(recursive: true);
+      } catch (_) {
+        // Temporary frame cleanup is best effort.
+      }
+    }
+  }
+
   static Map<String, dynamic> _normalizeSettings(Map<String, String> settings) {
     final codec = _parseCodec(settings['codec'] ?? 'h264').name;
     final resolution =
@@ -684,6 +909,96 @@ class RecordingExportService {
     );
   }
 
+  static Future<_PreparedSongRecordingAssets> _prepareSongAssets(
+    SongRecordingExportRequest request, {
+    required List<String> reasons,
+  }) async {
+    final article = await DatabaseService.getArticleById(request.articleId);
+    if (article == null) {
+      reasons.add('文章不存在（id=${request.articleId}）');
+      return _PreparedSongRecordingAssets.empty(request.articleId);
+    }
+    final audioFile = File(request.audioPath);
+    if (!await audioFile.exists()) {
+      reasons.add('歌曲音频文件不存在：${request.audioPath}');
+    }
+    SongSubtitleTimeline timeline;
+    try {
+      timeline = await SongSubtitleTimelineService.readTimeline(
+        request.timelinePath,
+      );
+    } catch (error) {
+      reasons.add(error.toString());
+      timeline = SongSubtitleTimeline(
+        version: 1,
+        articleId: request.articleId,
+        audioHash: '',
+        lyricsHash: '',
+        durationMs: 0,
+        source: 'suno',
+        cues: const [],
+      );
+    }
+    if (timeline.cues.isEmpty) {
+      reasons.add('歌曲字幕时间线为空');
+    }
+    final chapter =
+        await DatabaseService.getStoryChapterForArticle(request.articleId);
+    final series = chapter == null
+        ? null
+        : await DatabaseService.getStorySeriesById(chapter.seriesId);
+    final pages = await DatabaseService.getPictureBookPages(request.articleId);
+    final readyPages = pages
+        .where((page) => page.status == 'ready')
+        .toList(growable: false)
+      ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+    if (readyPages.isEmpty) {
+      reasons.add('绘本图尚未生成完成');
+    }
+    final imageByPath = <String, Uint8List>{};
+    for (final page in readyPages) {
+      final imagePath = page.imagePath?.trim() ?? '';
+      if (imagePath.isEmpty) {
+        reasons.add('第 ${page.pageIndex + 1} 张绘本缺少图片文件路径');
+        continue;
+      }
+      final file = File(imagePath);
+      if (!await file.exists()) {
+        reasons.add('第 ${page.pageIndex + 1} 张绘本图片文件不存在');
+        continue;
+      }
+      try {
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) {
+          reasons.add('第 ${page.pageIndex + 1} 张绘本图片为空');
+        } else {
+          imageByPath[imagePath] = bytes;
+        }
+      } catch (error) {
+        reasons.add('第 ${page.pageIndex + 1} 张绘本图片读取失败：$error');
+      }
+    }
+
+    final items = <_RecordingSentenceItem>[];
+    for (final cue in timeline.cues) {
+      final page = _pageForSentence(readyPages, cue.lineIndex);
+      items.add(_RecordingSentenceItem(
+        index: cue.lineIndex,
+        english: cue.english,
+        chinese: cue.chinese,
+        pageIndex: page?.pageIndex ?? 0,
+      ));
+    }
+    return _PreparedSongRecordingAssets(
+      article: article,
+      series: series,
+      pages: readyPages,
+      pageImageBytes: imageByPath,
+      items: items,
+      timeline: timeline,
+    );
+  }
+
   static Future<TtsMemoryHandle?> _memoryHandleOrNull({
     required String text,
     required String voiceType,
@@ -765,6 +1080,47 @@ class RecordingExportService {
     return _RecordingTimeline(
       segments: segments,
       durationMs: cursorMs,
+      pageChangeTimesMs: pageChangeTimes,
+    );
+  }
+
+  static _RecordingTimeline _buildSongTimeline(
+    _PreparedSongRecordingAssets assets,
+  ) {
+    final itemByLine = {
+      for (final item in assets.items) item.index: item,
+    };
+    final segments = <_RecordingTimelineSegment>[];
+    for (final cue in assets.timeline.cues) {
+      final item = itemByLine[cue.lineIndex] ??
+          _RecordingSentenceItem(
+            index: cue.lineIndex,
+            english: cue.english,
+            chinese: cue.chinese,
+            pageIndex: 0,
+          );
+      segments.add(_RecordingTimelineSegment(
+        item: item,
+        sentenceStartMs: cue.startMs,
+        englishStartMs: cue.startMs,
+        englishEndMs: cue.endMs,
+        chineseStartMs: cue.startMs,
+        chineseEndMs: cue.endMs,
+        sentenceEndMs: cue.endMs,
+      ));
+    }
+    final pageChangeTimes = <int>[];
+    for (var i = 1; i < segments.length; i += 1) {
+      if (segments[i - 1].item.pageIndex != segments[i].item.pageIndex) {
+        pageChangeTimes.add(segments[i].sentenceStartMs);
+      }
+    }
+    return _RecordingTimeline(
+      segments: segments,
+      durationMs: math.max(
+        assets.timeline.durationMs,
+        segments.isEmpty ? 0 : segments.last.sentenceEndMs,
+      ),
       pageChangeTimesMs: pageChangeTimes,
     );
   }
@@ -1679,6 +2035,61 @@ class _PreparedRecordingAssets {
   final int readyChinese;
 }
 
+class _PreparedSongRecordingAssets {
+  const _PreparedSongRecordingAssets({
+    required this.article,
+    required this.series,
+    required this.pages,
+    required this.pageImageBytes,
+    required this.items,
+    required this.timeline,
+  });
+
+  factory _PreparedSongRecordingAssets.empty(int articleId) =>
+      _PreparedSongRecordingAssets(
+        article: Article(
+          id: articleId,
+          title: '',
+          content: '',
+          sentences: const [],
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+        series: null,
+        pages: const [],
+        pageImageBytes: const {},
+        items: const [],
+        timeline: const SongSubtitleTimeline(
+          version: 1,
+          articleId: 0,
+          audioHash: '',
+          lyricsHash: '',
+          durationMs: 0,
+          source: 'suno',
+          cues: [],
+        ),
+      );
+
+  final Article article;
+  final StorySeries? series;
+  final List<PictureBookPage> pages;
+  final Map<String, Uint8List> pageImageBytes;
+  final List<_RecordingSentenceItem> items;
+  final SongSubtitleTimeline timeline;
+
+  _PreparedRecordingAssets toRecordingAssets() => _PreparedRecordingAssets(
+        article: article,
+        series: series,
+        pages: pages,
+        pageImageBytes: pageImageBytes,
+        items: items,
+        audioClips: const [],
+        requiredEnglish: timeline.cues.length,
+        readyEnglish: timeline.cues.length,
+        requiredChinese: 0,
+        readyChinese: 0,
+      );
+}
+
 class _RecordingSentenceItem {
   const _RecordingSentenceItem({
     required this.index,
@@ -1733,14 +2144,18 @@ class _RecordingTimeline {
   final List<int> pageChangeTimesMs;
 
   _RecordingTimelineSegment segmentAt(int timeMs) {
+    if (segments.isEmpty) {
+      throw const RecordingExportException('时间轴为空');
+    }
+    if (timeMs < segments.first.sentenceStartMs) {
+      return segments.first;
+    }
     for (final segment in segments) {
       if (timeMs >= segment.sentenceStartMs && timeMs < segment.sentenceEndMs) {
         return segment;
       }
     }
-    return segments.isEmpty
-        ? throw const RecordingExportException('时间轴为空')
-        : segments.last;
+    return segments.last;
   }
 }
 

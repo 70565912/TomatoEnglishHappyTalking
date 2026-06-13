@@ -110,6 +110,8 @@ web_ui/
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
 - Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词/风格达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
 - Suno 歌曲缓存必须按 `styleKey` 分组：`versions` 要带 `stylePrompt` / `styleKey`，`detectedSongUrls` 记录当前风格已检测到的完整歌曲链接，`downloadComplete=true` 只表示这些链接都有本地音频版本。重新检测下载时只下载缺失链接，不要重复下载已存在的同一 `songUrl`；同一风格已完整下载时只能进入已完成待命/播放状态，不能自动再次点击 Create 消耗 credits。
+- Suno 歌曲字幕时间轴使用 App 提交给 Suno 的原歌词作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
+- Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
 
 ## Flutter / Dart 规范
 

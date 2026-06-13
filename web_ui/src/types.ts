@@ -188,7 +188,30 @@ export interface ListeningSongStatePayload {
     createdAt?: string | null;
     stylePrompt?: string | null;
     styleKey?: string | null;
+    lyricsHash?: string | null;
+    timelinePath?: string | null;
+    timelineStatus?: 'missing' | 'generating' | 'ready' | 'error' | string | null;
+    timelineConfidence?: number | null;
+    timelineError?: string | null;
   }>;
+}
+
+export interface ListeningSongCuePayload {
+  lineIndex: number;
+  startMs: number;
+  endMs: number;
+  english: string;
+  chinese?: string | null;
+  confidence: number;
+  method: 'matched' | 'interpolated' | 'estimated' | 'fallback' | string;
+}
+
+export interface ListeningSongPositionPayload {
+  articleId: number;
+  versionId?: string | null;
+  positionMs: number;
+  durationMs?: number | null;
+  cue?: ListeningSongCuePayload | null;
 }
 
 export interface ListeningSentenceUpdatePayload {

@@ -27,6 +27,73 @@ class AsrException implements Exception {
   String toString() => message;
 }
 
+class AsrWordTiming {
+  const AsrWordTiming({
+    required this.text,
+    required this.startMs,
+    required this.endMs,
+  });
+
+  final String text;
+  final int startMs;
+  final int endMs;
+
+  Map<String, dynamic> toJson() => {
+        'text': text,
+        'startMs': startMs,
+        'endMs': endMs,
+      };
+}
+
+class AsrUtteranceTiming {
+  const AsrUtteranceTiming({
+    required this.text,
+    required this.startMs,
+    required this.endMs,
+    required this.definite,
+    required this.words,
+  });
+
+  final String text;
+  final int startMs;
+  final int endMs;
+  final bool definite;
+  final List<AsrWordTiming> words;
+
+  Map<String, dynamic> toJson() => {
+        'text': text,
+        'startMs': startMs,
+        'endMs': endMs,
+        'definite': definite,
+        'words': words.map((word) => word.toJson()).toList(),
+      };
+}
+
+class AsrTimelineResult {
+  const AsrTimelineResult({
+    required this.text,
+    required this.utterances,
+    required this.raw,
+    this.durationMs,
+  });
+
+  final String text;
+  final List<AsrUtteranceTiming> utterances;
+  final Map<String, dynamic> raw;
+  final int? durationMs;
+
+  List<AsrWordTiming> get words =>
+      utterances.expand((utterance) => utterance.words).toList(growable: false);
+
+  Map<String, dynamic> toJson() => {
+        'text': text,
+        'durationMs': durationMs,
+        'utterances':
+            utterances.map((utterance) => utterance.toJson()).toList(),
+        'raw': raw,
+      };
+}
+
 class StreamingAsrService {
   static const _audioTraceEnabled = bool.fromEnvironment(
     'TOMATO_AUDIO_TRACE',
@@ -221,6 +288,155 @@ class StreamingAsrService {
     }
   }
 
+  static Future<AsrTimelineResult> recognizeWithTimeline({
+    required List<int> audioBytes,
+  }) async {
+    if (audioBytes.isEmpty) {
+      throw const AsrException(AsrFailureType.emptyAudio, '音频为空，无法识别');
+    }
+
+    final apiKey = await AppConfig.volcBigAsrApiKey;
+    if (apiKey.trim().isEmpty) {
+      throw const AsrException(
+        AsrFailureType.missingApiKey,
+        '未读取到 speech-api-key.txt 里的新版语音 API Key',
+      );
+    }
+
+    WebSocket? socket;
+    final requestId = _newRequestId();
+    try {
+      _trace(
+        'timeline connect requestId=$requestId bytes=${audioBytes.length}',
+      );
+      socket = await _connectSocket(
+        endpoint: _endpoint,
+        apiKey: apiKey,
+        requestId: requestId,
+      );
+
+      socket.add(_buildFullClientRequestFrame(
+        audioFormat: 'wav',
+        enablePunc: false,
+        showUtterances: true,
+      ));
+
+      var offset = 0;
+      while (offset < audioBytes.length) {
+        final end = min(offset + _chunkSize, audioBytes.length);
+        final chunk = audioBytes.sublist(offset, end);
+        final isLast = end >= audioBytes.length;
+
+        socket.add(_buildAudioOnlyFrame(
+          audioChunk: chunk,
+          isLast: isLast,
+        ));
+
+        offset = end;
+      }
+
+      final completer = Completer<AsrTimelineResult>();
+      Map<String, dynamic>? latestPayload;
+      final subscription = socket.listen((dynamic event) {
+        final packet = _parseServerPacket(event);
+        if (packet == null) {
+          return;
+        }
+
+        if (packet.messageType == _messageTypeError) {
+          if (!completer.isCompleted) {
+            completer.completeError(
+              AsrException(
+                AsrFailureType.unknown,
+                packet.errorMessage ?? 'BigASR 返回协议错误',
+              ),
+            );
+          }
+          return;
+        }
+
+        final payload = packet.payloadMap;
+        if (payload != null) {
+          latestPayload = payload;
+        }
+
+        if (packet.isTerminal && !completer.isCompleted) {
+          final result = _extractTimelineResult(latestPayload ?? payload);
+          if (result == null || result.text.trim().isEmpty) {
+            completer.completeError(
+              const AsrException(
+                AsrFailureType.emptyResult,
+                'BigASR 未返回可用于字幕时间线的识别结果',
+              ),
+            );
+            return;
+          }
+          completer.complete(result);
+        }
+      }, onDone: () {
+        if (!completer.isCompleted) {
+          final result = _extractTimelineResult(latestPayload);
+          if (result == null || result.text.trim().isEmpty) {
+            completer.completeError(
+              const AsrException(
+                AsrFailureType.emptyResult,
+                'BigASR 未返回可用于字幕时间线的识别结果',
+              ),
+            );
+            return;
+          }
+          completer.complete(result);
+        }
+      }, onError: (Object error) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            AsrException(
+              AsrFailureType.unknown,
+              'BigASR 连接中断：$error',
+            ),
+          );
+        }
+      });
+
+      try {
+        final estimatedSeconds = max(1, audioBytes.length ~/ 32000);
+        final timeoutSeconds = max(60, min(300, estimatedSeconds + 90));
+        final result = await completer.future.timeout(
+          Duration(seconds: timeoutSeconds),
+          onTimeout: () => throw const AsrException(
+            AsrFailureType.timeout,
+            'BigASR 歌曲字幕识别超时，请稍后重试',
+          ),
+        );
+        if (result.words.isEmpty) {
+          throw const AsrException(
+            AsrFailureType.emptyResult,
+            'BigASR 未返回词级时间，无法生成歌曲字幕',
+          );
+        }
+        return result;
+      } finally {
+        await subscription.cancel();
+      }
+    } on AsrException {
+      rethrow;
+    } on WebSocketException catch (e) {
+      _trace('timeline websocketError requestId=$requestId error=$e');
+      throw AsrException(
+        AsrFailureType.connectFailed,
+        'BigASR 连接失败：$e',
+      );
+    } catch (e) {
+      _trace('timeline unknownError requestId=$requestId error=$e');
+      throw AsrException(
+        AsrFailureType.unknown,
+        'BigASR 歌曲字幕识别失败：$e',
+      );
+    } finally {
+      await socket?.close();
+    }
+  }
+
   static Future<String> recognizeLive({
     required Stream<List<int>> audioChunks,
     void Function(String text)? onPartial,
@@ -378,6 +594,11 @@ class StreamingAsrService {
     }
   }
 
+  static AsrTimelineResult? timelineResultFromPayloadForTest(
+    Map<String, dynamic> payload,
+  ) =>
+      _extractTimelineResult(payload);
+
   static Future<WebSocket> _connectSocket({
     required String endpoint,
     required String apiKey,
@@ -414,6 +635,8 @@ class StreamingAsrService {
 
   static List<int> _buildFullClientRequestFrame({
     required String audioFormat,
+    bool enablePunc = true,
+    bool showUtterances = false,
   }) {
     final payloadMap = <String, dynamic>{
       'user': {
@@ -429,7 +652,8 @@ class StreamingAsrService {
       'request': {
         'model_name': 'bigmodel',
         'enable_itn': true,
-        'enable_punc': true,
+        'enable_punc': enablePunc,
+        if (showUtterances) 'show_utterances': true,
       },
     };
 
@@ -631,6 +855,111 @@ class StreamingAsrService {
     }
 
     return null;
+  }
+
+  static AsrTimelineResult? _extractTimelineResult(
+    Map<String, dynamic>? frame,
+  ) {
+    if (frame == null) {
+      return null;
+    }
+    final source = _payloadSource(frame);
+    final text = _extractTextFromMap(source)?.trim() ??
+        _extractText(frame)?.trim() ??
+        '';
+    final result = source['result'];
+    final resultMap = result is Map<String, dynamic>
+        ? result
+        : result is Map
+            ? Map<String, dynamic>.from(result)
+            : source;
+    final rawUtterances = resultMap['utterances'];
+    final utterances = <AsrUtteranceTiming>[];
+    if (rawUtterances is List) {
+      for (final rawUtterance in rawUtterances) {
+        final utterance = _parseUtterance(rawUtterance);
+        if (utterance != null) {
+          utterances.add(utterance);
+        }
+      }
+    }
+    final audioInfo = source['audio_info'] is Map
+        ? Map<String, dynamic>.from(source['audio_info'] as Map)
+        : frame['audio_info'] is Map
+            ? Map<String, dynamic>.from(frame['audio_info'] as Map)
+            : const <String, dynamic>{};
+    final durationMs = (audioInfo['duration'] as num?)?.toInt();
+    return AsrTimelineResult(
+      text: text,
+      utterances: utterances,
+      durationMs: durationMs,
+      raw: source,
+    );
+  }
+
+  static Map<String, dynamic> _payloadSource(Map<String, dynamic> frame) {
+    final payload = frame['payload'];
+    if (payload is Map<String, dynamic>) {
+      return payload;
+    }
+    if (payload is Map) {
+      return Map<String, dynamic>.from(payload);
+    }
+    return frame;
+  }
+
+  static AsrUtteranceTiming? _parseUtterance(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final source = Map<String, dynamic>.from(value);
+    final text = source['text']?.toString().trim() ?? '';
+    final startMs = (source['start_time'] as num?)?.toInt() ??
+        (source['startMs'] as num?)?.toInt() ??
+        0;
+    final endMs = (source['end_time'] as num?)?.toInt() ??
+        (source['endMs'] as num?)?.toInt() ??
+        startMs;
+    final words = <AsrWordTiming>[];
+    final rawWords = source['words'];
+    if (rawWords is List) {
+      for (final rawWord in rawWords) {
+        final word = _parseWord(rawWord);
+        if (word != null) {
+          words.add(word);
+        }
+      }
+    }
+    return AsrUtteranceTiming(
+      text: text,
+      startMs: startMs,
+      endMs: max(endMs, startMs),
+      definite: source['definite'] == true,
+      words: words,
+    );
+  }
+
+  static AsrWordTiming? _parseWord(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final source = Map<String, dynamic>.from(value);
+    final text = source['text']?.toString().trim() ?? '';
+    if (text.isEmpty) {
+      return null;
+    }
+    final startMs = (source['start_time'] as num?)?.toInt() ??
+        (source['startMs'] as num?)?.toInt();
+    final endMs = (source['end_time'] as num?)?.toInt() ??
+        (source['endMs'] as num?)?.toInt();
+    if (startMs == null || endMs == null) {
+      return null;
+    }
+    return AsrWordTiming(
+      text: text,
+      startMs: max(0, startMs),
+      endMs: max(startMs, endMs),
+    );
   }
 
   static String _newRequestId() {

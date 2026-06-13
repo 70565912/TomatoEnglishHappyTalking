@@ -680,12 +680,82 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
               durationMs: 32000,
               stylePrompt: 'bright children musical',
               styleKey: 'minimax:bright children musical',
+              timelineStatus: 'ready',
+              timelinePath: 'mock-song-timeline.json',
+              timelineConfidence: 0.92,
             },
           ],
         },
       });
+      emitNativeEvent({
+        type: 'listening.song.position',
+        payload: {
+          articleId,
+          versionId: versionId || 'mock-minimax-1',
+          positionMs: 1200,
+          durationMs: 32000,
+          cue: {
+            lineIndex: 0,
+            startMs: 0,
+            endMs: 3200,
+            english: mockListening.items[0]?.english ?? '',
+            chinese: mockListening.items[0]?.chinese ?? '',
+            confidence: 0.92,
+            method: 'matched',
+          },
+        },
+      });
     }, 20);
     return { playbackState: 'playing' };
+  }
+  if (type === 'listening.songTimelineGenerate') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const versionId = String(payload.versionId ?? 'mock-minimax-1');
+    const result = {
+      articleId,
+      status: 'ready',
+      stylePrompt: 'bright children musical',
+      audioPath: 'mock-song.mp3',
+      errorMessage: '',
+      source: 'suno',
+      versions: [
+        {
+          id: versionId,
+          audioPath: 'mock-song.mp3',
+          title: 'Suno 版本 1',
+          durationMs: 32000,
+          stylePrompt: 'bright children musical',
+          styleKey: 'suno:bright children musical',
+          timelineStatus: 'ready',
+          timelinePath: 'mock-song-timeline.json',
+          timelineConfidence: 0.92,
+        },
+      ],
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({ type: 'listening.song.state', payload: result });
+    }, 40);
+    return result;
+  }
+  if (type === 'listening.songRecordVideo') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const result = {
+      articleId,
+      videoPath: 'C:\\Tomato\\recording-export\\mock-song.mp4',
+      subtitlePath: 'C:\\Tomato\\recording-export\\mock-song.srt',
+      durationMs: 32000,
+      frameCount: 800,
+      droppedFrameCount: 0,
+      encoderName: 'libx264',
+      codec: String(payload.codec ?? 'h264'),
+      resolution: String(payload.resolution ?? '1920x1080'),
+      pageTransition: String(payload.pageTransition ?? 'none'),
+      warnings: [],
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({ type: 'listening.recording.completed', payload: result });
+    }, 80);
+    return result;
   }
   if (type === 'listening.songStop') {
     return { stopped: true };

@@ -140,17 +140,34 @@ class ApiCacheService {
       return null;
     }
 
-    final entry = ApiCacheEntry.fromMap(rows.first);
+    var entry = ApiCacheEntry.fromMap(rows.first);
     final filePath = entry.filePath;
-    if (filePath != null &&
-        filePath.trim().isNotEmpty &&
-        !await File(filePath).exists()) {
-      await db.delete(
-        'api_cache_entries',
-        where: 'cache_key = ?',
-        whereArgs: [cacheKey],
-      );
-      return null;
+    if (filePath != null && filePath.trim().isNotEmpty) {
+      final resolvedPath = await migrateLegacyCacheFileIfNeeded(filePath);
+      if (!await File(resolvedPath).exists()) {
+        await db.delete(
+          'api_cache_entries',
+          where: 'cache_key = ?',
+          whereArgs: [cacheKey],
+        );
+        return null;
+      }
+      if (resolvedPath != filePath) {
+        await db.update(
+          'api_cache_entries',
+          {
+            'file_path': resolvedPath,
+            'updated_at': DateTime.now().toIso8601String(),
+          },
+          where: 'cache_key = ?',
+          whereArgs: [cacheKey],
+        );
+        entry = ApiCacheEntry.fromMap({
+          ...rows.first,
+          'file_path': resolvedPath,
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+      }
     }
 
     await touch(cacheKey);
@@ -611,7 +628,7 @@ class ApiCacheService {
   static Future<Directory> cacheDirectory(String subdirectory) async {
     final dir = Directory(
       path_lib.join(
-        await DatabaseService.databaseDirectory,
+        await DatabaseService.runtimeDataRoot,
         'tomato_api_cache',
         subdirectory,
       ),
@@ -620,6 +637,51 @@ class ApiCacheService {
       await dir.create(recursive: true);
     }
     return dir;
+  }
+
+  static Future<String> migrateLegacyCacheFileIfNeeded(
+    String filePath,
+  ) async {
+    final trimmed = filePath.trim();
+    if (trimmed.isEmpty) {
+      return trimmed;
+    }
+
+    final databaseCacheRoot = path_lib.join(
+      await DatabaseService.databaseDirectory,
+      'tomato_api_cache',
+    );
+    final runtimeCacheRoot = path_lib.join(
+      await DatabaseService.runtimeDataRoot,
+      'tomato_api_cache',
+    );
+    if (_sameOrWithin(runtimeCacheRoot, trimmed) ||
+        !_sameOrWithin(databaseCacheRoot, trimmed)) {
+      return trimmed;
+    }
+
+    final relativePath = path_lib.relative(trimmed, from: databaseCacheRoot);
+    final targetPath = path_lib.join(runtimeCacheRoot, relativePath);
+    final source = File(trimmed);
+    final target = File(targetPath);
+    if (!await source.exists()) {
+      return await target.exists() ? target.path : trimmed;
+    }
+
+    await target.parent.create(recursive: true);
+    if (!await target.exists()) {
+      await source.copy(target.path);
+    }
+    return target.path;
+  }
+
+  static bool _sameOrWithin(String parent, String child) {
+    final normalizedParent =
+        path_lib.normalize(path_lib.absolute(parent)).toLowerCase();
+    final normalizedChild =
+        path_lib.normalize(path_lib.absolute(child)).toLowerCase();
+    return path_lib.equals(normalizedParent, normalizedChild) ||
+        path_lib.isWithin(normalizedParent, normalizedChild);
   }
 
   static Future<void> _putEntry({
