@@ -190,6 +190,30 @@ void main() {
     );
   });
 
+  test('reads MiniMax API key from security MiniMax file', () async {
+    final previousDirectory = Directory.current;
+    final tempDirectory =
+        Directory.systemTemp.createTempSync('tomato_minimax_key_test_');
+    addTearDown(() {
+      Directory.current = previousDirectory;
+      if (tempDirectory.existsSync()) {
+        tempDirectory.deleteSync(recursive: true);
+      }
+    });
+
+    final securityDirectory =
+        Directory(_joinPath(tempDirectory.path, 'security'))..createSync();
+    File(_joinPath(securityDirectory.path, 'MiniMax.txt')).writeAsStringSync(
+      'MINIMAX_API_KEY=Bearer minimax-key-123456789012345678901234\n',
+    );
+    Directory.current = tempDirectory;
+
+    expect(
+      await AppConfig.miniMaxApiKey,
+      'minimax-key-123456789012345678901234',
+    );
+  });
+
   test('chooses longest unlabeled Ark key candidate in multiline file',
       () async {
     final previousDirectory = Directory.current;

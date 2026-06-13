@@ -299,17 +299,44 @@ class PracticeInputParser {
     }
 
     final englishLines = <String>[];
+    var insideSoftInterruption = false;
+    var sawSoftInterruption = false;
+    var resumedAfterSoftInterruption = false;
+    var skippedLikelyEnglishInSoftInterruption = false;
     for (var index = startIndex + 1; index < lines.length; index += 1) {
       final line = lines[index].trim();
       if (line.isEmpty) {
+        if (!insideSoftInterruption &&
+            englishLines.isNotEmpty &&
+            englishLines.last.isNotEmpty) {
+          englishLines.add('');
+        }
+        continue;
+      }
+      if (_isEnglishOriginalSectionHardStop(line)) {
+        break;
+      }
+      if (_isEnglishOriginalSectionSoftInterruption(line)) {
+        insideSoftInterruption = true;
+        sawSoftInterruption = true;
         if (englishLines.isNotEmpty && englishLines.last.isNotEmpty) {
           englishLines.add('');
         }
         continue;
       }
-      if (_isEnglishOriginalSectionStop(line)) {
-        break;
+
+      if (insideSoftInterruption) {
+        if (_isLikelyStoryEnglishContinuation(line)) {
+          insideSoftInterruption = false;
+          resumedAfterSoftInterruption = true;
+        } else {
+          if (_isEnglishLine(line) && _isLikelyStoryEnglish(line)) {
+            skippedLikelyEnglishInSoftInterruption = true;
+          }
+          continue;
+        }
       }
+
       if (_isEnglishLine(line) && _isLikelyStoryEnglish(line)) {
         englishLines.add(_cleanEnglishParagraph(line));
       }
@@ -336,6 +363,11 @@ class PracticeInputParser {
     if (paragraphs.isEmpty || wordCount < 20) {
       return null;
     }
+    if (sawSoftInterruption &&
+        !resumedAfterSoftInterruption &&
+        (skippedLikelyEnglishInSoftInterruption || wordCount < 120)) {
+      return null;
+    }
 
     return ParsedPracticeInput(
       sourceKind: PracticeInputSourceKind.english,
@@ -346,29 +378,214 @@ class PracticeInputParser {
     );
   }
 
-  static bool _isEnglishOriginalSectionStop(String line) {
+  static bool _isEnglishOriginalSectionHardStop(String line) {
     final compact = line.replaceAll(RegExp(r'\s+'), '');
-    if (compact.startsWith('【') || compact.endsWith('】')) {
+    final bareHeading = _bareChineseBracketHeading(compact);
+    if (_isEnglishOriginalTerminalHeading(bareHeading)) {
       return true;
     }
-    const exactHeadings = {
-      '文化卡片',
-      '生词好句',
-      '重点词汇',
-      '词汇讲解',
-      '中文译文',
-      '课程导读',
-      '参考译文',
-      '拓展',
-      '注释',
-    };
-    if (exactHeadings.contains(compact)) {
+    if (compact.startsWith('【') || compact.endsWith('】')) {
+      return !_isEnglishOriginalSectionSoftInterruption(line);
+    }
+    if (_isEnglishOriginalTerminalHeading(compact)) {
       return true;
     }
     if (RegExp(r'^\d+[.、]').hasMatch(line)) {
       return true;
     }
     return false;
+  }
+
+  static String _bareChineseBracketHeading(String compact) {
+    if (compact.startsWith('【') && compact.endsWith('】')) {
+      return compact.substring(1, compact.length - 1);
+    }
+    return compact;
+  }
+
+  static String _normalizedHeadingKey(String heading) {
+    final compact = heading.replaceAll(RegExp(r'\s+'), '');
+    return _bareChineseBracketHeading(compact)
+        .replaceAll(RegExp(r'''[【】\[\]（）()《》<>:：,，.。!！?？、;'"\-—–_/\\]+'''), '')
+        .toLowerCase();
+  }
+
+  static bool _startsWithNearHeading(
+    String key,
+    Set<String> prefixes, {
+    int extraLength = 14,
+  }) {
+    for (final prefix in prefixes) {
+      if (key == prefix ||
+          (key.startsWith(prefix) &&
+              key.length <= prefix.length + extraLength)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static bool _isEnglishOriginalTerminalHeading(String heading) {
+    final key = _normalizedHeadingKey(heading);
+    const exactHeadings = {
+      '文化卡片',
+      '生词好句',
+      '重点词汇',
+      '词汇讲解',
+      '词汇',
+      '单词讲解',
+      '生词',
+      '中文译文',
+      '中文翻译',
+      '参考译文',
+      '译文',
+      '翻译',
+      '课程导读',
+      '课后练习',
+      '练习',
+      '作业',
+      '例句',
+      '示例',
+      '范例',
+      '参考答案',
+      '答案',
+      '课文翻译',
+      '原文翻译',
+      '译文参考',
+      'vocabulary',
+      'wordlist',
+      'newwords',
+      'keywords',
+      'keyvocabulary',
+      'wordsandphrases',
+      'usefulphrases',
+      'usefulsentences',
+      'sentencebank',
+      'translation',
+      'referencetranslation',
+      'chinesetranslation',
+      'answer',
+      'answers',
+      'exercises',
+      'homework',
+      'quiz',
+      'questions',
+      'culturecard',
+      'culturalcard',
+    };
+    if (exactHeadings.contains(key)) {
+      return true;
+    }
+    const chinesePrefixes = {
+      '生词',
+      '词汇',
+      '单词',
+      '短语',
+      '句型',
+      '例句',
+      '练习',
+      '作业',
+      '答案',
+      '参考答案',
+      '阅读理解',
+      '课后题',
+      '问题',
+      '测验',
+    };
+    if (_startsWithNearHeading(key, chinesePrefixes, extraLength: 16)) {
+      return true;
+    }
+    const englishPrefixes = {
+      'vocabulary',
+      'wordlist',
+      'newwords',
+      'keywords',
+      'phrase',
+      'phrases',
+      'translation',
+      'answer',
+      'answers',
+      'exercise',
+      'exercises',
+      'homework',
+      'quiz',
+      'question',
+      'questions',
+    };
+    return _startsWithNearHeading(key, englishPrefixes, extraLength: 10);
+  }
+
+  static bool _isEnglishOriginalSectionSoftInterruption(String line) {
+    final compact = line.replaceAll(RegExp(r'\s+'), '');
+    if (compact.startsWith('【') && compact.endsWith('】')) {
+      return true;
+    }
+    final key = _normalizedHeadingKey(compact);
+    const softHeadings = {
+      '拓展',
+      '背景',
+      '背景知识',
+      '文化拓展',
+      '补充',
+      '补充说明',
+      '延伸阅读',
+      '知识点',
+      '知识拓展',
+      '句子解析',
+      '难句解析',
+      '长难句',
+      '语法点',
+      '语法讲解',
+      '文化注释',
+      '原文解析',
+      '重点解析',
+      '讲解',
+      '解析',
+      '说明',
+      '小贴士',
+      'tips',
+      'note',
+      'notes',
+      'teachersnote',
+      'teachernote',
+      'background',
+      'backgroundknowledge',
+      'extension',
+      'extendedreading',
+      'supplement',
+      'explanation',
+      'analysis',
+      'sentenceanalysis',
+      'difficultsentences',
+      'grammarnote',
+      'grammarnotes',
+      'culturenote',
+      'culturalnote',
+    };
+    if (softHeadings.contains(key)) {
+      return true;
+    }
+    const englishPrefixes = {
+      'background',
+      'extension',
+      'supplement',
+      'explanation',
+      'analysis',
+      'note',
+      'notes',
+      'grammar',
+      'culture',
+      'cultural',
+      'tip',
+      'tips',
+      'teacher',
+    };
+    if (_startsWithNearHeading(key, englishPrefixes, extraLength: 18)) {
+      return true;
+    }
+    return RegExp(
+      r'^(拓展|背景|补充|注释|讲解|解析|知识|语法|难句|长难句|文化|说明|小贴士|导读)',
+    ).hasMatch(compact);
   }
 
   static bool _containsChinese(String text) =>
@@ -440,6 +657,34 @@ class PracticeInputParser {
   static bool _isLikelyStoryEnglish(String line) {
     final wordCount = RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(line).length;
     return wordCount >= 5 || RegExp(r'[.!?;:,"—–]$').hasMatch(line.trim());
+  }
+
+  static bool _isLikelyStoryEnglishContinuation(String line) {
+    if (!_isEnglishLine(line) || !_isLikelyStoryEnglish(line)) {
+      return false;
+    }
+    final trimmed = line.trim();
+    final lower = trimmed.toLowerCase();
+    if (_looksLikeEnglishTitle(trimmed) &&
+        !trimmed.startsWith('"') &&
+        !RegExp(
+          r"\b(said|asked|replied|remarked|cried|shouted|thought|looked|went|came|was|were|had|did|could|would|should|began|heard|found|appeared)\b",
+          caseSensitive: false,
+        ).hasMatch(lower)) {
+      return false;
+    }
+    if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+      return true;
+    }
+    if (RegExp(
+      r"\b(said|asked|replied|remarked|cried|shouted|thought|looked|went|came|was|were|had|did|could|would|should|began|heard|found|appeared|collected|hurried|tucked|caught)\b",
+      caseSensitive: false,
+    ).hasMatch(lower)) {
+      return true;
+    }
+    final wordCount =
+        RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(trimmed).length;
+    return wordCount >= 12 && RegExp(r'[.!?;:]$').hasMatch(trimmed);
   }
 
   static String _cleanTitleCandidate(String line) =>

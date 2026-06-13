@@ -102,9 +102,13 @@ web_ui/
 - Widget 不直接 `await` API 调用，必须通过 Provider / AsyncValue 桥接。
 - API 响应原始 JSON 不直接传给 Widget，先在 Service 层解析为 Dart 模型。
 - Services 必须提供 mock fallback，方便无 API Key 时本地开发调试。
+- 诊断日志统一使用 `app/lib/core/logging/tomato_logger.dart` 的 `TomatoLogger`；新增链路不要再散落裸 `debugPrint`。日志默认写入运行数据根 `logs/`，并通过 QA `/logs/recent`、`/logs/stream`、`/logs/export` 调试。
 - 当前主 UI 是 `web_ui` 打包后的本地 WebView 页面；Flutter 的 `WebShellScreen` 负责桥接数据库、录音、播放、TTS、ASR、AI 对话和安全配置。
 - `app/lib/features/home|article|follow_read|chat|profile` 下的原生 Screen 仍可作为参考/兼容层，但默认路由进入 `WebShellScreen`。
 - Web UI 与 Flutter 交互时必须通过 `web_bridge_protocol.dart` / `bridge.ts` 的 typed command/event 协议，不要从 Web UI 直接访问云 API 或本地文件系统。
+- Suno 网页自动化在 `WebShellScreen` 内执行：同一篇文章如果已经保存过上一次 Suno 自动生成的风格，再次进入时直接填入旧风格；没有旧风格时才点击 `Styles` 工具栏里的蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
+- Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
+- Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词/风格达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
 
 ## Flutter / Dart 规范
 
@@ -412,11 +416,19 @@ Manifest 与入口约束：
 - 涉及 Android 调试脚本时，优先复用 `build_android.ps1 -Run`，不要复制一套新的 Flutter 启动逻辑。
 - 修改 Web UI 后，保持 `tools/build_windows.ps1`、`tools/build_android.ps1` 自动执行 `npm ci` / `npm install` 与 `npm run build`，确保 `app\assets\web\` 随 EXE/APK 更新。
 - 新增 Web UI 依赖时同步更新 `web_ui\package.json` 与 `web_ui\package-lock.json`，不要提交 `node_modules`。
-- Windows Debug 和 Release 可以是两套可执行程序，但桌面运行数据必须共用；Debug 构建默认通过 `TOMATO_DESKTOP_DATA_ROOT` 复用 `release\windows\tomato_english_happy_talking` 下的数据库和 API 缓存，不要让 Debug 写到 `app\build\windows\...\Debug` 旁边形成第二套数据。
+- Windows Debug 和 Release 可以是两套可执行程序，但桌面运行目录和数据必须共用 `release\windows\tomato_english_happy_talking`；Debug 构建/运行也要先把程序文件发布到该目录，确保 `ffmpeg.exe`、依赖 DLL、数据库和 API 缓存都从同一处读取，不要直接运行 `app\build\windows\...\Debug` 旁边的 EXE。
 
 ## 构建、运行与发布
 
 处理构建、发布、模拟器任务时，优先复用根目录 PowerShell 脚本，不要只给一次性裸终端命令。
+
+Codex / 自动化会话执行 Flutter 相关命令时，必须直接走已授权的沙箱外 PowerShell，不要先在受限沙箱内试跑。当前环境已验证受限沙箱会卡在 Flutter SDK cache lockfile 访问上；`flutter --version`、`flutter pub get`、`flutter analyze`、`flutter test`、`tools/build_windows.ps1`、`tools/build_android.ps1`、`tools/run_android_debug.ps1`、`tools/setup_android_emulator.ps1` 等只要会触碰 `D:\DevTools\flutter`，都应直接用类似下面的外部 PowerShell 形式执行：
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command '.\tools\build_windows.ps1'
+```
+
+纯 Web UI 的 `npm` / `tsc` / `vite` 命令可以按普通仓库命令执行；只有需要 Flutter SDK、Android SDK 或启动桌面/模拟器时才直接走沙箱外。
 
 常用命令：
 
@@ -456,15 +468,16 @@ cd f:\TomatoEnglishHappyTalking
 
 构建产物：
 
-- Windows 构建输出：`app\build\windows\x64\runner\Release\tomato_english_happy_talking.exe`
+- Windows Release 构建输出：`app\build\windows\x64\runner\Release\tomato_english_happy_talking.exe`
+- Windows Debug 构建中间输出：`app\build\windows\x64\runner\Debug\tomato_english_happy_talking.exe`，但调试运行也应使用脚本同步后的发布目录 EXE。
 - Windows 发布目录：`release\windows\tomato_english_happy_talking\`
 - Android 构建输出：`app\build\app\outputs\flutter-apk\app-release.apk`
 - Android 发布 APK：`release\android\tomato_english_happy_talking-android-release.apk`
 - Web UI 构建输出 / App 内置资源：`app\assets\web\`（由 `web_ui/vite.config.ts` 的 `outDir` 指定）
 
-- 桌面数据固定跟随发布目录：Windows Debug 和 Release 可以是两套程序，但数据库、`tomato_api_cache/`、绘本图片、TTS、录音等运行数据应共用 `release\windows\tomato_english_happy_talking\` 下的数据根，不要让 Debug 写到 `app\build\windows\...\Debug` 旁边形成第二套数据。
+- 桌面运行目录和数据固定跟随发布目录：Windows Debug 和 Release 可以是两套构建产物，但脚本会把最终运行的程序文件同步到 `release\windows\tomato_english_happy_talking\`；数据库、`tomato_api_cache/`、绘本图片、TTS、录音、`ffmpeg.exe` 和依赖 DLL 都应从这里读取，不要让 Debug 从 `app\build\windows\...\Debug` 直接启动或写入第二套数据。
 - `tools/build_windows.ps1` 不得清空用户运行数据；如果需要清理发布目录，只能清理程序构建产物，必须保留数据库、`tomato_api_cache/`、录音、绘本图片和配置密钥文件。
-- `D:\DevTools\flutter\bin\flutter.bat analyze`、`flutter.bat --version` 或 `flutter test` 若长时间无输出，优先怀疑 Flutter SDK cache lockfile / sandbox 权限问题；必须设置明确超时，必要时用已批准的 SDK cache 路径/提权方式重跑，不要无限等待。
+- `D:\DevTools\flutter\bin\flutter.bat analyze`、`flutter.bat --version`、`flutter test` 以及项目 Flutter 构建脚本在当前 Codex 沙箱内已确认会卡住 SDK cache lockfile；代理会话不要先试沙箱内命令，直接用已授权沙箱外 PowerShell 执行，并设置明确超时。
 
 只有在怀疑脚本本身有问题时，才退回到底层 `flutter build`、`flutter run`、`gradlew`、`adb` 或 `emulator` 命令定位。
 
@@ -537,8 +550,20 @@ Service 必须满足：
 - API Key 通过 `AppConfig` 读取。
 - mock fallback 返回结构合理的假数据。
 - 返回 Dart 模型类。
-- 错误时 `debugPrint` 并返回 `null` 或 fallback。
+- 错误时用 `TomatoLogger` 记录摘要并返回 `null` 或 fallback。
 - 不修改 `pubspec.yaml` 既有依赖版本，除非任务明确要求。
+
+## 诊断日志规范
+
+- 统一入口：`TomatoLogger`。
+- 固定字段：`ts, level, category, event, message, flowId, articleId, route, stage, status, durationMs, data, error, stack`。
+- 级别：`trace/debug/info/warn/error/fatal`；默认 `info`，可用 `TOMATO_LOG_LEVEL` 调整。
+- 分类：`startup, bridge, qa, webview, article, pictureBook, tts, asr, chat, follow, listening, recording, suno, music, cache, config, safety`。
+- 日志目录解析顺序：`TOMATO_LOG_DIR`、`TOMATO_DESKTOP_DATA_ROOT\logs`、桌面程序目录 `logs`。Windows Debug/Release 都应复用 `release\windows\tomato_english_happy_talking\logs`。
+- 日志文件为 NDJSON，内存保留最近 2000 条，文件默认 5 MB 轮转，最多 10 个文件或 7 天。
+- 永远不要记录完整 API key、Authorization、Cookie、完整文章正文、完整歌词、完整云响应或绝对路径明文；需要定位内容时记录 hash、长度、业务 ID 和短摘要。
+- Web UI 通过 `diagnostics.clientLog` 上报 `window.onerror`、`unhandledrejection` 和关键 `console.warn/error`；bridge 请求只记录 payload 摘要。
+- QA 实时接口：`GET /logs/recent?limit=200&level=&category=&since=`、`GET /logs/stream?level=&category=`、`GET /logs/files`、`GET /logs/export`。
 
 ## 跟读功能排查工作流
 

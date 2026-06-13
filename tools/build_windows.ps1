@@ -360,6 +360,7 @@ function Get-WindowsRuntimeDirectories {
         "tomato_api_cache",
         "downloads",
         "recordings",
+        "recording-export",
         "picture_book",
         "runtime",
         "user_data",
@@ -372,6 +373,71 @@ function Get-WindowsRuntimeDirectories {
         "data\user_data",
         "data\databases"
     )
+}
+
+function Get-WindowsFfmpegBundleSourceDir {
+    $candidates = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:VCPKG_ROOT)) {
+        $candidates += (Join-Path $env:VCPKG_ROOT "installed\x64-windows\tools\ffmpeg")
+    }
+
+    $candidates += @(
+        "E:\SDK\vcpkg\installed\x64-windows\tools\ffmpeg",
+        "e:\sdk\vcpkg\installed\x64-windows\tools\ffmpeg"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+
+        $ffmpegExe = Join-Path $candidate "ffmpeg.exe"
+        if (Test-Path $ffmpegExe) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Copy-WindowsFfmpegRuntime {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir
+    )
+
+    $sourceDir = Get-WindowsFfmpegBundleSourceDir
+    if ([string]::IsNullOrWhiteSpace($sourceDir)) {
+        throw "未找到可打包的 FFmpeg。请确认 E:\SDK\vcpkg\installed\x64-windows\tools\ffmpeg\ffmpeg.exe 存在，或设置 VCPKG_ROOT。"
+    }
+
+    Assert-PathInsideDirectory -Path $PackageDir -ParentPath (Split-Path -Parent $PackageDir)
+
+    $copied = @()
+    $ffmpegExe = Join-Path $sourceDir "ffmpeg.exe"
+    Copy-Item -LiteralPath $ffmpegExe -Destination (Join-Path $PackageDir "ffmpeg.exe") -Force
+    $copied += "ffmpeg.exe"
+
+    Get-ChildItem -LiteralPath $sourceDir -File -Filter "*.dll" | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $PackageDir $_.Name) -Force
+        $copied += $_.Name
+    }
+
+    Write-Host "已打包 FFmpeg 运行文件: $($copied.Count) 项" -ForegroundColor Green
+}
+
+function Ensure-WindowsRuntimeDirectories {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir
+    )
+
+    foreach ($relativePath in @(Get-WindowsRuntimeDirectories)) {
+        $destinationPath = Join-Path $PackageDir $relativePath
+        Assert-PathInsideDirectory -Path $destinationPath -ParentPath $PackageDir
+        New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
+    }
 }
 
 function Get-WindowsRuntimeFiles {
@@ -625,14 +691,16 @@ function Restore-WindowsRuntimeData {
     return $restoredItems
 }
 
-function Publish-WindowsReleaseArtifacts {
+function Publish-WindowsPackageArtifacts {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$BuildOutputDir
+        [string]$BuildOutputDir,
+        [Parameter(Mandatory = $true)]
+        [string]$BuildConfiguration
     )
 
     if (-not (Test-Path $BuildOutputDir)) {
-        throw "Windows Release 输出目录不存在: $BuildOutputDir"
+        throw "Windows $BuildConfiguration 输出目录不存在: $BuildOutputDir"
     }
 
     $releaseWindowsDir = Join-Path $releaseRoot "windows"
@@ -661,12 +729,33 @@ function Publish-WindowsReleaseArtifacts {
         Write-Host "已清理旧程序产物: $($removedItems.Count) 项" -ForegroundColor Yellow
     }
     Copy-Item -Path (Join-Path $BuildOutputDir "*") -Destination $packageDir -Recurse -Force
+    Copy-WindowsFfmpegRuntime -PackageDir $packageDir
+    Ensure-WindowsRuntimeDirectories -PackageDir $packageDir
 
     if ($null -ne $packageBackupDir -and (Test-Path $packageBackupDir)) {
         Write-Host "已保留发布目录运行数据，完整备份保留在: $packageBackupDir" -ForegroundColor DarkGray
     }
 
-    Write-Host "发布目录已更新: $packageDir" -ForegroundColor Green
+    Write-Host "Windows $BuildConfiguration 程序目录已更新: $packageDir" -ForegroundColor Green
+    return $packageDir
+}
+
+function Publish-WindowsReleaseArtifacts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BuildOutputDir
+    )
+
+    return Publish-WindowsPackageArtifacts -BuildOutputDir $BuildOutputDir -BuildConfiguration "Release"
+}
+
+function Publish-WindowsDebugArtifacts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BuildOutputDir
+    )
+
+    return Publish-WindowsPackageArtifacts -BuildOutputDir $BuildOutputDir -BuildConfiguration "Debug"
 }
 
 function Clear-StaleWindowsBuildCache {
@@ -708,9 +797,7 @@ try {
         $buildArgs = @("build", "windows", "--release") + $dartDefineArgs
         & $flutterExe @buildArgs
         Assert-LastExitCode -CommandName "flutter build windows --release"
-        $exePath = "build\windows\x64\runner\Release\tomato_english_happy_talking.exe"
-        Publish-WindowsReleaseArtifacts -BuildOutputDir (Join-Path (Get-Location) "build\windows\x64\runner\Release")
-        $releasePackageDir = Join-Path $releaseRoot "windows\tomato_english_happy_talking"
+        $releasePackageDir = Publish-WindowsReleaseArtifacts -BuildOutputDir (Join-Path (Get-Location) "build\windows\x64\runner\Release")
         $releaseExePath = Join-Path $releasePackageDir "tomato_english_happy_talking.exe"
         Write-Host "`n构建完成: $releaseExePath" -ForegroundColor Green
         if ($Run) {
@@ -721,16 +808,15 @@ try {
         $debugDartDefine = Add-DebugDesktopDataRootDefine -Values $DartDefine
         $dartDefineArgs = Get-FlutterDartDefineArgs -Values $debugDartDefine
         Write-Host "`n=== 构建或运行 Windows Debug ===" -ForegroundColor Cyan
+        $buildArgs = @("build", "windows", "--debug") + $dartDefineArgs
+        & $flutterExe @buildArgs
+        Assert-LastExitCode -CommandName "flutter build windows --debug"
+        $debugPackageDir = Publish-WindowsDebugArtifacts -BuildOutputDir (Join-Path (Get-Location) "build\windows\x64\runner\Debug")
+        $debugExePath = Join-Path $debugPackageDir "tomato_english_happy_talking.exe"
+        Write-Host "`n构建完成: $debugExePath" -ForegroundColor Green
         if ($Run) {
-            $runArgs = @("run", "-d", "windows") + $dartDefineArgs
-            & $flutterExe @runArgs
-            Assert-LastExitCode -CommandName "flutter run -d windows"
-        } else {
-            $buildArgs = @("build", "windows", "--debug") + $dartDefineArgs
-            & $flutterExe @buildArgs
-            Assert-LastExitCode -CommandName "flutter build windows --debug"
-            $exePath = "build\windows\x64\runner\Debug\tomato_english_happy_talking.exe"
-            Write-Host "`n构建完成: $exePath" -ForegroundColor Green
+            Write-Host "`n=== 启动应用 ===" -ForegroundColor Cyan
+            Start-Process -FilePath $debugExePath -WorkingDirectory $debugPackageDir
         }
     }
 } finally {

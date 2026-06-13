@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
 import 'text_generation_service.dart';
 
 class PracticeWordLookup {
@@ -131,6 +133,54 @@ class PracticeTextService {
       text: outputs.join('\n\n'),
       source: _combineTextGenerationSources(sources),
       errorMessage: firstError,
+    );
+  }
+
+  static Future<TextGenerationReply> translateToEnglishForPracticeStrict({
+    required String content,
+    int? articleId,
+  }) async {
+    final trimmed = _normalizeEnglishWordJoiners(content.trim());
+    if (trimmed.isEmpty) {
+      return const TextGenerationReply(
+        text: '',
+        source: TextGenerationReplySource.remote,
+      );
+    }
+    if (!_containsChineseText(trimmed)) {
+      return TextGenerationReply(
+        text: _normalizeInWordHyphens(
+          trimmed.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim(),
+        ),
+        source: TextGenerationReplySource.remote,
+      );
+    }
+
+    final outputs = <String>[];
+    final sources = <TextGenerationReplySource>[];
+    for (final chunk in _splitPracticePromptChunks(trimmed)) {
+      final prompt = _englishPracticePrompt(chunk);
+      final reply = await TextGenerationService.generateStrict(
+        turns: prompt.turns,
+        cachePurpose: 'translate_to_english_practice',
+        articleId: articleId,
+        maxTokens: 1600,
+        receiveTimeout: const Duration(seconds: 90),
+      );
+      final cleaned = _cleanRequiredEnglishPracticeArticle(reply.text);
+      outputs.add(cleaned);
+      sources.add(reply.source);
+    }
+
+    final text = outputs.join('\n\n').trim();
+    if (text.isEmpty) {
+      throw const TextGenerationException(
+        '文本提交处理失败：AI 未返回可保存的英文正文，请重试。',
+      );
+    }
+    return TextGenerationReply(
+      text: text,
+      source: _combineTextGenerationSources(sources),
     );
   }
 
@@ -300,12 +350,12 @@ class PracticeTextService {
           const TextGenerationTurn(
             role: 'system',
             content:
-                'You extract original English story prose from mixed Chinese-English learning material. Keep only the English story text in original order. Remove Chinese translations, explanations, vocabulary notes, headings, page labels, metadata, and teacher instructions. Do not translate Chinese into new story text. Return only English prose.',
+                'You prepare English practice story prose from mixed learning material. Keep only the story content in original order. If the story prose is already English, preserve the original English prose and do not rewrite it. If the story content is Chinese and no English story prose is present, translate only that story content into natural English. Remove lesson introductions, headings, dates, authors, explanations, expansion notes, culture cards, vocabulary lists, phonetics, examples, Chinese translations, metadata, and teacher instructions. Return only the final English story prose.',
           ),
           TextGenerationTurn(
             role: 'user',
             content:
-                'Extract the English story original from this mixed learning text. Return only the English story prose, with normal spacing and punctuation:\n\n$trimmed',
+                'Extract the story from this mixed learning text. Keep original English story prose when present; if the story is only in Chinese, translate it to English. Remove all non-story material and return only English story prose with normal spacing and punctuation:\n\n$trimmed',
           ),
         ],
       );
@@ -328,6 +378,10 @@ class PracticeTextService {
       ],
     );
   }
+
+  @visibleForTesting
+  static ({List<TextGenerationTurn> turns, String fallback})
+      englishPracticePromptForTest(String text) => _englishPracticePrompt(text);
 
   static List<String> _splitPracticePromptChunks(String text) {
     final trimmed = text.trim();
@@ -635,6 +689,17 @@ class PracticeTextService {
     }
     if (_containsChineseText(cleaned) && !_containsEnglishText(cleaned)) {
       return fallback;
+    }
+    return cleaned;
+  }
+
+  static String _cleanRequiredEnglishPracticeArticle(String text) {
+    final cleaned = _cleanEnglishPracticeArticle(text, '').trim();
+    if (cleaned.isEmpty ||
+        (_containsChineseText(cleaned) && !_containsEnglishText(cleaned))) {
+      throw const TextGenerationException(
+        '文本提交处理失败：AI 未返回可保存的英文正文，请重试。',
+      );
     }
     return cleaned;
   }

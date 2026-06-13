@@ -38,6 +38,16 @@ class TextGenerationReply {
   final String? errorMessage;
 }
 
+class TextGenerationException implements Exception {
+  const TextGenerationException(this.message, {this.cause});
+
+  final String message;
+  final Object? cause;
+
+  @override
+  String toString() => message;
+}
+
 typedef TextGenerationPostOverride = Future<Object?> Function({
   required String endpoint,
   required Map<String, String> headers,
@@ -162,6 +172,106 @@ class TextGenerationService {
     }
   }
 
+  static Future<TextGenerationReply> generateStrict({
+    required List<TextGenerationTurn> turns,
+    required String cachePurpose,
+    int? articleId,
+    int maxTokens = 1024,
+    Duration? receiveTimeout,
+    bool jsonResponse = false,
+  }) async {
+    final preparedTurns = await _prepareTurnsForApi(
+      turns,
+      purpose: cachePurpose,
+    );
+    final model = await AppConfig.volcArkTextModel;
+    final request = _cacheRequest(
+      model: model,
+      turns: preparedTurns,
+      purpose: cachePurpose,
+      maxTokens: maxTokens,
+      jsonResponse: jsonResponse,
+    );
+    final cacheKey = await ApiCacheService.keyForJson(
+      _cacheNamespace,
+      request,
+    );
+    final cachedText = await ApiCacheService.getText(
+      cacheKey,
+      articleId: articleId,
+      purpose: cachePurpose,
+    );
+    if (cachedText != null && cachedText.trim().isNotEmpty) {
+      return TextGenerationReply(
+        text: cachedText,
+        source: TextGenerationReplySource.cached,
+      );
+    }
+
+    final apiKey = await AppConfig.volcArkTextApiKey;
+    if (apiKey.trim().isEmpty) {
+      throw const TextGenerationException(
+        '文本提交处理失败：未读取到方舟 API Key，请配置后重试。',
+      );
+    }
+
+    try {
+      final body = <String, dynamic>{
+        'model': model,
+        'messages':
+            preparedTurns.map((turn) => turn.toJson()).toList(growable: false),
+        'max_tokens': maxTokens,
+        'stream': false,
+        if (jsonResponse) 'response_format': {'type': 'json_object'},
+      };
+      final responseData = await _postJson(
+        apiKey: apiKey,
+        body: body,
+        receiveTimeout: receiveTimeout,
+      );
+      final text = _extractMessageContent(responseData).trim();
+      if (text.isEmpty) {
+        throw const FormatException('Ark response has no message content');
+      }
+      await ApiCacheService.putText(
+        cacheKey: cacheKey,
+        kind: _cacheNamespace,
+        purpose: cachePurpose,
+        request: request,
+        textValue: text,
+        articleId: articleId,
+      );
+      await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
+        serviceKind: ContentSafetyService.serviceArkText,
+        purpose: cachePurpose,
+        articleId: articleId,
+        successfulText: _requestTranscript(preparedTurns),
+      );
+      return TextGenerationReply(
+        text: text,
+        source: TextGenerationReplySource.remote,
+      );
+    } catch (error) {
+      final errorSummary = _errorSummary(error);
+      final safety = ContentSafetyService.classifyFailure(error);
+      if (safety.suspectedSafetyBlock) {
+        await ContentSafetyService.recordFailure(
+          serviceKind: ContentSafetyService.serviceArkText,
+          purpose: cachePurpose,
+          articleId: articleId,
+          failedText: _requestTranscript(turns),
+          errorCode: safety.errorCode,
+          errorMessage: safety.message,
+        );
+      }
+      debugPrint('[TextGenerationService] strict error=$errorSummary');
+      throw TextGenerationException(
+        _strictUserMessage(error),
+        cause: error,
+      );
+    }
+  }
+
   static Future<void> attachExistingCache({
     required List<TextGenerationTurn> turns,
     required String cachePurpose,
@@ -184,6 +294,27 @@ class TextGenerationService {
       purpose: cachePurpose,
       request: request,
       articleId: articleId,
+    );
+  }
+
+  @visibleForTesting
+  static Future<Map<String, dynamic>> cacheRequestForTest({
+    required List<TextGenerationTurn> turns,
+    required String purpose,
+    int maxTokens = 1024,
+    bool jsonResponse = false,
+  }) async {
+    final preparedTurns = await _prepareTurnsForApi(
+      turns,
+      purpose: purpose,
+    );
+    final model = await AppConfig.volcArkTextModel;
+    return _cacheRequest(
+      model: model,
+      turns: preparedTurns,
+      purpose: purpose,
+      maxTokens: maxTokens,
+      jsonResponse: jsonResponse,
     );
   }
 
@@ -213,6 +344,7 @@ class TextGenerationService {
   static Future<Object?> _postJson({
     required String apiKey,
     required Map<String, dynamic> body,
+    Duration? receiveTimeout,
   }) async {
     final headers = <String, String>{
       'Authorization': 'Bearer $apiKey',
@@ -230,9 +362,30 @@ class TextGenerationService {
     final response = await _dio.post<dynamic>(
       _endpoint,
       data: body,
-      options: Options(headers: headers),
+      options: Options(
+        headers: headers,
+        receiveTimeout: receiveTimeout,
+      ),
     );
     return response.data;
+  }
+
+  static String _strictUserMessage(Object error) {
+    if (error is TextGenerationException) {
+      return error.message;
+    }
+    if (error is DioException &&
+        error.type == DioExceptionType.receiveTimeout) {
+      return '文本提交处理超时，请稍后重试。';
+    }
+    if (error is DioException &&
+        error.type == DioExceptionType.connectionTimeout) {
+      return '文本提交连接超时，请检查网络后重试。';
+    }
+    if (error is FormatException) {
+      return '文本提交处理失败：AI 返回内容格式不正确，请重试。';
+    }
+    return '文本提交处理失败，请稍后重试。';
   }
 
   static Map<String, dynamic> _cacheRequest({
@@ -240,6 +393,7 @@ class TextGenerationService {
     required List<TextGenerationTurn> turns,
     required String purpose,
     required int maxTokens,
+    bool jsonResponse = false,
   }) =>
       {
         'service': 'ark_chat_completions',
@@ -248,6 +402,7 @@ class TextGenerationService {
         'purpose': purpose,
         'maxTokens': maxTokens,
         'stream': false,
+        if (jsonResponse) 'responseFormat': 'json_object',
         'messages': turns.map((turn) => turn.toJson()).toList(growable: false),
       };
 

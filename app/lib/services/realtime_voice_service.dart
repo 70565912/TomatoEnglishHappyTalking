@@ -4,9 +4,10 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../core/config/app_config.dart';
+import '../core/logging/tomato_logger.dart';
 import 'api_cache_service.dart';
 
 enum RealtimeReplySource {
@@ -811,7 +812,13 @@ class RealtimeVoiceService {
     if (!_audioTraceEnabled) {
       return;
     }
-    debugPrint('[RealtimeTrace] $message');
+    TomatoLogger.trace(
+      category: 'chat',
+      event: 'realtime.trace',
+      message: message,
+      data: {'tag': 'RealtimeTrace'},
+      force: true,
+    );
   }
 
   static String _mockResponse() =>

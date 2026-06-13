@@ -76,4 +76,98 @@ describe('bridge client', () => {
 
     expect(response.tts.speakerId).toBe('en_male_tim_uranus_bigtts');
   });
+
+  it('reports bridge success and failure summaries to native diagnostics', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const callHandler = vi.fn().mockImplementation(
+      async (_handlerName: string, message: Record<string, unknown>) => {
+        calls.push(message);
+        if (message.type === 'diagnostics.clientLog') {
+          return {
+            id: message.id,
+            ok: true,
+            type: 'diagnostics.clientLog.result',
+            payload: { accepted: true },
+          };
+        }
+        if (message.type === 'article.fail') {
+          return {
+            id: message.id,
+            ok: false,
+            type: 'article.fail.error',
+            error: { message: 'native failed' },
+          };
+        }
+        return {
+          id: message.id,
+          ok: true,
+          type: `${message.type}.result`,
+          payload: { ok: true },
+        };
+      },
+    );
+    window.flutter_inappwebview = { callHandler };
+
+    await sendNative('article.list', {
+      apiKey: 'secret-token-123456789012',
+      content: 'Tom reads a story.',
+    });
+    await flushPromises();
+
+    await expect(sendNative('article.fail')).rejects.toThrow('native failed');
+    await flushPromises();
+
+    const diagnosticMessages = calls.filter(
+      (message) => message.type === 'diagnostics.clientLog',
+    );
+    expect(
+      diagnosticMessages.map((message) => (message.payload as Record<string, unknown>).event),
+    ).toEqual(expect.arrayContaining(['command.success', 'command.failed']));
+
+    const successPayload = diagnosticMessages.find(
+      (message) => (message.payload as Record<string, unknown>).event === 'command.success',
+    )?.payload as Record<string, unknown>;
+    const data = successPayload.data as {
+      payload: Record<string, unknown>;
+    };
+    expect(data.payload.apiKey).toBe('[redacted]');
+  });
+
+  it('reports console errors through diagnostics without leaking secrets', async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    window.flutter_inappwebview = {
+      callHandler: vi.fn().mockImplementation(
+        async (_handlerName: string, message: Record<string, unknown>) => {
+          calls.push(message);
+          return {
+            id: message.id,
+            ok: true,
+            type: `${message.type}.result`,
+            payload: { accepted: true },
+          };
+        },
+      ),
+    };
+
+    console.error('client render failed');
+    const event = new Event('unhandledrejection') as PromiseRejectionEvent;
+    Object.defineProperty(event, 'reason', {
+      value: new Error('Bearer secret-token-123456789012 exploded'),
+    });
+    window.dispatchEvent(event);
+    await flushPromises();
+
+    const diagnosticMessages = calls.filter(
+      (message) => message.type === 'diagnostics.clientLog',
+    );
+    expect(
+      diagnosticMessages.map((message) => (message.payload as Record<string, unknown>).event),
+    ).toEqual(expect.arrayContaining(['console.error', 'window.unhandled_rejection']));
+    expect(JSON.stringify(diagnosticMessages)).not.toContain('secret-token-123456789012');
+    expect(JSON.stringify(diagnosticMessages)).toContain('[redacted]');
+  });
 });
+
+function flushPromises() {
+  return new Promise((resolve) => window.setTimeout(resolve, 0));
+}

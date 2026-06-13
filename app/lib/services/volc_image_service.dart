@@ -166,6 +166,7 @@ class VolcImageService {
     String cachePurpose = 'picture_book_image',
     bool useSequential = false,
     bool reusePartialCache = true,
+    bool cacheOnly = false,
   }) async {
     final cleaned = requests
         .where((request) => request.prompt.trim().isNotEmpty)
@@ -173,7 +174,8 @@ class VolcImageService {
     if (cleaned.isEmpty) {
       return const [];
     }
-    if ((!_arkSequentialEnabled && !useSequential) || cleaned.length == 1) {
+    if (((!_arkSequentialEnabled && !useSequential) || cleaned.length == 1) &&
+        !cacheOnly) {
       return Future.wait(
         cleaned.map(
           (request) => generatePictureBookImage(
@@ -187,18 +189,6 @@ class VolcImageService {
           ),
         ),
       );
-    }
-
-    final apiKey = await AppConfig.volcArkImageApiKey;
-    if (apiKey.trim().isEmpty) {
-      return [
-        for (final request in cleaned)
-          VolcImageResult(
-            source: VolcImageResultSource.skippedNoKey,
-            pageIndex: request.pageIndex,
-            errorMessage: _missingArkImageKeyMessage,
-          ),
-      ];
     }
 
     final referenceImages = await _referenceImages(referenceImagePaths);
@@ -261,6 +251,17 @@ class VolcImageService {
         for (final request in cleaned) cachedResults[request.pageIndex]!,
       ];
     }
+    if (cacheOnly) {
+      return [
+        for (final request in cleaned)
+          cachedResults[request.pageIndex] ??
+              VolcImageResult(
+                source: VolcImageResultSource.failed,
+                pageIndex: request.pageIndex,
+                errorMessage: '组图缓存尚未生成第 ${request.pageIndex + 1} 张图片',
+              ),
+      ];
+    }
     if (cachedResults.isNotEmpty && reusePartialCache) {
       final generated = await generatePictureBookImageGroup(
         requests: missingRequests,
@@ -270,6 +271,7 @@ class VolcImageService {
         cachePurpose: cachePurpose,
         useSequential: useSequential,
         reusePartialCache: reusePartialCache,
+        cacheOnly: cacheOnly,
       );
       final byPage = <int, VolcImageResult>{
         ...cachedResults,
@@ -283,6 +285,19 @@ class VolcImageService {
                 source: VolcImageResultSource.failed,
                 pageIndex: request.pageIndex,
                 errorMessage: '组图缓存缺失且未返回该页图片',
+              ),
+      ];
+    }
+
+    final apiKey = await AppConfig.volcArkImageApiKey;
+    if (apiKey.trim().isEmpty) {
+      return [
+        for (final request in cleaned)
+          cachedResults[request.pageIndex] ??
+              VolcImageResult(
+                source: VolcImageResultSource.skippedNoKey,
+                pageIndex: request.pageIndex,
+                errorMessage: _missingArkImageKeyMessage,
               ),
       ];
     }

@@ -173,6 +173,17 @@ class ChapterStoryOutlineService {
     }
   }
 
+  static Future<String> contentHashFor({
+    required String articleTitle,
+    required String articleContent,
+    required List<String> sentences,
+  }) =>
+      _contentHash(
+        articleTitle: articleTitle,
+        articleContent: articleContent,
+        sentences: _cleanSentences(sentences, articleContent),
+      );
+
   static ChapterStoryOutline buildLocalOutline({
     required String articleTitle,
     required String articleContent,

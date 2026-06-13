@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/practice_text_service.dart';
 import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
@@ -55,6 +56,94 @@ void main() {
 
     expect(reply.source, TextGenerationReplySource.mockNoKey);
     expect(reply.text, 'Tom finds a bright snack box.');
+  });
+
+  test('mixed-material AI prompt keeps story only and can translate Chinese',
+      () async {
+    _writeArkConfig();
+    Map<String, dynamic>? seenBody;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        seenBody = body;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': 'Alice walked back to the garden.',
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final reply = await PracticeTextService.translateToEnglishForPractice(
+      content: '''
+课程导读
+这段是讲解。
+
+中文故事
+爱丽丝走回花园。
+
+【文化卡片】
+生词好句
+I can't stand it when people don't attend to the rules.
+''',
+    );
+
+    final messages = seenBody?['messages'] as List;
+    final system = (messages.first as Map)['content'] as String;
+    final user = (messages.last as Map)['content'] as String;
+    expect(reply.source, TextGenerationReplySource.remote);
+    expect(reply.text, 'Alice walked back to the garden.');
+    expect(system, contains('If the story content is Chinese'));
+    expect(system,
+        contains('translate only that story content into natural English'));
+    expect(system, contains('Remove lesson introductions'));
+    expect(system, contains('vocabulary lists'));
+    expect(user, contains('Remove all non-story material'));
+  });
+
+  test('strict English practice translation fails without Ark key', () async {
+    expect(
+      () => PracticeTextService.translateToEnglishForPracticeStrict(
+        content: '妈妈为孩子做了一个选择。',
+      ),
+      throwsA(isA<TextGenerationException>()),
+    );
+  });
+
+  test('strict English practice translation uses text cache before remote',
+      () async {
+    _writeArkConfig();
+    final prompt = PracticeTextService.englishPracticePromptForTest(
+      '妈妈为孩子做了一个选择。',
+    );
+    final request = await TextGenerationService.cacheRequestForTest(
+      turns: prompt.turns,
+      purpose: 'translate_to_english_practice',
+      maxTokens: 1600,
+    );
+    final cacheKey = await ApiCacheService.keyForJson('ark_text', request);
+    await ApiCacheService.putText(
+      cacheKey: cacheKey,
+      kind: 'ark_text',
+      purpose: 'translate_to_english_practice',
+      request: request,
+      textValue: 'A mother makes a choice for her child.',
+    );
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        fail('strict cached translation should not call remote Ark');
+      },
+    );
+
+    final reply = await PracticeTextService.translateToEnglishForPracticeStrict(
+      content: '妈妈为孩子做了一个选择。',
+    );
+
+    expect(reply.source, TextGenerationReplySource.cached);
+    expect(reply.text, 'A mother makes a choice for her child.');
   });
 
   test('cleans generated title to a compact English title', () async {

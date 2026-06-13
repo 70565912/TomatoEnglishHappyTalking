@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../../core/logging/tomato_logger.dart';
+
 class BridgeMessage {
   const BridgeMessage({
     required this.id,
@@ -59,6 +61,12 @@ class BridgeRouter {
     try {
       message = BridgeMessage.fromRaw(raw);
     } on FormatException catch (error) {
+      TomatoLogger.warn(
+        category: 'bridge',
+        event: 'command.malformed',
+        message: error.message,
+        data: {'rawType': raw.runtimeType.toString()},
+      );
       return BridgeResponse.error(
         id: 'invalid',
         type: 'bridge.error',
@@ -68,6 +76,13 @@ class BridgeRouter {
 
     final handler = handlers[message.type];
     if (handler == null) {
+      TomatoLogger.warn(
+        category: 'bridge',
+        event: 'command.unsupported',
+        flowId: message.id,
+        status: 'unsupported',
+        data: {'type': message.type},
+      );
       return BridgeResponse.error(
         id: message.id,
         type: '${message.type}.error',
@@ -75,14 +90,48 @@ class BridgeRouter {
       );
     }
 
+    final stopwatch = Stopwatch()..start();
+    TomatoLogger.info(
+      category: 'bridge',
+      event: 'command.start',
+      flowId: message.id,
+      status: 'start',
+      data: {
+        'type': message.type,
+        'payload': _payloadSummary(message.payload),
+      },
+    );
     try {
       final payload = await handler(message);
+      stopwatch.stop();
+      TomatoLogger.info(
+        category: 'bridge',
+        event: 'command.end',
+        flowId: message.id,
+        status: 'success',
+        durationMs: stopwatch.elapsedMilliseconds,
+        data: {
+          'type': message.type,
+          'resultKeys': payload.keys.take(30).toList(growable: false),
+        },
+      );
       return BridgeResponse.success(
         id: message.id,
         type: '${message.type}.result',
         payload: payload,
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
+      stopwatch.stop();
+      TomatoLogger.error(
+        category: 'bridge',
+        event: 'command.error',
+        flowId: message.id,
+        status: 'error',
+        durationMs: stopwatch.elapsedMilliseconds,
+        data: {'type': message.type},
+        error: error,
+        stackTrace: stackTrace,
+      );
       return BridgeResponse.error(
         id: message.id,
         type: '${message.type}.error',
@@ -126,4 +175,35 @@ Map<String, dynamic> _stringKeyMap(Object? value) {
   }
   final map = value as Map;
   return map.map((key, value) => MapEntry(key.toString(), value));
+}
+
+Map<String, dynamic> _payloadSummary(Map<String, dynamic> payload) {
+  return payload.map(
+    (key, value) => MapEntry(key, _valueSummary(value)),
+  );
+}
+
+Object? _valueSummary(Object? value) {
+  if (value == null || value is num || value is bool) {
+    return value;
+  }
+  if (value is String) {
+    return {
+      'type': 'string',
+      'length': value.length,
+    };
+  }
+  if (value is List) {
+    return {
+      'type': 'list',
+      'length': value.length,
+    };
+  }
+  if (value is Map) {
+    return {
+      'type': 'object',
+      'keys': value.keys.map((key) => key.toString()).take(30).toList(),
+    };
+  }
+  return {'type': value.runtimeType.toString()};
 }

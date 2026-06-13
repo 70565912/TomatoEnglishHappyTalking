@@ -19,6 +19,9 @@ typedef PictureBookProgressCallback = FutureOr<void> Function(
 class PictureBookService {
   static final Map<String, String> _imageUriCache = <String, String>{};
   static const String _promptPolicyVersion = 'chapter_storyboard_group_v1';
+  static const String _chapterPlanCachePurpose = 'picture_book_chapter_plan_v1';
+  static const String _chapterPlanPolicyVersion =
+      'picture_book_chapter_plan_v1';
   static const int _maxReferenceImagesPerRequest = int.fromEnvironment(
     'TOMATO_PICTURE_BOOK_MAX_REFERENCE_IMAGES',
     defaultValue: 6,
@@ -26,14 +29,6 @@ class PictureBookService {
   static const int _maxNewCharacterReferencesPerArticle = int.fromEnvironment(
     'TOMATO_PICTURE_BOOK_MAX_NEW_CHARACTER_REFS',
     defaultValue: 4,
-  );
-  static const bool _aiSeriesBibleEnabled = bool.fromEnvironment(
-    'TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE',
-    defaultValue: false,
-  );
-  static const bool _aiPagePromptEnabled = bool.fromEnvironment(
-    'TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS',
-    defaultValue: false,
   );
   static const bool _referenceImagesEnabled = bool.fromEnvironment(
     'TOMATO_PICTURE_BOOK_REFERENCE_IMAGES',
@@ -157,6 +152,113 @@ class PictureBookService {
     );
   }
 
+  static Future<ChapterPicturePlan> ensureChapterPlanForArticle({
+    required Article article,
+    required StoryChapter chapter,
+    StorySeries? series,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      throw StateError('Article must be saved before planning picture book');
+    }
+    final currentSeries =
+        series ?? await DatabaseService.getStorySeriesById(chapter.seriesId);
+    if (currentSeries == null) {
+      throw const TextGenerationException('文本提交处理失败：书籍信息不存在，请重试。');
+    }
+
+    final contentHash = await ChapterStoryOutlineService.contentHashFor(
+      articleTitle: article.title,
+      articleContent: article.content,
+      sentences: article.sentences,
+    );
+    final existing = _chapterPlanFromSummary(
+      chapter.summaryJson,
+      contentHash: contentHash,
+      sentenceCount: article.sentences.length,
+    );
+    if (existing != null) {
+      return existing;
+    }
+
+    final reply = await TextGenerationService.generateStrict(
+      turns: _chapterPlanPromptTurns(
+        article: article,
+        chapter: chapter,
+        series: currentSeries,
+      ),
+      cachePurpose: _chapterPlanCachePurpose,
+      articleId: articleId,
+      maxTokens: 5200,
+      receiveTimeout: _chapterPlanReceiveTimeout(article),
+      jsonResponse: true,
+    );
+    final raw = _decodeJson(reply.text, const <String, dynamic>{});
+    final outlineJson = _mapValue(raw['outline']);
+    final outline = ChapterStoryOutlineService.outlineFromJson(
+      {
+        ...outlineJson,
+        'kind': 'chapter_story_outline',
+        'policyVersion': ChapterStoryOutlineService.policyVersion,
+        'contentHash': contentHash,
+      },
+      contentHash: contentHash,
+      sentenceCount: article.sentences.length,
+      source: reply.source,
+      fallbackTitle: article.title,
+    );
+    if (outline == null) {
+      throw const TextGenerationException(
+        '文本提交处理失败：AI 未返回有效绘本分镜，请重试。',
+      );
+    }
+    final pagePrompts = _pagePromptsFromJson(
+      raw['pagePrompts'],
+      pageCount: outline.segments.length,
+    );
+    if (pagePrompts.length < outline.segments.length) {
+      throw const TextGenerationException(
+        '文本提交处理失败：AI 未返回完整绘本页提示词，请重试。',
+      );
+    }
+
+    final seriesBiblePatch = _mapValue(raw['seriesBiblePatch']);
+    final summaryJson = {
+      ...outline.toJson(),
+      'planKind': _chapterPlanCachePurpose,
+      'planPolicyVersion': _chapterPlanPolicyVersion,
+      'seriesBiblePatch': seriesBiblePatch,
+      'pagePrompts': [
+        for (var i = 0; i < outline.segments.length; i += 1)
+          {
+            'pageIndex': i,
+            ...pagePrompts[i]!,
+          },
+      ],
+    };
+    await DatabaseService.updateStoryChapter(
+      chapter.copyWith(
+        summaryJson: ApiCacheService.canonicalJson(summaryJson),
+        updatedAt: DateTime.now(),
+      ),
+    );
+    await DatabaseService.updateStorySeries(
+      currentSeries.copyWith(
+        bibleJson: ApiCacheService.canonicalJson(
+          _mergeSeriesBiblePatch(currentSeries.bibleJson, seriesBiblePatch),
+        ),
+        updatedAt: DateTime.now(),
+      ),
+    );
+
+    return ChapterPicturePlan(
+      outline: outline,
+      seriesBiblePatch: seriesBiblePatch,
+      pagePromptsByIndex: pagePrompts,
+      source: reply.source,
+    );
+  }
+
   static Future<void> generateForArticle({
     required Article article,
     required StoryChapter chapter,
@@ -169,19 +271,32 @@ class PictureBookService {
     }
 
     final existingPages = await DatabaseService.getPictureBookPages(articleId);
-    final series = await DatabaseService.getStorySeriesById(chapter.seriesId);
+    final currentChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId) ?? chapter;
+    final series =
+        await DatabaseService.getStorySeriesById(currentChapter.seriesId);
     if (series == null) {
       return;
     }
 
-    final outline = await ChapterStoryOutlineService.prepareOutline(
-      articleTitle: article.title,
-      articleContent: article.content,
-      sentences: article.sentences,
-      articleId: articleId,
-      chapter: chapter,
-      series: series,
-    );
+    final ChapterPicturePlan plan;
+    try {
+      plan = await ensureChapterPlanForArticle(
+        article: article,
+        chapter: currentChapter,
+        series: series,
+      );
+    } catch (error) {
+      await _writePlanningErrorPage(
+        article: article,
+        chapter: currentChapter,
+        series: series,
+        errorMessage: _displayErrorMessage(error),
+      );
+      await _emit(articleId, onProgress);
+      return;
+    }
+    final outline = plan.outline;
     final pages = _segmentArticle(article, outline);
     if (pages.isEmpty) {
       return;
@@ -202,12 +317,6 @@ class PictureBookService {
     if (regenerate || (existingPages.isNotEmpty && !existingPagesAreCurrent)) {
       await DatabaseService.deletePictureBookPagesForArticle(articleId);
     }
-
-    await _updateSeriesBible(
-      series: series,
-      chapter: chapter,
-      article: article,
-    );
 
     for (final segment in pages) {
       final now = DateTime.now();
@@ -233,7 +342,8 @@ class PictureBookService {
     await _emit(articleId, onProgress);
 
     final refreshedSeries =
-        await DatabaseService.getStorySeriesById(chapter.seriesId) ?? series;
+        await DatabaseService.getStorySeriesById(currentChapter.seriesId) ??
+            series;
     final promptedSegments = <_PromptedSegment>[];
 
     for (final segment in pages) {
@@ -245,11 +355,12 @@ class PictureBookService {
       );
       await _emit(articleId, onProgress);
 
-      final promptJson = await _buildPagePrompt(
+      final promptJson = _buildPagePrompt(
         series: refreshedSeries,
-        chapter: chapter,
+        chapter: currentChapter,
         segment: segment,
         articleId: articleId,
+        plannedPrompt: plan.pagePromptFor(segment.pageIndex),
       );
       final generatingPage = promptPage.copyWith(
         promptJson: ApiCacheService.canonicalJson(promptJson),
@@ -329,9 +440,8 @@ class PictureBookService {
     }
   }
 
-  static Future<void> regeneratePage({
+  static Future<void> regenerateArticle({
     required int articleId,
-    required int pageIndex,
     PictureBookProgressCallback? onProgress,
   }) async {
     final article = await DatabaseService.getArticleById(articleId);
@@ -340,111 +450,127 @@ class PictureBookService {
       return;
     }
 
-    final series = await DatabaseService.getStorySeriesById(chapter.seriesId);
-    if (series == null) {
-      return;
-    }
-
-    final outline = await ChapterStoryOutlineService.prepareOutline(
-      articleTitle: article.title,
-      articleContent: article.content,
-      sentences: article.sentences,
-      articleId: articleId,
+    await generateForArticle(
+      article: article,
       chapter: chapter,
-      series: series,
+      onProgress: onProgress,
+      regenerate: true,
     );
-    final segments = _segmentArticle(article, outline);
-    _PicturePageSegment? targetSegment;
-    for (final segment in segments) {
-      if (segment.pageIndex == pageIndex) {
-        targetSegment = segment;
-        break;
-      }
-    }
-    if (targetSegment == null) {
-      return;
-    }
-
-    final promptingPage = await _markPage(
-      targetSegment,
-      articleId: articleId,
-      seriesId: series.id,
-      status: 'prompting',
-      imagePath: '',
-      imageCacheKey: '',
-      errorMessage: '',
-    );
-    await _emit(articleId, onProgress);
-
-    final promptJson = await _buildPagePrompt(
-      series: series,
-      chapter: chapter,
-      segment: targetSegment,
-      articleId: articleId,
-    );
-    final generatingPage = promptingPage.copyWith(
-      promptJson: ApiCacheService.canonicalJson(promptJson),
-      imagePath: '',
-      imageCacheKey: '',
-      status: 'generating',
-      errorMessage: '',
-      updatedAt: DateTime.now(),
-    );
-    await DatabaseService.upsertPictureBookPage(generatingPage);
-    await _emit(articleId, onProgress);
-
-    final promptedSegment = _PromptedSegment(
-      segment: targetSegment,
-      page: generatingPage,
-      promptJson: promptJson,
-      prompt: _imagePromptFrom(promptJson),
-      characterNames: _characterNamesForPrompt(promptJson),
-    );
-    final references =
-        VolcImageService.supportsReferenceImages && _referenceImagesEnabled
-            ? await _ensureReferenceAssets(
-                series: series,
-                articleId: articleId,
-                promptedSegments: [promptedSegment],
-              )
-            : const <StoryReferenceAsset>[];
-    await _emit(articleId, onProgress);
-
-    final result = await VolcImageService.generatePictureBookImage(
-      prompt: promptedSegment.prompt,
-      promptMetadata: promptedSegment.promptJson,
-      articleId: articleId,
-      seriesId: series.id,
-      pageIndex: targetSegment.pageIndex,
-      referenceImagePaths: _referencePathsForPage(references, promptedSegment),
-      cachePurpose: 'picture_book_image',
-    );
-
-    final status = switch (result.source) {
-      VolcImageResultSource.remote || VolcImageResultSource.cached => 'ready',
-      VolcImageResultSource.skippedNoKey => 'skipped',
-      VolcImageResultSource.failed => 'error',
-    };
-    await DatabaseService.upsertPictureBookPage(
-      generatingPage.copyWith(
-        imageCacheKey: result.cacheKey ?? '',
-        imagePath: result.filePath ?? '',
-        status: status,
-        errorMessage: result.errorMessage ?? '',
-        updatedAt: DateTime.now(),
-      ),
-    );
-    await _emit(articleId, onProgress);
   }
 
-  static Future<Map<String, dynamic>> statePayload(int articleId) async {
+  static Future<Map<String, dynamic>> clearArticlePictureBookCache(
+    int articleId,
+  ) async {
+    final article = await DatabaseService.getArticleById(articleId);
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+
+    await DatabaseService.deletePictureBookPagesForArticle(articleId);
+    await ApiCacheService.deleteArticleRefsAndUnusedFilesForPurposes(
+      articleId,
+      purposes: {
+        'picture_book_image',
+        _chapterPlanCachePurpose,
+      },
+    );
+
+    if (article != null && chapter != null) {
+      await DatabaseService.updateStoryChapter(
+        chapter.copyWith(
+          summaryJson: ApiCacheService.canonicalJson({
+            'title': article.title,
+            'summary': _fallbackChapterSummary(article.content),
+          }),
+          updatedAt: DateTime.now(),
+        ),
+      );
+    }
+    _imageUriCache.clear();
+    return {
+      'articleId': articleId,
+      'deletedPages': pages.length,
+      'clearedPurposes': [
+        'picture_book_image',
+        _chapterPlanCachePurpose,
+      ],
+    };
+  }
+
+  static Future<void> _writePlanningErrorPage({
+    required Article article,
+    required StoryChapter chapter,
+    required StorySeries series,
+    required String errorMessage,
+  }) async {
+    final articleId = article.id;
+    final seriesId = series.id;
+    if (articleId == null || seriesId == null) {
+      return;
+    }
+    await DatabaseService.deletePictureBookPagesForArticle(articleId);
+    final now = DateTime.now();
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: seriesId,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex:
+            article.sentences.isEmpty ? 0 : article.sentences.length - 1,
+        paragraphText: article.content,
+        promptJson: ApiCacheService.canonicalJson({
+          'status': 'planning_error',
+          'chapterTitle': chapter.chapterTitle,
+          'promptPolicyVersion': _chapterPlanPolicyVersion,
+        }),
+        status: 'error',
+        errorMessage: errorMessage,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+  }
+
+  static Duration _chapterPlanReceiveTimeout(Article article) {
+    final rawSeconds = 120 + article.sentences.length * 5;
+    final seconds =
+        rawSeconds < 180 ? 180 : (rawSeconds > 420 ? 420 : rawSeconds);
+    return Duration(seconds: seconds);
+  }
+
+  static String _displayErrorMessage(Object error) {
+    final message = error is TextGenerationException
+        ? error.message
+        : error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
+    final trimmed = message.trim();
+    return trimmed.isEmpty ? '文本提交处理失败，请重试。' : trimmed;
+  }
+
+  static Future<void> regeneratePage({
+    required int articleId,
+    required int pageIndex,
+    PictureBookProgressCallback? onProgress,
+  }) =>
+      regenerateArticle(articleId: articleId, onProgress: onProgress);
+
+  static Future<Map<String, dynamic>> statePayload(
+    int articleId, {
+    bool includeImageUris = false,
+  }) async {
     final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
     final series = chapter == null
         ? null
         : await DatabaseService.getStorySeriesById(chapter.seriesId);
-    final pages = await DatabaseService.getPictureBookPages(articleId);
+    var pages = await DatabaseService.getPictureBookPages(articleId);
+    if (chapter != null && pages.length > 1) {
+      pages = await _recoverReadyPagesFromGroupCache(
+        articleId: articleId,
+        seriesId: chapter.seriesId,
+        pages: pages,
+      );
+    }
     final pageJsons = await Future.wait(
-      pages.map((page) => _pageJson(page, includeImageUri: false)),
+      pages.map((page) => _pageJson(page, includeImageUri: includeImageUris)),
     );
     final status = _overallStatus(pages);
     return {
@@ -455,6 +581,85 @@ class PictureBookService {
       'chapter': chapter?.toJson(series),
       'pages': pageJsons,
     };
+  }
+
+  static Future<List<PictureBookPage>> _recoverReadyPagesFromGroupCache({
+    required int articleId,
+    required int? seriesId,
+    required List<PictureBookPage> pages,
+  }) async {
+    if (!pages.any((page) =>
+        page.status == 'queued' ||
+        page.status == 'prompting' ||
+        page.status == 'generating' ||
+        (page.status == 'ready' &&
+            (page.imagePath == null || page.imagePath!.trim().isEmpty)))) {
+      return pages;
+    }
+
+    final sorted = [...pages]
+      ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+    final requests = <VolcImageBatchRequest>[];
+    for (final page in sorted) {
+      final promptJson = _decodeJson(page.promptJson, const {});
+      final prompt = _imagePromptFrom(promptJson);
+      if (prompt.trim().isEmpty) {
+        return pages;
+      }
+      requests.add(
+        VolcImageBatchRequest(
+          pageIndex: page.pageIndex,
+          prompt: prompt,
+          promptMetadata: promptJson,
+        ),
+      );
+    }
+
+    final results = await VolcImageService.generatePictureBookImageGroup(
+      requests: requests,
+      articleId: articleId,
+      seriesId: seriesId,
+      useSequential: true,
+      reusePartialCache: false,
+      cacheOnly: true,
+    );
+    final byPage = <int, VolcImageResult>{
+      for (final result in results)
+        if (result.pageIndex != null) result.pageIndex!: result,
+    };
+
+    var changed = false;
+    for (final page in sorted) {
+      final result = byPage[page.pageIndex];
+      final imagePath = result?.filePath?.trim() ?? '';
+      if (result == null ||
+          imagePath.isEmpty ||
+          (result.source != VolcImageResultSource.cached &&
+              result.source != VolcImageResultSource.remote)) {
+        continue;
+      }
+      final imageCacheKey = result.cacheKey?.trim() ?? page.imageCacheKey;
+      if (page.status == 'ready' &&
+          page.imagePath == imagePath &&
+          page.imageCacheKey == imageCacheKey) {
+        continue;
+      }
+      await DatabaseService.upsertPictureBookPage(
+        page.copyWith(
+          imageCacheKey: imageCacheKey,
+          imagePath: imagePath,
+          status: 'ready',
+          errorMessage: '',
+          updatedAt: DateTime.now(),
+        ),
+      );
+      changed = true;
+    }
+
+    if (!changed) {
+      return pages;
+    }
+    return DatabaseService.getPictureBookPages(articleId);
   }
 
   static Future<Map<String, dynamic>> pageImagePayload({
@@ -537,86 +742,6 @@ class PictureBookService {
       };
     }
     return null;
-  }
-
-  static Future<void> _updateSeriesBible({
-    required StorySeries series,
-    required StoryChapter chapter,
-    required Article article,
-  }) async {
-    final knownContinuityGuide = _knownSeriesContinuityGuide(series.title);
-    final existingBible = _decodeJson(series.bibleJson, const {});
-    final existingNotes = existingBible['continuityNotes'] is List
-        ? (existingBible['continuityNotes'] as List)
-            .map((item) => item.toString().trim())
-            .where((item) => item.isNotEmpty)
-            .toList(growable: true)
-        : <String>[];
-    if (knownContinuityGuide.isNotEmpty &&
-        !existingNotes.contains(knownContinuityGuide)) {
-      existingNotes.add(knownContinuityGuide);
-    }
-    if (!existingNotes.contains(
-        'Keep the same friendly English picture-book style across chapters.')) {
-      existingNotes.add(
-        'Keep the same friendly English picture-book style across chapters.',
-      );
-    }
-    final chapterSummaries = existingBible['chapterSummaries'] is List
-        ? (existingBible['chapterSummaries'] as List)
-            .whereType<Map>()
-            .map((item) => Map<String, dynamic>.from(item))
-            .where((item) => item['chapterOrder'] != chapter.chapterOrder)
-            .toList(growable: true)
-        : <Map<String, dynamic>>[];
-    chapterSummaries.add({
-      'chapterOrder': chapter.chapterOrder,
-      'title': article.title,
-      'summary': _fallbackChapterSummary(article.content),
-    });
-    final fallback = {
-      'characters': existingBible['characters'] is List
-          ? existingBible['characters']
-          : <Map<String, dynamic>>[],
-      'locations': existingBible['locations'] is List
-          ? existingBible['locations']
-          : <Map<String, dynamic>>[],
-      'continuityNotes': existingNotes,
-      'chapterSummaries': chapterSummaries,
-    };
-    if (!_aiSeriesBibleEnabled) {
-      await DatabaseService.updateStorySeries(
-        series.copyWith(
-          bibleJson: ApiCacheService.canonicalJson(fallback),
-          updatedAt: DateTime.now(),
-        ),
-      );
-      return;
-    }
-    final reply = await TextGenerationService.generate(
-      turns: [
-        const TextGenerationTurn(
-          role: 'system',
-          content:
-              'You maintain a compact story bible for a children and teen English picture book. Return only valid JSON. Keys: characters, locations, continuityNotes, chapterSummaries. Keep details visual and consistent.',
-        ),
-        TextGenerationTurn(
-          role: 'user',
-          content:
-              'Existing story bible JSON:\n${series.bibleJson}\n\nStyle guide JSON:\n${series.styleGuideJson}\n${_optionalSection('Fixed continuity guide', knownContinuityGuide)}\nSafe visual adaptation rule:\n$_safeClassicStoryPolicy\n\nFull new chapter ${chapter.chapterOrder}: ${article.title}\n${_sanitizeForImagePrompt(article.content)}\n\nUpdate the story bible for consistent future illustration prompts. Preserve any fixed continuity guide details exactly. Return JSON only.',
-        ),
-      ],
-      fallbackText: jsonEncode(fallback),
-      cachePurpose: 'picture_book_series_bible',
-      articleId: article.id,
-    );
-    final decoded = _decodeJson(reply.text, fallback);
-    await DatabaseService.updateStorySeries(
-      series.copyWith(
-        bibleJson: ApiCacheService.canonicalJson(decoded),
-        updatedAt: DateTime.now(),
-      ),
-    );
   }
 
   static Future<List<StoryReferenceAsset>> _ensureReferenceAssets({
@@ -938,6 +1063,165 @@ class PictureBookService {
     return names;
   }
 
+  static List<TextGenerationTurn> _chapterPlanPromptTurns({
+    required Article article,
+    required StoryChapter chapter,
+    required StorySeries series,
+  }) {
+    final cleanSentences = article.sentences
+        .map((sentence) => sentence.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
+    final numberedSentences = [
+      for (var i = 0; i < cleanSentences.length; i += 1)
+        '$i. ${cleanSentences[i]}',
+    ].join('\n');
+    final continuityGuide = _knownSeriesContinuityGuide(series.title);
+    return [
+      const TextGenerationTurn(
+        role: 'system',
+        content:
+            'You create one complete picture-book generation plan for an English learning chapter. Return only strict valid minified JSON and nothing else. Do not use markdown. Do not use Python tuples, parentheses inside arrays, comments, trailing commas, or prose outside JSON. Arrays must contain only valid JSON strings or objects. The JSON must contain outline, seriesBiblePatch, and pagePrompts. The outline segments define the exact generated image count. The pagePrompts array must have exactly one prompt for each outline segment, in the same order, not candidate variants.',
+      ),
+      TextGenerationTurn(
+        role: 'user',
+        content: [
+          'Book or series title: ${series.title}',
+          'Chapter order: ${chapter.chapterOrder}',
+          'Chapter title: ${chapter.chapterTitle}',
+          'Style guide JSON: ${series.styleGuideJson}',
+          'Existing series bible JSON: ${series.bibleJson}',
+          if (continuityGuide.isNotEmpty)
+            'Fixed continuity guide: $continuityGuide',
+          'Natural text policy: $_naturalTextPolicy',
+          'Safe classic story adaptation rule: $_safeClassicStoryPolicy',
+          '',
+          'Return JSON with this exact top-level shape:',
+          '{"outline":{"summary":"...","characters":["..."],"locations":["..."],"continuityNotes":["..."],"segments":[{"title":"...","sentenceStartIndex":0,"sentenceEndIndex":2,"summary":"...","visualPrompt":"...","characters":["..."],"locations":["..."],"continuityNotes":["..."]}]},"seriesBiblePatch":{"characters":[{"name":"...","visualContinuity":"..."}],"locations":[{"name":"...","visualContinuity":"..."}],"continuityNotes":["..."],"chapterSummaries":[{"chapterOrder":${chapter.chapterOrder},"title":"${chapter.chapterTitle}","summary":"..."}]},"pagePrompts":[{"pageIndex":0,"scene":"...","characters":["..."],"prompt":"...","negativePrompt":"..."}]}',
+          '',
+          'Rules:',
+          '- Output must be parseable by JSON.parse exactly as returned. Use ["note"] not [("note")].',
+          '- Every continuityNotes, characters, and locations field must be a JSON array of plain strings.',
+          '- Split by natural story beats: scene, event, conflict, decision, setting change, and ending.',
+          '- Use no more than ${ChapterStoryOutlineService.maxSegments} outline segments.',
+          '- Segments must cover every sentence from 0 to ${cleanSentences.isEmpty ? 0 : cleanSentences.length - 1}, in order, without overlap.',
+          '- pagePrompts.length must equal outline.segments.length.',
+          '- pagePrompts[i].pageIndex must equal i and describe exactly outline.segments[i].',
+          '- Each page prompt must be a concrete 16:9 illustration prompt and must include visual continuity details for recurring characters, costumes, palette, story world, setting logic, mood, and action.',
+          '- Preserve known recurring character identity from the book title and series bible, but prioritize the current chapter content.',
+          '- Keep every image safe, warm, child-appropriate, and suitable for a coherent sequential group image request.',
+          '',
+          'Numbered chapter sentences:',
+          numberedSentences.isEmpty
+              ? article.content.replaceAll(RegExp(r'\s+'), ' ').trim()
+              : numberedSentences,
+        ].join('\n'),
+      ),
+    ];
+  }
+
+  static ChapterPicturePlan? _chapterPlanFromSummary(
+    String summaryJson, {
+    required String contentHash,
+    required int sentenceCount,
+  }) {
+    final json = _decodeJson(summaryJson, const <String, dynamic>{});
+    if (json['planKind'] != _chapterPlanCachePurpose ||
+        json['planPolicyVersion'] != _chapterPlanPolicyVersion) {
+      return null;
+    }
+    final outline = ChapterStoryOutlineService.outlineFromJson(
+      json,
+      contentHash: contentHash,
+      sentenceCount: sentenceCount,
+      source: TextGenerationReplySource.cached,
+      fallbackTitle: json['title']?.toString(),
+    );
+    if (outline == null) {
+      return null;
+    }
+    final pagePrompts = _pagePromptsFromJson(
+      json['pagePrompts'],
+      pageCount: outline.segments.length,
+    );
+    if (pagePrompts.length < outline.segments.length) {
+      return null;
+    }
+    return ChapterPicturePlan(
+      outline: outline,
+      seriesBiblePatch: _mapValue(json['seriesBiblePatch']),
+      pagePromptsByIndex: pagePrompts,
+      source: TextGenerationReplySource.cached,
+    );
+  }
+
+  static Map<int, Map<String, dynamic>> _pagePromptsFromJson(
+    Object? raw, {
+    required int pageCount,
+  }) {
+    if (raw is! List) {
+      return const {};
+    }
+    final prompts = <int, Map<String, dynamic>>{};
+    for (var i = 0; i < raw.length; i += 1) {
+      final map = _mapValue(raw[i]);
+      if (map.isEmpty) {
+        continue;
+      }
+      final rawIndex = map['pageIndex'];
+      final index = rawIndex is num ? rawIndex.toInt() : i;
+      final prompt = map['prompt']?.toString().trim() ?? '';
+      if (index < 0 || index >= pageCount || prompt.isEmpty) {
+        continue;
+      }
+      prompts[index] = map;
+    }
+    return prompts;
+  }
+
+  static Map<String, dynamic> _mapValue(Object? raw) {
+    if (raw is Map<String, dynamic>) {
+      return raw;
+    }
+    if (raw is Map) {
+      return raw.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return const <String, dynamic>{};
+  }
+
+  static Map<String, dynamic> _mergeSeriesBiblePatch(
+    String existingJson,
+    Map<String, dynamic> patch,
+  ) {
+    final existing = _decodeJson(existingJson, const <String, dynamic>{});
+    return {
+      'characters':
+          _mergeJsonLists(existing['characters'], patch['characters']),
+      'locations': _mergeJsonLists(existing['locations'], patch['locations']),
+      'continuityNotes': _mergeJsonLists(
+          existing['continuityNotes'], patch['continuityNotes']),
+      'chapterSummaries': _mergeJsonLists(
+        existing['chapterSummaries'],
+        patch['chapterSummaries'],
+      ),
+    };
+  }
+
+  static List<Object?> _mergeJsonLists(Object? existing, Object? patch) {
+    final output = <Object?>[];
+    final seen = <String>{};
+    for (final value in [
+      if (existing is List) ...existing,
+      if (patch is List) ...patch,
+    ]) {
+      final key = ApiCacheService.canonicalJson(value);
+      if (seen.add(key)) {
+        output.add(value);
+      }
+    }
+    return output;
+  }
+
   static String _canonicalCharacterName(String rawName) {
     var name = rawName
         .replaceAll(RegExp(r'["“”‘’]'), '')
@@ -1004,12 +1288,13 @@ class PictureBookService {
     return text.toLowerCase().contains(normalizedName);
   }
 
-  static Future<Map<String, dynamic>> _buildPagePrompt({
+  static Map<String, dynamic> _buildPagePrompt({
     required StorySeries series,
     required StoryChapter chapter,
     required _PicturePageSegment segment,
     required int articleId,
-  }) async {
+    Map<String, dynamic>? plannedPrompt,
+  }) {
     final continuityGuide = _knownSeriesContinuityGuide(series.title);
     final safeChapterStory = _sanitizeForImagePrompt(segment.text);
     final storyCharacters = _knownCharacterNamesForText(safeChapterStory);
@@ -1033,42 +1318,9 @@ class PictureBookService {
       'segmentStoryText': segment.text,
       'safeSegmentStoryText': safeChapterStory,
     };
-    if (!_aiPagePromptEnabled) {
-      return {
-        ...fallback,
-        'styleGuide': _decodeJson(series.styleGuideJson, defaultStyleGuide),
-        'seriesTitle': series.title,
-        'continuityGuide': continuityGuide,
-        'chapterOrder': chapter.chapterOrder,
-        'pageIndex': segment.pageIndex,
-        'textPolicy': _naturalTextPolicy,
-        'promptPolicyVersion': _promptPolicyVersion,
-        'paragraphText': segment.text,
-        'segmentStoryText': segment.text,
-        'safeSegmentStoryText': safeChapterStory,
-      };
-    }
-    final reply = await TextGenerationService.generate(
-      turns: [
-        const TextGenerationTurn(
-          role: 'system',
-          content:
-              'You write image prompts for one image inside a sequential English picture-book group for teens and children. Return only valid compact JSON with keys scene, characters, prompt, negativePrompt. The image prompt must be visual, concrete, safe, and based on the storyboard segment. It must preserve character and setting continuity with the other images in the same generated group. Visible text is allowed when it naturally belongs in the scene. If the source is a classic story with severe royal threats or comic panic, adapt it into harmless theatrical emotion and keep every character safe and whole.',
-        ),
-        TextGenerationTurn(
-          role: 'user',
-          content:
-              'Series title: ${series.title}\nStyle guide JSON:\n${series.styleGuideJson}\nStory bible JSON:\n${series.bibleJson}\n${_optionalSection('Fixed continuity guide', continuityGuide)}\nNatural text policy:\n$_naturalTextPolicy\nSafe classic story adaptation rule:\n$_safeClassicStoryPolicy\n\nChapter ${chapter.chapterOrder}: ${chapter.chapterTitle}\nStoryboard image ${segment.pageIndex + 1} of ${segment.pageCount}: ${segment.title}\nStoryboard JSON:\n${jsonEncode(segment.outlineJson)}\nSegment story content:\n$safeChapterStory\n\nCreate one 16:9 illustration prompt for this exact storyboard image. Keep the correct book, setting, characters, mood, and action, and make it visually continuous with the rest of the same sequential group. Prioritize the current segment content over unrelated earlier events. Return JSON only.',
-        ),
-      ],
-      fallbackText: jsonEncode(fallback),
-      cachePurpose: 'picture_book_page_prompt',
-      articleId: articleId,
-    );
-    final parsed = _decodeJson(reply.text, fallback);
     return {
       ...fallback,
-      ...parsed,
+      if (plannedPrompt != null) ...plannedPrompt,
       'styleGuide': _decodeJson(series.styleGuideJson, defaultStyleGuide),
       'seriesTitle': series.title,
       'continuityGuide': continuityGuide,
@@ -1362,14 +1614,6 @@ class PictureBookService {
     return _imagePromptFrom(promptJson);
   }
 
-  static String _optionalSection(String title, String body) {
-    final trimmed = body.trim();
-    if (trimmed.isEmpty) {
-      return '';
-    }
-    return '$title:\n$trimmed\n\n';
-  }
-
   static String _knownSeriesContinuityGuide(String title) {
     final trimmed = title.trim();
     if (trimmed.isEmpty) {
@@ -1478,4 +1722,21 @@ class _PromptedSegment {
   final Map<String, dynamic> promptJson;
   final String prompt;
   final List<String> characterNames;
+}
+
+class ChapterPicturePlan {
+  const ChapterPicturePlan({
+    required this.outline,
+    required this.seriesBiblePatch,
+    required this.pagePromptsByIndex,
+    required this.source,
+  });
+
+  final ChapterStoryOutline outline;
+  final Map<String, dynamic> seriesBiblePatch;
+  final Map<int, Map<String, dynamic>> pagePromptsByIndex;
+  final TextGenerationReplySource source;
+
+  Map<String, dynamic>? pagePromptFor(int pageIndex) =>
+      pagePromptsByIndex[pageIndex];
 }

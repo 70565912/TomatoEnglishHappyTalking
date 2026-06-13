@@ -466,6 +466,16 @@ class DatabaseService {
     );
   }
 
+  static Future<void> updateArticleTitle(int id, String title) async {
+    final db = await _database;
+    await db.update(
+      'articles',
+      {'title': title},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   static Future<void> deleteArticle(int id) async {
     final db = await _database;
     final cacheRows = await db.query(
@@ -693,6 +703,53 @@ class DatabaseService {
     return translated.isEmpty ? null : translated;
   }
 
+  static Future<void> upsertArticleSentenceTranslation({
+    required int articleId,
+    required int sentenceIndex,
+    required String englishSentence,
+    required String chineseText,
+    String source = 'edited',
+  }) async {
+    final db = await _database;
+    final now = DateTime.now();
+    final existing = await db.query(
+      'article_sentence_translations',
+      columns: ['created_at'],
+      where: 'article_id = ? AND sentence_index = ?',
+      whereArgs: [articleId, sentenceIndex],
+      limit: 1,
+    );
+    final createdAt = existing.isEmpty
+        ? now
+        : DateTime.parse(existing.first['created_at'] as String);
+    final translation = ArticleSentenceTranslation(
+      articleId: articleId,
+      sentenceIndex: sentenceIndex,
+      englishSentence: englishSentence,
+      chineseText: chineseText,
+      source: source,
+      createdAt: createdAt,
+      updatedAt: now,
+    );
+    await db.insert(
+      'article_sentence_translations',
+      translation.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<void> deleteArticleSentenceTranslation(
+    int articleId,
+    int sentenceIndex,
+  ) async {
+    final db = await _database;
+    await db.delete(
+      'article_sentence_translations',
+      where: 'article_id = ? AND sentence_index = ?',
+      whereArgs: [articleId, sentenceIndex],
+    );
+  }
+
   static Future<void> deleteArticleSentenceTranslations(int articleId) async {
     final db = await _database;
     await db.delete(
@@ -775,6 +832,66 @@ class DatabaseService {
     );
   }
 
+  static Future<bool> deleteStorySeriesIfEmpty(int seriesId) async {
+    final db = await _database;
+    final remainingChapterCount = Sqflite.firstIntValue(
+          await db.rawQuery(
+            'SELECT COUNT(*) FROM story_chapters WHERE series_id = ?',
+            [seriesId],
+          ),
+        ) ??
+        0;
+    if (remainingChapterCount > 0) {
+      return false;
+    }
+
+    final referenceRows = await db.query(
+      'story_reference_assets',
+      columns: ['file_path', 'cache_key'],
+      where: 'series_id = ?',
+      whereArgs: [seriesId],
+    );
+    final referenceFilePaths = referenceRows
+        .map((row) => row['file_path']?.toString() ?? '')
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+
+    for (final row in referenceRows) {
+      final cacheKey = row['cache_key']?.toString() ?? '';
+      if (cacheKey.isEmpty) {
+        continue;
+      }
+      await db.delete(
+        'api_cache_entries',
+        where: 'cache_key = ?',
+        whereArgs: [cacheKey],
+      );
+    }
+
+    await db.delete(
+      'story_reference_assets',
+      where: 'series_id = ?',
+      whereArgs: [seriesId],
+    );
+    final deleted = await db.delete(
+      'story_series',
+      where: 'id = ?',
+      whereArgs: [seriesId],
+    );
+
+    for (final filePath in referenceFilePaths) {
+      try {
+        final file = File(filePath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (_) {
+        // Best-effort cleanup for generated reference assets.
+      }
+    }
+    return deleted > 0;
+  }
+
   static Future<StoryChapter?> getStoryChapterForArticle(int articleId) async {
     final db = await _database;
     final maps = await db.query(
@@ -821,6 +938,22 @@ class DatabaseService {
       chapter.toMap(),
       where: 'id = ?',
       whereArgs: [id],
+    );
+  }
+
+  static Future<void> updateStoryChapterTitleForArticle(
+    int articleId,
+    String title,
+  ) async {
+    final db = await _database;
+    await db.update(
+      'story_chapters',
+      {
+        'chapter_title': title,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'article_id = ?',
+      whereArgs: [articleId],
     );
   }
 

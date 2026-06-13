@@ -25,6 +25,40 @@ Test-Path .\release\windows\tomato_english_happy_talking\data\flutter_assets\ass
 
 三个结果都应为 `True`。
 
+## Windows Debug 缺少 ffmpeg.exe
+
+症状：
+
+- 听力录屏或视频导出不可用，提示：
+  `程序目录缺少 ffmpeg.exe：...\app\build\windows\x64\runner\Debug\ffmpeg.exe。请重新发布程序或把 ffmpeg.exe 放到程序目录。`
+- `release\windows\tomato_english_happy_talking\ffmpeg.exe` 存在，但 Debug 运行时仍然找 `app\build\windows\x64\runner\Debug\ffmpeg.exe`。
+
+原因：
+
+- App 固定从程序当前目录解析 `ffmpeg.exe`。
+- 如果用 `flutter run -d windows` 直接启动 Debug，程序目录会变成 `app\build\windows\x64\runner\Debug`，绕过发布目录里的 FFmpeg 和运行数据。
+
+处理：
+
+- Windows Debug 也必须通过 `tools/build_windows.ps1` 发布到统一运行目录：
+
+```powershell
+.\tools\build_windows.ps1
+.\tools\build_windows.ps1 -Run
+```
+
+- 脚本会先执行 `flutter build windows --debug`，再把 Debug 程序文件、`ffmpeg.exe` 和同目录 DLL 复制到 `release\windows\tomato_english_happy_talking\`。
+- 不要直接运行 `app\build\windows\x64\runner\Debug\tomato_english_happy_talking.exe` 来验证录屏或视频导出；最终调试入口也应是 `release\windows\tomato_english_happy_talking\tomato_english_happy_talking.exe`。
+
+验证：
+
+```powershell
+Test-Path .\release\windows\tomato_english_happy_talking\ffmpeg.exe
+Test-Path .\release\windows\tomato_english_happy_talking\tomato_english_happy_talking.exe
+```
+
+两个结果都应为 `True`。启动后的设置或录屏状态中，`ffmpegPath` 应指向 `release\windows\tomato_english_happy_talking\ffmpeg.exe`。
+
 ## 发布目录被正在运行的 EXE 锁住
 
 症状：
@@ -122,6 +156,31 @@ git diff -- app\pubspec.lock
 
 ```powershell
 .\tools\build_windows.ps1 -Run -DartDefine "TOMATO_WEB_UI_DEV_URL=http://127.0.0.1:5173"
+```
+
+## Web UI build 清理 app/assets/web 时 EPERM
+
+症状：
+
+- `npm --prefix web_ui run build` 在 `vite:prepare-out-dir` 阶段失败。
+- 错误类似：`EPERM: operation not permitted, unlink '...\app\assets\web\assets\ui\...\*.png'`。
+- 这通常不是 TypeScript 或 Vite 配置错误。
+
+原因与处理：
+
+- 正在运行的 Windows Debug/Release App 或 WebView 可能占用 `app/assets/web/` 里的静态资源。
+- 先关闭 `tomato_english_happy_talking.exe`，再重新执行 Web UI build。
+- 如果窗口不可见，先确认进程：
+
+```powershell
+Get-Process -Name tomato_english_happy_talking -ErrorAction SilentlyContinue |
+  Select-Object Id,ProcessName,Path
+```
+
+确认是本仓库运行的 App 后关闭窗口或结束该进程，再重跑：
+
+```powershell
+npm --prefix web_ui run build
 ```
 
 ## LEGO 道具图出现黑色切片线
@@ -289,3 +348,249 @@ elementRef.current?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
 ```
 
 - 不要为了测试删除真实浏览器需要的滚动行为；加方法存在性守卫即可。
+
+## Vite build-html 收到 Windows 绝对入口路径
+
+症状：
+
+- `npm --prefix web_ui run build` 在 `vite build` 阶段失败：
+  `The "fileName" or "name" properties of emitted chunks and assets must be strings that are neither absolute nor relative paths, received "F:/.../web_ui/index.html"`。
+- `tsc --noEmit` 已经通过，失败出现在 `vite:build-html` / Rollup emit 阶段。
+
+原因：
+
+- Vite 单页应用默认会使用项目根目录下的 `index.html`。
+- 在 `web_ui/vite.config.ts` 中额外写 `rollupOptions.input: 'index.html'` 时，当前 Vite/Rollup 组合会把它解析成 Windows 绝对路径，再被 build-html 当作非法输出 fileName。
+
+处理：
+
+- 删除单页应用不需要的 `rollupOptions.input`，保留 `base`、`plugins`、`build.outDir` 和 `emptyOutDir` 即可。
+
+验证：
+
+```powershell
+npm --prefix web_ui run build
+```
+
+成功时应输出 `../app/assets/web/index.html`、新的 JS/CSS 资源和 `built in ...s`。
+
+## 记录规则：只写已闭环的坑
+
+本文件只记录已经有明确处理办法的构建、发布、联调问题。新增条目必须包含：
+
+- 可识别的症状或错误文本。
+- 原因判断。
+- 可执行的处理步骤。
+- 验证方法或成功信号。
+
+如果只是遇到了问题但还没有稳定解决办法，不要写进本文件当作结论；先放在当次联调记录或任务说明里，等复现和解决路径闭环后再补。
+
+## Flutter 命令在 Codex 沙箱内卡住
+
+症状：
+
+- `tools/build_windows.ps1` 卡在 `=== 检查 Flutter 环境 ===`，或者 `flutter.bat --version` 长时间无输出。
+- 直接运行 Flutter tools snapshot 报：
+  `Flutter failed to open a file at "D:\DevTools\flutter\bin\cache\lockfile"`。
+- `dart.exe --version` 正常，说明 Dart SDK 本身没坏。
+- 当前 Codex 受限沙箱中已经稳定复现：Flutter 相关命令会卡在 SDK cache / lockfile 阶段，不能把“先试沙箱内，失败再提权”当作默认流程。
+
+原因：
+
+- Flutter wrapper 需要读写 `D:\DevTools\flutter\bin\cache\lockfile`。
+- 在受限沙箱里 SDK cache 目录不可写，或者上一次异常中断留下了陈旧 lockfile。
+
+处理：
+
+0. Codex / 自动化会话中，所有 Flutter SDK 相关命令直接走已授权的沙箱外 PowerShell，不要先在沙箱内试跑：
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command '.\tools\build_windows.ps1'
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command 'D:\DevTools\flutter\bin\flutter.bat analyze'
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command 'D:\DevTools\flutter\bin\flutter.bat test --reporter expanded -j 1'
+```
+
+适用范围包括 `flutter --version`、`flutter pub get`、`flutter analyze`、`flutter test`、`tools/build_windows.ps1`、`tools/build_android.ps1`、`tools/run_android_debug.ps1` 和 `tools/setup_android_emulator.ps1`。纯 Web UI 的 `npm` / `tsc` / `vite` 命令不需要因此改走外部 PowerShell。
+
+1. 先确认没有正在运行的 Flutter/Dart 工具进程：
+
+```powershell
+Get-Process flutter,dart -ErrorAction SilentlyContinue |
+  Select-Object Id,ProcessName,StartTime,Path
+```
+
+2. 如果没有相关进程，且确认是陈旧锁，可以删除 lockfile：
+
+```powershell
+Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
+```
+
+3. 涉及 `flutter.bat --version`、`flutter analyze`、`tools/build_windows.ps1` 的命令，只在已授权的外部 PowerShell/沙箱外运行，让 Flutter 能写 SDK cache：
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command '.\tools\build_windows.ps1 -Release'
+```
+
+验证：
+
+- `D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe --version` 能正常输出。
+- `flutter.bat --version` 能正常输出 Flutter 版本。
+- `tools/build_windows.ps1 -Release` 能进入 Web UI 构建和 Windows build 阶段。
+
+注意：
+
+- 不要在有 `flutter` 或 `dart` 进程运行时删除 lockfile。
+- 这个问题不是 Dart 代码错误，也不是 Web UI TypeScript 错误。
+
+## PowerShell 路径含空格时必须用调用运算符
+
+症状：
+
+- 运行类似 `C:\Program Files\PowerShell\7\pwsh.exe -Command ...` 的命令时报：
+  `The term 'C:\Program' is not recognized as a name of a cmdlet...`
+- 命令本身并没有真正执行，后面的构建或测试也没有开始。
+
+原因：
+
+- PowerShell 会把空格前的 `C:\Program` 当作命令名。
+- 给路径加引号还不够；要执行一个被引号包起来的可执行文件路径，必须使用调用运算符 `&`。
+
+处理：
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command '.\tools\build_windows.ps1 -Release'
+```
+
+更简单的情况，优先直接运行仓库脚本，避免多套一层 `pwsh.exe`：
+
+```powershell
+.\tools\build_windows.ps1 -Release
+```
+
+验证：
+
+- 输出进入脚本自己的阶段，例如 `=== 检查 Flutter 环境 ===`。
+- 不再出现 `C:\Program` 未识别错误。
+
+## Suno Styles 为空且页面反复跳动
+
+症状：
+
+- Suno 自动化进入 Advanced 后，页面在 Lyrics / Styles 附近反复滚动或跳动。
+- Tomato 一直显示“正在等待 Suno 自动风格生成完成...”。
+- Suno 的 `Styles` 框看起来没有真实内容，字符计数仍像 `0/1000`。
+- 或者 `Styles` 中短暂出现一串风格词，随后又被页面刷新回空值。
+
+原因：
+
+- Suno 的 `Styles` 默认 placeholder / 推荐标签是一组通用提示，不会根据当前歌词变化，不能当成自动风格结果。
+- `Refresh recommended styles` 只会刷新推荐标签 / placeholder，不是根据歌词生成风格的魔法棒。
+- 真正的风格魔法棒是 `Styles` 工具栏里的蓝色按钮，tooltip 为 `Personalize style prompt to match your taste`。
+- 旧逻辑会把推荐 placeholder 写进 textarea；Suno 的 React 状态随后会把这个直接注入的值刷掉，于是页面像在反复跳。
+- Suno 可能从 `Create` 跳到 `Discover` / Library 等页面；非 `https://suno.com/create` 页面上的 Search 输入框不能参与歌词或风格字段评分。
+- 工具输入框过滤只能看 `aria-label`、`placeholder`、`name`、`id`、`type` 等字段元信息，不能看 textarea 正文。Alice 文本里出现 `in search of her hedgehog` 时，若用正文匹配 `search`，会把真正的 Lyrics / Styles textarea 错当搜索框排除。
+
+处理：
+
+- 同一篇文章如果已经保存过上一次 Suno 自动生成的风格，再次进入 Suno 时直接把这个旧风格填入 `Styles`，不要再次点魔法棒。
+- 没有已保存风格时，自动化只点击 `Styles` 工具栏里的蓝色 `Personalize style prompt to match your taste` 按钮，然后等待 Suno 把生成结果写入真实 `textarea.value`。
+- 不要点击 `Refresh recommended styles`，不要点击 `Add style: ...` 推荐标签，不要把默认 placeholder / 推荐串当成最终风格。
+- 填表前先确认当前 URL 是 `https://suno.com/create`；如果 Suno 跳到其它页面，先导航回 Create，再开始定位 Lyrics / Styles。
+- `Styles` 优先选择 Lyrics 下方同一列的大 textarea，排除 Search、Current page、Song Title、Enhance lyrics 等工具输入框。
+- 歌词和风格填入后需要等待下一轮检测确认页面真实 value 已稳定，避免直接注入后被 React 重绘覆盖。
+- 在 Tomato 听力页显示“当前 Suno 自动风格”，便于用户确认本次实际采用的风格。
+
+验证：
+
+```powershell
+$body = @{ type = 'suno.debugInspect'; payload = @{} } | ConvertTo-Json -Depth 4
+$r = Invoke-RestMethod -Uri 'http://127.0.0.1:39317/bridge' -Method Post -ContentType 'application/json' -Body $body
+$r.payload.diagnostics.editors | Select-Object tag,placeholder,text,rect
+```
+
+成功信号：
+
+- `listening.songState` 返回 `automationStatus = waitingConfirm`。
+- `stylePrompt` 非空。
+- `suno.debugInspect` 中 `Styles` 对应编辑器的 `value` 非空；不能只看 `placeholder`。
+- `suno.debugFill` / 状态消息中 `magicTarget.ariaLabel` 应为 `Personalize style prompt to match your taste`，不应是 `Refresh recommended styles`。
+- 对含有 `search` 等普通英文单词的歌词，`suno.debugFill` 仍能选中真正的 Lyrics / Styles textarea，而不是返回缺少 `lyrics` / `style`。
+- Suno 的 Styles textarea 的 `text` 和 `placeholder` 都能看到同一段风格描述。
+- 页面不再持续跳动；用户未点击确认前不会消耗 credits。
+
+## Suno 下载到旧歌或错歌
+
+症状：
+
+- 在当前文章点击生成后，Suno 自动化跳到上一首或其它文章的歌曲详情页。
+- Tomato 没有确认歌词和风格是否对应，就开始下载，例如 Alice 文章误下载到 `Wrong Seat Apology`。
+- 删除 `.tmp/qa-suno-song/downloads` 下的旧 metadata JSON 后，`listening.songState` 仍然返回旧 `songUrl`。
+
+原因：
+
+- Suno 页面和播放器可能保留上一首歌的详情页、媒体元素或 Library 菜单。
+- 旧缓存中可能只剩 `songUrl` / `metadataPath`，但 metadata 文件和本地音频已经不存在。
+- 仅凭 `pendingSongUrl`、页面级 `Audio` 文本或低匹配的详情页，会把旧歌当作当前文章的完整歌曲。
+
+处理：
+
+- 完成检测和下载检测都必须计算当前页面 / Library 行 / 菜单上下文里的风格 token 与歌词片段匹配分。
+- 当前文章有 16 个风格 token 时，下载候选至少要达到 14 分；少量 token 时按约 85% 计算，最低 1 分。
+- `pendingSongUrl` 只能在匹配详情页、匹配 Library 行或已经打开且匹配的菜单中使用；不能让侧栏、顶部 `Audio` tab 或全局 `More` 借用页面正文成为下载按钮。
+- WebView 触发的媒体下载必须校验 `cdn1.suno.ai/<song-id>` 与目标 `https://suno.com/song/<song-id>` 一致，不一致就取消并提示人工处理。
+- 缓存恢复时，如果只有 `metadataPath`，但文件已经不存在，且没有任何本地音频版本，应返回空状态，不再暴露旧 `songUrl`。
+
+验证：
+
+```powershell
+$body = @{ type = 'listening.songState'; payload = @{ articleId = 24 } } | ConvertTo-Json -Depth 8
+$state = Invoke-RestMethod -Uri 'http://127.0.0.1:39317/bridge' -Method Post -ContentType 'application/json' -Body $body
+$state.payload | Select-Object status,audioPath,songUrl,metadataPath,automationStatus
+
+$debugBody = @{ type = 'suno.debugSnapshot'; payload = @{} } | ConvertTo-Json -Depth 4
+$debug = Invoke-RestMethod -Uri 'http://127.0.0.1:39317/bridge' -Method Post -ContentType 'application/json' -Body $debugBody
+$debug.payload.downloadProbe | Select-Object ok,stage,currentPageExpectedScore,expectedMatchThreshold,title,songUrl
+```
+
+成功信号：
+
+- 当前文章没有真实音频时，缺失 metadata 文件的旧缓存不会再返回旧 `songUrl`。
+- `Wrong Seat Apology` 等旧歌详情页即使包含部分相同风格词，未达到阈值也不会下载。
+- `downloadProbe` 不会把侧栏折叠按钮、顶部 `Audio` tab、全局 `More` 误判为下载入口。
+
+## Suno Library 里有 Download 但自动下载卡住
+
+症状：
+
+- Suno 已生成完整歌曲，Tomato 状态停在“正在下载 Suno 歌曲版本 1 / 1...”。
+- `suno.debugSnapshot` 的 `downloadProbe.target.text` 能看到 `Download Download`，但后续没有弹出 `Audio` 下载项，也没有触发 WebView 下载。
+- 页面可能已经从歌曲详情页跳到 `https://suno.com/me` 的 Library。
+
+原因：
+
+- Suno 的 Library 菜单是前端浮层控件，某些二级菜单点击不会稳定响应 WebView 注入的合成 click 事件。
+- 但完整歌曲加载到 Library/播放器后，页面 HTML 或媒体元素里通常已经暴露了目标歌曲 ID 对应的 `cdn1.suno.ai/<song-id>...` 完整媒体 URL。
+
+处理：
+
+- 下载逻辑先从 `audio/video/source` 和页面 HTML 中提取 `cdn1.suno.ai` 媒体 URL。
+- 只接受 URL 中包含当前 `https://suno.com/song/<song-id>` 的媒体，排除 `sil-100`、preview、sample、snippet、teaser。
+- App 直接下载该媒体文件并写入 Suno metadata；同一 `songUrl` 已有版本时立即跳过，不重复下载。
+- 菜单点击仍保留为兜底路径。
+
+验证：
+
+```powershell
+$body = @{ type = 'listening.songDownloadSunoExisting'; payload = @{ articleId = 25 } } | ConvertTo-Json -Depth 8
+Invoke-RestMethod -Uri 'http://127.0.0.1:39317/bridge' -Method Post -ContentType 'application/json' -Body $body
+
+$stateBody = @{ type = 'listening.songState'; payload = @{ articleId = 25 } } | ConvertTo-Json -Depth 8
+$state = Invoke-RestMethod -Uri 'http://127.0.0.1:39317/bridge' -Method Post -ContentType 'application/json' -Body $stateBody
+$state.payload.audioPath
+```
+
+成功信号：
+
+- `listening.songState` 返回 `status = ready`、`automationStatus = complete`。
+- 本地音频文件存在，文件头为 `ID3` 或其它可播放媒体头，文件大小不是几十 KB 的占位音。
+- 再次触发同一 `songUrl` 下载时，文件数量不增加，直接返回已下载版本。

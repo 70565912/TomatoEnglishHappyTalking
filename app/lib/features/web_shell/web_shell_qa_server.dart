@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
+import '../../core/logging/tomato_logger.dart';
 
 typedef QaBridgeDispatcher = Future<Map<String, dynamic>> Function(Object? raw);
 typedef QaJsonProducer = Future<Map<String, dynamic>> Function();
@@ -37,6 +38,8 @@ class WebShellQaServer {
 
   HttpServer? _server;
 
+  int? get activePort => _server?.port;
+
   Future<void> start() async {
     if (_server != null) {
       return;
@@ -45,12 +48,20 @@ class WebShellQaServer {
     try {
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
       _server = server;
-      debugPrint(
-        '[WebShellQA] listening on http://127.0.0.1:${server.port}',
+      TomatoLogger.info(
+        category: 'qa',
+        event: 'server.started',
+        message: 'WebShell QA server started',
+        data: {'url': 'http://127.0.0.1:${server.port}'},
       );
       unawaited(_serve(server));
     } catch (error) {
-      debugPrint('[WebShellQA] failed to start: $error');
+      TomatoLogger.error(
+        category: 'qa',
+        event: 'server.start_failed',
+        message: 'WebShell QA server failed to start',
+        error: error,
+      );
     }
   }
 
@@ -107,6 +118,46 @@ class WebShellQaServer {
         return;
       }
 
+      if (request.method == 'GET' && path == '/logs/recent') {
+        await _writeJson(request, {
+          'ok': true,
+          'logs': TomatoLogger.recentJson(
+            limit: _queryInt(request, 'limit', fallback: 200),
+            level: request.uri.queryParameters['level'],
+            category: request.uri.queryParameters['category'],
+            since: request.uri.queryParameters['since'],
+          ),
+        });
+        return;
+      }
+
+      if (request.method == 'GET' && path == '/logs/stream') {
+        await _streamLogs(request);
+        return;
+      }
+
+      if (request.method == 'GET' && path == '/logs/files') {
+        await _writeJson(request, {
+          'ok': true,
+          'files': await TomatoLogger.logFilesJson(),
+        });
+        return;
+      }
+
+      if (request.method == 'GET' && path == '/logs/export') {
+        await _writeJson(
+          request,
+          {
+            'ok': true,
+            'export': await TomatoLogger.exportDiagnostics(
+              environment: health,
+              snapshot: snapshot,
+            ),
+          },
+        );
+        return;
+      }
+
       if (request.method == 'POST' && path == '/navigate') {
         final body = await _readJsonBody(request);
         final route = body['path'];
@@ -157,6 +208,10 @@ class WebShellQaServer {
             'GET /health',
             'GET /snapshot',
             'GET /screenshot',
+            'GET /logs/recent?limit=200&level=&category=&since=',
+            'GET /logs/stream?level=&category=',
+            'GET /logs/files',
+            'GET /logs/export',
             'POST /navigate',
             'POST /click',
             'POST /fill',
@@ -184,6 +239,71 @@ class WebShellQaServer {
     final queryToken = request.uri.queryParameters['token'];
     final headerToken = request.headers.value('X-Tomato-QA-Token');
     return token == queryToken || token == headerToken;
+  }
+
+  int _queryInt(
+    HttpRequest request,
+    String key, {
+    required int fallback,
+  }) {
+    final value = int.tryParse(request.uri.queryParameters[key] ?? '');
+    return value == null || value <= 0 ? fallback : value;
+  }
+
+  Future<void> _streamLogs(HttpRequest request) async {
+    final level = request.uri.queryParameters['level'];
+    final category = request.uri.queryParameters['category'];
+    final since = request.uri.queryParameters['since'];
+    request.response.bufferOutput = false;
+    request.response
+      ..statusCode = HttpStatus.ok
+      ..headers.contentType =
+          ContentType('text', 'event-stream', charset: 'utf-8')
+      ..headers.set(HttpHeaders.cacheControlHeader, 'no-cache')
+      ..headers.set(HttpHeaders.connectionHeader, 'keep-alive')
+      ..write('event: ready\n')
+      ..write('data: ${jsonEncode({
+            'ok': true,
+            'ts': DateTime.now().toUtc().toIso8601String(),
+          })}\n\n');
+    await request.response.flush();
+
+    void sendEntry(TomatoLogEntry entry) {
+      if (!TomatoLogger.matches(
+        entry,
+        level: level,
+        category: category,
+        since: since,
+      )) {
+        return;
+      }
+      request.response
+        ..write('event: log\n')
+        ..write('data: ${jsonEncode(entry.toJson())}\n\n');
+    }
+
+    for (final entry in TomatoLogger.recent(
+      limit: _queryInt(request, 'limit', fallback: 50),
+      level: level,
+      category: category,
+      since: since,
+    )) {
+      sendEntry(entry);
+    }
+    await request.response.flush();
+
+    final heartbeat = Timer.periodic(const Duration(seconds: 15), (_) {
+      request.response.write(': heartbeat\n\n');
+      request.response.flush();
+    });
+    final subscription = TomatoLogger.entries.listen((entry) {
+      sendEntry(entry);
+      request.response.flush();
+    });
+    await request.response.done.whenComplete(() async {
+      heartbeat.cancel();
+      await subscription.cancel();
+    });
   }
 
   void _addCorsHeaders(HttpRequest request) {

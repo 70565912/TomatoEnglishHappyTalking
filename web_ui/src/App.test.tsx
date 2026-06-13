@@ -6,8 +6,11 @@ import type { BridgeResponse } from './types';
 
 describe('App', () => {
   afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
     cleanup();
     window.location.hash = '';
+    window.localStorage.clear();
     delete window.flutter_inappwebview;
   });
 
@@ -18,7 +21,7 @@ describe('App', () => {
 
     expect(await screen.findByText('今天也要快乐开口说英语！')).toBeInTheDocument();
     expect(await screen.findByText('我的书籍')).toBeInTheDocument();
-    expect(await screen.findByText('Space Story Series')).toBeInTheDocument();
+    expect((await screen.findAllByText('Space Story Series')).length).toBeGreaterThan(0);
     expect(await screen.findByText('Tomato')).toBeInTheDocument();
     expect(await screen.findByText('English')).toBeInTheDocument();
     expect(await screen.findByText('Happy Talking')).toBeInTheDocument();
@@ -31,6 +34,255 @@ describe('App', () => {
     expect(screen.getByText('对话')).toBeInTheDocument();
     expect(screen.getByText('听力')).toBeInTheDocument();
     expect(screen.queryByText('听全文')).not.toBeInTheDocument();
+  });
+
+  it('opens listening from default article entries and keeps follow explicit', async () => {
+    const article = {
+      id: 88,
+      title: 'E28 Tail Story',
+      content: 'Alice walks back to the garden.',
+      sentences: ['Alice walks back to the garden.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 72,
+      pictureBookEnabled: true,
+      seriesId: 7,
+      seriesTitle: "Alice's Adventures in Wonderland",
+      chapterOrder: 28,
+    };
+    const series = [
+      {
+        id: 7,
+        title: "Alice's Adventures in Wonderland",
+        styleGuide: {},
+        bible: {},
+        coverImagePath: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    const installBridge = () => {
+      window.flutter_inappwebview = {
+        callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+          const type = String(message.type ?? '');
+          if (type === 'app.ready' || type === 'article.list') {
+            return ok(message.id, type, { articles: [article], series });
+          }
+          if (type === 'listening.open') {
+            return ok(message.id, type, {
+              article,
+              items: [{ index: 0, english: article.sentences[0], chinese: '' }],
+            });
+          }
+          if (type === 'follow.open') {
+            return ok(message.id, type, {
+              article,
+              currentIndex: 0,
+              currentSentence: article.sentences[0],
+              step: 'idle',
+              playbackState: 'idle',
+              isRecording: false,
+              hasRecording: false,
+              result: null,
+              translations: {},
+            });
+          }
+          if (type === 'pictureBook.state') {
+            return ok(message.id, type, {
+              articleId: article.id,
+              enabled: true,
+              status: 'empty',
+              pages: [],
+            });
+          }
+          return ok(message.id, type, {});
+        }),
+      };
+    };
+
+    window.location.hash = '/';
+    installBridge();
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /开始闯关/ }));
+    await waitFor(() => expect(window.location.hash).toBe('#/listen/88'));
+
+    cleanup();
+    window.location.hash = '/';
+    installBridge();
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /Alice's Adventures in Wonderland/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'E28 Tail Story' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/listen/88'));
+
+    cleanup();
+    window.location.hash = '/';
+    installBridge();
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /Alice's Adventures in Wonderland/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '进入《E28 Tail Story》听力' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/listen/88'));
+
+    cleanup();
+    window.location.hash = '/';
+    installBridge();
+    render(<App />);
+    fireEvent.click(await screen.findByRole('button', { name: /Alice's Adventures in Wonderland/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '跟读' }));
+    await waitFor(() => expect(window.location.hash).toBe('#/follow/88'));
+  });
+
+  it('restores the recent book and sorts chapters by title', async () => {
+    window.location.hash = '/';
+    window.localStorage.setItem('tomato.recentSeriesKey.v1', 'series:2');
+    const now = new Date().toISOString();
+    const alphaArticle = {
+      id: 1,
+      title: 'Z Last Alpha',
+      content: 'Alpha starts.',
+      sentences: ['Alpha starts.'],
+      sentenceCount: 1,
+      createdAt: '2026-06-10T10:00:00.000Z',
+      averageScore: 80,
+      seriesId: 1,
+      seriesTitle: 'Alpha Book',
+    };
+    const betaTwo = {
+      id: 2,
+      title: 'E2 - Beta',
+      content: 'Beta two.',
+      sentences: ['Beta two.'],
+      sentenceCount: 1,
+      createdAt: now,
+      averageScore: 90,
+      seriesId: 2,
+      seriesTitle: 'Beta Book',
+    };
+    const betaTen = {
+      ...betaTwo,
+      id: 3,
+      title: 'E10 - Beta',
+      content: 'Beta ten.',
+      sentences: ['Beta ten.'],
+      createdAt: '2026-06-09T10:00:00.000Z',
+    };
+    const series = [
+      {
+        id: 1,
+        title: 'Alpha Book',
+        styleGuide: {},
+        bible: {},
+        coverImagePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: 2,
+        title: 'Beta Book',
+        styleGuide: {},
+        bible: {},
+        coverImagePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [alphaArticle, betaTen, betaTwo], series });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByLabelText('Beta Book 章节列表')).toBeInTheDocument();
+    const betaTwoButton = screen.getByRole('button', { name: 'E2 - Beta' });
+    const betaTenButton = screen.getByRole('button', { name: 'E10 - Beta' });
+    expect(betaTwoButton.compareDocumentPosition(betaTenButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(window.localStorage.getItem('tomato.recentSeriesKey.v1')).toBe('series:2');
+  });
+
+  it('renames an article title from the chapter list', async () => {
+    window.location.hash = '/';
+    const now = new Date().toISOString();
+    const article = {
+      id: 5,
+      title: 'Old Title',
+      content: 'Alice looks at the garden.',
+      sentences: ['Alice looks at the garden.'],
+      sentenceCount: 1,
+      createdAt: now,
+      averageScore: 90,
+      seriesId: 2,
+      seriesTitle: 'Alice Series',
+    };
+    const renamedArticle = { ...article, title: 'New Title' };
+    const series = [
+      {
+        id: 2,
+        title: 'Alice Series',
+        styleGuide: {},
+        bible: {},
+        coverImagePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'article.rename') {
+          return ok(message.id, type, { article: renamedArticle, articles: [renamedArticle], series });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Alice Series/ }));
+    fireEvent.click(await screen.findByRole('button', { name: '修改《Old Title》标题' }));
+    const dialog = await screen.findByRole('dialog', { name: '修改文章标题' });
+    expect(dialog.closest('.edit-dialog-backdrop')?.parentElement).toBe(document.body);
+    const titleInput = await screen.findByLabelText('标题');
+    fireEvent.change(titleInput, { target: { value: 'New Title' } });
+    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'article.rename')?.payload).toMatchObject({
+        articleId: 5,
+        title: 'New Title',
+      });
+    });
+    expect(await screen.findByRole('button', { name: 'New Title' })).toBeInTheDocument();
   });
 
   it('prefers generated picture-book covers in book and mission cards', async () => {
@@ -87,7 +339,11 @@ describe('App', () => {
     expect(await screen.findByText('选择番茄助教的发音')).toBeInTheDocument();
     expect(await screen.findByText('发音人')).toBeInTheDocument();
     expect(screen.getByRole('listbox', { name: '可选声音' })).toBeInTheDocument();
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByText('视频导出')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('编码')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('分辨率')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('转场')).not.toBeInTheDocument();
+    expect(screen.queryByText('ffmpeg.exe 路径')).not.toBeInTheDocument();
     expect(screen.getByText('Vivi 2.0')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /预览/ }).length).toBeGreaterThan(0);
     expect(screen.getByText(/个发音人/)).toBeInTheDocument();
@@ -137,6 +393,101 @@ describe('App', () => {
     expect(await screen.findByText('任务卡已加入大厅')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Space Story Series/ }));
     expect(await screen.findByText('Opens Lunch Shares')).toBeInTheDocument();
+  });
+
+  it('rejects article content over 8000 characters without truncating it', async () => {
+    window.location.hash = '/article/new';
+
+    render(<App />);
+
+    const contentInput = await screen.findByLabelText(/文章内容/);
+    const saveButton = screen.getByRole('button', { name: /保存任务/ });
+    const overLimitContent = 'a'.repeat(8001);
+
+    fireEvent.change(contentInput, { target: { value: overLimitContent } });
+
+    expect(contentInput).toHaveValue(overLimitContent);
+    expect(screen.getByText('文章内容不能超过 8000 个字符')).toBeInTheDocument();
+    expect(screen.getByText('8001/8000')).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+
+    fireEvent.change(contentInput, { target: { value: 'a'.repeat(8000) } });
+
+    expect(screen.queryByText('文章内容不能超过 8000 个字符')).not.toBeInTheDocument();
+    expect(screen.getByText('8000/8000')).toBeInTheDocument();
+    expect(saveButton).not.toBeDisabled();
+  });
+
+  it('shows empty books and deletes only empty series', async () => {
+    window.location.hash = '/';
+    const article = {
+      id: 5,
+      title: 'Chapter One',
+      content: 'Alice looks at the garden.',
+      sentences: ['Alice looks at the garden.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 90,
+      seriesId: 2,
+      seriesTitle: 'Alice Series',
+      chapterOrder: 1,
+    };
+    const emptySeries = {
+      id: 1,
+      title: 'Empty Book',
+      styleGuide: {},
+      bible: {},
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const filledSeries = {
+      id: 2,
+      title: 'Alice Series',
+      styleGuide: {},
+      bible: {},
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [emptySeries, filledSeries] });
+        }
+        if (type === 'series.delete') {
+          return ok(message.id, type, { articles: [article], series: [filledSeries] });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    const { container } = render(<App />);
+
+    expect(await screen.findByText('Empty Book')).toBeInTheDocument();
+    expect(screen.getAllByText('Alice Series').length).toBeGreaterThan(0);
+    const emptyBookDeleteButtons = container.querySelectorAll('.book-delete-button');
+    expect(emptyBookDeleteButtons).toHaveLength(1);
+
+    fireEvent.click(emptyBookDeleteButtons[0]);
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'series.delete')?.payload).toMatchObject({ seriesId: 1 });
+    });
+    expect(await screen.findByText('空书籍已删除')).toBeInTheDocument();
+    expect(screen.queryByText('Empty Book')).not.toBeInTheDocument();
+    expect(screen.getAllByText('Alice Series').length).toBeGreaterThan(0);
   });
 
   it('sends picture-book series choices when saving a new task', async () => {
@@ -745,7 +1096,7 @@ describe('App', () => {
             ],
           });
         }
-        if (type === 'listening.prepare' || type === 'listening.play' || type === 'listening.stop') {
+        if (type === 'listening.prepare' || type === 'listening.play' || type === 'listening.playSequence' || type === 'listening.stop') {
           return ok(message.id, type, { playbackState: 'success', prepared: true, stopped: true });
         }
         return ok(message.id, type, {});
@@ -776,10 +1127,638 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /开始播放/ }));
 
     await waitFor(() => {
-      const playCalls = calls.filter((call) => call.type === 'listening.play');
+      const playCalls = calls.filter((call) => call.type === 'listening.playSequence');
       expect(playCalls.length).toBeGreaterThan(0);
-      expect(playCalls[0]?.payload).toMatchObject({ index: 1, part: 'english' });
+      expect(playCalls[0]?.payload).toMatchObject({ startIndex: 1, mode: 'bilingual' });
     });
+  });
+
+  it('keeps subtitle editing on listening rows but not on the picture subtitle overlay', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [
+              { index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' },
+              { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
+            ],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [],
+          });
+        }
+        if (type === 'listening.updateSentence') {
+          const updatedArticle = {
+            ...article,
+            content: 'Tom finds a silver snack box. He shares it with his team.',
+            sentences: ['Tom finds a silver snack box.', 'He shares it with his team.'],
+          };
+          return ok(message.id, type, {
+            article: updatedArticle,
+            item: {
+              index: 0,
+              english: 'Tom finds a silver snack box.',
+              chinese: '汤姆发现了一个银色的零食盒。',
+            },
+            items: [
+              { index: 0, english: 'Tom finds a silver snack box.', chinese: '汤姆发现了一个银色的零食盒。' },
+              { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
+            ],
+            synthesis: { status: 'error', error: 'TTS 内容安全拒绝' },
+            articles: [updatedArticle],
+            series: [],
+          });
+        }
+        if (type === 'listening.resynthesizeSentence') {
+          return ok(message.id, type, {
+            item: {
+              index: 0,
+              english: 'Tom finds a silver snack box.',
+              chinese: '汤姆发现了一个银色的零食盒。',
+            },
+            synthesis: { status: 'ready', english: 'ready', chinese: 'ready', error: '' },
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    const pictureSubtitle = document.querySelector('.picture-book-subtitle-line.english');
+    expect(pictureSubtitle).toBeTruthy();
+    expect(
+      within(pictureSubtitle as HTMLElement).queryByRole('button', { name: '修改第 1 句字幕' }),
+    ).not.toBeInTheDocument();
+
+    const firstRowEdit = screen.getByRole('button', { name: '修改第 1 句字幕' });
+    fireEvent.click(firstRowEdit);
+
+    expect(await screen.findByRole('dialog', { name: '修改字幕' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('英文'), {
+      target: { value: 'Tom finds a silver snack box.' },
+    });
+    fireEvent.change(screen.getByLabelText('中文'), {
+      target: { value: '汤姆发现了一个银色的零食盒。' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'listening.updateSentence')?.payload).toMatchObject({
+        articleId: 1,
+        index: 0,
+        english: 'Tom finds a silver snack box.',
+        chinese: '汤姆发现了一个银色的零食盒。',
+      });
+    });
+    expect(await screen.findByText('TTS 内容安全拒绝')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重新合成语音' }));
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'listening.resynthesizeSentence')?.payload).toMatchObject({
+        articleId: 1,
+        index: 0,
+        part: 'both',
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('TTS 内容安全拒绝')).not.toBeInTheDocument();
+    });
+  });
+
+  it('enables fullscreen listening only after audio and picture preloading are ready', async () => {
+    window.location.hash = '/listen/1';
+    class InstantImage {
+      decoding = '';
+      complete = true;
+      naturalWidth = 1280;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+      decode() {
+        return Promise.resolve();
+      }
+    }
+    vi.stubGlobal('Image', InstantImage);
+
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    let audioReady = false;
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [
+              { index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' },
+              { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
+            ],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 1,
+                paragraphText: article.content,
+                imagePath: 'ready.png',
+                imageUri: 'data:image/png;base64,READY',
+                status: 'ready',
+              },
+            ],
+          });
+        }
+        if (type === 'listening.fullscreenReady') {
+          return ok(message.id, type, {
+            ready: audioReady,
+            reasons: audioReady ? [] : ['英文音频还没有全部加载到内存'],
+            requiredEnglish: 2,
+            readyEnglish: audioReady ? 2 : 1,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: audioReady ? [] : [1],
+            missingChinese: [],
+            failed: 0,
+          });
+        }
+        if (type === 'listening.playSequence') {
+          window.__tomatoNativeEvent?.({
+            type: 'listening.playback',
+            payload: { articleId: 1, index: 0, part: 'english', state: 'partStart' },
+          });
+          return new Promise<BridgeResponse>(() => undefined);
+        }
+        if (type === 'listening.pause' || type === 'listening.resume' || type === 'listening.stop') {
+          return ok(message.id, type, { paused: true, resumed: true, stopped: true });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    const fullscreenButton = await screen.findByRole('button', { name: /全屏播放/ });
+    await waitFor(() => expect(fullscreenButton).toBeDisabled());
+    expect(await screen.findByText('英文音频还没有全部加载到内存')).toBeInTheDocument();
+
+    audioReady = true;
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'preload.state',
+        payload: {
+          articleId: 1,
+          mode: 'listening',
+          scope: 'english',
+          runId: 'listening_english_1_1',
+          status: 'complete',
+          completed: 2,
+          total: 2,
+          failed: 0,
+        },
+      });
+    });
+
+    await waitFor(() => expect(fullscreenButton).not.toBeDisabled());
+    fireEvent.click(fullscreenButton);
+    const fullscreenDialog = await screen.findByRole('dialog', { name: '全屏听力播放' });
+    expect(fullscreenDialog).toBeInTheDocument();
+    expect(fullscreenDialog.parentElement).toBe(document.body);
+    const fullscreenToolbar = fullscreenDialog.querySelector('.fullscreen-listening-toolbar') as HTMLElement;
+    expect(fullscreenDialog).toHaveClass('controls-hidden');
+    expect(fullscreenDialog).toHaveClass('cursor-hidden');
+    expect(fullscreenToolbar).toHaveAttribute('aria-hidden', 'true');
+
+    await waitFor(() => {
+      const playCall = calls.find((call) => call.type === 'listening.playSequence');
+      expect(playCall?.payload).toMatchObject({
+        startIndex: 0,
+        mode: 'english',
+        singleItem: false,
+        strictPreloaded: true,
+      });
+    });
+
+    vi.useFakeTimers();
+    fireEvent.pointerMove(fullscreenDialog);
+    expect(fullscreenDialog).toHaveClass('cursor-visible');
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(fullscreenDialog).toHaveClass('cursor-hidden');
+
+    fireEvent.click(fullscreenDialog);
+    expect(fullscreenDialog).toHaveClass('controls-visible');
+    expect(fullscreenToolbar).toHaveAttribute('aria-hidden', 'false');
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(fullscreenDialog).toHaveClass('controls-hidden');
+    expect(fullscreenToolbar).toHaveAttribute('aria-hidden', 'true');
+
+    fireEvent.click(fullscreenDialog);
+    const pauseButton = within(fullscreenDialog).getByRole('button', { name: '暂停' });
+    fireEvent.click(pauseButton);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(calls.some((call) => call.type === 'listening.pause')).toBe(true);
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(fullscreenDialog).toHaveClass('controls-visible');
+    expect(fullscreenToolbar).toHaveAttribute('aria-hidden', 'false');
+  });
+
+  it('blocks the app with progress while exporting video and allows cancel', async () => {
+    window.location.hash = '/listen/1';
+    class InstantImage {
+      decoding = '';
+      complete = true;
+      naturalWidth = 1280;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.());
+      }
+      decode() {
+        return Promise.resolve();
+      }
+    }
+    vi.stubGlobal('Image', InstantImage);
+
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'none',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            ffmpegPath: 'F:\\Tomato\\ffmpeg.exe',
+            fps: 25,
+          });
+        }
+        if (type === 'recording.settings.save') {
+          return ok(message.id, type, {
+            codec: payload.codec,
+            resolution: payload.resolution,
+            pageTransition: payload.pageTransition,
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            ffmpegPath: 'F:\\Tomato\\ffmpeg.exe',
+            fps: 25,
+          });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.content,
+                imagePath: 'ready.png',
+                imageUri: 'data:image/png;base64,READY',
+                status: 'ready',
+              },
+            ],
+          });
+        }
+        if (type === 'listening.fullscreenReady' || type === 'listening.recordingReady') {
+          return ok(message.id, type, {
+            ready: true,
+            reasons: [],
+            requiredEnglish: 1,
+            readyEnglish: 1,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: [],
+            missingChinese: [],
+            failed: 0,
+          });
+        }
+        if (type === 'listening.recordVideo') {
+          queueMicrotask(() => {
+            window.__tomatoNativeEvent?.({
+              type: 'listening.recording.progress',
+              payload: {
+                articleId: 1,
+                phase: 'rendering',
+                progress: 0.42,
+                completedFrames: 42,
+                totalFrames: 100,
+                message: '正在渲染视频帧',
+              },
+            });
+          });
+          return new Promise<BridgeResponse>(() => undefined);
+        }
+        if (type === 'listening.cancelRecording') {
+          return ok(message.id, type, { cancelled: true });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    const recordButton = await screen.findByRole('button', { name: /录制视频/ });
+    await waitFor(() => expect(recordButton).not.toBeDisabled());
+
+    fireEvent.click(recordButton);
+    const settingsDialog = await screen.findByRole('dialog', { name: '录制视频设置' });
+    expect(within(settingsDialog).getByText('文件将保存到程序目录的 recording-export 文件夹。')).toBeInTheDocument();
+    expect(within(settingsDialog).getByLabelText('编码')).toHaveValue('h264');
+    expect(within(settingsDialog).getByLabelText('分辨率')).toHaveValue('1920x1080');
+    expect(within(settingsDialog).getByLabelText('转场')).toHaveValue('none');
+    expect(within(settingsDialog).queryByText('ffmpeg.exe 路径')).not.toBeInTheDocument();
+    expect(within(settingsDialog).queryByText('保存文件夹')).not.toBeInTheDocument();
+    fireEvent.click(within(settingsDialog).getByRole('button', { name: /开始录制/ }));
+    const dialog = await screen.findByRole('dialog', { name: '录制视频中' });
+    expect(dialog.parentElement).toHaveClass('recording-progress-overlay');
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
+    expect(within(dialog).getByText('录制期间已禁止页面操作，可以随时取消并退出。')).toBeInTheDocument();
+    expect(await within(dialog).findByText('正在渲染视频帧')).toBeInTheDocument();
+    expect(within(dialog).getByText('42 / 100 帧')).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: '取消并退出' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '录制视频中' })).not.toBeInTheDocument());
+    const saveCall = calls.find((call) => call.type === 'recording.settings.save');
+    expect(saveCall?.payload).toMatchObject({
+      codec: 'h264',
+      resolution: '1920x1080',
+      pageTransition: 'none',
+    });
+    expect(saveCall?.payload).not.toHaveProperty('outputDirectory');
+    expect(saveCall?.payload).not.toHaveProperty('ffmpegPath');
+    expect(calls.some((call) => call.type === 'listening.cancelRecording')).toBe(true);
+    expect(await screen.findByText('录制已取消')).toBeInTheDocument();
+  });
+
+  it('shows preload progress and hides the completed listening preload notice after 3 seconds', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '' }],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: 1, enabled: true, status: 'ready', pages: [] });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'preload.state',
+        payload: {
+          articleId: 1,
+          mode: 'listening',
+          runId: 'listening_1_1',
+          status: 'loading',
+          completed: 1,
+          total: 2,
+          failed: 0,
+        },
+      });
+    });
+    expect(screen.getByText('正在进行预加载... 1 / 2')).toBeInTheDocument();
+
+    vi.useFakeTimers();
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'preload.state',
+        payload: {
+          articleId: 1,
+          mode: 'listening',
+          runId: 'listening_1_1',
+          status: 'complete',
+          completed: 2,
+          total: 2,
+          failed: 0,
+        },
+      });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText('完成加载！')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.queryByText('完成加载！')).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it('does not show the preload strip while only picture decoding is pending', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    const originalDecode = window.HTMLImageElement.prototype.decode;
+    window.HTMLImageElement.prototype.decode = vi.fn(() => new Promise<void>(() => undefined));
+    try {
+      window.flutter_inappwebview = {
+        callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+          const type = String(message.type ?? '');
+          if (type === 'app.ready' || type === 'article.list') {
+            return ok(message.id, type, { articles: [article], series: [] });
+          }
+          if (type === 'listening.open') {
+            return ok(message.id, type, {
+              article,
+              items: [{ index: 0, english: article.sentences[0], chinese: '' }],
+            });
+          }
+          if (type === 'pictureBook.state') {
+            return ok(message.id, type, { articleId: 1, enabled: true, status: 'ready', pages: [] });
+          }
+          return ok(message.id, type, {});
+        }),
+      };
+
+      render(<App />);
+
+      expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+
+      vi.useFakeTimers();
+      act(() => {
+        window.__tomatoNativeEvent?.({
+          type: 'pictureBook.state',
+          payload: {
+            articleId: 1,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.sentences[0],
+                imageUri: 'data:image/png;base64,stub',
+                status: 'ready',
+              },
+            ],
+          },
+        });
+        window.__tomatoNativeEvent?.({
+          type: 'preload.state',
+          payload: {
+            articleId: 1,
+            mode: 'listening',
+            runId: 'listening_1_2',
+            status: 'complete',
+            completed: 2,
+            total: 2,
+            failed: 0,
+          },
+        });
+      });
+
+      expect(screen.queryByText('正在进行预加载...')).not.toBeInTheDocument();
+      expect(screen.queryByText('正在进行预加载... 2 / 2')).not.toBeInTheDocument();
+      expect(screen.getByText('完成加载！')).toBeInTheDocument();
+      vi.useRealTimers();
+    } finally {
+      window.HTMLImageElement.prototype.decode = originalDecode;
+    }
   });
 
   it('shows picture-book loading placeholders in listening, follow, and chat', async () => {
@@ -951,8 +1930,8 @@ describe('App', () => {
               );
           });
         }
-        if (type === 'listening.prepare') {
-          return ok(message.id, type, { prepared: true });
+        if (type === 'listening.prepare' || type === 'listening.playSequence') {
+          return ok(message.id, type, { prepared: true, playbackState: 'success' });
         }
         return ok(message.id, type, {});
       }),
@@ -1522,7 +2501,11 @@ describe('App', () => {
         if (type === 'listening.prepare') {
           return ok(message.id, type, { prepared: true });
         }
-        if (type === 'listening.play') {
+        if (type === 'listening.playSequence') {
+          window.__tomatoNativeEvent?.({
+            type: 'listening.playback',
+            payload: { articleId: 1, index: 0, part: 'english', state: 'partStart' },
+          });
           return new Promise((resolve) => {
             resolvePlayback = () =>
               resolve(ok(message.id, type, { playbackState: 'success' }));
@@ -1543,6 +2526,363 @@ describe('App', () => {
     act(() => {
       resolvePlayback?.();
     });
+  });
+
+  it('opens song style dialog, suggests style, and shows completion after generation', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const calls: string[] = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        calls.push(type);
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [
+              { index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' },
+              { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
+            ],
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'empty',
+            stylePrompt: '',
+            audioPath: null,
+            errorMessage: '',
+            source: 'minimax',
+          });
+        }
+        if (type === 'listening.songSuggestStyle') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'empty',
+            stylePrompt: 'bright children musical, whimsical adventure',
+            audioPath: null,
+            errorMessage: '',
+            source: 'minimax',
+          });
+        }
+        if (type === 'listening.songGenerate') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          window.setTimeout(() => {
+            window.__tomatoNativeEvent?.({
+              type: 'listening.song.state',
+              payload: {
+                articleId: article.id,
+                status: 'ready',
+                stylePrompt: String(payload.stylePrompt ?? ''),
+                audioPath: 'mock-song.mp3',
+                errorMessage: '',
+                lyricsCompressed: false,
+                source: 'minimax',
+              },
+            });
+          }, 5);
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'generating',
+            stylePrompt: String(payload.stylePrompt ?? ''),
+            source: String(payload.source ?? 'minimax'),
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '歌曲' }));
+    expect(await screen.findByRole('dialog', { name: '歌曲风格设置' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '生成合适的歌曲风格' }));
+    expect(await screen.findByDisplayValue('bright children musical, whimsical adventure')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /开始生成歌曲/ }));
+
+    await waitFor(() => expect(calls).toContain('listening.songGenerate'));
+    expect(await screen.findByText('歌曲生成完成')).toBeInTheDocument();
+  });
+
+  it('submits Suno song generation with explicit login guidance', async () => {
+    window.location.hash = '/listen/1';
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const generatePayloads: Array<Record<string, unknown>> = [];
+    const confirmPayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'settings.load') {
+          return ok(message.id, type, {
+            tts: { resourceId: 'seed-tts-2.0', speakerId: 'en_female_dacey_uranus_bigtts' },
+            song: { defaultSource: 'suno', sunoOutputDirectory: 'mock', sunoTimeoutMinutes: 20 },
+            voices: [],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'empty',
+            stylePrompt: '',
+            audioPath: null,
+            errorMessage: '',
+            source: 'suno',
+          });
+        }
+        if (type === 'listening.songGenerate') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          generatePayloads.push(payload);
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'generating',
+            source: 'suno',
+            stylePrompt: String(payload.stylePrompt ?? ''),
+            automationStatus: 'waitingConfirm',
+            manualActionMessage: 'Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。',
+          });
+        }
+        if (type === 'listening.songConfirmSunoCreate') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          confirmPayloads.push(payload);
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'generating',
+            source: 'suno',
+            stylePrompt: 'whimsical acoustic storybook pop generated by Suno',
+            automationStatus: 'creating',
+            manualActionMessage: 'Suno 正在生成歌曲...',
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '歌曲' }));
+    expect(await screen.findByText(/优先点击 Suno 自带的魔法棒/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '生成合适的歌曲风格' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('风格描述')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /开始生成歌曲/ }));
+
+    await waitFor(() => expect(generatePayloads[0]?.source).toBe('suno'));
+    expect(generatePayloads[0]?.stylePrompt).toBe('');
+    expect(confirmSpy).toHaveBeenCalled();
+    expect(await screen.findByText('Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。')).toBeInTheDocument();
+    const confirmButtons = await screen.findAllByRole('button', { name: /确认创建歌曲/ });
+    expect(confirmButtons.length).toBeGreaterThan(0);
+    fireEvent.click(confirmButtons[0]!);
+
+    await waitFor(() => expect(confirmPayloads[0]).toMatchObject({ articleId: 1 }));
+    expect(await screen.findByText('Suno 正在生成歌曲...')).toBeInTheDocument();
+    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    confirmSpy.mockRestore();
+  });
+
+  it('retries downloading an existing Suno song link', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const downloadPayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'settings.load') {
+          return ok(message.id, type, {
+            tts: { resourceId: 'seed-tts-2.0', speakerId: 'en_female_dacey_uranus_bigtts' },
+            song: { defaultSource: 'suno', sunoOutputDirectory: 'mock', sunoTimeoutMinutes: 20 },
+            voices: [],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'empty',
+            stylePrompt: 'Suno auto style',
+            audioPath: null,
+            errorMessage: '',
+            source: 'suno',
+            songUrl: 'https://suno.com/song/one',
+            automationStatus: 'manualAction',
+            manualActionMessage: 'Suno 歌曲已生成记录，但还没有本地音频文件。',
+          });
+        }
+        if (type === 'listening.songDownloadSunoExisting') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          downloadPayloads.push(payload);
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'generating',
+            stylePrompt: 'Suno auto style',
+            audioPath: null,
+            errorMessage: '',
+            source: 'suno',
+            songUrl: 'https://suno.com/song/one',
+            automationStatus: 'downloading',
+            manualActionMessage: '正在打开 Suno 已生成歌曲并尝试下载...',
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /重新检测下载/ }));
+
+    await waitFor(() => expect(downloadPayloads[0]).toMatchObject({ articleId: 1 }));
+    expect(await screen.findByText('正在打开 Suno 已生成歌曲并尝试下载...')).toBeInTheDocument();
+  });
+
+  it('plays a selected downloaded song version', async () => {
+    window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const playPayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'settings.load') {
+          return ok(message.id, type, {
+            tts: { resourceId: 'seed-tts-2.0', speakerId: 'en_female_dacey_uranus_bigtts' },
+            song: { defaultSource: 'suno', sunoOutputDirectory: 'mock', sunoTimeoutMinutes: 20 },
+            voices: [],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [{ index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' }],
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            stylePrompt: 'Suno auto style',
+            audioPath: 'suno-v1.mp3',
+            errorMessage: '',
+            source: 'suno',
+            versions: [
+              { id: 'suno-v1', audioPath: 'suno-v1.mp3', title: 'Suno 版本 1', songUrl: 'https://suno.com/song/one' },
+              { id: 'suno-v2', audioPath: 'suno-v2.mp3', title: 'Suno 版本 2', songUrl: 'https://suno.com/song/two' },
+            ],
+          });
+        }
+        if (type === 'listening.songPlay') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          playPayloads.push(payload);
+          return ok(message.id, type, { playbackState: 'playing' });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Suno 版本 2' }));
+
+    await waitFor(() => expect(playPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
   });
 
   it('opens a word translation card and resumes listening after closing it', async () => {
@@ -1584,7 +2924,11 @@ describe('App', () => {
         if (type === 'listening.prepare') {
           return ok(message.id, type, { prepared: true });
         }
-        if (type === 'listening.play') {
+        if (type === 'listening.playSequence') {
+          window.__tomatoNativeEvent?.({
+            type: 'listening.playback',
+            payload: { articleId: 1, index: 0, part: 'english', state: 'partStart' },
+          });
           return new Promise((resolve) => {
             resolvePlayback = () =>
               resolve(ok(message.id, type, { playbackState: 'success' }));

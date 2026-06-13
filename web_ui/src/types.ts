@@ -48,6 +48,17 @@ export interface StorySeries {
   updatedAt: string;
 }
 
+export interface PreloadState {
+  articleId: number;
+  mode: 'listening' | 'follow' | 'chat' | string;
+  scope?: 'english' | 'chinese' | string;
+  runId?: string;
+  status: 'loading' | 'complete' | 'partial' | 'error' | string;
+  completed: number;
+  total: number;
+  failed: number;
+}
+
 export interface PictureBookPage {
   id?: number;
   articleId: number;
@@ -127,12 +138,127 @@ export interface ListeningOpenPayload {
   items: ListeningItem[];
 }
 
+export interface ListeningPlaybackPayload {
+  articleId: number;
+  index: number;
+  part: 'english' | 'chinese' | null;
+  state: 'partStart' | 'completed' | 'stopped' | 'error';
+  error?: string | null;
+}
+
 export interface ListeningTranslationsPayload {
   articleId: number;
   translations: Array<{
     index: number;
     chinese: string;
   }>;
+}
+
+export interface ListeningSynthesisPayload {
+  status: 'ready' | 'error' | string;
+  english?: 'ready' | 'error' | 'pending' | 'unchanged' | string;
+  chinese?: 'ready' | 'error' | 'pending' | 'unchanged' | string;
+  error?: string | null;
+}
+
+export type SongSource = 'suno' | 'minimax' | 'other';
+
+export interface ListeningSongStatePayload {
+  articleId: number;
+  status: 'empty' | 'generating' | 'ready' | 'error' | 'playing' | string;
+  stylePrompt?: string;
+  audioPath?: string | null;
+  errorMessage?: string | null;
+  durationMs?: number | null;
+  source?: SongSource | string;
+  lyricsCompressed?: boolean;
+  songUrl?: string | null;
+  metadataPath?: string | null;
+  manualActionMessage?: string | null;
+  automationStatus?: string | null;
+  creditsRemaining?: number | null;
+  versions?: Array<{
+    id: string;
+    audioPath: string;
+    title?: string | null;
+    songUrl?: string | null;
+    durationMs?: number | null;
+    createdAt?: string | null;
+  }>;
+}
+
+export interface ListeningSentenceUpdatePayload {
+  article?: Article;
+  item: ListeningItem;
+  items?: ListeningItem[];
+  synthesis: ListeningSynthesisPayload;
+  articles?: Article[];
+  series?: StorySeries[];
+}
+
+export interface ListeningFullscreenReadyPayload {
+  ready: boolean;
+  reasons: string[];
+  requiredEnglish: number;
+  readyEnglish: number;
+  requiredChinese: number;
+  readyChinese: number;
+  missingEnglish: number[];
+  missingChinese: number[];
+  failed: number;
+}
+
+export type RecordingCodec = 'h264' | 'h265';
+export type RecordingResolution = '2560x1440' | '1920x1080' | '1280x720';
+export type RecordingPageTransition = 'none' | 'crossFade' | 'panZoomFade' | 'slide';
+
+export interface RecordingSettings {
+  codec: RecordingCodec;
+  resolution: RecordingResolution;
+  pageTransition: RecordingPageTransition;
+  outputDirectory: string;
+  ffmpegPath?: string;
+  fps: number;
+  quality: 'high' | string;
+  hardwareBackend: 'auto' | string;
+}
+
+export interface ListeningRecordingReadyPayload {
+  ready: boolean;
+  reasons: string[];
+  encoderName: string;
+  codec: RecordingCodec | string;
+  resolution: RecordingResolution | string;
+  pageTransition: RecordingPageTransition | string;
+  outputDirectory: string;
+  requiredEnglish: number;
+  readyEnglish: number;
+  requiredChinese: number;
+  readyChinese: number;
+  picturePageCount: number;
+}
+
+export interface ListeningRecordingProgressPayload {
+  articleId: number;
+  phase: 'rendering' | 'encoding' | 'completed' | string;
+  progress: number;
+  completedFrames: number;
+  totalFrames: number;
+  message?: string;
+}
+
+export interface ListeningRecordingResultPayload {
+  articleId: number;
+  videoPath: string;
+  subtitlePath: string;
+  durationMs: number;
+  frameCount: number;
+  droppedFrameCount: number;
+  encoderName: string;
+  codec: RecordingCodec | string;
+  resolution: RecordingResolution | string;
+  pageTransition: RecordingPageTransition | string;
+  warnings: string[];
 }
 
 export interface ListeningPausePayload {
@@ -204,6 +330,11 @@ export interface SettingsState {
     resourceId: string;
     speakerId: string;
   };
+  song?: {
+    defaultSource: SongSource | string;
+    sunoOutputDirectory: string;
+    sunoTimeoutMinutes: number;
+  };
   voices: VoiceOption[];
   contentSafety?: {
     rules: ContentSafetyRule[];
@@ -216,6 +347,35 @@ export interface GeneratedTitlePayload {
 
 export interface EnglishArticlePayload {
   content: string;
+}
+
+export interface DiagnosticLogEntry {
+  ts: string;
+  level: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal' | string;
+  category: string;
+  event: string;
+  message?: string | null;
+  flowId?: string | null;
+  articleId?: number | null;
+  route?: string | null;
+  stage?: string | null;
+  status?: string | null;
+  durationMs?: number | null;
+  data?: unknown;
+  error?: string | null;
+  stack?: string | null;
+}
+
+export interface DiagnosticLogQuery {
+  limit?: number;
+  level?: string;
+  category?: string;
+  since?: string;
+}
+
+export interface DiagnosticLogExportPayload {
+  path: string;
+  files: string[];
 }
 
 export interface VoicePreviewPayload {

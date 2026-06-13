@@ -2,9 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../core/config/app_config.dart';
+import '../core/logging/tomato_logger.dart';
 import 'api_cache_service.dart';
 import 'content_safety_service.dart';
 
@@ -590,6 +591,7 @@ class TtsService {
     bool preferRequestedVoice = false,
     int? articleId,
     String cachePurpose = 'tts',
+    bool forceRefresh = false,
   }) async {
     final path = await synthesizeToCachedFile(
       text: text,
@@ -597,6 +599,7 @@ class TtsService {
       preferRequestedVoice: preferRequestedVoice,
       articleId: articleId,
       cachePurpose: cachePurpose,
+      forceRefresh: forceRefresh,
     );
     return await File(path).readAsBytes();
   }
@@ -607,6 +610,7 @@ class TtsService {
     bool preferRequestedVoice = false,
     int? articleId,
     String cachePurpose = 'tts',
+    bool forceRefresh = false,
   }) async {
     final trimmedText = text.trim();
     if (trimmedText.isEmpty) {
@@ -651,15 +655,17 @@ class TtsService {
       }),
     );
 
-    for (final candidate in textCandidates) {
-      final cachedPath = await ApiCacheService.getFilePath(
-        candidate.cacheKey,
-        articleId: articleId,
-        purpose: cachePurpose,
-      );
-      if (cachedPath != null) {
-        _trace('cache hit key=${candidate.cacheKey} path=$cachedPath');
-        return cachedPath;
+    if (!forceRefresh) {
+      for (final candidate in textCandidates) {
+        final cachedPath = await ApiCacheService.getFilePath(
+          candidate.cacheKey,
+          articleId: articleId,
+          purpose: cachePurpose,
+        );
+        if (cachedPath != null) {
+          _trace('cache hit key=${candidate.cacheKey} path=$cachedPath');
+          return cachedPath;
+        }
       }
     }
 
@@ -720,14 +726,61 @@ class TtsService {
           }
           rethrow;
         }
-        debugPrint(
-          '[TtsService] retrying with readable text after empty audio: '
-          '${error.message}',
+        TomatoLogger.warn(
+          category: 'tts',
+          event: 'retry_readable_text',
+          message: error.message,
+          articleId: articleId,
+          data: {
+            'cachePurpose': cachePurpose,
+            'voiceType': voiceType,
+          },
         );
       }
     }
 
     throw firstError ?? const TtsException('TTS 2.0 合成失败');
+  }
+
+  static Future<Set<String>> cacheKeysForText({
+    required String text,
+    String voiceType = defaultVoiceType,
+    bool preferRequestedVoice = false,
+    String cachePurpose = 'tts',
+  }) async {
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) {
+      return <String>{};
+    }
+    final requestText = (await ContentSafetyService.prepareTextForApi(
+      trimmedText,
+      serviceKind: ContentSafetyService.serviceTts,
+      purpose: cachePurpose,
+    ))
+        .trim();
+    final safeText = requestText.isEmpty ? trimmedText : requestText;
+
+    final ttsResourceId = await AppConfig.volcTtsResourceId;
+    final configuredSpeakerId = await AppConfig.volcTtsSpeakerId;
+    final resolvedSpeakerId = _resolveSpeakerId(
+      configuredSpeakerId: configuredSpeakerId,
+      requestedVoiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
+    );
+    if (ttsResourceId.trim().isEmpty || resolvedSpeakerId.isEmpty) {
+      return <String>{};
+    }
+
+    final keys = <String>{};
+    for (final candidate in _synthesisTextCandidates(safeText)) {
+      final request = _cacheRequest(
+        text: candidate,
+        speakerId: resolvedSpeakerId,
+        resourceId: ttsResourceId,
+      );
+      keys.add(await ApiCacheService.keyForJson('tts', request));
+    }
+    return keys;
   }
 
   static Map<String, dynamic> _cacheRequest({
@@ -874,12 +927,20 @@ class TtsService {
         fallbackMessage: 'TTS 2.0 网络请求失败，请检查网络或本机语音配置',
       );
     } on FormatException catch (e) {
-      debugPrint('[TtsService] invalid v3 audio payload: $e');
+      TomatoLogger.error(
+        category: 'tts',
+        event: 'invalid_audio_payload',
+        error: e,
+      );
       throw const TtsException('TTS 2.0 返回格式异常');
     } on TtsException {
       rethrow;
     } catch (e) {
-      debugPrint('[TtsService] v3 synthesize failed: $e');
+      TomatoLogger.error(
+        category: 'tts',
+        event: 'synthesize.failed',
+        error: e,
+      );
       throw TtsException('TTS 2.0 合成失败：$e');
     }
   }
@@ -960,8 +1021,13 @@ class TtsService {
       serverMessage = responseData.trim();
     }
 
-    debugPrint(
-      '[TtsService] request failed: ${exception.message}; status=${exception.response?.statusCode}',
+    TomatoLogger.warn(
+      category: 'tts',
+      event: 'request.failed',
+      message: exception.message,
+      data: {
+        'statusCode': exception.response?.statusCode,
+      },
     );
 
     final status = exception.response?.statusCode;
@@ -1015,7 +1081,13 @@ class TtsService {
     if (!_audioTraceEnabled) {
       return;
     }
-    debugPrint('[TtsTrace] $message');
+    TomatoLogger.trace(
+      category: 'tts',
+      event: 'trace',
+      message: message,
+      data: {'tag': 'TtsTrace'},
+      force: true,
+    );
   }
 }
 

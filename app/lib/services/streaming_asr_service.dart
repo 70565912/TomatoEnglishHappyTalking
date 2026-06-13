@@ -4,9 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
-
 import '../core/config/app_config.dart';
+import '../core/logging/tomato_logger.dart';
 import 'api_cache_service.dart';
 
 enum AsrFailureType {
@@ -644,7 +643,13 @@ class StreamingAsrService {
     if (!_audioTraceEnabled) {
       return;
     }
-    debugPrint('[AsrTrace] $message');
+    TomatoLogger.trace(
+      category: 'asr',
+      event: 'trace',
+      message: message,
+      data: {'tag': 'AsrTrace'},
+      force: true,
+    );
   }
 }
 

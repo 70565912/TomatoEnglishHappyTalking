@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../../core/logging/tomato_logger.dart';
 import '../../../shared/models/playback_visual_state.dart';
 import '../../../services/chat_chapter_guide_service.dart';
 import '../../../services/database_service.dart';
@@ -608,8 +608,15 @@ class Chat extends _$Chat {
         error: e.message,
       );
       return _mapTtsException(e);
-    } catch (e) {
-      debugPrint('[ChatProvider] audio playback failed: $e');
+    } catch (e, stackTrace) {
+      TomatoLogger.warn(
+        category: 'chat',
+        event: 'audio_playback.failed',
+        articleId: articleId,
+        data: {'messageId': messageId},
+        error: e,
+        stackTrace: stackTrace,
+      );
       _updateMessagePlayback(
         messageId,
         PlaybackVisualState.failed,
@@ -634,7 +641,13 @@ class Chat extends _$Chat {
       return 'AI 对话配置未读取，当前为本地示例回复';
     }
 
-    debugPrint('[ChatProvider] realtime AI fallback: ${reply.errorMessage}');
+    TomatoLogger.warn(
+      category: 'chat',
+      event: 'realtime.fallback',
+      articleId: articleId,
+      message: reply.errorMessage,
+      data: {'source': reply.source.name},
+    );
     final detail = reply.errorMessage?.trim();
     if (detail == null || detail.isEmpty) {
       return 'Realtime AI 服务暂不可用，当前为本地示例回复';
@@ -762,7 +775,14 @@ class Chat extends _$Chat {
     if (!_audioTraceEnabled) {
       return;
     }
-    debugPrint('[ChatTrace] $message');
+    TomatoLogger.trace(
+      category: 'chat',
+      event: 'trace',
+      articleId: articleId,
+      message: message,
+      data: {'tag': 'ChatTrace'},
+      force: true,
+    );
   }
 }
 

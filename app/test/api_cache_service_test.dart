@@ -66,6 +66,74 @@ void main() {
     expect(tableNames, contains('content_safety_rules'));
   });
 
+  test('deletes empty story series and refuses series with chapters', () async {
+    final now = DateTime(2026, 1, 1);
+    final emptySeries = await PictureBookService.createSeries(
+      title: 'Empty Book',
+    );
+    final filledSeries = await PictureBookService.createSeries(
+      title: 'Filled Book',
+    );
+    final articleId = await _saveArticle('Alice looks at the garden.');
+    await DatabaseService.saveStoryChapter(
+      StoryChapter(
+        seriesId: filledSeries.id!,
+        articleId: articleId,
+        chapterOrder: 1,
+        chapterTitle: 'Chapter One',
+        summaryJson: '{}',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final cacheKey = await ApiCacheService.keyForJson(
+      'reference',
+      {'seriesId': emptySeries.id, 'kind': 'style'},
+    );
+    final referencePath = await ApiCacheService.putFileBytes(
+      cacheKey: cacheKey,
+      kind: 'image',
+      purpose: 'story_reference',
+      request: {'seriesId': emptySeries.id, 'kind': 'style'},
+      bytes: const [1, 2, 3],
+      subdirectory: 'reference_assets',
+      extension: 'png',
+      contentType: 'image/png',
+    );
+    await DatabaseService.saveStoryReferenceAsset(
+      StoryReferenceAsset(
+        seriesId: emptySeries.id!,
+        kind: 'style',
+        name: 'style',
+        filePath: referencePath,
+        promptJson: '{}',
+        cacheKey: cacheKey,
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    expect(await File(referencePath).exists(), isTrue);
+    expect(
+      await DatabaseService.deleteStorySeriesIfEmpty(filledSeries.id!),
+      isFalse,
+    );
+    expect(
+        await DatabaseService.getStorySeriesById(filledSeries.id!), isNotNull);
+
+    expect(
+      await DatabaseService.deleteStorySeriesIfEmpty(emptySeries.id!),
+      isTrue,
+    );
+
+    expect(await DatabaseService.getStorySeriesById(emptySeries.id!), isNull);
+    expect(await DatabaseService.getStoryReferenceAssets(emptySeries.id!),
+        isEmpty);
+    expect(await ApiCacheService.getEntry(cacheKey), isNull);
+    expect(await File(referencePath).exists(), isFalse);
+  });
+
   test('deleting an article removes its exclusive cached file', () async {
     final articleId = await _saveArticle('Tom finds a bright snack box.');
     final request = {
@@ -131,6 +199,51 @@ void main() {
     expect(await ApiCacheService.getFilePath(cacheKey), isNull);
   });
 
+  test('finds latest cache entry for an article purpose', () async {
+    final articleId = await _saveArticle('Tom sings about a bright snack box.');
+    final olderRequest = {'service': 'song', 'version': 1};
+    final newerRequest = {'service': 'song', 'version': 2};
+    final olderKey = await ApiCacheService.keyForJson(
+      'article_song_audio',
+      olderRequest,
+    );
+    final newerKey = await ApiCacheService.keyForJson(
+      'article_song_audio',
+      newerRequest,
+    );
+    await ApiCacheService.putFileBytes(
+      cacheKey: olderKey,
+      kind: 'minimax_music',
+      purpose: 'article_song_audio_v1',
+      request: olderRequest,
+      bytes: [1, 2, 3],
+      subdirectory: 'music/article_$articleId',
+      extension: 'mp3',
+      contentType: 'audio/mpeg',
+      articleId: articleId,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 2));
+    final newerPath = await ApiCacheService.putFileBytes(
+      cacheKey: newerKey,
+      kind: 'minimax_music',
+      purpose: 'article_song_audio_v1',
+      request: newerRequest,
+      bytes: [4, 5, 6],
+      subdirectory: 'music/article_$articleId',
+      extension: 'mp3',
+      contentType: 'audio/mpeg',
+      articleId: articleId,
+    );
+
+    final latest = await ApiCacheService.getLatestEntryForArticlePurpose(
+      articleId: articleId,
+      purpose: 'article_song_audio_v1',
+    );
+
+    expect(latest?.cacheKey, newerKey);
+    expect(latest?.filePath, newerPath);
+  });
+
   test('stores and removes the latest sentence recording with its article',
       () async {
     final articleId = await _saveArticle('Tom finds a bright snack box.');
@@ -161,7 +274,7 @@ void main() {
     );
   });
 
-  test('picture-book generation skips image calls when Ark key is missing',
+  test('picture-book generation records planning error when Ark key is missing',
       () async {
     final articleId = await _saveArticle(
       'Tom finds a bright snack box. He shares it with his team.',
@@ -184,11 +297,171 @@ void main() {
 
     final state = await PictureBookService.statePayload(articleId);
     expect(state['enabled'], isTrue);
-    expect(state['status'], 'skipped');
+    expect(state['status'], 'error');
     final pages = state['pages'] as List;
-    expect(pages, isNotEmpty);
-    expect(pages.first['status'], 'skipped');
-    expect(pages.first['imageUri'], isNull);
+    expect(pages, hasLength(1));
+    final page = pages.single as Map<String, dynamic>;
+    expect(page['status'], 'error');
+    expect(
+      page['errorMessage'],
+      contains('文本提交处理失败：未读取到方舟 API Key'),
+    );
+  });
+
+  test(
+      'picture-book generation uses one chapter plan text request for all prompts',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-plan-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    var textCalls = 0;
+    Map<String, dynamic>? textBody;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textCalls += 1;
+        textBody = body;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'outline': {
+                    'summary': 'Alice meets the Queen on the croquet-ground.',
+                    'characters': ['Alice', 'Queen of Hearts'],
+                    'locations': ['croquet-ground'],
+                    'continuityNotes': [
+                      'Alice keeps the same blue dress and curious expression.'
+                    ],
+                    'segments': [
+                      {
+                        'title': 'Alice Enters',
+                        'sentenceStartIndex': 0,
+                        'sentenceEndIndex': 0,
+                        'summary': 'Alice walks into the garden.',
+                        'visualPrompt':
+                            'Alice in a blue dress enters the garden.',
+                        'characters': ['Alice'],
+                        'locations': ['garden'],
+                        'continuityNotes': ['Alice wears a blue dress.'],
+                      },
+                      {
+                        'title': 'Queen Points',
+                        'sentenceStartIndex': 1,
+                        'sentenceEndIndex': 1,
+                        'summary': 'The Queen points at the croquet ground.',
+                        'visualPrompt': 'The Queen points in the same garden.',
+                        'characters': ['Alice', 'Queen of Hearts'],
+                        'locations': ['croquet-ground'],
+                        'continuityNotes': ['Alice keeps the same blue dress.'],
+                      },
+                    ],
+                  },
+                  'seriesBiblePatch': {
+                    'characters': [
+                      {
+                        'name': 'Alice',
+                        'visualContinuity': 'blue dress, apron, curious face'
+                      }
+                    ],
+                    'locations': [
+                      {
+                        'name': 'croquet-ground',
+                        'visualContinuity': 'storybook royal garden'
+                      }
+                    ],
+                    'continuityNotes': [
+                      'Keep Alice visually consistent across pages.'
+                    ],
+                    'chapterSummaries': [
+                      {
+                        'chapterOrder': 1,
+                        'title': 'Test',
+                        'summary': 'Alice reaches the croquet-ground.'
+                      }
+                    ],
+                  },
+                  'pagePrompts': [
+                    {
+                      'pageIndex': 0,
+                      'scene': 'Alice enters the royal garden.',
+                      'characters': ['Alice'],
+                      'prompt':
+                          'Alice in the same blue dress enters a royal garden.',
+                      'negativePrompt': 'unsafe imagery',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'scene': 'The Queen points ahead.',
+                      'characters': ['Alice', 'Queen of Hearts'],
+                      'prompt':
+                          'Alice in the same blue dress watches the Queen point.',
+                      'negativePrompt': 'unsafe imagery',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+    Map<String, dynamic>? imageBody;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageBody = body;
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 1])
+            },
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 2])
+            },
+          ],
+        };
+      },
+    );
+
+    await PictureBookService.generateForArticle(
+      article: article,
+      chapter: chapter,
+    );
+
+    expect(textCalls, 1);
+    expect(
+      textBody?['response_format'],
+      {'type': 'json_object'},
+    );
+    expect(
+      (imageBody?['sequential_image_generation_options'] as Map)['max_images'],
+      2,
+    );
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(2));
+    expect(pages.every((page) => page.status == 'ready'), isTrue);
+    expect(pages.first.promptJson, contains('same blue dress'));
+    final updatedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    expect(
+        updatedChapter?.summaryJson, contains('picture_book_chapter_plan_v1'));
   });
 
   test('Ark image generation sends reference images and reuses cache',
@@ -447,6 +720,173 @@ void main() {
     );
   });
 
+  test('Ark group cache-only lookup does not post a new image request',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-cache-only-key-12345678901234567890');
+    var postCount = 0;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        postCount += 1;
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 41])
+            },
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 42])
+            },
+          ],
+        };
+      },
+    );
+    const requests = [
+      VolcImageBatchRequest(
+        pageIndex: 0,
+        prompt: 'Page one picture-book image.',
+        promptMetadata: {'page': 0},
+      ),
+      VolcImageBatchRequest(
+        pageIndex: 1,
+        prompt: 'Page two picture-book image.',
+        promptMetadata: {'page': 1},
+      ),
+    ];
+
+    final generated = await VolcImageService.generatePictureBookImageGroup(
+      requests: requests,
+      seriesId: 14,
+      useSequential: true,
+    );
+    expect(generated.map((result) => result.source), [
+      VolcImageResultSource.remote,
+      VolcImageResultSource.remote,
+    ]);
+
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        postCount += 1;
+        throw StateError('cache-only lookup must not post');
+      },
+    );
+    final cached = await VolcImageService.generatePictureBookImageGroup(
+      requests: requests,
+      seriesId: 14,
+      useSequential: true,
+      cacheOnly: true,
+    );
+
+    expect(cached.map((result) => result.source), [
+      VolcImageResultSource.cached,
+      VolcImageResultSource.cached,
+    ]);
+    expect(postCount, 1);
+  });
+
+  test('picture-book state recovers ready group pages from cache', () async {
+    _writeImageArkKey(tempDir, 'ark-state-recover-key-12345678901234567890');
+    var postCount = 0;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        postCount += 1;
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 51])
+            },
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 52])
+            },
+          ],
+        };
+      },
+    );
+
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Cache Recovery',
+        content:
+            'Alice watches the first scene. Alice walks to the second scene.',
+        sentences: const [
+          'Alice watches the first scene.',
+          'Alice walks to the second scene.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(title: 'Cache Story');
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    final now = DateTime(2026, 1, 1);
+    final promptJsons = [
+      {
+        'prompt':
+            'Alice watches the first scene in a continuous picture-book style.',
+        'pageIndex': 0,
+        'pageCount': 2,
+        'promptPolicyVersion': 4,
+      },
+      {
+        'prompt':
+            'Alice walks to the second scene in the same picture-book style.',
+        'pageIndex': 1,
+        'pageCount': 2,
+        'promptPolicyVersion': 4,
+      },
+    ];
+    final requests = [
+      for (var index = 0; index < promptJsons.length; index += 1)
+        VolcImageBatchRequest(
+          pageIndex: index,
+          prompt: PictureBookService.imagePromptForTest(promptJsons[index]),
+          promptMetadata: promptJsons[index],
+        ),
+    ];
+
+    await VolcImageService.generatePictureBookImageGroup(
+      requests: requests,
+      articleId: articleId,
+      seriesId: series.id,
+      useSequential: true,
+    );
+    for (var index = 0; index < promptJsons.length; index += 1) {
+      await DatabaseService.upsertPictureBookPage(
+        PictureBookPage(
+          articleId: articleId,
+          seriesId: series.id,
+          pageIndex: index,
+          sentenceStartIndex: index,
+          sentenceEndIndex: index,
+          paragraphText: article.sentences[index],
+          promptJson: ApiCacheService.canonicalJson(promptJsons[index]),
+          status: 'generating',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
+
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        postCount += 1;
+        throw StateError('state recovery must only read cached images');
+      },
+    );
+    final state = await PictureBookService.statePayload(articleId);
+
+    expect(chapter.articleId, articleId);
+    expect(postCount, 1);
+    expect(state['status'], 'ready');
+    final pages = state['pages'] as List;
+    expect(pages.map((page) => page['status']), ['ready', 'ready']);
+    expect(
+      pages.every((page) => (page['imagePath'] as String).isNotEmpty),
+      isTrue,
+    );
+  });
+
   test(
       'picture-book generation creates storyboard group images without references by default',
       () async {
@@ -459,33 +899,68 @@ void main() {
             {
               'message': {
                 'content': jsonEncode({
-                  'summary': 'Alice joins the tea table and watches the group.',
-                  'characters': ['Alice', 'March Hare', 'Hatter', 'Dormouse'],
-                  'locations': ['tea table'],
-                  'continuityNotes': ['Keep the same tea-party setting.'],
-                  'segments': [
+                  'outline': {
+                    'summary':
+                        'Alice joins the tea table and watches the group.',
+                    'characters': ['Alice', 'March Hare', 'Hatter', 'Dormouse'],
+                    'locations': ['tea table'],
+                    'continuityNotes': ['Keep the same tea-party setting.'],
+                    'segments': [
+                      {
+                        'title': 'Alice arrives',
+                        'sentenceStartIndex': 0,
+                        'sentenceEndIndex': 2,
+                        'summary': 'Alice sits near the tea table.',
+                        'visualPrompt':
+                            'Alice approaches the March Hare and Hatter at the tea table.',
+                        'characters': ['Alice', 'March Hare', 'Hatter'],
+                        'locations': ['tea table'],
+                        'continuityNotes': ['Use the same costumes.'],
+                      },
+                      {
+                        'title': 'The table continues',
+                        'sentenceStartIndex': 3,
+                        'sentenceEndIndex': 5,
+                        'summary':
+                            'The Hatter lifts a cup while the Dormouse sleeps.',
+                        'visualPrompt':
+                            'The Hatter lifts a cup and the Dormouse sleeps beside the same table.',
+                        'characters': ['Hatter', 'Dormouse'],
+                        'locations': ['tea table'],
+                        'continuityNotes': ['Keep the same table and palette.'],
+                      },
+                    ],
+                  },
+                  'seriesBiblePatch': {
+                    'characters': [
+                      {
+                        'name': 'Alice',
+                        'visualContinuity':
+                            'same storybook Alice outfit and proportions'
+                      }
+                    ],
+                    'locations': [
+                      {
+                        'name': 'tea table',
+                        'visualContinuity': 'same long outdoor tea table'
+                      }
+                    ],
+                    'continuityNotes': ['Keep the tea table consistent.'],
+                  },
+                  'pagePrompts': [
                     {
-                      'title': 'Alice arrives',
-                      'sentenceStartIndex': 0,
-                      'sentenceEndIndex': 2,
-                      'summary': 'Alice sits near the tea table.',
-                      'visualPrompt':
-                          'Alice approaches the March Hare and Hatter at the tea table.',
+                      'pageIndex': 0,
+                      'prompt':
+                          'Alice approaches the March Hare and Hatter at the same tea table.',
+                      'scene': 'Alice arrives at the tea table.',
                       'characters': ['Alice', 'March Hare', 'Hatter'],
-                      'locations': ['tea table'],
-                      'continuityNotes': ['Use the same costumes.'],
                     },
                     {
-                      'title': 'The table continues',
-                      'sentenceStartIndex': 3,
-                      'sentenceEndIndex': 5,
-                      'summary':
-                          'The Hatter lifts a cup while the Dormouse sleeps.',
-                      'visualPrompt':
-                          'The Hatter lifts a cup and the Dormouse sleeps beside the same table.',
+                      'pageIndex': 1,
+                      'prompt':
+                          'The Hatter lifts a cup while the Dormouse sleeps beside the same table.',
+                      'scene': 'The tea table continues.',
                       'characters': ['Hatter', 'Dormouse'],
-                      'locations': ['tea table'],
-                      'continuityNotes': ['Keep the same table and palette.'],
                     },
                   ],
                 }),

@@ -188,6 +188,40 @@ class ApiCacheService {
     return entry?.filePath;
   }
 
+  static Future<ApiCacheEntry?> getLatestEntryForArticlePurpose({
+    required int articleId,
+    required String purpose,
+    int limit = 20,
+  }) async {
+    final db = await DatabaseService.database;
+    final rows = await db.rawQuery(
+      '''
+      SELECT e.*
+      FROM api_cache_article_refs r
+      JOIN api_cache_entries e ON e.cache_key = r.cache_key
+      WHERE r.article_id = ? AND r.purpose = ? AND e.purpose = ?
+      ORDER BY e.updated_at DESC, e.last_used_at DESC
+      LIMIT ?
+      ''',
+      [articleId, purpose, purpose, limit],
+    );
+    for (final row in rows) {
+      final cacheKey = row['cache_key']?.toString() ?? '';
+      if (cacheKey.isEmpty) {
+        continue;
+      }
+      final entry = await getEntry(
+        cacheKey,
+        articleId: articleId,
+        purpose: purpose,
+      );
+      if (entry != null) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
   static Future<void> putText({
     required String cacheKey,
     required String kind,
@@ -362,6 +396,109 @@ class ApiCacheService {
           }
         } catch (_) {
           // Best-effort cleanup.
+        }
+      }
+    }
+  }
+
+  static Future<void> deleteArticleRefsAndUnusedFilesForPurposes(
+    int articleId, {
+    required Set<String> purposes,
+  }) async {
+    if (purposes.isEmpty) {
+      return;
+    }
+    final db = await DatabaseService.database;
+    final placeholders = List.filled(purposes.length, '?').join(',');
+    final rows = await db.query(
+      'api_cache_article_refs',
+      columns: ['cache_key'],
+      where: 'article_id = ? AND purpose IN ($placeholders)',
+      whereArgs: [articleId, ...purposes],
+    );
+    final keys = rows
+        .map((row) => row['cache_key']?.toString() ?? '')
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    if (keys.isEmpty) {
+      return;
+    }
+
+    await db.delete(
+      'api_cache_article_refs',
+      where: 'article_id = ? AND purpose IN ($placeholders)',
+      whereArgs: [articleId, ...purposes],
+    );
+
+    for (final key in keys) {
+      final refCount = Sqflite.firstIntValue(
+            await db.rawQuery(
+              'SELECT COUNT(*) FROM api_cache_article_refs WHERE cache_key = ?',
+              [key],
+            ),
+          ) ??
+          0;
+      if (refCount > 0) {
+        continue;
+      }
+      final entry = await getEntry(key);
+      final filePath = entry?.filePath;
+      await db.delete(
+        'api_cache_entries',
+        where: 'cache_key = ?',
+        whereArgs: [key],
+      );
+      if (filePath != null && filePath.isNotEmpty) {
+        try {
+          final file = File(filePath);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (_) {
+          // Best-effort cleanup.
+        }
+      }
+    }
+  }
+
+  static Future<void> deleteEntriesByKeys(Set<String> cacheKeys) async {
+    final keys = cacheKeys
+        .map((key) => key.trim())
+        .where((key) => key.isNotEmpty)
+        .toSet();
+    if (keys.isEmpty) {
+      return;
+    }
+
+    final db = await DatabaseService.database;
+    for (final key in keys) {
+      final rows = await db.query(
+        'api_cache_entries',
+        columns: ['file_path'],
+        where: 'cache_key = ?',
+        whereArgs: [key],
+        limit: 1,
+      );
+      final filePath =
+          rows.isEmpty ? null : rows.first['file_path']?.toString();
+      await db.delete(
+        'api_cache_article_refs',
+        where: 'cache_key = ?',
+        whereArgs: [key],
+      );
+      await db.delete(
+        'api_cache_entries',
+        where: 'cache_key = ?',
+        whereArgs: [key],
+      );
+      if (filePath != null && filePath.isNotEmpty) {
+        try {
+          final file = File(filePath);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (_) {
+          // Best-effort cache cleanup.
         }
       }
     }

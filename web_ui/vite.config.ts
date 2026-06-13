@@ -7,9 +7,6 @@ export default defineConfig({
   build: {
     outDir: '../app/assets/web',
     emptyOutDir: true,
-    rollupOptions: {
-      input: 'index.html',
-    },
   },
   test: {
     environment: 'jsdom',

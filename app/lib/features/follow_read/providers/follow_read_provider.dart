@@ -3,11 +3,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
+import '../../../core/logging/tomato_logger.dart';
 import '../../../data/models/article_model.dart';
 import '../../../data/models/learning_record_model.dart';
 import '../../../shared/models/playback_visual_state.dart';
@@ -17,7 +18,8 @@ import '../../../services/nlp_service.dart';
 import '../../../services/recognition_based_assessment_service.dart';
 import '../../../services/scoring_service.dart';
 import '../../../services/streaming_asr_service.dart';
-import '../../../services/tts_service.dart';
+import '../../../services/tts_memory_cache_service.dart';
+import '../../../services/tts_service.dart' show TtsException;
 import '../../../services/translation_service.dart';
 
 part 'follow_read_provider.g.dart';
@@ -248,13 +250,13 @@ class FollowRead extends _$FollowRead {
     );
 
     try {
-      final path = await _cachedTtsPath(index: index, sentence: sentence);
+      final source = await _cachedTtsSource(index: index, sentence: sentence);
       if (!_isActivePlayback(token, index)) {
         return;
       }
 
-      await _playFileWithRecovery(
-        path: path,
+      await _playSourceWithRecovery(
+        source: source,
         token: token,
         index: index,
       );
@@ -313,22 +315,22 @@ class FollowRead extends _$FollowRead {
     return article.copyWith(sentences: sentences);
   }
 
-  Future<String> _cachedTtsPath({
+  Future<AudioSource> _cachedTtsSource({
     required int index,
     required String sentence,
   }) async {
     final key = '${articleId}_${index}_${_stableTextHash(sentence)}';
-    final path = await TtsService.synthesizeToCachedFile(
+    final handle = await TtsMemoryCacheService.load(
       text: sentence,
       articleId: articleId,
       cachePurpose: 'follow_tts',
     );
-    _trace('tts key=$key path=$path');
-    return path;
+    _trace('tts key=$key path=${handle.filePath}');
+    return handle.toAudioSource();
   }
 
-  Future<void> _playFileWithRecovery({
-    required String path,
+  Future<void> _playSourceWithRecovery({
+    required AudioSource source,
     required int token,
     required int index,
   }) async {
@@ -342,7 +344,7 @@ class FollowRead extends _$FollowRead {
 
       try {
         await _playFileOnce(
-          path: path,
+          source: source,
           token: token,
           index: index,
           attempt: attempt,
@@ -364,8 +366,19 @@ class FollowRead extends _$FollowRead {
     }
   }
 
-  Future<void> _playFileOnce({
+  Future<void> _playFileWithRecovery({
     required String path,
+    required int token,
+    required int index,
+  }) =>
+      _playSourceWithRecovery(
+        source: AudioSource.file(path),
+        token: token,
+        index: index,
+      );
+
+  Future<void> _playFileOnce({
+    required AudioSource source,
     required int token,
     required int index,
     required int attempt,
@@ -376,6 +389,7 @@ class FollowRead extends _$FollowRead {
     StreamSubscription<Duration>? positionSub;
     StreamSubscription<PlayerState>? stateSub;
     StreamSubscription<PlaybackEvent>? playbackEventSub;
+    Timer? durationFallbackTimer;
     var playCommandIssued = false;
     Duration lastPosition = Duration.zero;
     Duration? mediaDuration;
@@ -383,6 +397,22 @@ class FollowRead extends _$FollowRead {
     void completeStarted() {
       if (!playbackStarted.isCompleted) {
         playbackStarted.complete();
+      }
+      final duration = mediaDuration;
+      if (duration != null &&
+          duration > Duration.zero &&
+          durationFallbackTimer == null) {
+        durationFallbackTimer = Timer(
+          duration + const Duration(milliseconds: 900),
+          () {
+            if (_isActivePlayback(token, index)) {
+              completeStarted();
+              if (!playbackDone.isCompleted) {
+                playbackDone.complete();
+              }
+            }
+          },
+        );
       }
     }
 
@@ -403,7 +433,7 @@ class FollowRead extends _$FollowRead {
     }
 
     try {
-      await player.setFilePath(path).timeout(const Duration(seconds: 10));
+      await player.setAudioSource(source).timeout(const Duration(seconds: 10));
       await player.seek(Duration.zero).timeout(const Duration(seconds: 3));
       mediaDuration = player.duration;
       _trace(
@@ -479,6 +509,7 @@ class FollowRead extends _$FollowRead {
       }
       await player.stop().timeout(const Duration(seconds: 3));
     } finally {
+      durationFallbackTimer?.cancel();
       await stateSub?.cancel();
       await positionSub?.cancel();
       await playbackEventSub?.cancel();
@@ -585,8 +616,14 @@ class FollowRead extends _$FollowRead {
     _liveRecognitionFuture = StreamingAsrService.recognizeLive(
       audioChunks: asrController.stream,
       onPartial: _updateLiveRecognizedText,
-    ).catchError((Object error) {
-      debugPrint('[FollowRead] live recognition startup failed: $error');
+    ).catchError((Object error, StackTrace stackTrace) {
+      TomatoLogger.warn(
+        category: 'follow',
+        event: 'live_recognition.start_failed',
+        articleId: _s.article.id,
+        error: error,
+        stackTrace: stackTrace,
+      );
       return '';
     });
 
@@ -711,8 +748,14 @@ class FollowRead extends _$FollowRead {
           liveRecognizedText: result.recognizedText,
         ),
       );
-    } catch (e) {
-      debugPrint('[FollowRead] scoring failed: $e');
+    } catch (e, stackTrace) {
+      TomatoLogger.error(
+        category: 'follow',
+        event: 'scoring.failed',
+        articleId: _s.article.id,
+        error: e,
+        stackTrace: stackTrace,
+      );
       _recordingPcmBuilder = null;
       _set(step: FollowReadStep.idle, error: _friendlyScoringError(e));
     }
@@ -1039,8 +1082,14 @@ class FollowRead extends _$FollowRead {
 
     try {
       return await future.timeout(const Duration(seconds: 10));
-    } catch (e) {
-      debugPrint('[FollowRead] live recognition failed: $e');
+    } catch (e, stackTrace) {
+      TomatoLogger.warn(
+        category: 'follow',
+        event: 'live_recognition.failed',
+        articleId: _s.article.id,
+        error: e,
+        stackTrace: stackTrace,
+      );
       return '';
     }
   }
@@ -1053,8 +1102,14 @@ class FollowRead extends _$FollowRead {
 
     try {
       await done.future.timeout(const Duration(seconds: 3));
-    } catch (e) {
-      debugPrint('[FollowRead] recording stream finish ignored: $e');
+    } catch (e, stackTrace) {
+      TomatoLogger.warn(
+        category: 'recording',
+        event: 'stream_finish.ignored',
+        articleId: _s.article.id,
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -1117,6 +1172,13 @@ class FollowRead extends _$FollowRead {
     if (!_audioTraceEnabled) {
       return;
     }
-    debugPrint('[FollowReadTrace] $message');
+    TomatoLogger.trace(
+      category: 'follow',
+      event: 'trace',
+      articleId: _s.article.id,
+      message: message,
+      data: {'tag': 'FollowReadTrace'},
+      force: true,
+    );
   }
 }

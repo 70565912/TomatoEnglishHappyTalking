@@ -30,6 +30,30 @@ $headers = @{ "X-Tomato-QA-Token" = "dev-token" }
 
 ## 接口
 
+实时诊断日志：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:39317/logs/recent?limit=200&category=suno,bridge,webview"
+```
+
+`/logs/recent` 返回当前进程内存环形缓冲中的结构化日志，可用 `limit`、`level`、`category`、`since` 过滤。`level` 是最低级别，`category` 支持逗号分隔。
+
+```powershell
+$request = [System.Net.WebRequest]::Create("http://127.0.0.1:39317/logs/stream?category=suno,bridge,webview")
+$response = $request.GetResponse()
+$reader = [System.IO.StreamReader]::new($response.GetResponseStream())
+while (($line = $reader.ReadLine()) -ne $null) { $line }
+```
+
+`/logs/stream` 使用 SSE 实时推送新增日志，适合联调 Suno 自动化、bridge 命令和 WebView 页面状态，不需要靠固定间隔轮询 `/snapshot`。
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:39317/logs/files
+Invoke-RestMethod http://127.0.0.1:39317/logs/export
+```
+
+`/logs/files` 返回当前日志文件列表；`/logs/export` 在日志目录下生成诊断导出包，包含 `environment.json`、`snapshot.json`、`recent.ndjson` 和当前日志文件副本。导出包会走统一脱敏规则，不应包含 API key、Authorization、Cookie、完整文章正文、完整歌词或绝对路径明文。
+
 ## 自动回归脚本
 
 当 Windows EXE 已用 `TOMATO_QA_REMOTE=true` 启动后，可以直接跑完整主流程回归：

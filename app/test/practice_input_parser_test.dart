@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tomato_english_happy_talking/services/practice_input_parser.dart';
 import 'package:tomato_english_happy_talking/services/nlp_service.dart';
@@ -244,6 +246,135 @@ The Queen said—
       expect(parsed.englishContent, isNot(contains('文化卡片')));
       expect(
           parsed.englishContent, isNot(contains("look over one's shoulder")));
+    });
+
+    test('extracts full E28 story around inserted expansion notes', () {
+      final raw = File(
+        'test/fixtures/e28_mixed_story_with_insertions.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(parsed.englishContent,
+          contains('"I don\'t think they play at all fairly," Alice began'));
+      expect(parsed.englishContent,
+          contains('"A cat may look at a king," said Alice.'));
+      expect(parsed.englishContent,
+          contains('"Well, it must be removed," said the King'));
+      expect(parsed.englishContent,
+          contains('The moment Alice appeared, she was appealed to'));
+      expect(parsed.englishContent, contains('what they said.'));
+      expect(parsed.englishContent, isNot(contains('【拓展】')));
+      expect(parsed.englishContent, isNot(contains('精神抵抗形式')));
+      expect(
+          parsed.englishContent, isNot(contains('A Cat May Look Upon a King')));
+      expect(parsed.englishContent, isNot(contains('【文化卡片】')));
+      expect(parsed.englishContent, isNot(contains('生词好句')));
+      expect(parsed.englishContent,
+          isNot(contains("I can't stand it when people don't attend")));
+      expect(parsed.englishContent,
+          isNot(contains('This seems to me an excellent opportunity')));
+      expect(sentences.length, greaterThan(20));
+      expect(sentences.last, contains('what they said.'));
+    });
+
+    test('skips generic explanation insertions and resumes story prose', () {
+      final parsed = PracticeInputParser.parse('''
+英文原文
+
+Alice looked at the Cat and smiled.
+
+【难句解析】
+
+这一段是在讲解句子结构，不是故事正文。
+An Explanation Title Without Story Action
+
+The King went behind Alice and spoke in a low voice.
+
+【补充说明】
+
+这里继续讲解背景知识。
+
+"Well, it must be removed," said the King very decidedly.
+
+生词好句
+I can't stand it when people don't attend to the rules.
+''');
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.englishContent, contains('Alice looked at the Cat'));
+      expect(parsed.englishContent, contains('The King went behind Alice'));
+      expect(parsed.englishContent,
+          contains('"Well, it must be removed," said the King'));
+      expect(parsed.englishContent, isNot(contains('讲解句子结构')));
+      expect(parsed.englishContent,
+          isNot(contains('An Explanation Title Without Story Action')));
+      expect(parsed.englishContent,
+          isNot(contains("I can't stand it when people don't attend")));
+    });
+
+    test('skips non-bracket lesson insertions and stops at vocab sections', () {
+      final parsed = PracticeInputParser.parse('''
+英文原文
+
+Alice walked across the court and looked for the Cat.
+
+Background Knowledge:
+
+这一段是背景说明，不是故事正文。
+The Cheshire Cat in folklore
+
+Teacher's Note
+
+这里是老师提示，也不应进入正文。
+
+The King hurried after Alice and whispered to her. She listened carefully while the cards argued nearby.
+
+Vocabulary: Key words
+attend to
+I can't stand it when people don't attend to the rules.
+Reference Translation
+国王追上爱丽丝，小声对她说话。
+''');
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.englishContent, contains('Alice walked across the court'));
+      expect(parsed.englishContent, contains('The King hurried after Alice'));
+      expect(parsed.englishContent, contains('cards argued nearby'));
+      expect(parsed.englishContent, isNot(contains('背景说明')));
+      expect(parsed.englishContent,
+          isNot(contains('The Cheshire Cat in folklore')));
+      expect(parsed.englishContent, isNot(contains("Teacher's Note")));
+      expect(parsed.englishContent,
+          isNot(contains("I can't stand it when people don't attend")));
+      expect(parsed.englishContent, isNot(contains('Reference Translation')));
+    });
+
+    test('falls back to mixed when inserted notes hide possible story text',
+        () {
+      final parsed = PracticeInputParser.parse('''
+课程导读
+中文导读。
+
+英文原文
+
+Alice looked at the Cat.
+
+【拓展】
+
+A Cat May Look Upon a King
+
+【文化卡片】
+
+生词好句
+I can't stand it when people don't attend to the rules.
+''');
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.mixed);
+      expect(parsed.englishContent, isEmpty);
     });
   });
 }

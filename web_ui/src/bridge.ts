@@ -2,10 +2,12 @@ import type {
   Article,
   BridgeResponse,
   ChatState,
+  DiagnosticLogEntry,
   FollowState,
   ListeningOpenPayload,
   NativeEvent,
   PictureBookState,
+  RecordingSettings,
   SettingsState,
   StorySeries,
   VoiceOption,
@@ -26,12 +28,16 @@ declare global {
       webview?: unknown;
     };
     __tomatoNativeEvent?: (event: NativeEvent) => void;
+    __tomatoDiagnosticsInstalled?: boolean;
   }
 }
 
 const listeners = new Map<string, Set<NativeListener>>();
 const FLUTTER_BRIDGE_WAIT_MS = 1800;
 const FLUTTER_BRIDGE_POLL_MS = 50;
+const DIAGNOSTICS_CLIENT_LOG = 'diagnostics.clientLog';
+const CLIENT_LOG_MAX_STRING = 360;
+const mockDiagnosticLogs: DiagnosticLogEntry[] = [];
 
 export function onNativeEvent<T>(
   type: string,
@@ -63,21 +69,52 @@ export async function sendNative<T>(
   type: string,
   payload: Record<string, unknown> = {},
 ): Promise<T> {
+  const startedAt = performanceNow();
   const message = {
     id: makeRequestId(),
     type,
     payload,
   };
 
-  const flutterBridge = await resolveFlutterBridge();
-  const response = flutterBridge
-    ? await flutterBridge.callHandler('tomatoBridge', message)
-    : await mockNativeResponse(type, payload, message.id);
+  try {
+    const flutterBridge = await resolveFlutterBridge();
+    const response = flutterBridge
+      ? await flutterBridge.callHandler('tomatoBridge', message)
+      : await mockNativeResponse(type, payload, message.id);
 
-  if (!response.ok) {
-    throw new Error(response.error?.message ?? `Native command failed: ${type}`);
+    const durationMs = Math.round(performanceNow() - startedAt);
+    if (!response.ok) {
+      throw new Error(response.error?.message ?? `Native command failed: ${type}`);
+    }
+    reportClientLog({
+      level: 'debug',
+      category: 'bridge',
+      event: 'command.success',
+      message: type,
+      durationMs,
+      data: {
+        type,
+        id: message.id,
+        payload: summarizeNativePayload(payload),
+      },
+    });
+    return (response.payload ?? {}) as T;
+  } catch (error) {
+    reportClientLog({
+      level: 'error',
+      category: 'bridge',
+      event: 'command.failed',
+      message: type,
+      durationMs: Math.round(performanceNow() - startedAt),
+      data: {
+        type,
+        id: message.id,
+        payload: summarizeNativePayload(payload),
+      },
+      error,
+    });
+    throw error;
   }
-  return (response.payload ?? {}) as T;
 }
 
 async function resolveFlutterBridge(): Promise<Window['flutter_inappwebview']> {
@@ -134,6 +171,239 @@ function makeRequestId(): string {
   return `web_${Date.now()}_${Math.round(Math.random() * 1_000_000)}`;
 }
 
+function performanceNow(): number {
+  return window.performance?.now?.() ?? Date.now();
+}
+
+function reportClientLog({
+  level,
+  category,
+  event,
+  message,
+  durationMs,
+  data,
+  error,
+}: {
+  level: string;
+  category: string;
+  event: string;
+  message?: string;
+  durationMs?: number;
+  data?: unknown;
+  error?: unknown;
+}): void {
+  if (event !== 'command.failed' && message === DIAGNOSTICS_CLIENT_LOG) {
+    return;
+  }
+
+  const bridge = window.flutter_inappwebview;
+  if (!bridge) {
+    return;
+  }
+
+  const errorInfo = errorInfoFrom(error);
+  const payload = {
+    level,
+    category,
+    event,
+    message: sanitizeDiagnosticString(message ?? ''),
+    durationMs,
+    data: sanitizeDiagnosticValue(data),
+    error: errorInfo.message,
+    stack: errorInfo.stack,
+  };
+
+  try {
+    void bridge
+      .callHandler('tomatoBridge', {
+        id: makeRequestId(),
+        type: DIAGNOSTICS_CLIENT_LOG,
+        payload,
+      })
+      .catch(() => undefined);
+  } catch {
+    // Diagnostics must never break the product UI.
+  }
+}
+
+function installClientDiagnostics(): void {
+  if (window.__tomatoDiagnosticsInstalled) {
+    return;
+  }
+  window.__tomatoDiagnosticsInstalled = true;
+
+  window.addEventListener('error', (event) => {
+    reportClientLog({
+      level: 'error',
+      category: 'webview',
+      event: 'window.error',
+      message: event.message,
+      data: {
+        filename: event.filename,
+        line: event.lineno,
+        column: event.colno,
+      },
+      error: event.error,
+    });
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    reportClientLog({
+      level: 'error',
+      category: 'webview',
+      event: 'window.unhandled_rejection',
+      message: 'Unhandled promise rejection',
+      error: event.reason,
+    });
+  });
+
+  const originalWarn = console.warn.bind(console);
+  console.warn = (...args: unknown[]) => {
+    originalWarn(...args);
+    reportClientLog({
+      level: 'warn',
+      category: 'webview',
+      event: 'console.warn',
+      message: formatDiagnosticArgs(args),
+      data: {argCount: args.length},
+    });
+  };
+
+  const originalError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    originalError(...args);
+    reportClientLog({
+      level: 'error',
+      category: 'webview',
+      event: 'console.error',
+      message: formatDiagnosticArgs(args),
+      data: {argCount: args.length},
+      error: args.find((item) => item instanceof Error),
+    });
+  };
+}
+
+function summarizeNativePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(payload)
+      .slice(0, 30)
+      .map(([key, value]) => [key, summarizeDiagnosticValue(value, key)]),
+  );
+}
+
+function summarizeDiagnosticValue(value: unknown, key?: string): unknown {
+  if (isSensitiveKey(key)) {
+    return '[redacted]';
+  }
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return {
+      type: 'string',
+      length: value.length,
+      sample: sanitizeDiagnosticString(value.slice(0, 80)),
+    };
+  }
+  if (Array.isArray(value)) {
+    return {type: 'array', length: value.length};
+  }
+  if (typeof value === 'object') {
+    return {type: 'object', keys: Object.keys(value as Record<string, unknown>).slice(0, 20)};
+  }
+  return typeof value;
+}
+
+function sanitizeDiagnosticValue(value: unknown, key?: string, depth = 0): unknown {
+  if (isSensitiveKey(key)) {
+    return '[redacted]';
+  }
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return sanitizeDiagnosticString(value);
+  }
+  if (depth >= 4) {
+    return '[max-depth]';
+  }
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 30).map((item) => sanitizeDiagnosticValue(item, undefined, depth + 1));
+    return value.length > 30 ? {items, truncated: true, length: value.length} : items;
+  }
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .slice(0, 30)
+        .map(([childKey, childValue]) => [
+          childKey,
+          sanitizeDiagnosticValue(childValue, childKey, depth + 1),
+        ]),
+    );
+  }
+  return sanitizeDiagnosticString(String(value));
+}
+
+function sanitizeDiagnosticString(value: string): string {
+  let text = value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [redacted]')
+    .replace(
+      /(X-Api-Key|api[_-]?key|authorization|cookie|token|secret)\s*[:=]\s*[^,\s;}]+/gi,
+      '$1=[redacted]',
+    )
+    .replace(/[A-Za-z]:\\[^\s"<>|]+/g, (match) => `[path:${pathBaseName(match)}]`);
+  if (text.length <= CLIENT_LOG_MAX_STRING) {
+    return text;
+  }
+  return `${text.slice(0, 180)}...[truncated length=${text.length}]...${text.slice(-80)}`;
+}
+
+function isSensitiveKey(key?: string): boolean {
+  return Boolean(key?.match(/api[_-]?key|authorization|bearer|cookie|token|secret|password|credential/i));
+}
+
+function pathBaseName(value: string): string {
+  const normalized = value.replaceAll('\\', '/');
+  const parts = normalized.split('/');
+  return parts.at(-1) || 'file';
+}
+
+function errorInfoFrom(error: unknown): {message?: string; stack?: string} {
+  if (!error) {
+    return {};
+  }
+  if (error instanceof Error) {
+    return {
+      message: sanitizeDiagnosticString(error.message),
+      stack: sanitizeDiagnosticString(error.stack ?? ''),
+    };
+  }
+  return {message: sanitizeDiagnosticString(String(error))};
+}
+
+function formatDiagnosticArgs(args: unknown[]): string {
+  return sanitizeDiagnosticString(
+    args
+      .slice(0, 6)
+      .map((item) => {
+        if (item instanceof Error) {
+          return item.message;
+        }
+        if (typeof item === 'string') {
+          return item;
+        }
+        try {
+          return JSON.stringify(sanitizeDiagnosticValue(item));
+        } catch {
+          return String(item);
+        }
+      })
+      .join(' '),
+  );
+}
+
+installClientDiagnostics();
+
 async function mockNativeResponse(
   type: string,
   payload: Record<string, unknown>,
@@ -150,6 +420,27 @@ async function mockNativeResponse(
 }
 
 function mockPayload(type: string, payload: Record<string, unknown>): unknown {
+  if (type === 'diagnostics.logsRecent') {
+    return {logs: mockDiagnosticLogs.slice(-Number(payload.limit ?? 200))};
+  }
+  if (type === 'diagnostics.logsExport') {
+    return {path: 'mock-diagnostics', files: ['environment.json', 'recent.ndjson']};
+  }
+  if (type === DIAGNOSTICS_CLIENT_LOG) {
+    const log = payload as Partial<DiagnosticLogEntry>;
+    mockDiagnosticLogs.push({
+      ts: new Date().toISOString(),
+      level: String(log.level ?? 'info'),
+      category: String(log.category ?? 'webview'),
+      event: String(log.event ?? 'client.log'),
+      message: log.message ?? null,
+      durationMs: typeof log.durationMs === 'number' ? log.durationMs : null,
+      data: sanitizeDiagnosticValue(log.data),
+      error: log.error ?? null,
+      stack: log.stack ?? null,
+    });
+    return {accepted: true};
+  }
   if (type === 'article.list' || type === 'app.ready') {
     return { articles: mockArticles, series: mockSeries };
   }
@@ -175,6 +466,18 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       chapterOrder: pictureBookEnabled ? 2 : null,
     };
     return { article, articles: [article, ...mockArticles], series: mockSeries };
+  }
+  if (type === 'article.rename') {
+    const articleId = Number(payload.articleId ?? mockArticles[0].id);
+    const title = String(payload.title ?? '').trim() || mockArticles[0].title;
+    const articles = mockArticles.map((article) =>
+      article.id === articleId ? { ...article, title } : article,
+    );
+    return {
+      article: articles.find((article) => article.id === articleId) ?? articles[0],
+      articles,
+      series: mockSeries,
+    };
   }
   if (type === 'article.suggestTitle') {
     return { title: mockSuggestTitle(String(payload.content ?? '')) };
@@ -203,6 +506,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       updatedAt: new Date().toISOString(),
     };
     return { series: [series, ...mockSeries] };
+  }
+  if (type === 'series.delete') {
+    const seriesId = Number(payload.seriesId ?? 0);
+    return {
+      articles: mockArticles,
+      series: mockSeries.filter((item) => item.id !== seriesId),
+    };
   }
   if (type === 'series.attachArticle') {
     const articleId = Number(payload.articleId ?? mockArticles[0].id);
@@ -246,8 +556,244 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'listening.open') {
     return mockListening;
   }
+  if (type === 'listening.songState') {
+    return {
+      articleId: Number(payload.articleId ?? mockListening.article.id),
+      status: 'empty',
+      stylePrompt: '',
+      audioPath: null,
+      errorMessage: '',
+    };
+  }
+  if (type === 'listening.songSuggestStyle') {
+    return {
+      articleId: Number(payload.articleId ?? mockListening.article.id),
+      status: 'empty',
+      stylePrompt: 'bright children musical, whimsical adventure, light percussion, strings, warm storybook mood',
+      audioPath: null,
+      errorMessage: '',
+    };
+  }
+  if (type === 'listening.songGenerate') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const source = String(payload.source ?? 'minimax');
+    if (source === 'suno') {
+      const sunoResult = {
+        articleId,
+        status: 'generating',
+        stylePrompt: String(payload.stylePrompt ?? 'bright children musical'),
+        audioPath: null,
+        errorMessage: '',
+        durationMs: null,
+        source: 'suno',
+        automationStatus: 'waitingLogin',
+        manualActionMessage: 'Suno 页面已打开，请先在页面中自行登录。',
+      };
+      window.setTimeout(() => {
+        emitNativeEvent({ type: 'listening.song.state', payload: sunoResult });
+      }, 40);
+      return sunoResult;
+    }
+    const result = {
+      articleId,
+      status: 'ready',
+      stylePrompt: String(payload.stylePrompt ?? 'bright children musical'),
+      audioPath: 'mock-song.mp3',
+      errorMessage: '',
+      durationMs: 32000,
+      source: 'minimax',
+      lyricsCompressed: Boolean(payload.compressLyrics),
+      versions: [
+        {
+          id: 'mock-minimax-1',
+          audioPath: 'mock-song.mp3',
+          title: 'MiniMax 版本 1',
+          durationMs: 32000,
+        },
+      ],
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({ type: 'listening.song.state', payload: result });
+    }, 40);
+    return {
+      ...result,
+      status: 'generating',
+      audioPath: null,
+    };
+  }
+  if (type === 'listening.songConfirmSunoCreate') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const result = {
+      articleId,
+      status: 'generating',
+      stylePrompt: 'bright children musical',
+      audioPath: null,
+      errorMessage: '',
+      durationMs: null,
+      source: 'suno',
+      automationStatus: 'creating',
+      manualActionMessage: 'Suno 正在生成歌曲...',
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({ type: 'listening.song.state', payload: result });
+    }, 40);
+    return result;
+  }
+  if (type === 'listening.songDownloadSunoExisting') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const result = {
+      articleId,
+      status: 'generating',
+      stylePrompt: 'bright children musical',
+      audioPath: null,
+      errorMessage: '',
+      durationMs: null,
+      source: 'suno',
+      songUrl: 'https://suno.com/song/mock',
+      automationStatus: 'downloading',
+      manualActionMessage: '正在打开 Suno 已生成歌曲并尝试下载...',
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({ type: 'listening.song.state', payload: result });
+    }, 40);
+    return result;
+  }
+  if (type === 'listening.songPlay') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const versionId = String(payload.versionId ?? '');
+    window.setTimeout(() => {
+      emitNativeEvent({
+        type: 'listening.song.state',
+        payload: {
+          articleId,
+          status: 'playing',
+          stylePrompt: 'bright children musical',
+          audioPath: 'mock-song.mp3',
+          errorMessage: '',
+          versions: [
+            {
+              id: versionId || 'mock-minimax-1',
+              audioPath: 'mock-song.mp3',
+              title: 'MiniMax 版本 1',
+              durationMs: 32000,
+            },
+          ],
+        },
+      });
+    }, 20);
+    return { playbackState: 'playing' };
+  }
+  if (type === 'listening.songStop') {
+    return { stopped: true };
+  }
   if (type === 'listening.prepare') {
     return { prepared: true };
+  }
+  if (type === 'listening.playSequence') {
+    return { playbackState: 'success' };
+  }
+  if (type === 'listening.fullscreenReady') {
+    const mode = String(payload.mode ?? 'english');
+    const items = Array.isArray(payload.items) ? payload.items : mockListening.items;
+    const requiredChinese = mode === 'bilingual'
+      ? items.filter((item) => String((item as { chinese?: unknown }).chinese ?? '').trim()).length
+      : 0;
+    return {
+      ready: true,
+      reasons: [],
+      requiredEnglish: items.length,
+      readyEnglish: items.length,
+      requiredChinese,
+      readyChinese: requiredChinese,
+      missingEnglish: [],
+      missingChinese: [],
+      failed: 0,
+    };
+  }
+  if (type === 'listening.recordingReady') {
+    return {
+      ready: true,
+      reasons: [],
+      encoderName: 'libx264',
+      codec: String(payload.codec ?? mockRecordingSettings.codec),
+      resolution: String(payload.resolution ?? mockRecordingSettings.resolution),
+      pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition),
+      outputDirectory: mockRecordingSettings.outputDirectory,
+      requiredEnglish: mockListening.items.length,
+      readyEnglish: mockListening.items.length,
+      requiredChinese: String(payload.mode ?? 'english') === 'bilingual' ? mockListening.items.length : 0,
+      readyChinese: String(payload.mode ?? 'english') === 'bilingual' ? mockListening.items.length : 0,
+      picturePageCount: 1,
+    };
+  }
+  if (type === 'listening.recordVideo') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    window.setTimeout(() => {
+      emitNativeEvent({
+        type: 'listening.recording.progress',
+        payload: {
+          articleId,
+          phase: 'rendering',
+          progress: 0.4,
+          completedFrames: 40,
+          totalFrames: 100,
+          message: '正在渲染视频帧',
+        },
+      });
+    }, 20);
+    const result = {
+      articleId,
+      videoPath: `${mockRecordingSettings.outputDirectory}\\Space Snacks.mp4`,
+      subtitlePath: `${mockRecordingSettings.outputDirectory}\\Space Snacks.srt`,
+      durationMs: 4200,
+      frameCount: 105,
+      droppedFrameCount: 0,
+      encoderName: 'libx264',
+      codec: String(payload.codec ?? mockRecordingSettings.codec),
+      resolution: String(payload.resolution ?? mockRecordingSettings.resolution),
+      pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition),
+      warnings: [],
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({ type: 'listening.recording.completed', payload: result });
+    }, 40);
+    return result;
+  }
+  if (type === 'listening.cancelRecording') {
+    return { cancelled: true };
+  }
+  if (type === 'listening.updateSentence') {
+    const index = Number(payload.index ?? 0);
+    const item = {
+      index,
+      english: String(payload.english ?? mockListening.items[0].english),
+      chinese: String(payload.chinese ?? mockListening.items[0].chinese),
+    };
+    const items = mockListening.items.map((current) =>
+      current.index === index ? item : current,
+    );
+    const article: Article = {
+      ...mockListening.article,
+      sentences: items.map((current) => current.english),
+      content: items.map((current) => current.english).join(' '),
+      sentenceCount: items.length,
+    };
+    return {
+      article,
+      item,
+      items,
+      synthesis: { status: 'ready', english: 'ready', chinese: item.chinese ? 'ready' : 'unchanged', error: '' },
+      articles: mockArticles.map((current) => (current.id === article.id ? article : current)),
+      series: mockSeries,
+    };
+  }
+  if (type === 'listening.resynthesizeSentence') {
+    const index = Number(payload.index ?? 0);
+    const item = mockListening.items.find((current) => current.index === index) ?? mockListening.items[0];
+    return {
+      item,
+      synthesis: { status: 'ready', english: 'ready', chinese: item.chinese ? 'ready' : 'unchanged', error: '' },
+    };
   }
   if (type === 'listening.play') {
     return { playbackState: 'success' };
@@ -341,6 +887,29 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'settings.load') {
     return mockSettings;
+  }
+  if (type === 'settings.saveSong') {
+    mockSettings = {
+      ...mockSettings,
+      song: {
+        defaultSource: String(payload.defaultSource ?? mockSettings.song?.defaultSource ?? 'suno'),
+        sunoOutputDirectory: String(payload.sunoOutputDirectory ?? mockSettings.song?.sunoOutputDirectory ?? ''),
+        sunoTimeoutMinutes: Number(payload.sunoTimeoutMinutes ?? mockSettings.song?.sunoTimeoutMinutes ?? 20),
+      },
+    };
+    return mockSettings;
+  }
+  if (type === 'recording.settings.load') {
+    return mockRecordingSettings;
+  }
+  if (type === 'recording.settings.save') {
+    mockRecordingSettings = {
+      ...mockRecordingSettings,
+      codec: String(payload.codec ?? mockRecordingSettings.codec) as RecordingSettings['codec'],
+      resolution: String(payload.resolution ?? mockRecordingSettings.resolution) as RecordingSettings['resolution'],
+      pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition) as RecordingSettings['pageTransition'],
+    };
+    return mockRecordingSettings;
   }
   if (type === 'settings.saveVoice') {
     const speakerId = String(payload.speakerId ?? mockSettings.tts.speakerId);
@@ -779,6 +1348,11 @@ let mockSettings: SettingsState = {
     resourceId: 'seed-tts-2.0',
     speakerId: 'en_female_dacey_uranus_bigtts',
   },
+  song: {
+    defaultSource: 'suno',
+    sunoOutputDirectory: 'mock-suno-output',
+    sunoTimeoutMinutes: 20,
+  },
   voices: mockVoiceOptions,
   contentSafety: {
     rules: [
@@ -810,4 +1384,15 @@ let mockSettings: SettingsState = {
       },
     ],
   },
+};
+
+let mockRecordingSettings: RecordingSettings = {
+  codec: 'h264',
+  resolution: '1920x1080',
+  pageTransition: 'none',
+  outputDirectory: 'C:\\Program Files\\TomatoEnglishHappyTalking\\recording-export',
+  ffmpegPath: 'C:\\Program Files\\TomatoEnglishHappyTalking\\ffmpeg.exe',
+  fps: 25,
+  quality: 'high',
+  hardwareBackend: 'auto',
 };
