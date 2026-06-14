@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -123,6 +124,239 @@ class _CachedFollowRecording {
   final PronunciationResult result;
 }
 
+const _autoStopContractions = <String, String>{
+  "i'm": 'i am',
+  "you're": 'you are',
+  "he's": 'he is',
+  "she's": 'she is',
+  "it's": 'it is',
+  "we're": 'we are',
+  "they're": 'they are',
+  "i've": 'i have',
+  "you've": 'you have',
+  "we've": 'we have',
+  "they've": 'they have',
+  "i'll": 'i will',
+  "you'll": 'you will',
+  "he'll": 'he will',
+  "she'll": 'she will',
+  "it'll": 'it will',
+  "we'll": 'we will',
+  "they'll": 'they will',
+  "i'd": 'i would',
+  "you'd": 'you would',
+  "he'd": 'he would',
+  "she'd": 'she would',
+  "we'd": 'we would',
+  "they'd": 'they would',
+  "can't": 'cannot',
+  "won't": 'will not',
+  "don't": 'do not',
+  "doesn't": 'does not',
+  "didn't": 'did not',
+  "isn't": 'is not',
+  "aren't": 'are not',
+  "wasn't": 'was not',
+  "weren't": 'were not',
+  "couldn't": 'could not',
+  "shouldn't": 'should not',
+  "wouldn't": 'would not',
+  "let's": 'let us',
+};
+
+const _autoStopHomophones = <String, String>{
+  'too': 'to',
+  'two': 'to',
+  'four': 'for',
+  'fore': 'for',
+  'won': 'one',
+  'our': 'hour',
+  'ate': 'eight',
+  'see': 'sea',
+  'hear': 'here',
+  'there': 'their',
+  'theyre': 'their',
+  'write': 'right',
+  'buy': 'by',
+  'bye': 'by',
+};
+
+const _autoStopOptionalEndingWords = <String>{'a', 'an', 'the'};
+
+bool _shouldAutoStopRecording({
+  required String referenceText,
+  required String recognizedText,
+}) {
+  final referenceWords = _autoStopWords(referenceText);
+  final recognizedWords = _autoStopWords(recognizedText);
+  if (referenceWords.isEmpty || recognizedWords.isEmpty) {
+    return false;
+  }
+
+  final minimumRecognizedWords = referenceWords.length <= 2
+      ? referenceWords.length
+      : math.min(referenceWords.length, 3);
+  if (recognizedWords.length < minimumRecognizedWords) {
+    return false;
+  }
+
+  final matchedCount = _orderedMatchCount(referenceWords, recognizedWords);
+  final coverage = matchedCount / referenceWords.length;
+  final requiredCoverage = referenceWords.length <= 4
+      ? 0.78
+      : referenceWords.length <= 8
+          ? 0.68
+          : 0.58;
+  if (coverage < requiredCoverage) {
+    return false;
+  }
+
+  final endingLength = referenceWords.length <= 3
+      ? referenceWords.length
+      : math.min(4, math.max(2, (referenceWords.length * 0.28).ceil()));
+  return _hasApproximateEnding(
+    referenceWords: referenceWords,
+    recognizedWords: recognizedWords,
+    endingLength: endingLength,
+  );
+}
+
+List<String> _autoStopWords(String text) {
+  var normalized = text
+      .toLowerCase()
+      .replaceAll('’', "'")
+      .replaceAll('‘', "'")
+      .replaceAll('`', "'");
+  normalized = ' $normalized ';
+  for (final entry in _autoStopContractions.entries) {
+    normalized = normalized.replaceAll(
+      RegExp('\\b${RegExp.escape(entry.key)}\\b'),
+      ' ${entry.value} ',
+    );
+  }
+  return RegExp(r'[a-z0-9]+').allMatches(normalized).map((match) {
+    final word = match.group(0)!;
+    return _autoStopHomophones[word] ?? word;
+  }).toList(growable: false);
+}
+
+int _orderedMatchCount(List<String> referenceWords, List<String> spokenWords) {
+  final previous = List<int>.filled(spokenWords.length + 1, 0);
+  final current = List<int>.filled(spokenWords.length + 1, 0);
+  for (final reference in referenceWords) {
+    for (var j = 1; j <= spokenWords.length; j++) {
+      if (_wordsSimilar(reference, spokenWords[j - 1])) {
+        current[j] = previous[j - 1] + 1;
+      } else {
+        current[j] = math.max(previous[j], current[j - 1]);
+      }
+    }
+    previous.setAll(0, current);
+    for (var j = 0; j < current.length; j++) {
+      current[j] = 0;
+    }
+  }
+  return previous.last;
+}
+
+bool _hasApproximateEnding({
+  required List<String> referenceWords,
+  required List<String> recognizedWords,
+  required int endingLength,
+}) {
+  if (endingLength <= 0 || recognizedWords.length < endingLength) {
+    return false;
+  }
+
+  final referenceEnding =
+      referenceWords.sublist(referenceWords.length - endingLength);
+  final latestStart = recognizedWords.length - endingLength;
+  final earliestStart = math.max(0, latestStart - 2);
+  for (var start = earliestStart; start <= latestStart; start++) {
+    final candidate = recognizedWords.sublist(start, start + endingLength);
+    final matches = _pairwiseMatchCount(referenceEnding, candidate);
+    final requiredMatches = endingLength <= 2 ? endingLength : endingLength - 1;
+    if (matches >= requiredMatches &&
+        _wordsSimilar(referenceEnding.last, candidate.last)) {
+      return true;
+    }
+  }
+
+  final referenceCompact = referenceEnding.join();
+  for (var tailLength = endingLength;
+      tailLength <= math.min(recognizedWords.length, endingLength + 2);
+      tailLength++) {
+    final candidateCompact =
+        recognizedWords.sublist(recognizedWords.length - tailLength).join();
+    if (_similarity(referenceCompact, candidateCompact) >= 0.78) {
+      return true;
+    }
+  }
+  final relaxedReferenceEnding = referenceEnding
+      .where((word) => !_autoStopOptionalEndingWords.contains(word))
+      .toList(growable: false);
+  if (relaxedReferenceEnding.isNotEmpty &&
+      relaxedReferenceEnding.length < referenceEnding.length &&
+      _hasApproximateEnding(
+        referenceWords: relaxedReferenceEnding,
+        recognizedWords: recognizedWords,
+        endingLength: relaxedReferenceEnding.length,
+      )) {
+    return true;
+  }
+  return false;
+}
+
+int _pairwiseMatchCount(List<String> left, List<String> right) {
+  var matches = 0;
+  for (var i = 0; i < left.length && i < right.length; i++) {
+    if (_wordsSimilar(left[i], right[i])) {
+      matches++;
+    }
+  }
+  return matches;
+}
+
+bool _wordsSimilar(String expected, String actual) {
+  if (expected == actual) {
+    return true;
+  }
+  if (expected.length <= 2 || actual.length <= 2) {
+    return false;
+  }
+  return _similarity(expected, actual) >= 0.76;
+}
+
+double _similarity(String left, String right) {
+  if (left == right) {
+    return 1;
+  }
+  if (left.isEmpty || right.isEmpty) {
+    return 0;
+  }
+  final distance = _levenshteinDistance(left, right);
+  final longest = math.max(left.length, right.length);
+  return 1 - distance / longest;
+}
+
+int _levenshteinDistance(String left, String right) {
+  final previous = List<int>.generate(right.length + 1, (index) => index);
+  final current = List<int>.filled(right.length + 1, 0);
+  for (var i = 0; i < left.length; i++) {
+    current[0] = i + 1;
+    for (var j = 0; j < right.length; j++) {
+      final substitutionCost =
+          left.codeUnitAt(i) == right.codeUnitAt(j) ? 0 : 1;
+      current[j + 1] = math.min(
+        math.min(current[j] + 1, previous[j + 1] + 1),
+        previous[j] + substitutionCost,
+      );
+    }
+    previous.setAll(0, current);
+  }
+  return previous.last;
+}
+
 // ---------------------------------------------------------------------------
 // Notifier
 // ---------------------------------------------------------------------------
@@ -133,6 +367,17 @@ class FollowRead extends _$FollowRead {
     'TOMATO_AUDIO_TRACE',
     defaultValue: false,
   );
+  static const _autoStopDelay = Duration(milliseconds: 480);
+
+  @visibleForTesting
+  static bool shouldAutoStopRecordingForTest({
+    required String referenceText,
+    required String recognizedText,
+  }) =>
+      _shouldAutoStopRecording(
+        referenceText: referenceText,
+        recognizedText: recognizedText,
+      );
 
   AudioPlayer? _player;
   AudioRecorder? _recorder;
@@ -145,8 +390,10 @@ class FollowRead extends _$FollowRead {
   StreamSubscription<PlayerState>? _playerStateSub;
   StreamSubscription<ProcessingState>? _processingStateSub;
   StreamSubscription<Object>? _playbackErrorSub;
+  Timer? _autoStopRecordingTimer;
   int _playbackToken = 0;
   bool _pausedForWord = false;
+  bool _autoStopRecordingTriggered = false;
   @override
   Future<FollowReadState> build(int articleId) async {
     ref.onDispose(_cleanup);
@@ -596,6 +843,7 @@ class FollowRead extends _$FollowRead {
     }
     _playbackToken++;
     unawaited(_disposePlayer());
+    _cancelAutoStopRecording(resetTrigger: true);
 
     final hasPermission = await _recorder!.hasPermission();
     if (!hasPermission) {
@@ -670,6 +918,7 @@ class FollowRead extends _$FollowRead {
   // ---- Stop recording and submit for scoring ----
   Future<void> stopRecordingAndScore() async {
     if (_s.step != FollowReadStep.recording) return;
+    _cancelAutoStopRecording(resetTrigger: false);
 
     final path = _recordingPath;
     await _recorder!.stop();
@@ -1082,6 +1331,64 @@ class FollowRead extends _$FollowRead {
     state = AsyncValue.data(
       current.copyWith(liveRecognizedText: normalized, clearError: true),
     );
+
+    if (current.step == FollowReadStep.recording &&
+        _shouldAutoStopRecording(
+          referenceText: current.currentSentence,
+          recognizedText: normalized,
+        )) {
+      _scheduleAutoStopRecording(normalized);
+    }
+  }
+
+  void _scheduleAutoStopRecording(String matchedText) {
+    if (_autoStopRecordingTriggered || _autoStopRecordingTimer != null) {
+      return;
+    }
+
+    _autoStopRecordingTriggered = true;
+    _autoStopRecordingTimer = Timer(_autoStopDelay, () {
+      _autoStopRecordingTimer = null;
+      if (!state.hasValue) {
+        _autoStopRecordingTriggered = false;
+        return;
+      }
+
+      final current = _s;
+      if (current.step != FollowReadStep.recording) {
+        return;
+      }
+
+      final latestRecognized = current.liveRecognizedText.trim().isNotEmpty
+          ? current.liveRecognizedText
+          : matchedText;
+      if (!_shouldAutoStopRecording(
+        referenceText: current.currentSentence,
+        recognizedText: latestRecognized,
+      )) {
+        _autoStopRecordingTriggered = false;
+        return;
+      }
+
+      TomatoLogger.info(
+        category: 'follow',
+        event: 'recording.auto_stop',
+        articleId: current.article.id,
+        data: {
+          'sentenceIndex': current.currentIndex,
+          'recognizedWords': _autoStopWords(latestRecognized).length,
+        },
+      );
+      unawaited(stopRecordingAndScore());
+    });
+  }
+
+  void _cancelAutoStopRecording({required bool resetTrigger}) {
+    _autoStopRecordingTimer?.cancel();
+    _autoStopRecordingTimer = null;
+    if (resetTrigger) {
+      _autoStopRecordingTriggered = false;
+    }
   }
 
   Future<String> _finishLiveRecognition() async {
@@ -1134,6 +1441,7 @@ class FollowRead extends _$FollowRead {
   }
 
   Future<void> _cleanupRecordingStream() async {
+    _cancelAutoStopRecording(resetTrigger: true);
     await _recordingStreamSub?.cancel();
     _recordingStreamSub = null;
     _recordingStreamDone = null;

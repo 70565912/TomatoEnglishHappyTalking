@@ -65,13 +65,15 @@ npm run qa:windows
 脚本会检查：
 
 - QA 服务加载的是内置 Web 资源，不是 Vite dev server。
-- 首页、新增文章、设置、跟读、对话页面没有破图和可见溢出。
-- 新增文章初始为空，保存按钮初始禁用，填入英文后出现短句预览。
-- 设置页使用可滚动声音卡片列表，而不是下拉框。
-- 跟读页初始录音禁用，播放完原音后录音和重播可用。
-- 对话页进入 `userIdle` 后输入框可用，并使用 LEGO 奖励图标。
-- 旧 `monster-*`、`reward-*`、`tomato-*` 资源没有被渲染。
-- 测试文章会在结束时删除。
+- 书库、新增章节、书籍详情、章节播放器、创作中心、练习中心和设置页没有破图和可见溢出。
+- 新增章节初始为空，`保存章节` 初始禁用，填入英文后出现短句预览，并能挂到新建 QA 书籍。
+- 书籍详情能显示章节目录、连续听力、歌曲模式和练习入口。
+- 章节播放器的听力模式不展示生成/导出生产按钮，歌曲模式只展示本地歌曲播放和创作中心入口。
+- 创作中心覆盖绘本、Suno 歌曲和视频导出面板，且不再展示 MiniMax API。
+- 练习中心只展示跟读/对话入口，不混入连续听力或创作按钮。
+- 设置页保留声音卡片、Suno 输出目录和超时设置，不再展示 MiniMax 或默认歌曲来源。
+- 旧 `monster-*`、`reward-*`、`lego/prop-*`、`tomato-*` 游戏化资源没有被主流程渲染。
+- 测试章节和空 QA 书籍会在结束时删除。
 
 默认截图保存到 `.tmp/qa-windows/`。可选参数：
 
@@ -79,6 +81,22 @@ npm run qa:windows
 node .\tools\qa_windows_release.mjs --port 39317
 node .\tools\qa_windows_release.mjs --token dev-token
 node .\tools\qa_windows_release.mjs --no-screenshots
+```
+
+快速布局审计可在同一个 QA 服务上运行：
+
+```powershell
+npm run qa:layout
+```
+
+该脚本会遍历书库、新增章节、书籍详情、听力/歌曲播放器、创作中心各标签、练习中心和设置页，记录破图、显著溢出和不应出现的旧文案；结果保存到 `.tmp/qa-layout-audit/result.json`，截图默认保存到 `.tmp/qa-layout-audit/screenshots/`。
+
+可选参数：
+
+```powershell
+node .\tools\qa_layout_audit.mjs --port 39317
+node .\tools\qa_layout_audit.mjs --include-practice-pages
+node .\tools\qa_layout_audit.mjs --no-screenshots
 ```
 
 绘本整章组图和听力模式需要跑真实异步链路，不要只用 service
@@ -142,7 +160,7 @@ Invoke-RestMethod http://127.0.0.1:39317/navigate `
 Invoke-RestMethod http://127.0.0.1:39317/click `
   -Method Post `
   -ContentType "application/json" `
-  -Body '{"text":"保存任务"}'
+  -Body '{"text":"保存章节"}'
 
 Invoke-RestMethod http://127.0.0.1:39317/click `
   -Method Post `
@@ -208,9 +226,13 @@ Invoke-RestMethod http://127.0.0.1:39317/bridge `
 
 每次改完 Web UI 并重新构建 Windows 版后，至少检查：
 
-- 首页：`brokenImages` 为 0，番茄形象不遮挡奖励卡，主按钮能进入新增文章或跟读。
-- 新增文章：标题和正文初始为空，`保存任务` 初始禁用；填入英文后出现短句预览，保存后回到大厅。
-- 设置：声音用可滚动列表展示，没有下拉框；当前声音能在右侧显示，保存后按钮恢复禁用。
-- 跟读：初始只允许 `播放原音` 和跳过/完成；播放时有准备/播放提示；最后一句按钮显示 `完成`；伙伴状态按听原音、跟读录音、查看得分切换。
-- 对话：用户空输入时 `发送` 禁用；用户可输入状态显示 `轮到你说英语啦。`；AI 说话或处理时输入框禁用；奖励图标使用 LEGO 道具。
+- 书库：首页 `brokenImages` 为 0，能看到书库、创作中心、练习中心和新增章节入口。
+- 新增章节：标题和正文初始为空，`保存章节` 初始禁用；填入英文后出现短句预览，保存后回到书库或书籍详情。
+- 书籍详情：章节目录、连续听力、歌曲模式和练习入口可见，章节封面比例稳定。
+- 章节播放器：听力模式只展示播放相关控制；歌曲模式只展示本地歌曲版本、歌曲列表和创作中心入口。
+- 创作中心：绘本、Suno 歌曲、视频导出面板可切换，不出现 MiniMax API 或旧歌曲来源。
+- 练习中心：只提供跟读和对话入口，不出现绘本/歌曲/视频生产按钮。
+- 设置：声音用可滚动列表展示；Suno 输出目录和超时可保存；不出现 MiniMax 或默认歌曲来源。
+- 跟读：初始只允许 `播放原音` 和跳过/完成；播放时有准备/播放提示；最后一句按钮显示 `完成`；实时识别命中整句后可自动停止录音并评分。
+- 对话：用户空输入时 `发送` 禁用；用户可输入状态显示 `轮到你说英语啦。`；AI 说话或处理时输入框禁用。
 - QA 状态：`/snapshot.runtimeState.follow.step` 和 `playbackState` 能解释按钮状态，不只依赖截图猜测。

@@ -24,8 +24,6 @@ class AppConfig {
       String.fromEnvironment('TOMATO_VOLC_ARK_API_KEY');
   static const _envVolcArkTextModel =
       String.fromEnvironment('TOMATO_VOLC_ARK_TEXT_MODEL');
-  static const _envMiniMaxApiKey =
-      String.fromEnvironment('TOMATO_MINIMAX_API_KEY');
   static const defaultVolcArkTextModel = 'doubao-seed-2-0-lite-260215';
 
   static const _speechApiKeyFileCandidates = [
@@ -42,13 +40,6 @@ class AppConfig {
     '../security/ark.txt',
   ];
 
-  static const _miniMaxApiKeyFileCandidates = [
-    'MiniMax.txt',
-    'security/MiniMax.txt',
-    '../MiniMax.txt',
-    '../security/MiniMax.txt',
-  ];
-
   // ===== 火山引擎 TTS =====
   static const _volcTtsResourceId = 'volc_tts_resource_id';
   static const _volcTtsSpeakerId = 'volc_tts_speaker_id';
@@ -57,11 +48,9 @@ class AppConfig {
   static const _volcSpeechApiKey = 'volc_speech_api_key';
   static const _volcArkApiKey = 'volc_ark_api_key';
   static const _volcArkTextModel = 'volc_ark_text_model';
-  static const _miniMaxApiKey = 'minimax_api_key';
   static const _recordingCodec = 'recording_codec';
   static const _recordingResolution = 'recording_resolution';
   static const _recordingPageTransition = 'recording_page_transition';
-  static const _songDefaultSource = 'song_default_source';
   static const _sunoOutputDirectory = 'suno_output_directory';
   static const _sunoTimeoutMinutes = 'suno_timeout_minutes';
 
@@ -167,28 +156,6 @@ class AppConfig {
     }
 
     return _readSecret(key: _volcArkApiKey);
-  }
-
-  static Future<String> get miniMaxApiKey async {
-    final miniMaxApiKeyFile = _findExistingFile(_miniMaxApiKeyFileCandidates);
-    if (miniMaxApiKeyFile != null) {
-      try {
-        final value =
-            _parseMiniMaxApiKeyFile(await miniMaxApiKeyFile.readAsString());
-        if (value.isNotEmpty) {
-          return value;
-        }
-      } catch (e) {
-        debugPrint('[AppConfig] MiniMax.txt read failed: $e');
-      }
-    }
-
-    final envValue = _envMiniMaxApiKey.trim();
-    if (envValue.isNotEmpty) {
-      return _stripBearerPrefix(envValue);
-    }
-
-    return _readSecret(key: _miniMaxApiKey);
   }
 
   static String _parseSpeechApiKeyFile(String text) {
@@ -356,68 +323,6 @@ class AppConfig {
     return '';
   }
 
-  static String _parseMiniMaxApiKeyFile(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      return '';
-    }
-
-    try {
-      final decoded = jsonDecode(trimmed);
-      if (decoded is Map) {
-        return _stripBearerPrefix(
-          _firstNonEmpty([
-            decoded['MINIMAX_API_KEY']?.toString(),
-            decoded['TOMATO_MINIMAX_API_KEY']?.toString(),
-            decoded['minimax_api_key']?.toString(),
-            decoded['Authorization']?.toString(),
-            decoded['authorization']?.toString(),
-            decoded['api_key']?.toString(),
-            decoded['apiKey']?.toString(),
-          ]),
-        );
-      }
-    } catch (_) {
-      // Plain text and key:value lines are the common local formats.
-    }
-
-    final labeledPattern = RegExp(
-      r'^(?:MINIMAX_API_KEY|TOMATO_MINIMAX_API_KEY|minimax_api_key|Authorization|api[_ -]?key)\s*[:=]\s*(.+)$',
-      caseSensitive: false,
-    );
-    final unlabeledValues = <String>[];
-    for (final rawLine in trimmed.split(RegExp(r'[\r\n]+'))) {
-      final line = rawLine.trim();
-      if (line.isEmpty || line.startsWith('#')) {
-        continue;
-      }
-      final match = labeledPattern.firstMatch(line);
-      if (match != null) {
-        return _stripBearerPrefix(match.group(1) ?? '');
-      }
-      if (RegExp(r'^[A-Za-z_][A-Za-z0-9_\- ]*\s*[:=]').hasMatch(line)) {
-        continue;
-      }
-      unlabeledValues.add(line);
-    }
-
-    if (unlabeledValues.isEmpty) {
-      return '';
-    }
-    if (unlabeledValues.length == 1) {
-      return _stripBearerPrefix(unlabeledValues.first);
-    }
-
-    final longValues = unlabeledValues
-        .where((value) => value.length >= 32)
-        .toList(growable: false)
-      ..sort((left, right) => right.length.compareTo(left.length));
-    if (longValues.isNotEmpty) {
-      return _stripBearerPrefix(longValues.first);
-    }
-    return '';
-  }
-
   static String _stripBearerPrefix(String value) {
     return value
         .trim()
@@ -438,7 +343,6 @@ class AppConfig {
       await _writeIfProvided(key: _volcArkApiKey, value: _envVolcArkApiKey);
       await _writeIfProvided(
           key: _volcArkTextModel, value: _envVolcArkTextModel);
-      await _writeIfProvided(key: _miniMaxApiKey, value: _envMiniMaxApiKey);
     } catch (e) {
       debugPrint('[AppConfig] secure storage bootstrap failed: $e');
     }
@@ -493,10 +397,6 @@ class AppConfig {
   }
 
   static Future<Map<String, String>> get songSettings async => {
-        'defaultSource': await _readSecret(
-          key: _songDefaultSource,
-          defaultValue: 'suno',
-        ),
         'sunoOutputDirectory': await _readSecret(
           key: _sunoOutputDirectory,
           defaultValue: '',
@@ -508,20 +408,15 @@ class AppConfig {
       };
 
   static Future<void> saveSongSettings({
-    required String defaultSource,
     required String sunoOutputDirectory,
     required int sunoTimeoutMinutes,
   }) async {
-    final source =
-        defaultSource.trim().toLowerCase() == 'minimax' ? 'minimax' : 'suno';
     final timeout = sunoTimeoutMinutes.clamp(5, 120).toString();
-    await _storage.write(key: _songDefaultSource, value: source);
     await _storage.write(
       key: _sunoOutputDirectory,
       value: sunoOutputDirectory.trim(),
     );
     await _storage.write(key: _sunoTimeoutMinutes, value: timeout);
-    _runtimeSecrets[_songDefaultSource] = source;
     _runtimeSecrets[_sunoOutputDirectory] = sunoOutputDirectory.trim();
     _runtimeSecrets[_sunoTimeoutMinutes] = timeout;
   }

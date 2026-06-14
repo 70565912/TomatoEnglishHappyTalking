@@ -8,6 +8,7 @@
     "assets:lego-props": "node tools/export_ui_props.mjs",
     "assets:app-icons": "node tools/generate_app_icons.mjs",
     "qa:windows": "node tools/qa_windows_release.mjs",
+    "qa:layout": "node tools/qa_layout_audit.mjs",
     "qa:picture-book-live": "node tools/qa_picture_book_live.mjs"
   },
   "devDependencies": {

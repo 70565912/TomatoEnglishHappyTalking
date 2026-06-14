@@ -77,6 +77,7 @@ app/lib/
 │   ├── scoring_service.dart  # deprecated compatibility model/stub
 │   └── nlp_service.dart
 ├── data/models/
+│   └── article_song_model.dart
 ├── features/
 │   ├── home/
 │   ├── article/
@@ -104,8 +105,10 @@ web_ui/
 - Services 必须提供 mock fallback，方便无 API Key 时本地开发调试。
 - 诊断日志统一使用 `app/lib/core/logging/tomato_logger.dart` 的 `TomatoLogger`；新增链路不要再散落裸 `debugPrint`。日志默认写入运行数据根 `logs/`，并通过 QA `/logs/recent`、`/logs/stream`、`/logs/export` 调试。
 - 当前主 UI 是 `web_ui` 打包后的本地 WebView 页面；Flutter 的 `WebShellScreen` 负责桥接数据库、录音、播放、TTS、ASR、AI 对话和安全配置。
+- 当前产品 UI 以“书库 / 创作中心 / 练习中心 / 设置”为主导航，不再把首页、听力、跟读和对话包装成游戏大厅、任务、闯关、XP 或奖励流程。新页面和文案应延续书籍、章节、绘本、歌曲、视频导出的工作台心智。
 - `app/lib/features/home|article|follow_read|chat|profile` 下的原生 Screen 仍可作为参考/兼容层，但默认路由进入 `WebShellScreen`。
 - Web UI 与 Flutter 交互时必须通过 `web_bridge_protocol.dart` / `bridge.ts` 的 typed command/event 协议，不要从 Web UI 直接访问云 API 或本地文件系统。
+- 歌曲生成来源固定为 Suno 网页自动化和本地版本库；不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt`、`song_default_source` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供 Suno 缓存、播放、字幕时间轴和视频导出复用。
 - Suno 网页自动化在 `WebShellScreen` 内执行：同一篇文章如果已经保存过上一次 Suno 自动生成的风格，再次进入时直接填入旧风格；没有旧风格时才点击 `Styles` 工具栏里的蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
 - Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词/风格达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
@@ -113,6 +116,7 @@ web_ui/
 - Suno 歌曲字幕时间轴使用 App 提交给 Suno 的原歌词作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
 - Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
 - 听力播放、全屏播放和普通录制只播放英文 TTS；中文翻译只作为字幕/对照文本显示，不再触发听力中文 TTS 预加载或播放。`listening.fullscreenReady` 只检查当前和下一句英文音频，绘本图片只预取当前和下一张；文章保存时应优先保存导入译文，缺失时可用 `PracticeTextService.translateToChinese` 生成逐句字幕，后续听力/跟读只读库中译文，不在打开页面时批量翻译。
+- 跟读录音可根据 BigASR 实时识别文本自动停止：只有识别结果达到参考句覆盖率并匹配句尾时才触发，避免只说末尾短语就结束。相关启发式在 `follow_read_provider.dart`，更新阈值时同步 `follow_recording_auto_stop_test.dart`。
 
 ## Flutter / Dart 规范
 

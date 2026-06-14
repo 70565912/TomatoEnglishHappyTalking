@@ -203,31 +203,7 @@ function usePictureBookRetryGate(): PictureBookRetryGate {
   };
 }
 
-const mascotBlinkFrames = [
-  'lego/mascot-blink/frame-01.png',
-  'lego/mascot-blink/frame-02.png',
-  'lego/mascot-blink/frame-03.png',
-  'lego/mascot-blink/frame-04.png',
-  'lego/mascot-blink/frame-05.png',
-  'lego/mascot-blink/frame-06.png',
-  'lego/mascot-blink/frame-07.png',
-];
-
-const legoMascot = {
-  idle: mascotBlinkFrames[0],
-  blink: mascotBlinkFrames[3],
-  blinkFrames: mascotBlinkFrames,
-};
-
-const pngAsset = {
-  star: 'lego/prop-star.png',
-  brick: 'lego/prop-bricks.png',
-  legoLogo: 'lego/brand-tomato.png',
-  legoListen: 'lego/prop-headphones.png',
-  legoRecord: 'lego/prop-microphone.png',
-  legoScore: 'lego/prop-shield.png',
-  legoMonster: 'lego/prop-monster.png',
-};
+type PlayerMode = 'listening' | 'song';
 
 function App() {
   const [route, setRoute] = useHashRoute();
@@ -364,7 +340,7 @@ function App() {
 
       <aside className="side-rail">
         <button className="brand-card" onClick={() => navigate('/')}>
-          <img src={asset(pngAsset.legoLogo)} alt="" />
+          <span className="brand-mark" aria-hidden="true">T</span>
           <span className="brand-copy">
             <b>
               <span>Tomato</span>
@@ -375,12 +351,24 @@ function App() {
             </b>
           </span>
         </button>
-        <NavButton label="大厅" icon="home" active={route === '/'} onClick={() => navigate('/')} />
+        <NavButton label="书库" icon="home" active={parsedRoute.kind === 'home' || parsedRoute.kind === 'book'} onClick={() => navigate('/')} />
         <NavButton
-          label="任务"
+          label="新增章节"
           icon="task"
           active={route === '/article/new'}
           onClick={() => navigate('/article/new')}
+        />
+        <NavButton
+          label="创作中心"
+          icon="recordVideo"
+          active={parsedRoute.kind === 'creation'}
+          onClick={() => navigate('/creation')}
+        />
+        <NavButton
+          label="练习中心"
+          icon="mic"
+          active={parsedRoute.kind === 'practice'}
+          onClick={() => navigate('/practice')}
         />
         <NavButton
           label="设置"
@@ -407,6 +395,13 @@ function App() {
             recentBookKey={recentSeriesKey}
             onRecentBookKeyChange={rememberSeriesKey}
             onNavigate={navigate}
+            onOpenBook={(book) => {
+              if (book.seriesId != null) {
+                navigate(`/books/${book.seriesId}`);
+                return;
+              }
+              rememberSeriesKey(book.key);
+            }}
             onDelete={async (articleId) => {
               const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
                 'article.delete',
@@ -450,15 +445,47 @@ function App() {
               setArticles(payload.articles);
               if (payload.series) setSeries(payload.series);
               rememberSeriesKey(bookKeyForArticle(payload.article));
-              navigate('/');
-              setNotice('任务卡已加入大厅');
+              navigate(payload.article.seriesId != null ? `/books/${payload.article.seriesId}` : '/');
+              setNotice('章节已加入书库');
             }}
           />
         )}
 
-        {parsedRoute.kind === 'listen' && (
-          <ListeningPage
-            articleId={parsedRoute.articleId}
+        {parsedRoute.kind === 'book' && (
+          <BookDetailPage
+            seriesId={parsedRoute.seriesId}
+            articles={articles}
+            series={series}
+            onNavigate={navigate}
+            onRecentBookKeyChange={rememberSeriesKey}
+            onDelete={async (articleId) => {
+              const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
+                'article.delete',
+                { articleId },
+              );
+              setArticles(payload.articles);
+              if (payload.series) setSeries(payload.series);
+            }}
+            onRename={async (articleId, title) => {
+              const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
+                'article.rename',
+                { articleId, title },
+              );
+              setArticles(payload.articles);
+              if (payload.series) setSeries(payload.series);
+              rememberSeriesKey(bookKeyForArticle(payload.article));
+              setNotice('章节标题已更新');
+            }}
+          />
+        )}
+
+        {parsedRoute.kind === 'bookPlayer' && (
+          <BookPlayerPage
+            seriesId={parsedRoute.seriesId}
+            startArticleId={parsedRoute.articleId}
+            mode={parsedRoute.mode}
+            articles={articles}
+            series={series}
             pictureBookState={pictureBookState?.articleId === parsedRoute.articleId ? pictureBookState : null}
             onNavigate={navigate}
             onPictureBookLoaded={setPictureBookState}
@@ -472,6 +499,52 @@ function App() {
               if (payload.articles) setArticles(payload.articles);
               if (payload.series) setSeries(payload.series);
             }}
+          />
+        )}
+
+        {parsedRoute.kind === 'listen' && (
+          <ListeningPage
+            articleId={parsedRoute.articleId}
+            mode="listening"
+            pictureBookState={pictureBookState?.articleId === parsedRoute.articleId ? pictureBookState : null}
+            onNavigate={navigate}
+            onPictureBookLoaded={setPictureBookState}
+            pictureBookRetryGate={pictureBookRetryGate}
+            englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
+            recordingSettings={recordingSettings}
+            onRecordingSettingsLoaded={setRecordingSettings}
+            songSettings={settings?.song ?? null}
+            onNotice={setNotice}
+            onArticlesUpdated={(payload) => {
+              if (payload.articles) setArticles(payload.articles);
+              if (payload.series) setSeries(payload.series);
+            }}
+          />
+        )}
+
+        {parsedRoute.kind === 'creation' && (
+          <CreationCenterPage
+            articles={articles}
+            series={series}
+            initialSeriesId={parsedRoute.seriesId}
+            initialArticleId={parsedRoute.articleId}
+            pictureBookRetryGate={pictureBookRetryGate}
+            onNavigate={navigate}
+            onNotice={setNotice}
+            onArticlesUpdated={(payload) => {
+              if (payload.articles) setArticles(payload.articles);
+              if (payload.series) setSeries(payload.series);
+            }}
+          />
+        )}
+
+        {parsedRoute.kind === 'practice' && (
+          <PracticeCenterPage
+            articles={articles}
+            series={series}
+            initialSeriesId={parsedRoute.seriesId}
+            onNavigate={navigate}
+            onRecentBookKeyChange={rememberSeriesKey}
           />
         )}
 
@@ -518,6 +591,7 @@ function HomePage({
   recentBookKey,
   onRecentBookKeyChange,
   onNavigate,
+  onOpenBook,
   onDelete,
   onDeleteSeries,
   onRename,
@@ -528,6 +602,7 @@ function HomePage({
   recentBookKey: string | null;
   onRecentBookKeyChange: (key: string | null) => void;
   onNavigate: (path: string) => void;
+  onOpenBook: (book: BookGroup) => void;
   onDelete: (articleId: number) => Promise<void>;
   onDeleteSeries: (seriesId: number) => Promise<void>;
   onRename: (articleId: number, title: string) => Promise<void>;
@@ -555,13 +630,6 @@ function HomePage({
     selectedBookKey == null
       ? null
       : books.find((book) => book.key === selectedBookKey) ?? null;
-  const orderedChapters = useMemo(
-    () => (selectedBook ? sortBookChapters(selectedBook.articles, chapterOrder) : []),
-    [selectedBook, chapterOrder],
-  );
-  const totalChapterPages = Math.max(1, Math.ceil(orderedChapters.length / 10));
-  const safeChapterPage = Math.min(chapterPage, totalChapterPages - 1);
-  const visibleChapters = orderedChapters.slice(safeChapterPage * 10, safeChapterPage * 10 + 10);
 
   useEffect(() => {
     if (books.length === 0) {
@@ -591,164 +659,100 @@ function HomePage({
     }
   }, [books, recentBookKey, selectedBookKey]);
 
-  useEffect(() => {
-    setChapterPage((current) => Math.min(current, totalChapterPages - 1));
-  }, [totalChapterPages]);
-
   return (
     <section className="page home-page">
       <header className="home-hero">
         <div className="hero-copy">
-          <p className="eyebrow">Level 12 · Speaking Quest</p>
-          <h1>今天也要快乐开口说英语！</h1>
-          <p>把文章变成闯关卡：先跟读、再对话，也可以随时听全文。</p>
+          <h1>书库、绘本和章节听力工作台</h1>
+          <p>按书籍管理章节，把英文内容变成可连续播放的绘本听力、歌曲和学习视频。</p>
           <div className="hero-actions">
             <button
               className="primary-action"
               onClick={() => {
                 if (latestArticle) {
                   onRecentBookKeyChange(bookKeyForArticle(latestArticle));
-                  onNavigate(`/listen/${latestArticle.id}`);
+                  if (latestArticle.seriesId != null) {
+                    onNavigate(`/books/${latestArticle.seriesId}/player?articleId=${latestArticle.id}&mode=listening`);
+                  } else {
+                    onNavigate(`/listen/${latestArticle.id}`);
+                  }
                 } else {
                   onNavigate('/article/new');
                 }
               }}
             >
-              <Icon name="play" /> 开始闯关
+              <Icon name="play" /> 继续听力
+            </button>
+            <button className="ghost-action" type="button" onClick={() => onNavigate('/creation')}>
+              <Icon name="recordVideo" /> 打开创作中心
             </button>
           </div>
         </div>
-        <div className="hero-stage">
-          <MascotBlinker className="hero-mascot" />
-          <div className="xp-chip">
-            <span>Next reward</span>
-            <b>+350 XP</b>
+        <div className="hero-stage library-stage">
+          <div className="library-stage-preview">
+            <span>当前书库</span>
+            <b>{books.length} 本书</b>
+            <small>{articles.length} 个章节 · {totalSentences} 句英文</small>
           </div>
         </div>
       </header>
 
       <div className="dashboard-grid">
         <section className="stats-row" aria-label="learning stats">
-          <StatTile label="任务卡" value={articles.length.toString()} icon="card" />
+          <StatTile label="章节" value={articles.length.toString()} icon="card" />
           <StatTile label="句子" value={totalSentences.toString()} icon="sentence" />
-          <StatTile label="平均分" value={averageScore > 0 ? averageScore.toString() : '--'} icon="star" />
+          <StatTile label="平均跟读分" value={averageScore > 0 ? averageScore.toString() : '--'} icon="star" />
         </section>
       </div>
 
-      <section className="mission-list-panel">
-        <div className="section-heading with-action">
-          <span>我的书籍</span>
-          <button onClick={() => onNavigate('/article/new')}>
-            <Icon name="plus" /> 新增任务
-          </button>
-        </div>
-        {books.length === 0 ? (
-          <EmptyMission onNavigate={onNavigate} />
-        ) : (
-          <>
-            <div className="book-list" role="list" aria-label="书籍列表">
-              {books.map((book, index) => (
-                <div className="book-card-wrap" key={book.key}>
-                  <button
-                    className={`book-card ${book.key === selectedBookKey ? 'active' : ''}`}
-                    type="button"
-                    onClick={() => {
-                      setSelectedBookKey(book.key);
-                      onRecentBookKeyChange(book.key);
-                      setChapterPage(0);
-                    }}
-                  >
-                    <img src={bookCoverSource(book, index)} alt="" />
-                    <span>
-                      <b>{book.title}</b>
-                      <small>{book.articles.length} 篇章节 · {book.sentenceCount} 句子</small>
-                    </span>
-                    <Icon name="next" />
-                  </button>
-                  {book.seriesId != null && book.articles.length === 0 && (
-                    <button
-                      className="danger-light small book-delete-button"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void onDeleteSeries(book.seriesId!);
-                      }}
-                    >
-                      删除
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {selectedBook && (
-              <section className="chapter-list-panel" aria-label={`${selectedBook.title} 章节列表`}>
-                <div className="chapter-toolbar">
-                  <div>
-                    <span>章节列表</span>
-                    <b>{selectedBook.title}</b>
-                  </div>
-                  <div className="chapter-tools">
-                    <div className="pagination" aria-label="章节分页">
-                      <button
-                        type="button"
-                        onClick={() => setChapterPage((page) => Math.max(0, page - 1))}
-                        disabled={safeChapterPage === 0}
-                      >
-                        <Icon name="prev" /> 上一页
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setChapterOrder((current) => (current === 'asc' ? 'desc' : 'asc'));
-                          setChapterPage(0);
-                        }}
-                      >
-                        <Icon name="swap" /> {chapterOrder === 'asc' ? '正序' : '倒序'}
-                      </button>
-                      <span>第 {safeChapterPage + 1} / {totalChapterPages} 页 · 每页 10 篇</span>
-                      <button
-                        type="button"
-                        onClick={() => setChapterPage((page) => Math.min(totalChapterPages - 1, page + 1))}
-                        disabled={safeChapterPage >= totalChapterPages - 1}
-                      >
-                        下一页 <Icon name="next" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mission-list">
-                  {visibleChapters.map((article, index) => (
-                    <MissionRow
-                      key={article.id}
-                      article={article}
-                      imageSrc={articleCoverSource(article, safeChapterPage * 10 + index)}
-                      onListen={() => {
-                        onRecentBookKeyChange(selectedBook.key);
-                        onNavigate(`/listen/${article.id}`);
-                      }}
-                      onFollow={() => {
-                        onRecentBookKeyChange(selectedBook.key);
-                        onNavigate(`/follow/${article.id}`);
-                      }}
-                      onChat={() => {
-                        onRecentBookKeyChange(selectedBook.key);
-                        onNavigate(`/chat/${article.id}`);
-                      }}
-                      onDelete={() => onDelete(article.id)}
-                      onRename={() => {
-                        setRenameDraft({ article, title: article.title });
-                        setRenameError(null);
-                      }}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
-          </>
+      <BookLibrarySelectorPanel
+        books={books}
+        selectedBookKey={selectedBook?.key ?? null}
+        chapterPage={chapterPage}
+        chapterOrder={chapterOrder}
+        emptyState={<EmptyMission onNavigate={onNavigate} />}
+        onAddChapter={() => onNavigate('/article/new')}
+        onSelectBook={(book) => {
+          setSelectedBookKey(book.key);
+          onRecentBookKeyChange(book.key);
+          setChapterPage(0);
+          onOpenBook(book);
+        }}
+        onChapterPageChange={setChapterPage}
+        onChapterOrderChange={(nextOrder) => {
+          setChapterOrder(nextOrder);
+          setChapterPage(0);
+        }}
+        onDeleteSeries={onDeleteSeries}
+        renderChapterRow={({ selectedBook: book, article, imageSrc }) => (
+          <MissionRow
+            key={article.id}
+            article={article}
+            imageSrc={imageSrc}
+            onListen={() => {
+              onRecentBookKeyChange(book.key);
+              onNavigate(
+                book.seriesId != null
+                  ? `/books/${book.seriesId}/player?articleId=${article.id}&mode=listening`
+                  : `/listen/${article.id}`,
+              );
+            }}
+            onFollow={() => {
+              onRecentBookKeyChange(book.key);
+              onNavigate(`/follow/${article.id}`);
+            }}
+            onChat={() => {
+              onRecentBookKeyChange(book.key);
+              onNavigate(`/chat/${article.id}`);
+            }}
+            onDelete={() => onDelete(article.id)}
+            onRename={() => {
+              setRenameDraft({ article, title: article.title });
+              setRenameError(null);
+            }}
+          />
         )}
-      </section>
+      />
       {renameDraft && (
         <EditTitleDialog
           title={renameDraft.title}
@@ -782,7 +786,1143 @@ function HomePage({
   );
 }
 
+function BookDetailPage({
+  seriesId,
+  articles,
+  series,
+  onNavigate,
+  onRecentBookKeyChange,
+  onDelete,
+  onRename,
+}: {
+  seriesId: number;
+  articles: Article[];
+  series: StorySeries[];
+  onNavigate: (path: string) => void;
+  onRecentBookKeyChange: (key: string | null) => void;
+  onDelete: (articleId: number) => Promise<void>;
+  onRename: (articleId: number, title: string) => Promise<void>;
+}) {
+  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
+  const [renameDraft, setRenameDraft] = useState<{ article: Article; title: string } | null>(null);
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const book = useMemo(
+    () => bookGroupsForArticles(articles, series).find((item) => item.seriesId === seriesId) ?? null,
+    [articles, series, seriesId],
+  );
+  const chapters = useMemo(
+    () => sortBookChapters(book?.articles ?? [], chapterOrder),
+    [book?.articles, chapterOrder],
+  );
+  const firstChapter = chapters[0];
+
+  if (!book) {
+    return (
+      <section className="page book-detail-page">
+        <TopBar title="书籍不存在" onBack={() => onNavigate('/')} />
+        <div className="loading-panel">
+          <p>没有找到这本书，可能已被删除或尚未同步。</p>
+          <button className="primary-action" type="button" onClick={() => onNavigate('/')}>
+            <Icon name="back" /> 返回书库
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  const bookKey = `series:${seriesId}`;
+  const openPlayer = (mode: PlayerMode, articleId = firstChapter?.id) => {
+    if (!articleId) return;
+    onRecentBookKeyChange(bookKey);
+    onNavigate(`/books/${seriesId}/player?articleId=${articleId}&mode=${mode}`);
+  };
+
+  return (
+    <section className="page book-detail-page">
+      <TopBar title={book.title} onBack={() => onNavigate('/')}>
+        <button className="ghost-action" type="button" onClick={() => onNavigate('/article/new')}>
+          <Icon name="plus" /> 新增章节
+        </button>
+        <button className="ghost-action" type="button" onClick={() => onNavigate(`/creation?seriesId=${seriesId}`)}>
+          <Icon name="recordVideo" /> 创作中心
+        </button>
+      </TopBar>
+
+      <section className="book-overview-panel">
+        <img src={bookCoverSource(book, 0)} alt="" />
+        <div className="book-overview-copy">
+          <h2>{book.title}</h2>
+          <p>{book.articles.length} 个章节 · {book.sentenceCount} 句英文 · 平均跟读分 {book.averageScore || '--'}</p>
+          <div className="button-row">
+            <button className="primary-action" type="button" disabled={!firstChapter} onClick={() => openPlayer('listening')}>
+              <Icon name="play" /> 连续听力
+            </button>
+            <button className="ghost-action" type="button" disabled={!firstChapter} onClick={() => openPlayer('song')}>
+              <Icon name="music" /> 歌曲模式
+            </button>
+            <button className="ghost-action" type="button" onClick={() => onNavigate(`/practice?seriesId=${seriesId}`)}>
+              <Icon name="mic" /> 练习章节
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section className="chapter-list-panel book-detail-chapters" aria-label={`${book.title} 章节列表`}>
+        <div className="chapter-toolbar">
+          <div>
+            <span>章节目录</span>
+            <b>{chapters.length} 个章节</b>
+          </div>
+          <button
+            className="ghost-action small"
+            type="button"
+            onClick={() => setChapterOrder((current) => (current === 'asc' ? 'desc' : 'asc'))}
+          >
+            <Icon name="swap" /> {chapterOrder === 'asc' ? '正序' : '倒序'}
+          </button>
+        </div>
+        {chapters.length === 0 ? (
+          <EmptyMission onNavigate={onNavigate} />
+        ) : (
+          <div className="mission-list">
+            {chapters.map((article, index) => (
+              <MissionRow
+                key={article.id}
+                article={article}
+                imageSrc={articleCoverSource(article, index)}
+                onListen={() => openPlayer('listening', article.id)}
+                onFollow={() => onNavigate(`/follow/${article.id}`)}
+                onChat={() => onNavigate(`/chat/${article.id}`)}
+                onDelete={() => onDelete(article.id)}
+                onRename={() => {
+                  setRenameDraft({ article, title: article.title });
+                  setRenameError(null);
+                }}
+                extraAction={
+                  <button className="ghost-action small" type="button" onClick={() => onNavigate(`/creation?articleId=${article.id}&seriesId=${seriesId}`)}>
+                    <Icon name="recordVideo" /> 生成
+                  </button>
+                }
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {renameDraft && (
+        <EditTitleDialog
+          title={renameDraft.title}
+          error={renameError}
+          saving={renameSaving}
+          onTitleChange={(title) => {
+            setRenameDraft((current) => (current ? { ...current, title } : current));
+            setRenameError(null);
+          }}
+          onCancel={() => {
+            if (renameSaving) return;
+            setRenameDraft(null);
+            setRenameError(null);
+          }}
+          onSave={async () => {
+            if (!renameDraft || renameSaving) return;
+            setRenameSaving(true);
+            setRenameError(null);
+            try {
+              await onRename(renameDraft.article.id, renameDraft.title.trim());
+              setRenameDraft(null);
+            } catch (error) {
+              setRenameError(error instanceof Error ? error.message : '章节标题保存失败');
+            } finally {
+              setRenameSaving(false);
+            }
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function BookPlayerPage({
+  seriesId,
+  startArticleId,
+  mode,
+  articles,
+  series,
+  pictureBookState,
+  onNavigate,
+  onPictureBookLoaded,
+  pictureBookRetryGate,
+  englishPreloadState,
+  recordingSettings,
+  onRecordingSettingsLoaded,
+  songSettings,
+  onNotice,
+  onArticlesUpdated,
+}: {
+  seriesId: number;
+  startArticleId: number;
+  mode: PlayerMode;
+  articles: Article[];
+  series: StorySeries[];
+  pictureBookState: PictureBookState | null;
+  onNavigate: (path: string) => void;
+  onPictureBookLoaded: PictureBookStateSetter;
+  pictureBookRetryGate: PictureBookRetryGate;
+  englishPreloadState?: PreloadState;
+  recordingSettings: RecordingSettings | null;
+  onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
+  songSettings: SettingsState['song'] | null;
+  onNotice: (message: string) => void;
+  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
+}) {
+  const book = useMemo(
+    () => bookGroupsForArticles(articles, series).find((item) => item.seriesId === seriesId) ?? null,
+    [articles, series, seriesId],
+  );
+  const chapters = useMemo(() => sortBookChapters(book?.articles ?? [], 'asc'), [book?.articles]);
+  const activeIndex = Math.max(0, chapters.findIndex((article) => article.id === startArticleId));
+  const activeArticle = chapters[activeIndex] ?? chapters[0];
+  const previousArticle = activeIndex > 0 ? chapters[activeIndex - 1] : null;
+  const nextArticle = activeIndex >= 0 && activeIndex < chapters.length - 1 ? chapters[activeIndex + 1] : null;
+  const [chapterDrawerOpen, setChapterDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    setChapterDrawerOpen(false);
+  }, [startArticleId, mode]);
+
+  useEffect(() => {
+    if (!chapterDrawerOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setChapterDrawerOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [chapterDrawerOpen]);
+
+  if (!book || !activeArticle) {
+    return (
+      <section className="page book-player-page">
+        <TopBar title="书籍播放器" onBack={() => onNavigate(`/books/${seriesId}`)} />
+        <LoadingPanel text="正在准备书籍章节..." />
+      </section>
+    );
+  }
+
+  const navigatePlayer = (articleId: number, nextMode = mode) => {
+    onNavigate(`/books/${seriesId}/player?articleId=${articleId}&mode=${nextMode}`);
+  };
+
+  return (
+    <section className="page book-player-page">
+      <div className="book-player-layout">
+        <div className="book-player-main">
+          <ListeningPage
+            articleId={activeArticle.id}
+            mode={mode}
+            bookTitle={book.title}
+            chapterLabel={`第 ${activeIndex + 1} / ${chapters.length} 章`}
+            onPrevChapter={previousArticle ? () => navigatePlayer(previousArticle.id) : undefined}
+            onNextChapter={nextArticle ? () => navigatePlayer(nextArticle.id) : undefined}
+            onSwitchMode={(nextMode) => navigatePlayer(activeArticle.id, nextMode)}
+            chapterDrawerOpen={chapterDrawerOpen}
+            onOpenChapterDrawer={() => setChapterDrawerOpen(true)}
+            pictureBookState={pictureBookState}
+            onNavigate={onNavigate}
+            onPictureBookLoaded={onPictureBookLoaded}
+            pictureBookRetryGate={pictureBookRetryGate}
+            englishPreloadState={englishPreloadState}
+            recordingSettings={recordingSettings}
+            onRecordingSettingsLoaded={onRecordingSettingsLoaded}
+            songSettings={songSettings}
+            onNotice={onNotice}
+            onArticlesUpdated={onArticlesUpdated}
+          />
+        </div>
+      </div>
+      <ChapterDrawer
+        book={book}
+        chapters={chapters}
+        activeArticle={activeArticle}
+        activeIndex={activeIndex}
+        open={chapterDrawerOpen}
+        onClose={() => setChapterDrawerOpen(false)}
+        onSelect={(articleId) => navigatePlayer(articleId)}
+        onOpenBook={() => onNavigate(`/books/${seriesId}`)}
+      />
+    </section>
+  );
+}
+
+function ChapterDrawer({
+  book,
+  chapters,
+  activeArticle,
+  activeIndex,
+  open,
+  onClose,
+  onSelect,
+  onOpenBook,
+}: {
+  book: BookGroup;
+  chapters: Article[];
+  activeArticle: Article;
+  activeIndex: number;
+  open: boolean;
+  onClose: () => void;
+  onSelect: (articleId: number) => void;
+  onOpenBook: () => void;
+}) {
+  if (!open) return null;
+
+  return createPortal(
+    <div className="chapter-drawer-backdrop" role="presentation" onClick={onClose}>
+      <aside
+        id="book-chapter-drawer"
+        className="chapter-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`${book.title} 章节列表`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="chapter-drawer-heading">
+          <div>
+            <span>章节列表</span>
+            <b>{book.title}</b>
+            <small>当前第 {activeIndex + 1} / {chapters.length} 章</small>
+          </div>
+          <button className="icon-button small" type="button" aria-label="关闭章节列表" onClick={onClose}>
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="chapter-queue chapter-drawer-list" aria-label={`${book.title} 播放队列`}>
+          {chapters.map((chapter, index) => (
+            <button
+              key={chapter.id}
+              type="button"
+              className={chapter.id === activeArticle.id ? 'active' : ''}
+              onClick={() => {
+                onSelect(chapter.id);
+                onClose();
+              }}
+            >
+              <b>{index + 1}</b>
+              <span>{chapter.title}</span>
+              <small>{chapter.sentenceCount ?? chapter.sentences?.length ?? 0} 句</small>
+            </button>
+          ))}
+        </div>
+        <footer className="chapter-drawer-footer">
+          <button className="ghost-action" type="button" onClick={onOpenBook}>
+            <Icon name="back" /> 书籍详情
+          </button>
+        </footer>
+      </aside>
+    </div>,
+    document.body,
+  );
+}
+
+function BookLibrarySelectorPanel({
+  books,
+  selectedBookKey,
+  chapterPage,
+  chapterOrder,
+  emptyState,
+  className,
+  onAddChapter,
+  onSelectBook,
+  onChapterPageChange,
+  onChapterOrderChange,
+  onDeleteSeries,
+  renderChapterRow,
+}: {
+  books: BookGroup[];
+  selectedBookKey: string | null;
+  chapterPage: number;
+  chapterOrder: ChapterOrder;
+  emptyState: ReactNode;
+  className?: string;
+  onAddChapter: () => void;
+  onSelectBook: (book: BookGroup) => void;
+  onChapterPageChange: (page: number | ((current: number) => number)) => void;
+  onChapterOrderChange: (order: ChapterOrder) => void;
+  onDeleteSeries?: (seriesId: number) => void | Promise<void>;
+  renderChapterRow: (context: {
+    selectedBook: BookGroup;
+    article: Article;
+    imageSrc: string;
+    visibleIndex: number;
+    absoluteIndex: number;
+  }) => ReactNode;
+}) {
+  const selectedBook =
+    selectedBookKey == null
+      ? null
+      : books.find((book) => book.key === selectedBookKey) ?? null;
+  const orderedChapters = useMemo(
+    () => (selectedBook ? sortBookChapters(selectedBook.articles, chapterOrder) : []),
+    [selectedBook, chapterOrder],
+  );
+  const totalChapterPages = Math.max(1, Math.ceil(orderedChapters.length / 10));
+  const safeChapterPage = Math.max(0, Math.min(chapterPage, totalChapterPages - 1));
+  const visibleChapters = orderedChapters.slice(safeChapterPage * 10, safeChapterPage * 10 + 10);
+  const panelClassName = ['mission-list-panel', 'book-library-selector-panel', className]
+    .filter(Boolean)
+    .join(' ');
+
+  return (
+    <section className={panelClassName}>
+      <div className="section-heading with-action">
+        <span>我的书籍</span>
+        <button type="button" onClick={onAddChapter}>
+          <Icon name="plus" /> 新增章节
+        </button>
+      </div>
+      {books.length === 0 ? (
+        emptyState
+      ) : (
+        <>
+          <div className="book-list" role="list" aria-label="书籍列表">
+            {books.map((book, index) => (
+              <div className="book-card-wrap" key={book.key}>
+                <button
+                  className={`book-card ${book.key === selectedBook?.key ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => onSelectBook(book)}
+                >
+                  <img src={bookCoverSource(book, index)} alt="" />
+                  <span>
+                    <b>{book.title}</b>
+                    <small>{book.articles.length} 篇章节 · {book.sentenceCount} 句子</small>
+                  </span>
+                  <Icon name="next" />
+                </button>
+                {onDeleteSeries && book.seriesId != null && book.articles.length === 0 && (
+                  <button
+                    className="danger-light small book-delete-button"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void onDeleteSeries(book.seriesId!);
+                    }}
+                  >
+                    删除
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {selectedBook && (
+            <section className="chapter-list-panel" aria-label={`${selectedBook.title} 章节列表`}>
+              <div className="chapter-toolbar">
+                <div>
+                  <span>章节列表</span>
+                  <b>{selectedBook.title}</b>
+                </div>
+                <div className="chapter-tools">
+                  <div className="pagination" aria-label="章节分页">
+                    <button
+                      type="button"
+                      onClick={() => onChapterPageChange((page) => Math.max(0, page - 1))}
+                      disabled={safeChapterPage === 0}
+                    >
+                      <Icon name="prev" /> 上一页
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onChapterOrderChange(chapterOrder === 'asc' ? 'desc' : 'asc')}
+                    >
+                      <Icon name="swap" /> {chapterOrder === 'asc' ? '正序' : '倒序'}
+                    </button>
+                    <span>第 {safeChapterPage + 1} / {totalChapterPages} 页 · 每页 10 篇</span>
+                    <button
+                      type="button"
+                      onClick={() => onChapterPageChange((page) => Math.min(totalChapterPages - 1, page + 1))}
+                      disabled={safeChapterPage >= totalChapterPages - 1}
+                    >
+                      下一页 <Icon name="next" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mission-list">
+                {visibleChapters.map((article, index) =>
+                  renderChapterRow({
+                    selectedBook,
+                    article,
+                    imageSrc: articleCoverSource(article, safeChapterPage * 10 + index),
+                    visibleIndex: index,
+                    absoluteIndex: safeChapterPage * 10 + index,
+                  }),
+                )}
+              </div>
+            </section>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function PracticeCenterPage({
+  articles,
+  series,
+  initialSeriesId,
+  onNavigate,
+  onRecentBookKeyChange,
+}: {
+  articles: Article[];
+  series: StorySeries[];
+  initialSeriesId?: number;
+  onNavigate: (path: string) => void;
+  onRecentBookKeyChange: (key: string | null) => void;
+}) {
+  const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
+  const routeBook = books.find((book) => book.seriesId === initialSeriesId) ?? null;
+  const [selectedBookKey, setSelectedBookKey] = useState<string | null>(() => routeBook?.key ?? books[0]?.key ?? null);
+  const syncedRouteBookKeyRef = useRef<string | null>(null);
+  const [chapterPage, setChapterPage] = useState(0);
+  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
+  const resolvedSelectedBookKey =
+    selectedBookKey && books.some((book) => book.key === selectedBookKey)
+      ? selectedBookKey
+      : books[0]?.key ?? null;
+
+  useEffect(() => {
+    if (books.length === 0) {
+      if (selectedBookKey !== null) {
+        setSelectedBookKey(null);
+      }
+      setChapterPage(0);
+      return;
+    }
+    const routeBookKey = routeBook?.key ?? null;
+    if (routeBookKey && syncedRouteBookKeyRef.current !== routeBookKey) {
+      syncedRouteBookKeyRef.current = routeBookKey;
+      if (selectedBookKey !== routeBookKey) {
+        setSelectedBookKey(routeBookKey);
+      }
+      setChapterPage(0);
+      return;
+    }
+    if (!routeBookKey) {
+      syncedRouteBookKeyRef.current = null;
+    }
+    if (!selectedBookKey || !books.some((book) => book.key === selectedBookKey)) {
+      setSelectedBookKey(books[0].key);
+      setChapterPage(0);
+    }
+  }, [books, routeBook?.key, selectedBookKey]);
+
+  return (
+    <section className="page practice-center-page">
+      <TopBar title="练习中心" onBack={() => onNavigate('/')} />
+      <BookLibrarySelectorPanel
+        books={books}
+        selectedBookKey={resolvedSelectedBookKey}
+        chapterPage={chapterPage}
+        chapterOrder={chapterOrder}
+        className="practice-library-selector"
+        emptyState={<EmptyMission onNavigate={onNavigate} />}
+        onAddChapter={() => onNavigate('/article/new')}
+        onSelectBook={(book) => {
+          setSelectedBookKey(book.key);
+          onRecentBookKeyChange(book.key);
+          setChapterPage(0);
+        }}
+        onChapterPageChange={setChapterPage}
+        onChapterOrderChange={(nextOrder) => {
+          setChapterOrder(nextOrder);
+          setChapterPage(0);
+        }}
+        renderChapterRow={({ selectedBook, article, imageSrc }) => (
+          <MissionRow
+            key={article.id}
+            article={article}
+            imageSrc={imageSrc}
+            onFollow={() => {
+              onRecentBookKeyChange(selectedBook.key);
+              onNavigate(`/follow/${article.id}`);
+            }}
+            onChat={() => {
+              onRecentBookKeyChange(selectedBook.key);
+              onNavigate(`/chat/${article.id}`);
+            }}
+          />
+        )}
+      />
+    </section>
+  );
+}
+
+function CreationCenterPage({
+  articles,
+  series,
+  initialSeriesId,
+  initialArticleId,
+  pictureBookRetryGate,
+  onNavigate,
+  onNotice,
+  onArticlesUpdated,
+}: {
+  articles: Article[];
+  series: StorySeries[];
+  initialSeriesId?: number;
+  initialArticleId?: number;
+  pictureBookRetryGate: PictureBookRetryGate;
+  onNavigate: (path: string) => void;
+  onNotice: (message: string) => void;
+  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
+}) {
+  const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
+  const routeBook = books.find((book) => book.seriesId === initialSeriesId) ??
+    books.find((book) => book.articles.some((article) => article.id === initialArticleId)) ??
+    null;
+  const [selectedBookKey, setSelectedBookKey] = useState<string | null>(() => routeBook?.key ?? books[0]?.key ?? null);
+  const syncedRouteSelectionRef = useRef<string | null>(null);
+  const [chapterPage, setChapterPage] = useState(0);
+  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
+  const [selectedArticleId, setSelectedArticleId] = useState<number | null>(() => initialArticleId ?? null);
+  const [activeTab, setActiveTab] = useState<'picture' | 'song' | 'video'>('picture');
+  const resolvedSelectedBookKey =
+    selectedBookKey && books.some((book) => book.key === selectedBookKey)
+      ? selectedBookKey
+      : books[0]?.key ?? null;
+  const selectedBook =
+    resolvedSelectedBookKey == null
+      ? null
+      : books.find((book) => book.key === resolvedSelectedBookKey) ?? null;
+  const orderedChapters = useMemo(
+    () => sortBookChapters(selectedBook?.articles ?? [], chapterOrder),
+    [selectedBook?.articles, chapterOrder],
+  );
+  const selectedArticle =
+    orderedChapters.find((article) => article.id === selectedArticleId) ??
+    orderedChapters.find((article) => article.id === initialArticleId) ??
+    orderedChapters[0] ??
+    null;
+
+  useEffect(() => {
+    if (books.length === 0) {
+      if (selectedBookKey !== null) {
+        setSelectedBookKey(null);
+      }
+      if (selectedArticleId !== null) {
+        setSelectedArticleId(null);
+      }
+      setChapterPage(0);
+      return;
+    }
+    const routeSelectionKey = routeBook
+      ? `${routeBook.key}:${initialArticleId ?? ''}`
+      : null;
+    if (routeBook && routeSelectionKey && syncedRouteSelectionRef.current !== routeSelectionKey) {
+      syncedRouteSelectionRef.current = routeSelectionKey;
+      const routeChapters = sortBookChapters(routeBook.articles, chapterOrder);
+      const routeArticleId =
+        routeChapters.find((article) => article.id === initialArticleId)?.id ??
+        routeChapters[0]?.id ??
+        null;
+      if (selectedBookKey !== routeBook.key) {
+        setSelectedBookKey(routeBook.key);
+      }
+      if (selectedArticleId !== routeArticleId) {
+        setSelectedArticleId(routeArticleId);
+      }
+      setChapterPage(0);
+      return;
+    }
+    if (!routeSelectionKey) {
+      syncedRouteSelectionRef.current = null;
+    }
+    if (!selectedBookKey || !books.some((book) => book.key === selectedBookKey)) {
+      const fallbackBook = books[0];
+      setSelectedBookKey(fallbackBook.key);
+      setSelectedArticleId(sortBookChapters(fallbackBook.articles, chapterOrder)[0]?.id ?? null);
+      setChapterPage(0);
+    }
+  }, [books, chapterOrder, initialArticleId, routeBook, selectedArticleId, selectedBookKey]);
+
+  useEffect(() => {
+    if (orderedChapters.length === 0) {
+      if (selectedArticleId !== null) {
+        setSelectedArticleId(null);
+      }
+      return;
+    }
+    if (!selectedArticle || selectedArticle.id !== selectedArticleId) {
+      setSelectedArticleId(selectedArticle?.id ?? orderedChapters[0].id);
+    }
+  }, [orderedChapters, selectedArticle, selectedArticleId]);
+
+  return (
+    <section className="page creation-center-page">
+      <TopBar title="创作中心" onBack={() => onNavigate('/')}>
+        {selectedBook?.seriesId != null && (
+          <button className="ghost-action" type="button" onClick={() => onNavigate(`/books/${selectedBook.seriesId}`)}>
+            <Icon name="back" /> 返回书籍
+          </button>
+        )}
+      </TopBar>
+
+      <BookLibrarySelectorPanel
+        books={books}
+        selectedBookKey={resolvedSelectedBookKey}
+        chapterPage={chapterPage}
+        chapterOrder={chapterOrder}
+        className="creation-library-selector"
+        emptyState={<EmptyMission onNavigate={onNavigate} />}
+        onAddChapter={() => onNavigate('/article/new')}
+        onSelectBook={(book) => {
+          const firstArticle = sortBookChapters(book.articles, chapterOrder)[0] ?? null;
+          setSelectedBookKey(book.key);
+          setSelectedArticleId(firstArticle?.id ?? null);
+          setChapterPage(0);
+        }}
+        onChapterPageChange={setChapterPage}
+        onChapterOrderChange={(nextOrder) => {
+          setChapterOrder(nextOrder);
+          setChapterPage(0);
+        }}
+        renderChapterRow={({ article, imageSrc }) => (
+          <MissionRow
+            key={article.id}
+            article={article}
+            imageSrc={imageSrc}
+            selected={article.id === selectedArticle?.id}
+            openLabel="创作"
+            onOpen={() => setSelectedArticleId(article.id)}
+            extraAction={
+              <>
+                <button
+                  className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'picture' ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedArticleId(article.id);
+                    setActiveTab('picture');
+                  }}
+                >
+                  <Icon name="card" /> 绘本
+                </button>
+                <button
+                  className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'song' ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedArticleId(article.id);
+                    setActiveTab('song');
+                  }}
+                >
+                  <Icon name="music" /> 歌曲
+                </button>
+                <button
+                  className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'video' ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setSelectedArticleId(article.id);
+                    setActiveTab('video');
+                  }}
+                >
+                  <Icon name="recordVideo" /> 视频
+                </button>
+              </>
+            }
+          />
+        )}
+      />
+
+      <section className="creation-workspace">
+        {!selectedArticle ? (
+          <section className="creation-panel">
+            <p className="sentence-empty">请先在书库中新建章节。</p>
+            <button className="primary-action" type="button" onClick={() => onNavigate('/article/new')}>
+              <Icon name="plus" /> 新增章节
+            </button>
+          </section>
+        ) : activeTab === 'picture' ? (
+          <PictureBookCreationPanel article={selectedArticle} pictureBookRetryGate={pictureBookRetryGate} onNotice={onNotice} />
+        ) : activeTab === 'song' ? (
+          <SongCreationPanel article={selectedArticle} onNotice={onNotice} />
+        ) : (
+          <VideoCreationPanel article={selectedArticle} onNotice={onNotice} onArticlesUpdated={onArticlesUpdated} />
+        )}
+      </section>
+    </section>
+  );
+}
+
+function PictureBookCreationPanel({
+  article,
+  pictureBookRetryGate,
+  onNotice,
+}: {
+  article: Article;
+  pictureBookRetryGate: PictureBookRetryGate;
+  onNotice: (message: string) => void;
+}) {
+  const [state, setState] = useState<PictureBookState | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadState = () => {
+    setLoading(true);
+    sendNative<PictureBookState>('pictureBook.state', { articleId: article.id, includeImageUris: true })
+      .then(setState)
+      .catch((error) => onNotice(error instanceof Error ? error.message : '绘本状态加载失败'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(loadState, [article.id]);
+
+  const retryPage = (page: PictureBookPage) => {
+    if (!pictureBookRetryGate.begin(article.id, page.pageIndex)) return;
+    sendNative<PictureBookState>('pictureBook.retryPage', {
+      articleId: article.id,
+      pageIndex: page.pageIndex,
+    })
+      .then((payload) => {
+        setState(payload);
+        onNotice('已提交绘本重试');
+      })
+      .catch((error) => onNotice(error instanceof Error ? error.message : '绘本重试失败'))
+      .finally(() => pictureBookRetryGate.finish(article.id, page.pageIndex));
+  };
+
+  return (
+    <section className="creation-panel">
+      <div className="section-heading with-action">
+        <span>绘本组图</span>
+        <button className="ghost-action small" type="button" onClick={loadState} disabled={loading}>
+          <Icon name="refresh" /> 刷新状态
+        </button>
+      </div>
+      <p className="creation-panel-note">绘本生成使用整章连续分镜组图；失败后从这里重新提交对应章节页。</p>
+      <div className="creation-resource-grid" aria-label="绘本资源状态">
+        <ResourceRow label="章节正文" value={`${article.sentenceCount} 句英文`} />
+        <ResourceRow label="绘本图片" value={state ? `${state.pages.length} 页 · ${pictureBookStatusLabel(state.status)}` : '读取中'} />
+      </div>
+      {loading && <LoadingPanel text="正在读取绘本状态" />}
+      {!loading && !state && <p className="sentence-empty">还没有绘本状态。</p>}
+      {state && (
+        <div className="picture-creation-grid">
+          {state.pages.length === 0 ? (
+            <p className="sentence-empty">这章还没有绘本页。</p>
+          ) : (
+            state.pages.map((page, index) => {
+              const safePageIndex = Number.isFinite(page.pageIndex) ? page.pageIndex : index;
+              const imageSource = directImageSource(page.imageUri) || directImageSource(page.imagePath);
+              return (
+                <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
+                  <div className="picture-creation-media">
+                    {imageSource ? (
+                      <img src={imageSource} alt="" />
+                    ) : (
+                      <span>{page.status === 'error' ? '生成失败' : '等待图片'}</span>
+                    )}
+                  </div>
+                  <div>
+                    <b>第 {safePageIndex + 1} 页</b>
+                    <small>句子 {page.sentenceStartIndex + 1} - {page.sentenceEndIndex + 1}</small>
+                    <p>{page.paragraphText}</p>
+                    {page.errorMessage && <em>{page.errorMessage}</em>}
+                    {page.status === 'error' && (
+                      <button
+                        className="ghost-action small"
+                        type="button"
+                        disabled={pictureBookRetryGate.isRetrying(article.id, safePageIndex)}
+                        onClick={() => retryPage({ ...page, pageIndex: safePageIndex })}
+                      >
+                        <Icon name="refresh" /> {pictureBookRetryGate.isRetrying(article.id, safePageIndex) ? '重试中' : '重试'}
+                      </button>
+                    )}
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SongCreationPanel({
+  article,
+  onNotice,
+}: {
+  article: Article;
+  onNotice: (message: string) => void;
+}) {
+  const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadState = () => {
+    setBusy(true);
+    sendNative<ListeningSongStatePayload>('listening.songState', { articleId: article.id })
+      .then(setSongState)
+      .catch((error) => onNotice(error instanceof Error ? error.message : '歌曲状态加载失败'))
+      .finally(() => setBusy(false));
+  };
+
+  useEffect(loadState, [article.id]);
+
+  useEffect(() => onNativeEvent<ListeningSongStatePayload>('listening.song.state', (payload) => {
+    if (payload.articleId === article.id) {
+      setSongState(payload);
+    }
+  }), [article.id]);
+
+  const runSongCommand = async (
+    command: string,
+    payload: Record<string, unknown> = {},
+    successMessage?: string,
+  ) => {
+    setBusy(true);
+    try {
+      const next = await sendNative<ListeningSongStatePayload>(command, {
+        articleId: article.id,
+        ...payload,
+      });
+      setSongState(next);
+      if (successMessage) onNotice(successMessage);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '歌曲操作失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const versions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
+  const groupedVersions = groupSongVersionsByStyle(versions);
+  const waitingConfirm = isSunoWaitingConfirm(songState);
+  const canDownloadMissing =
+    songState?.source === 'suno' &&
+    Boolean(songState.songUrl?.trim()) &&
+    songState.status !== 'playing' &&
+    songState.downloadComplete === false &&
+    !waitingConfirm;
+
+  return (
+    <section className="creation-panel">
+      <div className="section-heading with-action">
+        <span>Suno 歌曲</span>
+        <button className="ghost-action small" type="button" onClick={loadState} disabled={busy}>
+          <Icon name="refresh" /> 刷新状态
+        </button>
+      </div>
+      <p className="creation-panel-note">
+        歌曲生成只保留 Suno 网页自动化。本页负责生成、确认 credits、下载缺失版本、生成歌词时间轴和导出歌曲视频。
+      </p>
+      <div className="creation-resource-grid" aria-label="歌曲资源状态">
+        <ResourceRow label="Suno 音频" value="保存在程序目录 suno-music/" />
+        <ResourceRow label="本地歌曲版本" value={versions.length > 0 ? `${versions.length} 个可播放版本` : '暂无完整版本'} />
+      </div>
+      {songState?.manualActionMessage && <p className="playback-cue">{songState.manualActionMessage}</p>}
+      {songState?.status === 'generating' && songState.automationStatus && !songState.manualActionMessage && (
+        <p className="playback-cue">{songAutomationStatusText(songState)}</p>
+      )}
+      {songState?.status === 'error' && songState.errorMessage && (
+        <p className="playback-cue error">{songState.errorMessage}</p>
+      )}
+      <div className="button-row creation-actions">
+        <button
+          className="primary-action"
+          type="button"
+          disabled={busy || songState?.status === 'generating'}
+          onClick={() => runSongCommand('listening.songGenerate', {
+            source: 'suno',
+            lyrics: '',
+          }, '已打开 Suno 歌曲生成流程')}
+        >
+          <Icon name="music" /> 生成 Suno 歌曲
+        </button>
+        {waitingConfirm && (
+          <button
+            className="primary-action"
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              const confirmed = window.confirm('确认消耗 Suno credits 并创建歌曲？');
+              if (confirmed) {
+                void runSongCommand('listening.songConfirmSunoCreate', {}, '已确认创建 Suno 歌曲');
+              }
+            }}
+          >
+            <Icon name="music" /> 确认创建歌曲
+          </button>
+        )}
+        {canDownloadMissing && (
+          <button
+            className="ghost-action"
+            type="button"
+            disabled={busy}
+            onClick={() => runSongCommand('listening.songDownloadSunoExisting', {}, '已开始下载缺失版本')}
+          >
+            <Icon name="download" /> 下载缺失版本
+          </button>
+        )}
+      </div>
+      <div className="song-style-groups creation-song-groups">
+        {groupedVersions.length === 0 ? (
+          <p className="sentence-empty">还没有本地完整歌曲版本。</p>
+        ) : groupedVersions.map((group) => (
+          <div className="song-style-group" key={group.key}>
+            <div className="song-style-group-heading">
+              <span>风格</span>
+              <b>{group.label}</b>
+            </div>
+            <div className="song-version-row">
+              {group.versions.map((version, index) => {
+                const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
+                const title = version.title?.trim() || `版本 ${index + 1}`;
+                return (
+                  <div className="song-version-actions" key={version.id}>
+                    <button
+                      className={`icon-button small song-default-button ${version.isDefault ? 'active' : ''}`}
+                      type="button"
+                      disabled={busy}
+                      aria-label={version.isDefault ? `${title} 已是默认播放歌曲` : `设为默认播放歌曲：${title}`}
+                      title={version.isDefault ? '默认播放歌曲' : '设为默认播放歌曲'}
+                      onClick={() => runSongCommand('listening.songSetDefault', { versionId: version.id }, '已设为默认播放歌曲')}
+                    >
+                      <Icon name="star" />
+                    </button>
+                    <button className="ghost-action small" type="button" disabled={busy} onClick={() => void sendNative('listening.songPlay', { articleId: article.id, versionId: version.id })}>
+                      <Icon name="sound" />
+                      <span className="song-version-title">{title}{version.isDefault ? ' · 默认' : ''}</span>
+                    </button>
+                    <button className="ghost-action small" type="button" disabled={busy || timelineStatus === 'generating'} onClick={() => runSongCommand('listening.songTimelineGenerate', { versionId: version.id }, '已提交歌词时间轴生成')}>
+                      <Icon name={timelineStatus === 'generating' ? 'refresh' : 'sentence'} /> {songTimelineLabel(timelineStatus)}
+                    </button>
+                    <button className="ghost-action small" type="button" disabled={busy || timelineStatus !== 'ready'} onClick={() => runSongCommand('listening.songRecordVideo', { versionId: version.id }, '歌曲视频导出完成')}>
+                      <Icon name="recordVideo" /> 导出歌曲视频
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function VideoCreationPanel({
+  article,
+  onNotice,
+  onArticlesUpdated,
+}: {
+  article: Article;
+  onNotice: (message: string) => void;
+  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
+}) {
+  const [recordingReady, setRecordingReady] = useState<ListeningRecordingReadyPayload | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const checkReady = () => {
+    setBusy(true);
+    sendNative<ListeningRecordingReadyPayload>('listening.recordingReady', {
+      articleId: article.id,
+      codec: 'h264',
+      resolution: '1920x1080',
+      pageTransition: 'crossFade',
+    })
+      .then(setRecordingReady)
+      .catch((error) => onNotice(error instanceof Error ? error.message : '视频准备状态检查失败'))
+      .finally(() => setBusy(false));
+  };
+
+  useEffect(checkReady, [article.id]);
+
+  const recordListeningVideo = async () => {
+    setBusy(true);
+    try {
+      await sendNative<ListeningRecordingResultPayload>('listening.recordVideo', {
+        articleId: article.id,
+        codec: 'h264',
+        resolution: '1920x1080',
+        pageTransition: 'crossFade',
+      });
+      onNotice('听力视频导出完成');
+      onArticlesUpdated({});
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '听力视频导出失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="creation-panel">
+      <div className="section-heading with-action">
+        <span>视频导出</span>
+        <button className="ghost-action small" type="button" onClick={checkReady} disabled={busy}>
+          <Icon name="refresh" /> 检查准备状态
+        </button>
+      </div>
+      <p className="creation-panel-note">视频导出复用已有绘本图、英文 TTS、歌曲音频和字幕时间轴，不在练习页面触发。</p>
+      <div className="creation-resource-grid" aria-label="视频资源状态">
+        <ResourceRow label="听力视频" value="保存在 recording-export/" />
+        <ResourceRow label="素材来源" value="绘本图片 / 英文 TTS / 歌曲时间轴" />
+      </div>
+      {recordingReady && (
+        <div className={`readiness-card ${recordingReady.ready ? 'ready' : 'blocked'}`}>
+          <b>{recordingReady.ready ? '听力视频已准备好' : '听力视频暂不可导出'}</b>
+          <small>{recordingReady.encoderName} · {recordingReady.resolution}</small>
+          {recordingReady.reasons.length > 0 && (
+            <ul>
+              {recordingReady.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+      <div className="button-row">
+        <button className="primary-action" type="button" disabled={busy || !recordingReady?.ready} onClick={() => void recordListeningVideo()}>
+          <Icon name="recordVideo" /> 导出听力视频
+        </button>
+        <button className="ghost-action" type="button" disabled>
+          <Icon name="recordVideo" /> 歌曲视频请在歌曲标签选择版本
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function ResourceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="resource-row">
+      <span>{label}</span>
+      <b>{value}</b>
+    </div>
+  );
+}
+
 type ChapterOrder = 'asc' | 'desc';
+
+function pictureBookStatusLabel(status?: string | null): string {
+  switch (status) {
+    case 'loading':
+      return '读取中';
+    case 'empty':
+      return '未生成';
+    case 'generating':
+      return '生成中';
+    case 'ready':
+      return '已完成';
+    case 'partial':
+      return '部分完成';
+    case 'skipped':
+      return '已跳过';
+    case 'error':
+      return '有错误';
+    default:
+      return status?.trim() || '未知';
+  }
+}
 
 type BookGroup = {
   key: string;
@@ -1105,7 +2245,7 @@ function ArticlePage({
             取消
           </button>
           <button className="primary-action" disabled={!canSave}>
-            <Icon name="save" /> {saving ? '保存中' : '保存任务'}
+            <Icon name="save" /> {saving ? '保存中' : '保存章节'}
           </button>
         </footer>
       </form>
@@ -1168,6 +2308,14 @@ type FollowControl = 'source' | 'record' | 'recording';
 
 function ListeningPage({
   articleId,
+  mode = 'listening',
+  bookTitle,
+  chapterLabel,
+  onPrevChapter,
+  onNextChapter,
+  onSwitchMode,
+  chapterDrawerOpen = false,
+  onOpenChapterDrawer,
   pictureBookState,
   onNavigate,
   onPictureBookLoaded,
@@ -1180,6 +2328,14 @@ function ListeningPage({
   onArticlesUpdated,
 }: {
   articleId: number;
+  mode?: PlayerMode;
+  bookTitle?: string;
+  chapterLabel?: string;
+  onPrevChapter?: () => void;
+  onNextChapter?: () => void;
+  onSwitchMode?: (mode: PlayerMode) => void;
+  chapterDrawerOpen?: boolean;
+  onOpenChapterDrawer?: () => void;
   pictureBookState: PictureBookState | null;
   onNavigate: (path: string) => void;
   onPictureBookLoaded: PictureBookStateSetter;
@@ -1215,6 +2371,7 @@ function ListeningPage({
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
   const [songCue, setSongCue] = useState<ListeningSongPositionPayload['cue']>(null);
   const [songDialog, setSongDialog] = useState<SongDialogState | null>(null);
+  const [selectedSongVersionId, setSelectedSongVersionId] = useState('');
   const playbackTokenRef = useRef(0);
   const wordCardTokenRef = useRef(0);
   const fullscreenReadyTokenRef = useRef(0);
@@ -1258,6 +2415,7 @@ function ListeningPage({
     setSongState(null);
     setSongCue(null);
     setSongDialog(null);
+    setSelectedSongVersionId('');
     wordCardTokenRef.current += 1;
     fullscreenReadyTokenRef.current += 1;
     recordingReadyTokenRef.current += 1;
@@ -1300,6 +2458,31 @@ function ListeningPage({
       void sendNative('word.stop').catch(() => undefined);
     };
   }, [articleId, onPictureBookLoaded]);
+
+  useEffect(() => {
+    if (mode !== 'song') return;
+    let isMounted = true;
+    sendNative<ListeningSongStatePayload>('listening.songState', { articleId })
+      .then((payload) => {
+        if (isMounted) {
+          setSongState(payload);
+        }
+      })
+      .catch((loadError) => {
+        if (!isMounted) return;
+        setSongState({
+          articleId,
+          status: 'error',
+          source: 'suno',
+          stylePrompt: '',
+          audioPath: null,
+          errorMessage: loadError instanceof Error ? loadError.message : '本地歌曲状态读取失败',
+        });
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [articleId, mode]);
 
   useEffect(() => {
     return onNativeEvent<ListeningTranslationsPayload>('listening.translations', (payload) => {
@@ -1413,6 +2596,20 @@ function ListeningPage({
       }
     });
   }, [articleId]);
+
+  useEffect(() => {
+    const versions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
+    if (versions.length === 0) {
+      setSelectedSongVersionId('');
+      return;
+    }
+    setSelectedSongVersionId((current) => {
+      if (versions.some((version) => version.id === current)) {
+        return current;
+      }
+      return versions.find((version) => version.isDefault)?.id ?? versions[0]?.id ?? '';
+    });
+  }, [songState?.articleId, songState?.versions]);
 
   useEffect(() => {
     if (items.length === 0) {
@@ -1693,11 +2890,10 @@ function ListeningPage({
         currentSongState = null;
       }
     }
-    const defaultSource = normalizeSongSource(currentSongState?.source ?? songSettings?.defaultSource ?? 'suno');
     const versions = currentSongState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
     setSongDialog({
-      activeTab: versions.length > 0 ? 'play' : 'settings',
-      source: defaultSource,
+      activeTab: mode === 'song' || versions.length > 0 ? 'play' : 'settings',
+      source: 'suno',
       stylePrompt: currentSongState?.stylePrompt?.trim() ?? '',
       suggesting: false,
       submitting: false,
@@ -1706,62 +2902,18 @@ function ListeningPage({
   };
 
   const suggestSongStyle = async () => {
-    if (!songDialog || songDialog.suggesting || songDialog.submitting) return;
-    if (songDialog.source !== 'minimax') return;
-    setSongDialog((current) => (current ? { ...current, suggesting: true, error: null } : current));
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songSuggestStyle', { articleId });
-      setSongState(payload);
-      setSongDialog((current) =>
-        current
-          ? {
-              ...current,
-              stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
-              suggesting: false,
-              error: null,
-            }
-          : current,
-      );
-    } catch (styleError) {
-      setSongDialog((current) =>
-        current
-          ? {
-              ...current,
-              suggesting: false,
-              error: styleError instanceof Error ? styleError.message : '歌曲风格生成失败',
-            }
-          : current,
-      );
-    }
+    return undefined;
   };
 
   const generateSong = async () => {
     if (!songDialog || songDialog.submitting || songDialog.suggesting) return;
     const stylePrompt = songDialog.stylePrompt.trim();
-    if (songDialog.source !== 'suno' && !stylePrompt) {
-      setSongDialog((current) => (current ? { ...current, error: '请先填写歌曲风格描述。' } : current));
-      return;
-    }
 
     const lyrics = songLyricsFromItems(items);
-    let compressLyrics = false;
-    if (songDialog.source === 'minimax' && lyrics.length > 3500) {
-      const confirmed = window.confirm(
-        `整篇文章歌词约 ${lyrics.length} 个字符，超过 MiniMax 3500 字符上限。是否先调用 AI 改写压缩后再生成歌曲？`,
-      );
-      if (!confirmed) return;
-      compressLyrics = true;
-    }
-    if (songDialog.source === 'suno') {
-      const confirmed = window.confirm(
-        '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词；如果这篇文章已有上次 Suno 自动风格会直接复用，否则点击 Suno 蓝色魔法棒根据歌词生成风格，并在点击 Create 前再次确认消耗 Suno credits。是否继续？',
-      );
-      if (!confirmed) return;
-    }
-    if (songDialog.source === 'other') {
-      setSongDialog((current) => (current ? { ...current, error: '其它生成方式还没有开放。' } : current));
-      return;
-    }
+    const confirmed = window.confirm(
+      '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词；如果这篇文章已有上次 Suno 自动风格会直接复用，否则点击 Suno 蓝色魔法棒根据歌词生成风格，并在点击 Create 前再次确认消耗 Suno credits。是否继续？',
+    );
+    if (!confirmed) return;
 
     setSongDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
     setSongState({
@@ -1769,29 +2921,25 @@ function ListeningPage({
       status: 'generating',
       stylePrompt,
       errorMessage: null,
-      source: songDialog.source,
+      source: 'suno',
     });
     try {
       const payload = await sendNative<ListeningSongStatePayload>('listening.songGenerate', {
         articleId,
-        source: songDialog.source,
+        source: 'suno',
         stylePrompt,
-        compressLyrics,
         lyrics,
       });
       setSongState(payload);
       setSongDialog((current) =>
         current
-          ? {
-              ...current,
-              activeTab: payload.status === 'ready' || isSunoWaitingConfirm(payload) ? 'play' : current.activeTab,
-              submitting:
-                songDialog.source !== 'suno' && payload.status === 'generating' && !isSunoWaitingConfirm(payload)
-                  ? current.submitting
-                  : false,
-              stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
-            }
-          : current,
+            ? {
+                ...current,
+                activeTab: payload.status === 'ready' || isSunoWaitingConfirm(payload) ? 'play' : current.activeTab,
+                submitting: false,
+                stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
+              }
+            : current,
       );
     } catch (songError) {
       const message = songError instanceof Error ? songError.message : '歌曲生成提交失败';
@@ -1799,7 +2947,7 @@ function ListeningPage({
         articleId,
         status: 'error',
         stylePrompt,
-        source: songDialog.source,
+        source: 'suno',
         errorMessage: message,
       });
       setSongDialog((current) =>
@@ -1873,6 +3021,28 @@ function ListeningPage({
         source: current?.source,
         versions: current?.versions,
         errorMessage: songError instanceof Error ? songError.message : '歌曲播放失败',
+      }));
+    }
+  };
+
+  const setDefaultSongVersion = async (versionId: string) => {
+    if (!versionId.trim()) return;
+    try {
+      const payload = await sendNative<ListeningSongStatePayload>('listening.songSetDefault', {
+        articleId,
+        versionId,
+      });
+      setSongState(payload);
+      setSelectedSongVersionId(versionId);
+      onNotice('已设为默认播放歌曲');
+    } catch (songError) {
+      setSongState((current) => ({
+        articleId,
+        status: 'error',
+        stylePrompt: current?.stylePrompt ?? '',
+        source: current?.source,
+        versions: current?.versions,
+        errorMessage: songError instanceof Error ? songError.message : '默认歌曲设置失败',
       }));
     }
   };
@@ -2193,8 +3363,8 @@ function ListeningPage({
           </button>
         </TopBar>
         <section className="loading-panel">
-          <img src={asset(legoMascot.idle)} alt="" />
-          <p>{error ?? '听力练习打开失败，请回到大厅后重试。'}</p>
+          <span className="assistant-avatar large" aria-hidden="true">T</span>
+          <p>{error ?? '听力练习打开失败，请回到书库后重试。'}</p>
         </section>
       </section>
     );
@@ -2212,7 +3382,12 @@ function ListeningPage({
         : Math.round(((currentIndex + (busy ? 0.5 : 0)) / items.length) * 100);
   const playbackError = status === 'error' ? error : null;
   const startLabel = status === 'done' ? '重新播放' : '开始播放';
-  const titleParts = storyTitlePartsFor(article, pictureBookState, article.title);
+  const titleParts = storyTitlePartsFor(
+    article,
+    pictureBookState,
+    article.title,
+    bookTitle,
+  );
   const visiblePreloadState = englishPreloadState;
   const fullscreenPictureReadiness = pictureBookFullscreenReadiness(
     pictureBookState,
@@ -2248,6 +3423,11 @@ function ListeningPage({
   const songGenerating = songState?.status === 'generating';
   const songPlaying = songState?.status === 'playing';
   const songVersions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
+  const selectedSongVersion =
+    songVersions.find((version) => version.id === selectedSongVersionId) ??
+    songVersions.find((version) => version.isDefault) ??
+    songVersions[0] ??
+    null;
   const canRetrySunoDownload =
     songState?.source === 'suno' &&
     Boolean(songState?.songUrl?.trim()) &&
@@ -2255,15 +3435,28 @@ function ListeningPage({
     (songState?.status !== 'ready' || songState.downloadComplete === false) &&
     !songWaitingConfirm &&
     !(songGenerating && songState?.automationStatus !== 'manualAction');
-  const songButtonLabel = songWaitingConfirm
-    ? '确认创建歌曲'
-    : songGenerating
-      ? '生成歌曲中'
-      : songPlaying
-        ? '播放歌曲中'
-        : canRetrySunoDownload
-          ? '下载歌曲'
-        : '歌曲';
+  const modeSwitch = onSwitchMode ? (
+    <div className="segmented-control listening-mode-switch" role="tablist" aria-label="播放模式">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'listening'}
+        className={mode === 'listening' ? 'active' : ''}
+        onClick={() => onSwitchMode('listening')}
+      >
+        听力
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'song'}
+        className={mode === 'song' ? 'active' : ''}
+        onClick={() => onSwitchMode('song')}
+      >
+        歌曲
+      </button>
+    </div>
+  ) : null;
   const retryPicturePage = (page: PictureBookPage) => {
     if (!pictureBookRetryGate.begin(articleId, page.pageIndex)) {
       return;
@@ -2284,15 +3477,36 @@ function ListeningPage({
 
   return (
     <section className="page listening-page">
-      <TopBar title={<StoryTitle parts={titleParts} />} onBack={() => onNavigate('/')}>
+      <TopBar
+        title={<StoryTitle parts={titleParts} />}
+        onBack={() => onNavigate(article?.seriesId != null ? `/books/${article.seriesId}` : '/')}
+      >
+        <span className="player-chapter-count">{chapterLabel}</span>
+        <button className="ghost-action small" type="button" disabled={!onPrevChapter} onClick={onPrevChapter}>
+            <Icon name="prev" /> 上一章
+        </button>
+        <button className="ghost-action small" type="button" disabled={!onNextChapter} onClick={onNextChapter}>
+            下一章 <Icon name="next" />
+        </button>
+        {onOpenChapterDrawer && (
+          <button
+          className="ghost-action small chapter-drawer-trigger"
+          type="button"
+          aria-controls="book-chapter-drawer"
+          aria-expanded={chapterDrawerOpen}
+          onClick={onOpenChapterDrawer}
+        >
+          <Icon name="list" /> 章节
+        </button>
+        )}
         <div className="listening-progress-summary">
           <ProgressLine
             value={progress}
-            label={`听力进度 ${Math.min(currentIndex + 1, Math.max(items.length, 1))} / ${Math.max(items.length, 1)}`}
+            label={`${mode === 'song' ? '歌曲字幕' : '听力进度'} ${Math.min(currentIndex + 1, Math.max(items.length, 1))} / ${Math.max(items.length, 1)}`}
             compact
           />
         </div>
-        <button className="ghost-action" onClick={() => onNavigate('/')}>
+        <button className="ghost-action" onClick={() => onNavigate(article?.seriesId != null ? `/books/${article.seriesId}` : '/')}>
           <Icon name="exit" /> 退出
         </button>
       </TopBar>
@@ -2313,53 +3527,95 @@ function ListeningPage({
           />
           {playbackError && <p className="playback-cue error">{playbackError}</p>}
           <div className="listening-control-panel">
-            <div className="button-row">
-              {busy ? (
-                <button className="danger-light" onClick={stopPlayback}>
-                  <Icon name="stop" /> 停止
+            {mode === 'song' ? (
+              <div className="song-listening-controls">
+                <div className="button-row">
+                  {modeSwitch}
+                  {songPlaying ? (
+                    <button className="danger-light" onClick={() => void stopSong()}>
+                      <Icon name="stop" /> 停止歌曲
+                    </button>
+                  ) : (
+                    <button
+                      className={`primary-action song-action ${songGenerating && !songWaitingConfirm ? 'loading' : ''}`}
+                      onClick={() => void playSongVersion(selectedSongVersion?.id)}
+                      disabled={busy || items.length === 0 || !selectedSongVersion || songGenerating}
+                      title={songState?.status === 'error' ? songState.errorMessage?.trim() || '歌曲播放失败' : undefined}
+                    >
+                      <Icon name={songGenerating && !songWaitingConfirm ? 'refresh' : 'play'} /> 开始播放
+                    </button>
+                  )}
+                  <button
+                    className="ghost-action"
+                    type="button"
+                    onClick={() => onNavigate(`/creation?articleId=${articleId}${article?.seriesId != null ? `&seriesId=${article.seriesId}` : ''}`)}
+                  >
+                    <Icon name="recordVideo" /> 创作中心
+                  </button>
+                </div>
+                <div className="song-version-picker">
+                  <label htmlFor={`song-version-${articleId}`}>歌曲列表</label>
+                  <select
+                    id={`song-version-${articleId}`}
+                    aria-label="歌曲列表"
+                    value={selectedSongVersion?.id ?? ''}
+                    disabled={busy || songPlaying || songVersions.length === 0}
+                    onChange={(event) => setSelectedSongVersionId(event.target.value)}
+                  >
+                    {songVersions.length === 0 ? (
+                      <option value="">还没有本地歌曲</option>
+                    ) : songVersions.map((version, index) => (
+                      <option value={version.id} key={version.id}>
+                        {(version.title?.trim() || `版本 ${index + 1}`)}{version.isDefault ? ' · 默认' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className={`icon-button small song-default-button ${selectedSongVersion?.isDefault ? 'active' : ''}`}
+                    type="button"
+                    disabled={!selectedSongVersion || busy || songPlaying}
+                    aria-label={selectedSongVersion?.isDefault ? '当前歌曲已是默认播放歌曲' : '设为当前默认播放歌曲'}
+                    title={selectedSongVersion?.isDefault ? '当前默认播放歌曲' : '设为当前默认播放歌曲'}
+                    onClick={() => selectedSongVersion && void setDefaultSongVersion(selectedSongVersion.id)}
+                  >
+                    <Icon name="star" />
+                  </button>
+                </div>
+                {songVersions.length === 0 && (
+                  <p className="fullscreen-ready-hint">还没有本地歌曲，请到创作中心生成或下载。</p>
+                )}
+              </div>
+            ) : (
+              <div className="button-row">
+                {modeSwitch}
+                {busy ? (
+                  <button className="danger-light" onClick={stopPlayback}>
+                    <Icon name="stop" /> 停止
+                  </button>
+                ) : (
+                  <button className="primary-action" onClick={() => void playFrom(currentIndex)} disabled={items.length === 0}>
+                    <Icon name="play" /> {startLabel}
+                  </button>
+                )}
+                <button
+                  className="ghost-action"
+                  onClick={() => void playFrom(currentIndex, true)}
+                  disabled={busy || items.length === 0}
+                >
+                  <Icon name="replay" /> 重听本句
                 </button>
-              ) : (
-                <button className="primary-action" onClick={() => void playFrom(currentIndex)} disabled={items.length === 0}>
-                  <Icon name="play" /> {startLabel}
+                <button
+                  className="ghost-action fullscreen-start-button"
+                  onClick={() => setFullscreenPlayerOpen(true)}
+                  disabled={!canOpenFullscreen || recordingBusy}
+                  title={fullscreenReadiness.reason}
+                >
+                  <Icon name="fullscreen" /> 全屏播放
                 </button>
-              )}
-              <button
-                className="ghost-action"
-                onClick={() => void playFrom(currentIndex, true)}
-                disabled={busy || items.length === 0}
-              >
-                <Icon name="replay" /> 重听本句
-              </button>
-              <button
-                className={`ghost-action song-action ${songGenerating && !songWaitingConfirm ? 'loading' : ''}`}
-                onClick={() => void openSongDialog()}
-                disabled={busy || items.length === 0}
-                title={songState?.status === 'error' ? songState.errorMessage?.trim() || '歌曲生成失败' : undefined}
-              >
-                <Icon name={songGenerating && !songWaitingConfirm ? 'refresh' : songPlaying ? 'sound' : 'music'} /> {songButtonLabel}
-              </button>
-              <button
-                className="ghost-action fullscreen-start-button"
-                onClick={() => setFullscreenPlayerOpen(true)}
-                disabled={!canOpenFullscreen || recordingBusy}
-                title={fullscreenReadiness.reason}
-              >
-                <Icon name="fullscreen" /> 全屏播放
-              </button>
-              <button
-                className="ghost-action recording-start-button"
-                onClick={openRecordingDialog}
-                disabled={!canRecordVideo}
-                title={recordingReadiness.reason}
-              >
-                <Icon name="recordVideo" /> 录制视频
-              </button>
-            </div>
+              </div>
+            )}
             {!fullscreenReadiness.ready && (
               <p className="fullscreen-ready-hint">{fullscreenReadiness.reason}</p>
-            )}
-            {!recordingReadiness.ready && (
-              <p className="fullscreen-ready-hint">{recordingReadiness.reason}</p>
             )}
             {songState?.status === 'error' && songState.errorMessage?.trim() && (
               <p className="playback-cue error">{songState.errorMessage}</p>
@@ -2371,19 +3627,6 @@ function ListeningPage({
             )}
             {songState?.manualActionMessage?.trim() && (
               <p className="playback-cue">{songState.manualActionMessage}</p>
-            )}
-            {songState?.source === 'suno' && songState?.stylePrompt?.trim() && (
-              <div className="suno-style-chip" aria-label="当前 Suno 自动风格">
-                <span>当前 Suno 自动风格</span>
-                <b>{songState.stylePrompt.trim()}</b>
-              </div>
-            )}
-            {recordingError && <p className="playback-cue error">{recordingError}</p>}
-            {recordingResult && (
-              <RecordingResultCard
-                result={recordingResult}
-                onClose={() => setRecordingResult(null)}
-              />
             )}
           </div>
 
@@ -2472,6 +3715,7 @@ function ListeningPage({
           state={songDialog}
           songState={songState}
           songVersions={songVersions}
+          allowGeneration={mode !== 'song'}
           canRetrySunoDownload={canRetrySunoDownload}
           songWaitingConfirm={songWaitingConfirm}
           songGenerating={songGenerating}
@@ -2595,6 +3839,7 @@ function SongDialog({
   state,
   songState,
   songVersions,
+  allowGeneration = true,
   canRetrySunoDownload,
   songWaitingConfirm,
   songGenerating,
@@ -2616,6 +3861,7 @@ function SongDialog({
   state: SongDialogState;
   songState: ListeningSongStatePayload | null;
   songVersions: NonNullable<ListeningSongStatePayload['versions']>;
+  allowGeneration?: boolean;
   canRetrySunoDownload: boolean;
   songWaitingConfirm: boolean;
   songGenerating: boolean;
@@ -2650,21 +3896,9 @@ function SongDialog({
         <div className="edit-dialog-heading">
           <div>
             <b>歌曲风格设置</b>
-            <small>{state.activeTab === 'play' ? '选择本地已下载的完整歌曲版本播放。' : state.source === 'suno' ? '已有 Suno 风格会复用；没有时由 Suno 根据歌词生成。' : '确认后会使用整篇文章生成歌曲。'}</small>
+            <small>{state.activeTab === 'play' ? '选择本地已下载的完整歌曲版本播放。' : '已有 Suno 风格会复用；没有时由 Suno 根据歌词生成。'}</small>
           </div>
           <div className="song-style-heading-actions">
-            {state.activeTab === 'settings' && state.source === 'minimax' && (
-              <button
-                className={`icon-button small ${state.suggesting ? 'loading' : ''}`}
-                type="button"
-                onClick={onSuggest}
-                disabled={busy}
-                aria-label="生成合适的歌曲风格"
-                title="生成合适的歌曲风格"
-              >
-                <Icon name={state.suggesting ? 'refresh' : 'wand'} />
-              </button>
-            )}
             <button className="icon-button small" type="button" onClick={onCancel} aria-label="关闭">
               <Icon name="exit" />
             </button>
@@ -2681,15 +3915,17 @@ function SongDialog({
           >
             播放
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={state.activeTab === 'settings'}
-            className={state.activeTab === 'settings' ? 'active' : ''}
-            onClick={() => onTabChange('settings')}
-          >
-            设置
-          </button>
+          {allowGeneration && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={state.activeTab === 'settings'}
+              className={state.activeTab === 'settings' ? 'active' : ''}
+              onClick={() => onTabChange('settings')}
+            >
+              生成
+            </button>
+          )}
         </div>
 
         {state.activeTab === 'play' ? (
@@ -2772,9 +4008,11 @@ function SongDialog({
                   <Icon name="download" /> 下载缺失版本
                 </button>
               )}
-              <button className="ghost-action small" type="button" onClick={() => onTabChange('settings')} disabled={busy}>
-                <Icon name="music" /> 生成新版本
-              </button>
+              {allowGeneration && (
+                <button className="ghost-action small" type="button" onClick={() => onTabChange('settings')} disabled={busy}>
+                  <Icon name="music" /> 生成新版本
+                </button>
+              )}
             </div>
           </div>
         ) : (
@@ -2788,52 +4026,21 @@ function SongDialog({
               >
                 Suno 网页自动化
               </button>
-              <button
-                type="button"
-                className={state.source === 'minimax' ? 'active' : ''}
-                disabled={busy}
-                onClick={() => onSourceChange('minimax')}
-              >
-                MiniMax API
-              </button>
-              <button type="button" disabled>
-                其它方式
-              </button>
             </div>
-            {state.source === 'suno' ? (
-              <div className="song-source-note suno-style-preview">
-                <p>
-                  将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，复用本篇文章上次 Suno 风格；没有已保存风格时，优先点击 Suno 自带的魔法棒根据歌词生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
-                </p>
-                <label>
-                  <span>Suno 自动风格</span>
-                  <textarea
-                    ref={styleRef}
-                    value={state.stylePrompt || '没有已保存风格，登录后由 Suno 蓝色魔法棒根据歌词自动生成'}
-                    rows={3}
-                    readOnly
-                  />
-                </label>
-              </div>
-            ) : (
-              <p className="song-source-note">
-                MiniMax 使用本机配置的 API Key 直接生成歌曲，长歌词会先询问是否压缩。
+            <div className="song-source-note suno-style-preview">
+              <p>
+                将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，复用本篇文章上次 Suno 风格；没有已保存风格时，优先点击 Suno 自带的魔法棒根据歌词生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
               </p>
-            )}
-            {state.source !== 'suno' && (
               <label>
-                <span>风格描述</span>
+                <span>Suno 自动风格</span>
                 <textarea
                   ref={styleRef}
-                  value={state.stylePrompt}
-                  rows={5}
-                  maxLength={2000}
-                  placeholder="例如：明亮的儿童音乐剧, 奇幻冒险, 轻快节奏, 弦乐和木琴, 适合绘本故事"
-                  onChange={(event) => onStyleChange(event.target.value)}
-                  disabled={state.submitting}
+                  value={state.stylePrompt || '没有已保存风格，登录后由 Suno 蓝色魔法棒根据歌词自动生成'}
+                  rows={3}
+                  readOnly
                 />
               </label>
-            )}
+            </div>
           </>
         )}
         {state.error && <p className="edit-dialog-error">{state.error}</p>}
@@ -2846,7 +4053,7 @@ function SongDialog({
               className="primary-action"
               type="button"
               onClick={onConfirm}
-              disabled={busy || (state.source !== 'suno' && !state.stylePrompt.trim())}
+              disabled={busy}
             >
               <Icon name={state.submitting ? 'refresh' : 'music'} /> {state.submitting ? '提交生成中' : '开始生成歌曲'}
             </button>
@@ -3515,7 +4722,7 @@ function FollowPage({
   if (!state || state.status === 'loading') {
     return (
       <section className="page follow-page">
-        <TopBar title="跟读任务准备中" onBack={() => onNavigate('/')}>
+        <TopBar title="跟读练习准备中" onBack={() => onNavigate('/')}>
           <button className="ghost-action" onClick={() => onNavigate('/')}>
             <Icon name="exit" /> 退出
           </button>
@@ -3528,14 +4735,14 @@ function FollowPage({
   if (state.status === 'error') {
     return (
       <section className="page follow-page">
-        <TopBar title="跟读任务暂时打不开" onBack={() => onNavigate('/')}>
+        <TopBar title="跟读练习暂时打不开" onBack={() => onNavigate('/')}>
           <button className="ghost-action" onClick={() => onNavigate('/')}>
             <Icon name="exit" /> 退出
           </button>
         </TopBar>
         <section className="loading-panel">
-          <img src={asset(legoMascot.idle)} alt="" />
-          <p>{state.error ?? '跟读任务打开失败，请回到大厅后重试。'}</p>
+          <span className="assistant-avatar large" aria-hidden="true">T</span>
+          <p>{state.error ?? '跟读任务打开失败，请回到书库后重试。'}</p>
         </section>
       </section>
     );
@@ -3615,48 +4822,58 @@ function FollowPage({
           {state?.playbackError && <p className="error-text">{state.playbackError}</p>}
           {state?.error && <p className="error-text">{state.error}</p>}
           <div className="follow-control-panel">
-            <div className="follow-control-deck" aria-label="跟读控制">
-              <button
-                className={`follow-control-button source ${sourceActive ? 'active' : ''}`}
-                type="button"
-                onClick={playCurrent}
-                disabled={!canPlaySource}
-              >
-                <Icon name={sourceActive ? 'sound' : 'play'} />
-                <span>播放原音</span>
+            {transcriptHint && <p className="follow-live-transcript">{transcriptHint}</p>}
+            <div className="follow-control-row">
+              <div className="follow-control-deck" aria-label="跟读控制">
+                <button
+                  className={`follow-control-button source ${sourceActive ? 'active' : ''}`}
+                  type="button"
+                  onClick={playCurrent}
+                  disabled={!canPlaySource}
+                >
+                  <span className="follow-control-icon-shell">
+                    <Icon name={sourceActive ? 'sound' : 'play'} />
+                  </span>
+                  <span className="follow-control-label">播放原音</span>
+                </button>
+                <button
+                  className={`follow-control-button record ${recordActive ? 'active' : ''}`}
+                  type="button"
+                  aria-label={step === 'recording' ? '停止录音' : step === 'scoring' ? '评分中' : '开始录音'}
+                  onClick={() => {
+                    if (step === 'recording') {
+                      stopRecordingAndAutoPlay();
+                    } else {
+                      void runFollowCommand('follow.recordStart', 'record');
+                    }
+                  }}
+                  disabled={!canRecordCurrent}
+                >
+                  <span className="follow-control-icon-shell">
+                    <Icon name={step === 'recording' ? 'stop' : 'mic'} />
+                  </span>
+                  <span className="follow-control-label">
+                    {step === 'recording' ? '停止录音' : step === 'scoring' ? '评分中' : '录音'}
+                  </span>
+                </button>
+                <button
+                  className={`follow-control-button recording ${recordingPlaybackActive ? 'active' : ''}`}
+                  type="button"
+                  onClick={playRecording}
+                  disabled={!canPlayRecording}
+                >
+                  <span className="follow-control-icon-shell">
+                    <Icon name={recordingPlaybackActive ? 'sound' : 'replay'} />
+                  </span>
+                  <span className="follow-control-label">播放录音</span>
+                </button>
+                {result && <FollowScoreBadge result={result} compact />}
+              </div>
+              <button className="primary-action follow-next-action" onClick={advanceSentence} disabled={!canAdvanceSentence}>
+                {advanceLabel} <Icon name="arrow" />
               </button>
-              <button
-                className={`follow-control-button record ${recordActive ? 'active' : ''}`}
-                type="button"
-                aria-label={step === 'recording' ? '停止录音' : step === 'scoring' ? '评分中' : '开始录音'}
-                onClick={() => {
-                  if (step === 'recording') {
-                    stopRecordingAndAutoPlay();
-                  } else {
-                    void runFollowCommand('follow.recordStart', 'record');
-                  }
-                }}
-                disabled={!canRecordCurrent}
-              >
-                <Icon name={step === 'recording' ? 'stop' : 'mic'} />
-                <span>{step === 'recording' ? '停止录音' : step === 'scoring' ? '评分中' : '录音'}</span>
-              </button>
-              <button
-                className={`follow-control-button recording ${recordingPlaybackActive ? 'active' : ''}`}
-                type="button"
-                onClick={playRecording}
-                disabled={!canPlayRecording}
-              >
-                <Icon name={recordingPlaybackActive ? 'sound' : 'replay'} />
-                <span>播放录音</span>
-              </button>
-              {result && <FollowScoreBadge result={result} compact />}
             </div>
-            <button className="primary-action follow-next-action" onClick={advanceSentence} disabled={!canAdvanceSentence}>
-              {advanceLabel} <Icon name="arrow" />
-            </button>
           </div>
-          {transcriptHint && <p className="follow-live-transcript">{transcriptHint}</p>}
         </main>
 
       </div>
@@ -4470,9 +5687,13 @@ function storyTitlePartsFor(
   article?: Article | null,
   pictureBookState?: PictureBookState | null,
   fallback = '',
+  seriesFallback = '',
 ): StoryTitleParts {
   const articleTitle = article?.title?.trim() ?? '';
-  const seriesTitle = pictureBookState?.series?.title?.trim() || article?.seriesTitle?.trim() || '';
+  const seriesTitle =
+    pictureBookState?.series?.title?.trim() ||
+    article?.seriesTitle?.trim() ||
+    seriesFallback.trim();
   const chapterTitle = chapterTitleForDisplay(articleTitle, seriesTitle) || articleTitle || fallback.trim() || seriesTitle;
   return {
     seriesTitle,
@@ -4625,10 +5846,9 @@ function ChatPage({
               <span>{chatCue}</span>
             </div>
             <ProgressLine value={chatProgress} label={`对话进度 ${questionCount} / ${maxQuestions}`} compact />
-            <div className="reward-preview chat-reward-preview">
-              <span>奖励预览</span>
-              <img src={asset(pngAsset.star)} alt="" />
-              <img src={asset(pngAsset.brick)} alt="" />
+            <div className="dialogue-outline-preview">
+              <span>对话提纲</span>
+              <b>{maxQuestions} 轮</b>
             </div>
           </div>
           {step === 'completed' && (state?.abilityLevel || state?.practiceSummary) && (
@@ -4664,7 +5884,7 @@ function ChatPage({
                   className={`chat-bubble ${message.isAi ? 'ai-bubble' : 'user-bubble'}`}
                   key={entry.key}
                 >
-                  {message.isAi && <img src={asset(legoMascot.idle)} alt="" />}
+                  {message.isAi && <span className="assistant-avatar" aria-hidden="true">T</span>}
                   <div>
                     <p>{message.text}</p>
                     {message.isAi && (
@@ -4697,7 +5917,7 @@ function ChatPage({
             })}
             {messages.length === 0 && (
               <div className="chat-empty">
-                <img src={asset(pngAsset.legoMonster)} alt="" />
+                <span className="assistant-avatar large" aria-hidden="true">T</span>
                 <span>番茄助教正在准备第一个问题。</span>
               </div>
             )}
@@ -4741,9 +5961,6 @@ function SettingsPage({
 }) {
   const [current, setCurrent] = useState<SettingsState | null>(settings);
   const [selectedVoiceId, setSelectedVoiceId] = useState(settings?.tts.speakerId ?? '');
-  const [songDefaultSource, setSongDefaultSource] = useState<SongSource>(
-    normalizeSongSource(settings?.song?.defaultSource ?? 'suno'),
-  );
   const [sunoOutputDirectory, setSunoOutputDirectory] = useState(settings?.song?.sunoOutputDirectory ?? '');
   const [sunoTimeoutMinutes, setSunoTimeoutMinutes] = useState(settings?.song?.sunoTimeoutMinutes ?? 20);
   const [savingSongSettings, setSavingSongSettings] = useState(false);
@@ -4760,7 +5977,6 @@ function SettingsPage({
         if (!isMounted) return;
         setCurrent(payload);
         setSelectedVoiceId(payload.tts.speakerId);
-        setSongDefaultSource(normalizeSongSource(payload.song?.defaultSource ?? 'suno'));
         setSunoOutputDirectory(payload.song?.sunoOutputDirectory ?? '');
         setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
         onLoaded(payload);
@@ -4777,7 +5993,6 @@ function SettingsPage({
     setCurrent(settings);
     if (settings) {
       setSelectedVoiceId(settings.tts.speakerId);
-      setSongDefaultSource(normalizeSongSource(settings.song?.defaultSource ?? 'suno'));
       setSunoOutputDirectory(settings.song?.sunoOutputDirectory ?? '');
       setSunoTimeoutMinutes(settings.song?.sunoTimeoutMinutes ?? 20);
     }
@@ -4795,7 +6010,6 @@ function SettingsPage({
   const unchanged = selectedVoiceId === current.tts.speakerId;
   const safetyRules = current.contentSafety?.rules ?? [];
   const songSettingsUnchanged =
-    songDefaultSource === normalizeSongSource(current.song?.defaultSource ?? 'suno') &&
     sunoOutputDirectory.trim() === (current.song?.sunoOutputDirectory ?? '').trim() &&
     Number(sunoTimeoutMinutes) === Number(current.song?.sunoTimeoutMinutes ?? 20);
 
@@ -4847,12 +6061,10 @@ function SettingsPage({
     setStatus(null);
     try {
       const payload = await sendNative<SettingsState>('settings.saveSong', {
-        defaultSource: songDefaultSource,
         sunoOutputDirectory: sunoOutputDirectory.trim(),
         sunoTimeoutMinutes: Number(sunoTimeoutMinutes) || 20,
       });
       setCurrent(payload);
-      setSongDefaultSource(normalizeSongSource(payload.song?.defaultSource ?? 'suno'));
       setSunoOutputDirectory(payload.song?.sunoOutputDirectory ?? '');
       setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
       onLoaded(payload);
@@ -4966,7 +6178,9 @@ function SettingsPage({
             </FieldGroup>
 
             <aside className="selected-voice-panel">
-              <MascotBlinker className="settings-mascot" />
+              <span className="selected-voice-mark" aria-hidden="true">
+                {selectedVoice?.name.slice(0, 1) ?? 'V'}
+              </span>
               <span>当前声音</span>
               <b>{selectedVoice?.name ?? '未选择'}</b>
               {selectedVoice && (
@@ -4977,16 +6191,6 @@ function SettingsPage({
 
           <FieldGroup title="歌曲生成">
             <div className="song-settings-grid">
-              <label className="settings-label">
-                <span>默认生成来源</span>
-                <select
-                  value={songDefaultSource}
-                  onChange={(event) => setSongDefaultSource(normalizeSongSource(event.target.value))}
-                >
-                  <option value="suno">Suno 网页自动化</option>
-                  <option value="minimax">MiniMax API</option>
-                </select>
-              </label>
               <label className="settings-label">
                 <span>Suno 输出目录</span>
                 <input
@@ -5184,52 +6388,67 @@ function EditTitleDialog({
 function MissionRow({
   article,
   imageSrc,
+  selected,
+  openLabel,
+  onOpen,
   onListen,
   onFollow,
   onChat,
   onDelete,
   onRename,
+  extraAction,
 }: {
   article: Article;
   imageSrc: string;
-  onListen: () => void;
-  onFollow: () => void;
-  onChat: () => void;
-  onDelete: () => void;
-  onRename: () => void;
+  selected?: boolean;
+  openLabel?: string;
+  onOpen?: () => void;
+  onListen?: () => void;
+  onFollow?: () => void;
+  onChat?: () => void;
+  onDelete?: () => void;
+  onRename?: () => void;
+  extraAction?: ReactNode;
 }) {
   const score = article.averageScore > 0 ? Math.round(article.averageScore) : 40;
+  const openArticle = onOpen ?? onListen ?? onFollow ?? onChat;
   return (
-    <article className="mission-row">
+    <article className={`mission-row ${selected ? 'active' : ''}`}>
       <button
         className="mission-cover-button"
         type="button"
-        onClick={onListen}
-        aria-label={`进入《${article.title}》听力`}
+        onClick={openArticle}
+        disabled={!openArticle}
+        aria-label={`进入《${article.title}》${openLabel ?? (onListen ? '听力' : '练习')}`}
       >
         <img src={imageSrc} alt="" />
       </button>
       <div>
         <h3 className="mission-title-line">
-          <button type="button" className="mission-title-button" onClick={onListen}>
+          <button type="button" className="mission-title-button" onClick={openArticle} disabled={!openArticle}>
             {article.title}
           </button>
-          <button
-            className="icon-button tiny"
-            type="button"
-            onClick={onRename}
-            aria-label={`修改《${article.title}》标题`}
-          >
-            <Icon name="edit" />
-          </button>
+          {onRename && (
+            <button
+              className="icon-button tiny"
+              type="button"
+              onClick={onRename}
+              aria-label={`修改《${article.title}》标题`}
+            >
+              <Icon name="edit" />
+            </button>
+          )}
         </h3>
         <p>{article.sentenceCount} 句子 · 最近学习 今天</p>
       </div>
       <span className="ring-score">{score}%</span>
-      <button className="listen-action" onClick={onListen}><Icon name="sound" /> 听力</button>
-      <button className="primary-action" onClick={onFollow}><Icon name="mic" /> 跟读</button>
-      <button className="purple-action" onClick={onChat}><Icon name="chat" /> 对话</button>
-      <button className="delete-action" onClick={onDelete}>删除</button>
+      <div className="mission-actions">
+        {onListen && <button className="listen-action" onClick={onListen}><Icon name="sound" /> 听力</button>}
+        {onFollow && <button className="primary-action" onClick={onFollow}><Icon name="mic" /> 跟读</button>}
+        {onChat && <button className="purple-action" onClick={onChat}><Icon name="chat" /> 对话</button>}
+        {extraAction}
+        {onDelete && <button className="delete-action" onClick={onDelete}>删除</button>}
+      </div>
     </article>
   );
 }
@@ -5237,10 +6456,12 @@ function MissionRow({
 function EmptyMission({ onNavigate }: { onNavigate: (path: string) => void }) {
   return (
     <div className="empty-mission">
-      <img src={asset(legoMascot.idle)} alt="" />
-      <p>先放入一篇英文短文，番茄助教会把它变成闯关任务。</p>
+      <div className="empty-book-mark" aria-hidden="true">
+        <Icon name="card" />
+      </div>
+      <p>先放入一篇英文短文，系统会把它保存为书籍章节，并异步生成连续绘本图。</p>
       <button className="primary-action" onClick={() => onNavigate('/article/new')}>
-        <Icon name="plus" /> 创建第一张任务卡
+        <Icon name="plus" /> 创建第一章
       </button>
     </div>
   );
@@ -5269,63 +6490,10 @@ function TopBar({
 function UserBadge() {
   return (
     <div className="user-badge">
-      <span>Tommy</span>
-      <b>Lv.12 Star</b>
-      <ProgressLine value={65} label="650 / 1000 XP" compact />
+      <span>本地书库</span>
+      <b>练习与创作分离</b>
+      <ProgressLine value={65} label="绘本 / 听力 / 歌曲" compact />
     </div>
-  );
-}
-
-function StatusItem({ image, text, active = false }: { image: string; text: string; active?: boolean }) {
-  return (
-    <div className={`status-item ${active ? 'active' : ''}`}>
-      <img src={asset(image)} alt="" />
-      <span>{text}</span>
-    </div>
-  );
-}
-
-function MascotBlinker({ className }: { className: string }) {
-  const [frameIndex, setFrameIndex] = useState(0);
-
-  useEffect(() => {
-    let blinkTimer: number | undefined;
-    let frameTimer: number | undefined;
-
-    const scheduleBlink = () => {
-      const delay = 2400 + Math.round(Math.random() * 3600);
-      blinkTimer = window.setTimeout(() => {
-        let nextFrame = 1;
-        const playFrame = () => {
-          setFrameIndex(nextFrame);
-          nextFrame += 1;
-
-          if (nextFrame < legoMascot.blinkFrames.length) {
-            frameTimer = window.setTimeout(playFrame, 58);
-            return;
-          }
-
-          frameTimer = window.setTimeout(() => {
-            setFrameIndex(0);
-            scheduleBlink();
-          }, 72);
-        };
-
-        playFrame();
-      }, delay);
-    };
-
-    scheduleBlink();
-    return () => {
-      if (blinkTimer !== undefined) window.clearTimeout(blinkTimer);
-      if (frameTimer !== undefined) window.clearTimeout(frameTimer);
-    };
-  }, []);
-
-  return (
-    <span className={`mascot-blinker ${className}`} aria-hidden="true">
-      <img className="mascot-frame" src={asset(legoMascot.blinkFrames[frameIndex])} alt="" />
-    </span>
   );
 }
 
@@ -5388,7 +6556,7 @@ function FieldGroup({ title, children }: { title: string; children: ReactNode })
 function LoadingPanel({ text }: { text: string }) {
   return (
     <div className="loading-panel">
-      <img src={asset(legoMascot.idle)} alt="" />
+      <span className="assistant-avatar large" aria-hidden="true">T</span>
       <p>{text}</p>
     </div>
   );
@@ -5464,6 +6632,22 @@ const iconPaths: Record<string, ReactNode> = {
       <path d="M20 9V4h-5" />
       <path d="M4 15v5h5" />
       <path d="M20 15v5h-5" />
+    </>
+  ),
+  list: (
+    <>
+      <path d="M8 6.5h12" />
+      <path d="M8 12h12" />
+      <path d="M8 17.5h12" />
+      <path d="M4.5 6.5h.1" />
+      <path d="M4.5 12h.1" />
+      <path d="M4.5 17.5h.1" />
+    </>
+  ),
+  close: (
+    <>
+      <path d="m6 6 12 12" />
+      <path d="M18 6 6 18" />
     </>
   ),
   recordVideo: (
@@ -5694,9 +6878,7 @@ function songLyricsFromItems(items: ListeningItem[]): string {
 }
 
 function normalizeSongSource(source?: string | null): SongSource {
-  const value = (source ?? '').trim().toLowerCase();
-  if (value === 'minimax') return 'minimax';
-  if (value === 'other') return 'other';
+  void source;
   return 'suno';
 }
 
@@ -5828,20 +7010,57 @@ function useHashRoute(): [string, (path: string) => void] {
 function parseRoute(route: string):
   | { kind: 'home' }
   | { kind: 'article' }
+  | { kind: 'book'; seriesId: number }
+  | { kind: 'bookPlayer'; seriesId: number; articleId: number; mode: PlayerMode }
+  | { kind: 'creation'; seriesId?: number; articleId?: number }
+  | { kind: 'practice'; seriesId?: number }
   | { kind: 'listen'; articleId: number }
   | { kind: 'follow'; articleId: number }
   | { kind: 'chat'; articleId: number }
   | { kind: 'settings' } {
-  if (route === '/article/new') return { kind: 'article' };
-  if (route === '/settings' || route === '/profile') return { kind: 'settings' };
+  const [path, rawQuery = ''] = route.split('?');
+  const query = new URLSearchParams(rawQuery);
+  if (path === '/article/new') return { kind: 'article' };
+  if (path === '/settings' || path === '/profile') return { kind: 'settings' };
+  if (path === '/creation') {
+    const seriesId = Number(query.get('seriesId') ?? '');
+    const articleId = Number(query.get('articleId') ?? '');
+    return {
+      kind: 'creation',
+      seriesId: Number.isFinite(seriesId) && seriesId > 0 ? seriesId : undefined,
+      articleId: Number.isFinite(articleId) && articleId > 0 ? articleId : undefined,
+    };
+  }
+  if (path === '/practice') {
+    const seriesId = Number(query.get('seriesId') ?? '');
+    return {
+      kind: 'practice',
+      seriesId: Number.isFinite(seriesId) && seriesId > 0 ? seriesId : undefined,
+    };
+  }
 
-  const follow = route.match(/^\/follow\/(\d+)/);
+  const bookPlayer = path.match(/^\/books\/(\d+)\/player/);
+  if (bookPlayer) {
+    const articleId = Number(query.get('articleId') ?? 0);
+    const rawMode = query.get('mode')?.trim();
+    return {
+      kind: 'bookPlayer',
+      seriesId: Number(bookPlayer[1]),
+      articleId: Number.isFinite(articleId) ? articleId : 0,
+      mode: rawMode === 'song' ? 'song' : 'listening',
+    };
+  }
+
+  const book = path.match(/^\/books\/(\d+)/);
+  if (book) return { kind: 'book', seriesId: Number(book[1]) };
+
+  const follow = path.match(/^\/follow\/(\d+)/);
   if (follow) return { kind: 'follow', articleId: Number(follow[1]) };
 
-  const listen = route.match(/^\/listen\/(\d+)/);
+  const listen = path.match(/^\/listen\/(\d+)/);
   if (listen) return { kind: 'listen', articleId: Number(listen[1]) };
 
-  const chat = route.match(/^\/chat\/(\d+)/);
+  const chat = path.match(/^\/chat\/(\d+)/);
   if (chat) return { kind: 'chat', articleId: Number(chat[1]) };
 
   return { kind: 'home' };

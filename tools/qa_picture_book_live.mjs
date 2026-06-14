@@ -32,7 +32,7 @@ async function main() {
     await fill('#article-title', config.title);
     await fill('#article-content', rawText);
     await capture('article-filled');
-    await click('保存任务');
+    await click('保存章节');
 
     article = await waitFor(
       async () => {

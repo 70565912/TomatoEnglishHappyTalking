@@ -454,7 +454,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
     const article: Article = {
       id: 99,
-      title: resolvedTitle || 'New Quest',
+      title: resolvedTitle || 'New Chapter',
       content,
       sentences,
       sentenceCount: sentences.length,
@@ -565,63 +565,23 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       errorMessage: '',
     };
   }
-  if (type === 'listening.songSuggestStyle') {
-    return {
-      articleId: Number(payload.articleId ?? mockListening.article.id),
-      status: 'empty',
-      stylePrompt: 'bright children musical, whimsical adventure, light percussion, strings, warm storybook mood',
-      audioPath: null,
-      errorMessage: '',
-    };
-  }
   if (type === 'listening.songGenerate') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
-    const source = String(payload.source ?? 'minimax');
-    if (source === 'suno') {
-      const sunoResult = {
-        articleId,
-        status: 'generating',
-        stylePrompt: String(payload.stylePrompt ?? 'bright children musical'),
-        audioPath: null,
-        errorMessage: '',
-        durationMs: null,
-        source: 'suno',
-        automationStatus: 'waitingLogin',
-        manualActionMessage: 'Suno 页面已打开，请先在页面中自行登录。',
-      };
-      window.setTimeout(() => {
-        emitNativeEvent({ type: 'listening.song.state', payload: sunoResult });
-      }, 40);
-      return sunoResult;
-    }
-    const result = {
+    const sunoResult = {
       articleId,
-      status: 'ready',
+      status: 'generating',
       stylePrompt: String(payload.stylePrompt ?? 'bright children musical'),
-      audioPath: 'mock-song.mp3',
+      audioPath: null,
       errorMessage: '',
-      durationMs: 32000,
-      source: 'minimax',
-      lyricsCompressed: Boolean(payload.compressLyrics),
-      versions: [
-        {
-          id: 'mock-minimax-1',
-          audioPath: 'mock-song.mp3',
-          title: 'MiniMax 版本 1',
-          durationMs: 32000,
-          stylePrompt: String(payload.stylePrompt ?? 'bright children musical'),
-          styleKey: 'minimax:bright children musical',
-        },
-      ],
+      durationMs: null,
+      source: 'suno',
+      automationStatus: 'waitingLogin',
+      manualActionMessage: 'Suno 页面已打开，请先在页面中自行登录。',
     };
     window.setTimeout(() => {
-      emitNativeEvent({ type: 'listening.song.state', payload: result });
+      emitNativeEvent({ type: 'listening.song.state', payload: sunoResult });
     }, 40);
-    return {
-      ...result,
-      status: 'generating',
-      audioPath: null,
-    };
+    return sunoResult;
   }
   if (type === 'listening.songConfirmSunoCreate') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
@@ -674,12 +634,12 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
           errorMessage: '',
           versions: [
             {
-              id: versionId || 'mock-minimax-1',
+              id: versionId || 'mock-suno-1',
               audioPath: 'mock-song.mp3',
-              title: 'MiniMax 版本 1',
+              title: 'Suno 版本 1',
               durationMs: 32000,
               stylePrompt: 'bright children musical',
-              styleKey: 'minimax:bright children musical',
+              styleKey: 'suno:bright children musical',
               timelineStatus: 'ready',
               timelinePath: 'mock-song-timeline.json',
               timelineConfidence: 0.92,
@@ -691,7 +651,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         type: 'listening.song.position',
         payload: {
           articleId,
-          versionId: versionId || 'mock-minimax-1',
+          versionId: versionId || 'mock-suno-1',
           positionMs: 1200,
           durationMs: 32000,
           cue: {
@@ -710,7 +670,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'listening.songTimelineGenerate') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
-    const versionId = String(payload.versionId ?? 'mock-minimax-1');
+    const versionId = String(payload.versionId ?? 'mock-suno-1');
     const result = {
       articleId,
       status: 'ready',
@@ -966,7 +926,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     mockSettings = {
       ...mockSettings,
       song: {
-        defaultSource: String(payload.defaultSource ?? mockSettings.song?.defaultSource ?? 'suno'),
         sunoOutputDirectory: String(payload.sunoOutputDirectory ?? mockSettings.song?.sunoOutputDirectory ?? ''),
         sunoTimeoutMinutes: Number(payload.sunoTimeoutMinutes ?? mockSettings.song?.sunoTimeoutMinutes ?? 20),
       },
@@ -1423,7 +1382,6 @@ let mockSettings: SettingsState = {
     speakerId: 'en_female_dacey_uranus_bigtts',
   },
   song: {
-    defaultSource: 'suno',
     sunoOutputDirectory: 'mock-suno-output',
     sunoTimeoutMinutes: 20,
   },

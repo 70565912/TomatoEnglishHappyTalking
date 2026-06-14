@@ -15,12 +15,12 @@ import '../../core/theme/app_theme.dart';
 import '../../core/webview/webview_environment.dart';
 import '../../data/models/article_model.dart';
 import '../../data/models/article_sentence_translation_model.dart';
+import '../../data/models/article_song_model.dart';
 import '../../data/models/picture_book_model.dart';
 import '../../services/api_cache_service.dart';
 import '../../services/asset_path_service.dart';
 import '../../services/database_service.dart';
 import '../../services/content_safety_service.dart';
-import '../../services/minimax_music_service.dart';
 import '../../services/nlp_service.dart';
 import '../../services/picture_book_service.dart';
 import '../../services/practice_input_parser.dart';
@@ -69,9 +69,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   AudioPlayer? _previewPlayer;
   AudioPlayer? _songPlayer;
   final Map<String, Future<String>> _listeningTtsPathFutures = {};
-  final Map<int, Future<ArticleSongGenerationResult>> _songGenerationTasks = {};
-  final Map<int, String> _songGenerationStyles = {};
-  final Map<int, String> _songErrors = {};
   final Map<String, Future<ArticleSongVersion>> _songTimelineTasks = {};
   final Map<String, String> _songTimelineErrors = {};
   InAppWebViewController? _sunoController;
@@ -169,7 +166,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'listening.recordVideo': _handleListeningRecordVideo,
         'listening.cancelRecording': _handleListeningCancelRecording,
         'listening.songState': _handleListeningSongState,
-        'listening.songSuggestStyle': _handleListeningSongSuggestStyle,
         'listening.songGenerate': _handleListeningSongGenerate,
         'listening.songConfirmSunoCreate':
             _handleListeningSongConfirmSunoCreate,
@@ -177,6 +173,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             _handleListeningSongDownloadSunoExisting,
         'listening.songTimelineGenerate': _handleListeningSongTimelineGenerate,
         'listening.songPlay': _handleListeningSongPlay,
+        'listening.songSetDefault': _handleListeningSongSetDefault,
         'listening.songStop': _handleListeningSongStop,
         'listening.songRecordVideo': _handleListeningSongRecordVideo,
         'suno.debugInspect': _handleSunoDebugInspect,
@@ -647,18 +644,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         articleId: id,
       );
     }
-    unawaited(
-      MiniMaxMusicService.ensureStylePromptForArticle(article.copyWith(id: id))
-          .catchError((Object error) {
-        TomatoLogger.warn(
-          category: 'music',
-          event: 'style_suggestion.failed',
-          articleId: id,
-          error: error,
-        );
-        return '';
-      }),
-    );
     if (pictureBookEnabled) {
       final savedArticle = article.copyWith(id: id);
       int? seriesIdForRollback;
@@ -1368,6 +1353,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               timelineConfidence:
                   hasTimeline ? version.timelineConfidence : null,
               timelineError: hasTimeline ? version.timelineError : null,
+              isDefault: version.isDefault,
             ),
           );
         }
@@ -1407,42 +1393,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
       return state.toJson();
     }
-    final songSettings = await AppConfig.songSettings;
-    final defaultSource =
-        _normalizeSongSource(songSettings['defaultSource'] ?? 'suno');
     final cachedSuno = await _cachedSunoSongState(article);
-    if (defaultSource == 'suno') {
-      var state = cachedSuno ??
-          ArticleSongState(
-            articleId: articleId,
-            status: 'empty',
-            stylePrompt: '',
-            source: 'suno',
-          );
-      if (statusOverride != null) {
-        state = state.copyWith(status: statusOverride);
-      }
-      if (stylePromptOverride != null) {
-        state = state.copyWith(stylePrompt: stylePromptOverride);
-      }
-      if (errorMessageOverride != null) {
-        state = state.copyWith(errorMessage: errorMessageOverride);
-      }
-      return state.toJson();
-    }
-    var state = await MiniMaxMusicService.stateForArticle(article);
-    if (_songGenerationTasks.containsKey(articleId)) {
-      state = state.copyWith(
-        status: 'generating',
-        stylePrompt: _songGenerationStyles[articleId] ?? state.stylePrompt,
-        errorMessage: null,
-      );
-    } else if (_songErrors[articleId]?.trim().isNotEmpty ?? false) {
-      state = state.copyWith(
-        status: 'error',
-        errorMessage: _songErrors[articleId],
-      );
-    }
+    var state = cachedSuno ??
+        ArticleSongState(
+          articleId: articleId,
+          status: 'empty',
+          stylePrompt: '',
+          source: 'suno',
+        );
     if (statusOverride != null) {
       state = state.copyWith(status: statusOverride);
     }
@@ -1934,27 +1892,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return _songStatePayload(articleId);
   }
 
-  Future<Map<String, dynamic>> _handleListeningSongSuggestStyle(
-    BridgeMessage message,
-  ) async {
-    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
-        _activeListeningArticleId;
-    if (articleId == null) {
-      throw const FormatException('听力任务尚未打开');
-    }
-    final article = await _songArticle(articleId);
-    final style = await MiniMaxMusicService.ensureStylePromptForArticle(
-      article,
-    );
-    final payload = await _songStatePayload(
-      articleId,
-      statusOverride: 'empty',
-      stylePromptOverride: style,
-    );
-    unawaited(_pushEvent('listening.song.state', payload));
-    return payload;
-  }
-
   Future<Map<String, dynamic>> _handleListeningSongGenerate(
     BridgeMessage message,
   ) async {
@@ -1963,107 +1900,43 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (articleId == null) {
       throw const FormatException('听力任务尚未打开');
     }
-    final source = _normalizeSongSource(
-      _payloadString(message.payload, 'source', fallback: 'suno'),
-    );
-    if (source == 'suno') {
-      final article = await _songArticle(articleId);
-      final forceNew = _payloadBool(
-        message.payload,
-        'forceNew',
-        fallback: false,
-      );
-      final cachedSuno = await _cachedSunoSongState(article);
-      final requestedStylePrompt =
-          _payloadString(message.payload, 'stylePrompt').trim();
-      final cachedSunoStylePrompt = (cachedSuno?.stylePrompt ?? '').trim();
-      final stylePrompt = requestedStylePrompt.isNotEmpty
-          ? requestedStylePrompt
-          : cachedSunoStylePrompt;
-      if (!forceNew && cachedSuno != null) {
-        final groups = await _cachedSunoSongGroups(article);
-        final styleKey = _sunoStyleKey(stylePrompt);
-        SunoCachedSongGroup? matchingGroup;
-        for (final group in groups) {
-          if (group.styleKey == styleKey) {
-            matchingGroup = group;
-            break;
-          }
-        }
-        if (matchingGroup != null &&
-            ((matchingGroup.songUrl ?? '').trim().isNotEmpty ||
-                matchingGroup.detectedSongUrls.isNotEmpty)) {
-          return _startExistingSunoDownload(
-            article,
-            stylePrompt: stylePrompt,
-          );
-        }
-      }
-      final lyrics = _payloadString(message.payload, 'lyrics').trim();
-      return _startSunoAutomation(
-        article: article,
-        stylePrompt: stylePrompt,
-        lyrics: lyrics.isEmpty ? _articleSongLyrics(article) : lyrics,
-      );
-    }
-    final existingTask = _songGenerationTasks[articleId];
-    if (existingTask != null) {
-      return _songStatePayload(
-        articleId,
-        statusOverride: 'generating',
-        stylePromptOverride: _songGenerationStyles[articleId],
-      );
-    }
-
-    final stylePrompt = _payloadString(message.payload, 'stylePrompt').trim();
-    if (stylePrompt.isEmpty) {
-      throw const FormatException('请先填写歌曲风格描述');
-    }
-    final compressLyrics = _payloadBool(
+    final article = await _songArticle(articleId);
+    final forceNew = _payloadBool(
       message.payload,
-      'compressLyrics',
+      'forceNew',
       fallback: false,
     );
-    final article = await _songArticle(articleId);
-    final generation = MiniMaxMusicService.generateSong(
+    final cachedSuno = await _cachedSunoSongState(article);
+    final requestedStylePrompt =
+        _payloadString(message.payload, 'stylePrompt').trim();
+    final cachedSunoStylePrompt = (cachedSuno?.stylePrompt ?? '').trim();
+    final stylePrompt = requestedStylePrompt.isNotEmpty
+        ? requestedStylePrompt
+        : cachedSunoStylePrompt;
+    if (!forceNew && cachedSuno != null) {
+      final groups = await _cachedSunoSongGroups(article);
+      final styleKey = _sunoStyleKey(stylePrompt);
+      SunoCachedSongGroup? matchingGroup;
+      for (final group in groups) {
+        if (group.styleKey == styleKey) {
+          matchingGroup = group;
+          break;
+        }
+      }
+      if (matchingGroup != null &&
+          ((matchingGroup.songUrl ?? '').trim().isNotEmpty ||
+              matchingGroup.detectedSongUrls.isNotEmpty)) {
+        return _startExistingSunoDownload(
+          article,
+          stylePrompt: stylePrompt,
+        );
+      }
+    }
+    final lyrics = _payloadString(message.payload, 'lyrics').trim();
+    return _startSunoAutomation(
       article: article,
       stylePrompt: stylePrompt,
-      compressLyricsIfNeeded: compressLyrics,
-    );
-    _songGenerationTasks[articleId] = generation;
-    _songGenerationStyles[articleId] = stylePrompt;
-    _songErrors.remove(articleId);
-    unawaited(
-      _pushSongState(
-        articleId,
-        statusOverride: 'generating',
-        stylePromptOverride: stylePrompt,
-      ),
-    );
-    unawaited(
-      generation.then((result) async {
-        _songErrors.remove(articleId);
-        final payload = result.state.toJson()
-          ..['lyricsCompressed'] = result.lyricsCompressed;
-        await _pushEvent('listening.song.state', payload);
-      }).catchError((Object error, StackTrace stackTrace) async {
-        final message = _displayError(error);
-        _songErrors[articleId] = message;
-        await _pushSongState(
-          articleId,
-          statusOverride: 'error',
-          errorMessageOverride: message,
-          stylePromptOverride: stylePrompt,
-        );
-      }).whenComplete(() {
-        _songGenerationTasks.remove(articleId);
-        _songGenerationStyles.remove(articleId);
-      }),
-    );
-    return _songStatePayload(
-      articleId,
-      statusOverride: 'generating',
-      stylePromptOverride: stylePrompt,
+      lyrics: lyrics.isEmpty ? _articleSongLyrics(article) : lyrics,
     );
   }
 
@@ -2189,7 +2062,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         .toList();
     ArticleSongVersion? selectedVersion;
     if (requestedVersionId.isEmpty) {
-      selectedVersion = versions.isNotEmpty ? versions.first : null;
+      selectedVersion = _defaultSongVersion(versions);
     } else {
       for (final version in versions) {
         if (version.id == requestedVersionId) {
@@ -2238,6 +2111,63 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return {'playbackState': 'playing'};
   }
 
+  Future<Map<String, dynamic>> _handleListeningSongSetDefault(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final versionId = _payloadString(message.payload, 'versionId').trim();
+    if (versionId.isEmpty) {
+      throw const FormatException('请选择要设为默认播放的歌曲');
+    }
+    final article = await _songArticle(articleId);
+    final currentPayload = await _songStatePayload(articleId);
+    final currentVersions = ((currentPayload['versions'] as List?) ?? const [])
+        .map(ArticleSongVersion.fromJson)
+        .whereType<ArticleSongVersion>()
+        .toList();
+    if (currentVersions.isEmpty) {
+      throw const FormatException('还没有可用的本地歌曲版本');
+    }
+    var found = false;
+    final updatedVersions = currentVersions.map((version) {
+      final selected = version.id == versionId;
+      found = found || selected;
+      return version.copyWith(isDefault: selected);
+    }).toList(growable: false);
+    if (!found) {
+      throw FormatException('没有找到歌曲版本：$versionId');
+    }
+    if (_sunoArticleId == articleId) {
+      _sunoVersions
+        ..clear()
+        ..addAll(updatedVersions);
+    }
+    final versionsByStyle = <String, List<ArticleSongVersion>>{};
+    final stylePromptByKey = <String, String>{};
+    for (final version in updatedVersions) {
+      final stylePrompt = (version.stylePrompt ?? '').trim();
+      final savedStyleKey = (version.styleKey ?? '').trim();
+      final styleKey =
+          savedStyleKey.isNotEmpty ? savedStyleKey : _sunoStyleKey(stylePrompt);
+      versionsByStyle
+          .putIfAbsent(styleKey, () => <ArticleSongVersion>[])
+          .add(version);
+      stylePromptByKey.putIfAbsent(styleKey, () => stylePrompt);
+    }
+    for (final entry in versionsByStyle.entries) {
+      await _saveSunoMetadataForVersions(
+        article: article,
+        versions: entry.value,
+        stylePrompt: stylePromptByKey[entry.key] ?? '',
+      );
+    }
+    return _songStatePayload(articleId);
+  }
+
   Future<Map<String, dynamic>> _handleListeningSongStop(
     BridgeMessage message,
   ) async {
@@ -2258,7 +2188,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       throw const FormatException('还没有可用的本地歌曲版本');
     }
     if (versionId.isEmpty) {
-      return versions.first;
+      return _defaultSongVersion(versions) ?? versions.first;
     }
     for (final version in versions) {
       if (version.id == versionId) {
@@ -2313,6 +2243,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       timelineStatus: 'ready',
       timelineConfidence: result.timeline.confidence,
       timelineError: null,
+      isDefault: version.isDefault,
     );
     await _persistUpdatedSunoVersion(article, updated);
     return updated;
@@ -6112,11 +6043,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Future<Map<String, dynamic>> _handleSettingsSaveSong(
     BridgeMessage message,
   ) async {
-    final defaultSource = _payloadString(
-      message.payload,
-      'defaultSource',
-      fallback: 'suno',
-    );
     final sunoOutputDirectory = _payloadString(
       message.payload,
       'sunoOutputDirectory',
@@ -6130,7 +6056,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final safeSunoOutputDirectory =
         _sunoOutputDirectorySettingForSave(sunoOutputDirectory);
     await AppConfig.saveSongSettings(
-      defaultSource: defaultSource,
       sunoOutputDirectory: safeSunoOutputDirectory,
       sunoTimeoutMinutes: timeout,
     );
@@ -6702,7 +6627,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           },
         );
         final message = _displayError(error);
-        _songErrors[articleId] = message;
         await _pushSongState(
           articleId,
           statusOverride: 'error',
@@ -7686,7 +7610,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Future<Map<String, dynamic>> _songSettingsPayload() async {
     final settings = await AppConfig.songSettings;
-    final source = _normalizeSongSource(settings['defaultSource'] ?? 'suno');
     final rawOutputDirectory = (settings['sunoOutputDirectory'] ?? '').trim();
     final timeout =
         int.tryParse((settings['sunoTimeoutMinutes'] ?? '').trim()) ?? 20;
@@ -7694,7 +7617,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawOutputDirectory.isNotEmpty &&
         AssetPathService.isTemporaryAssetDirectory(rawOutputDirectory)) {
       await AppConfig.saveSongSettings(
-        defaultSource: source,
         sunoOutputDirectory: '',
         sunoTimeoutMinutes: timeout,
       );
@@ -7708,7 +7630,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       );
     }
     return {
-      'defaultSource': source,
       'sunoOutputDirectory': outputDirectory,
       'sunoTimeoutMinutes': timeout.clamp(5, 120),
     };
@@ -8514,11 +8435,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return value.toString();
   }
 
-  String _normalizeSongSource(String value) {
-    final normalized = value.trim().toLowerCase();
-    return normalized == 'minimax' ? 'minimax' : 'suno';
-  }
-
   Map<String, dynamic> _decodeJsonObject(String? text) {
     final raw = text?.trim() ?? '';
     if (raw.isEmpty) {
@@ -8582,6 +8498,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   String _songTimelineKey(int articleId, String versionId) =>
       '$articleId::$versionId';
 
+  ArticleSongVersion? _defaultSongVersion(List<ArticleSongVersion> versions) {
+    if (versions.isEmpty) {
+      return null;
+    }
+    for (final version in versions) {
+      if (version.isDefault) {
+        return version;
+      }
+    }
+    return versions.first;
+  }
+
   String _versionTimelineStatus(ArticleSongVersion version) {
     final explicit = (version.timelineStatus ?? '').trim();
     if (explicit.isNotEmpty && explicit != 'generating') {
@@ -8594,7 +8522,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     int articleId,
     List<ArticleSongVersion> versions,
   ) {
-    return versions.map((version) {
+    final payloadVersions = versions.map((version) {
       final key = _songTimelineKey(articleId, version.id);
       if (_songTimelineTasks.containsKey(key)) {
         return version.copyWith(
@@ -8614,6 +8542,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         timelineError: version.timelineError,
       );
     }).toList(growable: false);
+    return [
+      ...payloadVersions.where((version) => version.isDefault),
+      ...payloadVersions.where((version) => !version.isDefault),
+    ];
   }
 
   void _rememberCurrentStyleDownloadedSunoUrls() {

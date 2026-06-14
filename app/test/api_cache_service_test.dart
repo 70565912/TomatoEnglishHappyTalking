@@ -287,7 +287,7 @@ void main() {
     );
     await ApiCacheService.putFileBytes(
       cacheKey: olderKey,
-      kind: 'minimax_music',
+      kind: 'suno_song',
       purpose: 'article_song_audio_v1',
       request: olderRequest,
       bytes: [1, 2, 3],
@@ -299,7 +299,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 2));
     final newerPath = await ApiCacheService.putFileBytes(
       cacheKey: newerKey,
-      kind: 'minimax_music',
+      kind: 'suno_song',
       purpose: 'article_song_audio_v1',
       request: newerRequest,
       bytes: [4, 5, 6],

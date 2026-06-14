@@ -161,7 +161,7 @@ export interface ListeningSynthesisPayload {
   error?: string | null;
 }
 
-export type SongSource = 'suno' | 'minimax' | 'other';
+export type SongSource = 'suno';
 
 export interface ListeningSongStatePayload {
   articleId: number;
@@ -193,6 +193,7 @@ export interface ListeningSongStatePayload {
     timelineStatus?: 'missing' | 'generating' | 'ready' | 'error' | string | null;
     timelineConfidence?: number | null;
     timelineError?: string | null;
+    isDefault?: boolean;
   }>;
 }
 
@@ -358,7 +359,6 @@ export interface SettingsState {
     speakerId: string;
   };
   song?: {
-    defaultSource: SongSource | string;
     sunoOutputDirectory: string;
     sunoTimeoutMinutes: number;
   };
