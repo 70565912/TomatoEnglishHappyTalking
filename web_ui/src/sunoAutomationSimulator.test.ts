@@ -651,12 +651,176 @@ describe('suno automation simulator', () => {
     expect(decision.missing).toContain('styleMagic');
   });
 
-  it('reuses the previous Suno-generated style before clicking style magic again', () => {
-    const previousStyle = 'mariachi, neo-rockabilly, gregorian chant, dark female voice, dubstep beats';
+  it('expands collapsed Styles before reporting the style field missing', () => {
     const decision = simulateSunoCreateFill({
       currentUrl: 'https://suno.com/create',
       lyrics: '"Well, it must be removed," said the King very decidedly,',
-      fallbackStyle: previousStyle,
+      controls: [
+        { label: 'Advanced', selected: true },
+        {
+          label: 'Styles',
+          context: 'closed accordion below Lyrics',
+          expanded: false,
+          rect: { x: 232, y: 239, width: 371, height: 40 },
+        },
+      ],
+      fields: [
+        {
+          label: 'Lyrics',
+          context: 'Lyrics 1998/5000',
+          rect: { height: 248 },
+        },
+      ],
+      allowMagicClick: true,
+    });
+    expect(decision.action).toBe('expandStyles');
+    expect(decision.styleExpandControl?.label).toBe('Styles');
+  });
+
+  it('expands collapsed Styles before clearing a stale style value', () => {
+    const decision = simulateSunoCreateFill({
+      currentUrl: 'https://suno.com/create',
+      lyrics: '"Well, it must be removed," said the King very decidedly,',
+      controls: [
+        { label: 'Advanced', selected: true },
+        {
+          label: 'Styles',
+          text: 'Styles previous whimsical folk style',
+          context: 'closed accordion below Styles',
+          expanded: false,
+          rect: { x: 232, y: 239, width: 371, height: 40 },
+        },
+        {
+          label: 'More Options',
+          context: 'closed accordion below Styles',
+          expanded: false,
+          rect: { x: 232, y: 327, width: 371, height: 40 },
+        },
+      ],
+      fields: [
+        {
+          label: 'Lyrics',
+          context: 'Lyrics 1998/5000',
+          rect: { height: 248 },
+        },
+        {
+          label: 'Styles',
+          value: 'previous whimsical folk style',
+          context: 'Styles 31/1000',
+          hitTestVisible: false,
+          rect: { height: 88 },
+        },
+      ],
+      allowMagicClick: true,
+    });
+    expect(decision.action).toBe('expandStyles');
+    expect(decision.styleExpandControl?.label).toBe('Styles');
+    expect(decision.stylePrompt).toBeUndefined();
+  });
+
+  it('does not use More Options as the Styles expansion target', () => {
+    const decision = simulateSunoCreateFill({
+      currentUrl: 'https://suno.com/create',
+      lyrics: 'Tom finds a bright snack box. He sings a happy song with Alice.',
+      controls: [
+        { label: 'Advanced', selected: true },
+        { label: 'More Options', context: 'closed accordion below Styles', expanded: false },
+      ],
+      fields: [
+        {
+          label: 'Lyrics',
+          context: 'Lyrics 63/5000',
+          rect: { height: 120 },
+        },
+        {
+          label: 'Styles',
+          value: 'storybook folk-pop, children’s folk, 96 BPM, acoustic guitar',
+          context: 'Styles 305/1000',
+          hitTestVisible: false,
+          rect: { height: 100 },
+        },
+      ],
+      allowMagicClick: true,
+    });
+    expect(decision.action).toBe('manualAction');
+    expect(decision.missing).toContain('style');
+    expect(decision.styleExpandControl).toBeUndefined();
+  });
+
+  it('does not choose right-side search inputs as Styles while Styles is collapsed', () => {
+    const decision = simulateSunoCreateFill({
+      currentUrl: 'https://suno.com/create',
+      lyrics: '"Well, it must be removed," said the King very decidedly,',
+      controls: [
+        { label: 'Advanced', selected: true },
+        {
+          label: 'Styles',
+          text: 'Styles 0/1000',
+          context: 'Styles 0/1000 energetic pop punchy bass',
+          expanded: false,
+        },
+        { label: 'More Options', context: 'More Options Vocal Gender', expanded: false },
+      ],
+      fields: [
+        {
+          label: 'Lyrics',
+          value: '"Well, it must be removed," said the King very decidedly,',
+          context: 'Lyrics 57/5000',
+          rect: { x: 232, y: 207, width: 371, height: 120 },
+        },
+        {
+          label: 'Search clips',
+          placeholder: 'Search',
+          context: 'Filters (3) Newest List',
+          rect: { x: 691, y: 78, width: 159, height: 21 },
+        },
+        {
+          label: 'Current page number',
+          value: '1',
+          context: 'Current page number',
+          rect: { x: 1152, y: 70, width: 54, height: 36 },
+        },
+      ],
+      allowMagicClick: true,
+    });
+    expect(decision.action).toBe('expandStyles');
+    expect(decision.styleField?.label).not.toBe('Search clips');
+    expect(decision.styleExpandControl?.label).toBe('Styles');
+  });
+
+  it('does not choose a visible Styles textarea as Lyrics when the real Lyrics textarea is offscreen', () => {
+    const decision = simulateSunoCreateFill({
+      currentUrl: 'https://suno.com/create',
+      lyrics: '"Well, it must be removed," said the King very decidedly,',
+      controls: [
+        { label: 'Advanced', selected: true },
+        {
+          label: 'Personalize style prompt to match your taste',
+          context: 'Styles 0/1000',
+          className: 'hxc-btn-variant-standard bg-accent-blue text-white',
+        },
+      ],
+      fields: [
+        {
+          label: 'Styles',
+          value: '"Well, it must be removed," said the King very decidedly,',
+          placeholder: 'slavic folk metal, hard bass, 90s pop, yodeling',
+          context: 'Styles 1000/1000 slavic folk metal hard bass',
+          rect: { x: 232, y: 141, width: 371, height: 100 },
+        },
+      ],
+      allowMagicClick: true,
+    });
+    expect(decision.action).toBe('manualAction');
+    expect(decision.missing).toContain('lyrics');
+    expect(decision.lyricsField).toBeUndefined();
+    expect(decision.styleField?.label).toBe('Styles');
+  });
+
+  it('clicks style magic instead of reusing a previous generated style', () => {
+    const decision = simulateSunoCreateFill({
+      currentUrl: 'https://suno.com/create',
+      lyrics: '"Well, it must be removed," said the King very decidedly,',
       controls: [
         { label: 'Advanced', selected: true },
         {
@@ -680,9 +844,9 @@ describe('suno automation simulator', () => {
       ],
       allowMagicClick: true,
     });
-    expect(decision.action).toBe('readyToConfirm');
-    expect(decision.stylePrompt).toBe(previousStyle);
-    expect(decision.styleSource).toBe('fallback');
+    expect(decision.action).toBe('clickStyleMagic');
+    expect(decision.stylePrompt).toBeUndefined();
+    expect(decision.styleSource).toBe('sunoMagic');
   });
 
   it('keeps waiting when Styles still contains an ignored value from the previous article', () => {

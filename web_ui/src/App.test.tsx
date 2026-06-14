@@ -593,7 +593,7 @@ describe('App', () => {
     expect(saveButton).not.toBeDisabled();
   });
 
-  it('shows empty books and deletes only empty series', async () => {
+  it('moves empty-book deletion to the creation center', async () => {
     window.location.hash = '/';
     const article = {
       id: 5,
@@ -644,6 +644,16 @@ describe('App', () => {
         if (type === 'series.delete') {
           return ok(message.id, type, { articles: [article], series: [filledSeries] });
         }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: Number(payload.articleId ?? article.id),
+            enabled: true,
+            status: 'ready',
+            completed: 0,
+            total: 0,
+            pages: [],
+          });
+        }
         return ok(message.id, type, {});
       }),
     };
@@ -652,6 +662,10 @@ describe('App', () => {
 
     expect(await screen.findByText('Empty Book')).toBeInTheDocument();
     expect(screen.getAllByText('Alice Series').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('.book-delete-button')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: '创作中心' }));
+    expect(await screen.findByRole('heading', { name: '创作中心' })).toBeInTheDocument();
     const emptyBookDeleteButtons = container.querySelectorAll('.book-delete-button');
     expect(emptyBookDeleteButtons).toHaveLength(1);
 
@@ -663,6 +677,81 @@ describe('App', () => {
     expect(await screen.findByText('空书籍已删除')).toBeInTheDocument();
     expect(screen.queryByText('Empty Book')).not.toBeInTheDocument();
     expect(screen.getAllByText('Alice Series').length).toBeGreaterThan(0);
+  });
+
+  it('moves chapter deletion to the creation center', async () => {
+    window.location.hash = '/';
+    const article = {
+      id: 42,
+      title: 'Draft Chapter',
+      content: 'Alice keeps walking.',
+      sentences: ['Alice keeps walking.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 0,
+      pictureBookEnabled: true,
+      seriesId: 9,
+      seriesTitle: 'Draft Book',
+      chapterOrder: 1,
+    };
+    const series = [{
+      id: 9,
+      title: 'Draft Book',
+      styleGuide: {},
+      bible: {},
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }];
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'article.delete') {
+          return ok(message.id, type, { articles: [], series });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: Number(payload.articleId ?? article.id),
+            enabled: true,
+            status: 'ready',
+            completed: 0,
+            total: 0,
+            pages: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    const { container } = render(<App />);
+
+    expect(await screen.findByText('Draft Chapter')).toBeInTheDocument();
+    expect(container.querySelectorAll('.mission-row .delete-action')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: '创作中心' }));
+    expect(await screen.findByRole('heading', { name: '创作中心' })).toBeInTheDocument();
+    const chapterDeleteButtons = container.querySelectorAll('.mission-row .delete-action');
+    expect(chapterDeleteButtons).toHaveLength(1);
+
+    fireEvent.click(chapterDeleteButtons[0]);
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'article.delete')?.payload).toMatchObject({ articleId: 42 });
+    });
+    expect(await screen.findByText('章节已删除')).toBeInTheDocument();
   });
 
   it('sends picture-book series choices when saving a new chapter', async () => {
@@ -1797,6 +1886,121 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.getAllByText('Beta Creation Chapter').length).toBeGreaterThan(0));
     expect(screen.queryAllByText('Alpha Creation Chapter')).toHaveLength(0);
+  });
+
+  it('loads creation center picture-book images as persisted thumbnails after metadata', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const now = new Date().toISOString();
+    const article = {
+      id: 1,
+      title: 'Thumbnail Chapter',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: now,
+      averageScore: 86,
+      seriesId: 1,
+      seriesTitle: 'Thumbnail Book',
+      chapterOrder: 1,
+    };
+    const series = [
+      {
+        id: 1,
+        title: 'Thumbnail Book',
+        styleGuide: {},
+        bible: {},
+        coverImagePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.sentences[0],
+                imagePath: 'F:/Tomato/picture_book/original-0.png',
+                imageUri: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+              {
+                articleId: article.id,
+                seriesId: 1,
+                pageIndex: 1,
+                sentenceStartIndex: 1,
+                sentenceEndIndex: 1,
+                paragraphText: article.sentences[1],
+                imagePath: 'F:/Tomato/picture_book/original-1.png',
+                imageUri: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        if (type === 'pictureBook.pageImage') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            pageIndex: Number(payload.pageIndex ?? 0),
+            variant: payload.variant,
+            imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('绘本组图')).toBeInTheDocument();
+    await waitFor(() => {
+      const stateCall = calls.find((call) => call.type === 'pictureBook.state');
+      expect(stateCall?.payload).toMatchObject({
+        articleId: 1,
+        includeImageUris: false,
+      });
+    });
+    await waitFor(() => {
+      const pageImageCalls = calls.filter((call) => call.type === 'pictureBook.pageImage');
+      expect(pageImageCalls).toHaveLength(2);
+      expect(pageImageCalls.map((call) => call.payload)).toEqual([
+        { articleId: 1, pageIndex: 0, variant: 'thumbnail' },
+        { articleId: 1, pageIndex: 1, variant: 'thumbnail' },
+      ]);
+    });
+    await waitFor(() => {
+      const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
+        .map((image) => image.getAttribute('src'));
+      expect(thumbnails).toEqual([
+        'data:image/png;base64,THUMBNAIL_0',
+        'data:image/png;base64,THUMBNAIL_1',
+      ]);
+    });
   });
 
   it('shows preload progress and hides the completed listening preload notice after 3 seconds', async () => {
@@ -2983,7 +3187,7 @@ describe('App', () => {
         screen.getAllByText('Suno 生成结果已出现，但没有找到 Download 或 Audio 下载按钮。').length,
       ).toBeGreaterThan(0),
     );
-    expect(screen.queryByRole('dialog', { name: '歌曲风格设置' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: 'Suno 歌曲设置' })).not.toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 
@@ -3059,7 +3263,7 @@ describe('App', () => {
     render(<App />);
 
     await clickSelectedCreationAction('歌曲');
-    fireEvent.click(await screen.findByRole('button', { name: /下载缺失版本/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /检测下载/ }));
 
     await waitFor(() => expect(downloadPayloads[0]).toMatchObject({ articleId: 1 }));
     await waitFor(() =>
@@ -3130,8 +3334,10 @@ describe('App', () => {
 
     await clickSelectedCreationAction('歌曲');
     expect(screen.queryByLabelText('当前 Suno 自动风格')).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getAllByText('Suno auto style').length).toBeGreaterThan(0));
-    expect(await screen.findByText('Dreamy lullaby style')).toBeInTheDocument();
+    expect(screen.queryByText('Suno auto style')).not.toBeInTheDocument();
+    expect(screen.queryByText('Dreamy lullaby style')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Suno 版本 2' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Dreamy 版本' })).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: 'Suno 版本 2' }));
 
     await waitFor(() => expect(playPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
@@ -3162,8 +3368,8 @@ describe('App', () => {
       },
     ];
     const versions = [
-      { id: 'suno-v1', audioPath: 'suno-v1.mp3', title: 'Suno 版本 1', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style', isDefault: true },
-      { id: 'suno-v2', audioPath: 'suno-v2.mp3', title: 'Suno 版本 2', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style' },
+      { id: 'suno-v1', audioPath: 'suno-v1.mp3', title: 'Suno 版本 1', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style', timelineStatus: 'ready', timelinePath: 'timeline-v1.json', isDefault: true },
+      { id: 'suno-v2', audioPath: 'suno-v2.mp3', title: 'Suno 版本 2', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style', timelineStatus: 'missing' },
     ];
     const playPayloads: Array<Record<string, unknown>> = [];
     const defaultPayloads: Array<Record<string, unknown>> = [];
@@ -3189,6 +3395,19 @@ describe('App', () => {
         }
         if (type === 'pictureBook.state') {
           return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.fullscreenReady') {
+          return ok(message.id, type, {
+            ready: false,
+            reasons: ['当前和下一句英文音频还没有加载到内存'],
+            requiredEnglish: 1,
+            readyEnglish: 0,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: [0],
+            missingChinese: [],
+            failed: 0,
+          });
         }
         if (type === 'listening.songState') {
           return ok(message.id, type, {
@@ -3223,10 +3442,13 @@ describe('App', () => {
 
     const songSelect = await screen.findByRole('combobox', { name: '歌曲列表' });
     await waitFor(() => expect(songSelect).toHaveValue('suno-v1'));
+    expect(screen.queryByText('当前和下一句英文音频还没有加载到内存')).not.toBeInTheDocument();
+    expect(screen.queryByText('这首歌还没有生成字幕，请到创作中心生成歌曲字幕。')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /选择本地歌曲/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /去创作中心生成/ })).not.toBeInTheDocument();
 
     fireEvent.change(songSelect, { target: { value: 'suno-v2' } });
+    expect(await screen.findByText('这首歌还没有生成字幕，请到创作中心生成歌曲字幕。')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '设为当前默认播放歌曲' }));
     await waitFor(() => expect(defaultPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
 
@@ -3346,7 +3568,8 @@ describe('App', () => {
     render(<App />);
 
     await clickSelectedCreationAction('歌曲');
-    expect(await screen.findByText('Suno auto style')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Suno 版本 1' })).toBeInTheDocument();
+    expect(screen.queryByText('Suno auto style')).not.toBeInTheDocument();
     const recordButton = await screen.findByRole('button', { name: '导出歌曲视频' });
     expect(recordButton).toBeDisabled();
 

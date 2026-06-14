@@ -57,22 +57,23 @@ void main() {
     expect(json['versions'], hasLength(1));
   });
 
-  test('builds legacy and multi-style Suno cache groups', () {
+  test('builds lyrics-based Suno cache groups', () {
     final legacy = SunoCachedSongGroupBuilder(
+      lyricsHash: 'lyrics-a',
       stylePrompt: '',
-      styleKey: 'suno:legacy',
     )..addVersions(
         const [
           ArticleSongVersion(
             id: 'legacy',
             audioPath: r'F:\songs\legacy.mp3',
             title: 'Suno 缓存版本',
+            lyricsHash: 'lyrics-a',
           ),
         ],
       );
     final storybook = SunoCachedSongGroupBuilder(
+      lyricsHash: 'lyrics-a',
       stylePrompt: 'storybook pop',
-      styleKey: 'suno:storybook pop',
     )..addVersions(
         const [
           ArticleSongVersion(
@@ -80,13 +81,13 @@ void main() {
             audioPath: r'F:\songs\storybook-1.mp3',
             songUrl: 'https://suno.com/song/storybook-1',
             stylePrompt: 'storybook pop',
-            styleKey: 'suno:storybook pop',
+            lyricsHash: 'lyrics-a',
           ),
         ],
       );
     final folk = SunoCachedSongGroupBuilder(
+      lyricsHash: 'lyrics-b',
       stylePrompt: 'folk lullaby',
-      styleKey: 'suno:folk lullaby',
     )..addVersions(
         const [
           ArticleSongVersion(
@@ -94,17 +95,17 @@ void main() {
             audioPath: r'F:\songs\folk-1.mp3',
             songUrl: 'https://suno.com/song/folk-1',
             stylePrompt: 'folk lullaby',
-            styleKey: 'suno:folk lullaby',
+            lyricsHash: 'lyrics-b',
           ),
         ],
       );
 
     final groups = [legacy.build(), storybook.build(), folk.build()];
 
-    expect(groups.map((group) => group.styleKey), [
-      'suno:legacy',
-      'suno:storybook pop',
-      'suno:folk lullaby',
+    expect(groups.map((group) => group.lyricsHash), [
+      'lyrics-a',
+      'lyrics-a',
+      'lyrics-b',
     ]);
     expect(groups.first.versions.single.id, 'legacy');
     expect(groups.first.hasKnownCompleteDownloads, isFalse);
@@ -114,8 +115,8 @@ void main() {
 
   test('tracks detected Suno full song URLs and skips duplicate downloads', () {
     final group = SunoCachedSongGroupBuilder(
+      lyricsHash: 'lyrics-a',
       stylePrompt: 'storybook pop',
-      styleKey: 'suno:storybook pop',
     )
       ..detectedSongUrls.addAll([
         'https://suno.com/song/full-1',

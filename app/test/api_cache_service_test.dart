@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path_lib;
@@ -541,7 +542,7 @@ void main() {
     final updatedChapter =
         await DatabaseService.getStoryChapterForArticle(articleId);
     expect(
-        updatedChapter?.summaryJson, contains('picture_book_chapter_plan_v1'));
+        updatedChapter?.summaryJson, contains('picture_book_chapter_plan_v2'));
   });
 
   test('Ark image generation sends reference images and reuses cache',
@@ -667,6 +668,10 @@ void main() {
     expect(seenBody?['image'], isA<List>());
     expect((seenBody?['prompt'] as String), contains('Image 1:'));
     expect((seenBody?['prompt'] as String), contains('Image 2:'));
+    expect(
+      (seenBody?['prompt'] as String),
+      contains('match the listed segment action'),
+    );
   });
 
   test('Ark group generation does not rerun cached pages on retry', () async {
@@ -1129,20 +1134,27 @@ void main() {
     expect(pages.last['sentenceEndIndex'], 5);
   });
 
-  test('picture-book image prompt allows natural visible text', () {
+  test('picture-book image prompt allows natural story-world text', () {
     final prompt = PictureBookService.imagePromptForTest({
       'prompt':
-          'A girl smiles over a glowing map in a warm bedroom picture-book scene.',
-      'negativePrompt': 'avoid scary details',
+          'A girl smiles over a glowing map in a warm bedroom picture-book scene, open clean space for subtitles.',
+      'negativePrompt': 'avoid scary details, no UI overlays',
       'seriesTitle': 'Alice\'s Adventures in Wonderland',
       'styleGuide': {
         'visualStyle': 'warm English picture book illustration',
+        'layout':
+            'one clear text-free background scene, enough clean open space for app-rendered subtitles outside the generated artwork',
+        'safety':
+            'no visible text, captions, subtitles, speech bubbles, narration bars, UI overlays',
       },
     });
+    final lower = prompt.toLowerCase();
 
     expect(prompt, contains('coherent sequential picture-book storyboard'));
-    expect(prompt, contains('NATURAL TEXT POLICY'));
-    expect(prompt, contains('visible text is allowed'));
+    expect(prompt, contains('TEXT POLICY'));
+    expect(prompt, contains('visible letters and words are optional'));
+    expect(prompt, contains('natural scene composition'));
+    expect(prompt, contains('current story action'));
     expect(prompt, contains('BOOK TITLE / SERIES TITLE'));
     expect(prompt, contains('Alice\'s Adventures in Wonderland'));
     expect(
@@ -1160,6 +1172,37 @@ void main() {
     expect(prompt, isNot(contains('Do not turn Alice into a modern student')));
     expect(prompt, isNot(contains('no typography')));
     expect(prompt, isNot(contains('All visible surfaces are simple color')));
+    expect(lower, isNot(contains('subtitle')));
+    expect(lower, isNot(contains('caption')));
+    expect(lower, isNot(contains('open clean space')));
+    expect(lower, isNot(contains('app-rendered')));
+  });
+
+  test('Ark group prompt removes old subtitle-space wording', () {
+    final prompt = VolcImageService.groupPromptForTest(
+      const [
+        VolcImageBatchRequest(
+          pageIndex: 0,
+          prompt:
+              'Alice stands on the croquet lawn, open clean space for subtitles, gentle colors.',
+          promptMetadata: {'page': 0},
+        ),
+        VolcImageBatchRequest(
+          pageIndex: 1,
+          prompt:
+              'The King hurries away with enough clean open space for app-rendered subtitles outside the generated artwork.',
+          promptMetadata: {'page': 1},
+        ),
+      ],
+    );
+    final lower = prompt.toLowerCase();
+
+    expect(prompt, contains('Generate exactly 2 separate full-frame 16:9'));
+    expect(prompt, contains('match the listed segment action'));
+    expect(prompt, contains('natural scene composition'));
+    expect(lower, isNot(contains('subtitle')));
+    expect(lower, isNot(contains('app-rendered')));
+    expect(lower, isNot(contains('open clean space')));
   });
 
   test('picture-book image prompt uses any series title without Alice lock-in',
@@ -1279,8 +1322,14 @@ but the three were all crowded together at one corner of it.
   test('picture-book cover payload uses the first ready generated image',
       () async {
     final articleId = await _saveArticle('Mia opens a map and smiles.');
-    final imageFile = File('${tempDir.path}${Platform.pathSeparator}cover.png')
-      ..writeAsBytesSync([137, 80, 78, 71, 1, 2, 3]);
+    final imageFile = await _writeTestPng(
+      tempDir,
+      'cover.png',
+      width: 1280,
+      height: 720,
+    );
+    final originalDataUri =
+        'data:image/png;base64,${base64Encode(await imageFile.readAsBytes())}';
     final now = DateTime(2026, 1, 1);
 
     await DatabaseService.upsertPictureBookPage(
@@ -1304,10 +1353,20 @@ but the three were all crowded together at one corner of it.
 
     expect(payload, isNotNull);
     expect(payload?['coverImagePath'], imageFile.path);
+    expect(payload?['coverImageVariant'], 'thumbnail');
     expect(
       payload?['coverImageUri']?.toString(),
       startsWith('data:image/png;base64,'),
     );
+    expect(payload?['coverImageUri'], isNot(originalDataUri));
+
+    final thumbnailDirectory =
+        await ApiCacheService.cacheDirectory('picture_book_thumbnails');
+    final thumbnails = await thumbnailDirectory
+        .list()
+        .where((entity) => entity is File && entity.path.endsWith('.png'))
+        .toList();
+    expect(thumbnails, hasLength(1));
   });
 }
 
@@ -1320,6 +1379,45 @@ Future<int> _saveArticle(String content) {
       createdAt: DateTime(2026, 1, 1),
     ),
   );
+}
+
+Future<File> _writeTestPng(
+  Directory directory,
+  String name, {
+  required int width,
+  required int height,
+}) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = ui.Canvas(recorder);
+  canvas.drawRect(
+    ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    ui.Paint()..color = const ui.Color(0xFFFF6B35),
+  );
+  canvas.drawCircle(
+    ui.Offset(width * 0.32, height * 0.45),
+    height * 0.22,
+    ui.Paint()..color = const ui.Color(0xFFFFD54F),
+  );
+  canvas.drawRect(
+    ui.Rect.fromLTWH(width * 0.55, height * 0.18, width * 0.3, height * 0.5),
+    ui.Paint()..color = const ui.Color(0xFF1A237E),
+  );
+
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(width, height);
+  try {
+    final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+    final bytes = byteData?.buffer.asUint8List();
+    if (bytes == null || bytes.isEmpty) {
+      throw StateError('Failed to create test PNG bytes');
+    }
+    final file = File(path_lib.join(directory.path, name));
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  } finally {
+    image.dispose();
+    picture.dispose();
+  }
 }
 
 void _writeImageArkKey(Directory root, String key) {

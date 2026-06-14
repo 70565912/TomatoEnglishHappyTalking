@@ -207,22 +207,22 @@ class ArticleSongVersion {
 
 class SunoCachedSongGroup {
   const SunoCachedSongGroup({
-    required this.stylePrompt,
-    required this.styleKey,
+    required this.lyricsHash,
     required this.versions,
     required this.detectedSongUrls,
     required this.songUrl,
     required this.metadataPath,
     required this.manualActionMessage,
+    this.stylePrompt = '',
   });
 
-  final String stylePrompt;
-  final String styleKey;
+  final String lyricsHash;
   final List<ArticleSongVersion> versions;
   final List<String> detectedSongUrls;
   final String? songUrl;
   final String? metadataPath;
   final String? manualActionMessage;
+  final String stylePrompt;
 
   bool get hasKnownCompleteDownloads {
     if (detectedSongUrls.isEmpty) {
@@ -248,12 +248,12 @@ class SunoCachedSongGroup {
 
 class SunoCachedSongGroupBuilder {
   SunoCachedSongGroupBuilder({
-    required this.stylePrompt,
-    required this.styleKey,
+    required this.lyricsHash,
+    this.stylePrompt = '',
   });
 
+  final String lyricsHash;
   String stylePrompt;
-  final String styleKey;
   String? songUrl;
   String? metadataPath;
   String? manualActionMessage;
@@ -297,8 +297,8 @@ class SunoCachedSongGroupBuilder {
       }
     }
     return SunoCachedSongGroup(
+      lyricsHash: lyricsHash,
       stylePrompt: stylePrompt,
-      styleKey: styleKey,
       versions: List<ArticleSongVersion>.unmodifiable(versions),
       detectedSongUrls: List<String>.unmodifiable(mergedDetectedSongUrls),
       songUrl: songUrl,

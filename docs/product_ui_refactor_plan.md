@@ -36,7 +36,7 @@ Tomato English Happy Talking 早期定位更接近游戏化英语朗读、听力
 - 主导航已切到书库、创作中心、练习中心和设置；首页文案不再使用游戏大厅、任务、闯关、XP 等定位。
 - 已新增书籍详情、书籍章节播放器、创作中心和练习中心页面骨架；听力播放器保留播放职责，绘本、歌曲和视频生产动作集中到创作中心。
 - 歌曲来源已固定为 Suno 网页自动化和本地版本库，MiniMax API、配置、mock 和测试入口已清理。
-- `ArticleSongState`、`ArticleSongVersion` 和 `SunoCachedSongGroup` 已拆到 `app/lib/data/models/article_song_model.dart`，支持 styleKey 分组、缺失下载判断、歌词时间轴字段和默认版本标记。
+- `ArticleSongState`、`ArticleSongVersion` 和 `SunoCachedSongGroup` 已拆到 `app/lib/data/models/article_song_model.dart`，支持按歌词缓存组、缺失 `songUrl` 下载判断、歌词时间轴字段和默认版本标记。
 - 新增 `npm run qa:layout` 布局审计脚本，并扩展 Windows QA 回归以覆盖书库、书籍详情、章节播放器、创作中心、练习中心和 Suno-only 设置。
 
 下面的章节仍保留完整目标方案和后续拆分建议；未完成项以各阶段验收标准为准。
@@ -55,7 +55,7 @@ Tomato English Happy Talking 早期定位更接近游戏化英语朗读、听力
 当前绘本和歌曲相关能力也已经基本存在：
 
 - 文章保存后默认异步生成连续绘本组图。
-- Suno 网页自动化已支持填歌词、生成或复用风格、确认消耗 credits、下载歌曲。
+- Suno 网页自动化已支持填歌词、每次让 Suno 根据歌词重新生成风格、确认消耗 credits、下载歌曲。
 - Suno 下载音频和 metadata 已按持久目录 `suno-music/` 管理。
 - 歌曲字幕时间轴已通过 `SongSubtitleTimelineService` 和 BigASR 生成。
 - 听力视频和歌曲视频录制已有 bridge 与服务基础。
@@ -288,7 +288,7 @@ Tomato English Happy Talking 早期定位更接近游戏化英语朗读、听力
 - 查看缺失下载项。
 - 打开 Suno 网页自动化。
 - 确认消耗 Suno credits。
-- 下载缺失版本。
+- 检测下载缺失 `songUrl`。
 - 生成歌词时间轴。
 
 约束：
@@ -298,7 +298,7 @@ Tomato English Happy Talking 早期定位更接近游戏化英语朗读、听力
 - 不再提供“其它方式”占位入口。
 - 不保存 Suno 用户名、密码、验证码或 cookie 明文。
 - 完成下载后继续明确提示用户确认关闭 Suno 窗口。
-- 同一风格已完整下载时进入完成待命/播放状态，不能自动再次点击 Create。
+- 当前歌词已完整下载时进入完成待命/播放状态；用户点击生成新版本时仍重新进入 Create 确认流程。
 
 #### 视频标签
 
@@ -373,7 +373,7 @@ Tomato English Happy Talking 早期定位更接近游戏化英语朗读、听力
 3. 系统展示现有 Suno 风格、版本和下载状态。
 4. 用户点击生成新版本。
 5. 系统打开 Suno 页面并自动填写歌词。
-6. 若已有同一文章上次 Suno 自动风格则复用；否则点击 Suno 蓝色魔法棒生成真实 style value。
+6. 每次生成都清空旧 Styles，点击 Suno 蓝色魔法棒生成真实 style value。
 7. 点击 Create 前必须让用户确认消耗 Suno credits。
 8. 下载完成后保存音频、metadata、版本列表和 detected song URLs。
 9. UI 提示下载完成，并等待用户确认关闭 Suno 窗口。
@@ -995,7 +995,7 @@ app/lib/services/
 
 - AppConfig 删除 MiniMax 后的 song settings。
 - 歌曲模型迁移后的 JSON 兼容。
-- Suno metadata 读取和 styleKey 分组。
+- Suno metadata 读取和按歌词缓存组恢复。
 - 播放位置保存和恢复。
 
 ### 真实 Windows 回归
@@ -1029,7 +1029,7 @@ app/lib/services/
 - `App.tsx` 不再承载所有页面细节。
 - 歌曲状态模型不再依赖 `minimax_music_service.dart`。
 - MiniMax 相关 API key、配置、测试和 mock 已清理。
-- Suno 缓存、styleKey 分组、detectedSongUrls 和持久目录行为保持可用。
+- Suno 缓存、按歌词分组、detectedSongUrls 和持久目录行为保持可用。
 - 旧路由兼容，不会让已有文章无法打开。
 - Windows 和 Android 布局没有严重遮挡和溢出。
 

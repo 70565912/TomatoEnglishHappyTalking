@@ -601,21 +601,52 @@ class VolcImageService {
   static String _groupPrompt(List<VolcImageBatchRequest> requests) {
     final buffer = StringBuffer()
       ..writeln(
-        'Generate exactly ${requests.length} separate 16:9 English picture-book illustrations as a coherent visual sequence.',
+        'Generate exactly ${requests.length} separate full-frame 16:9 English picture-book illustrations as a coherent visual sequence.',
       )
       ..writeln(
         'Keep the same book title, character appearances, costumes, color palette, and picture-book style across all images.',
       )
       ..writeln(
         'Use any reference images only for character and style consistency. Natural story text, signs, playing-card marks, or book-title lettering may appear when useful, but the image sequence should stay visual and readable without relying on text alone.',
+      )
+      ..writeln(
+        'For every image, match the listed segment action, characters, props, location, and mood.',
       );
     for (var index = 0; index < requests.length; index += 1) {
       buffer
         ..writeln()
         ..writeln('Image ${index + 1}:')
-        ..writeln(requests[index].prompt.trim());
+        ..writeln(_sanitizePromptArtifacts(requests[index].prompt));
     }
     return buffer.toString().trim();
+  }
+
+  static String _sanitizePromptArtifacts(String prompt) {
+    var cleaned = prompt.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final replacements = <RegExp, String>{
+      RegExp(r'\bopen clean space for subtitles\b', caseSensitive: false):
+          'natural scene composition',
+      RegExp(
+        r'\benough clean open space for app-rendered subtitles outside the generated artwork\b',
+        caseSensitive: false,
+      ): 'natural scene composition',
+      RegExp(r'\bapp[- ]rendered subtitles?\b', caseSensitive: false): 'text',
+      RegExp(r'\bapp displays subtitles separately\b', caseSensitive: false):
+          '',
+      RegExp(r'\bthe app overlays subtitles separately\b',
+          caseSensitive: false): '',
+      RegExp(r'\bsubtitles?\b', caseSensitive: false): 'text',
+      RegExp(r'\bcaptions?\b', caseSensitive: false): 'text',
+    };
+    for (final entry in replacements.entries) {
+      cleaned = cleaned.replaceAll(entry.key, entry.value);
+    }
+    return cleaned.trim();
+  }
+
+  @visibleForTesting
+  static String groupPromptForTest(List<VolcImageBatchRequest> requests) {
+    return _groupPrompt(requests);
   }
 
   static Future<List<int>> _extractImageBytes(Object? responseData) async {

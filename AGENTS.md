@@ -109,10 +109,10 @@ web_ui/
 - `app/lib/features/home|article|follow_read|chat|profile` 下的原生 Screen 仍可作为参考/兼容层，但默认路由进入 `WebShellScreen`。
 - Web UI 与 Flutter 交互时必须通过 `web_bridge_protocol.dart` / `bridge.ts` 的 typed command/event 协议，不要从 Web UI 直接访问云 API 或本地文件系统。
 - 歌曲生成来源固定为 Suno 网页自动化和本地版本库；不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt`、`song_default_source` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供 Suno 缓存、播放、字幕时间轴和视频导出复用。
-- Suno 网页自动化在 `WebShellScreen` 内执行：同一篇文章如果已经保存过上一次 Suno 自动生成的风格，再次进入时直接填入旧风格；没有旧风格时才点击 `Styles` 工具栏里的蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
+- Suno 网页自动化在 `WebShellScreen` 内执行：每次生成都只用当前歌词填表；如果 `Styles` 折叠，必须先点击 `Styles` 折叠头展开到能看到 `Styles` 工具栏魔法棒，再清空旧 `Styles` value 并点击蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把 `More Options` 当成 `Styles` 展开入口。保存下来的风格只作为本次歌曲 metadata，不再回填或作为下载筛选条件；不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
-- Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词/风格达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
-- Suno 歌曲缓存必须按 `styleKey` 分组：`versions` 要带 `stylePrompt` / `styleKey`，`detectedSongUrls` 记录当前风格已检测到的完整歌曲链接，`downloadComplete=true` 只表示这些链接都有本地音频版本。重新检测下载时只下载缺失链接，不要重复下载已存在的同一 `songUrl`；同一风格已完整下载时只能进入已完成待命/播放状态，不能自动再次点击 Create 消耗 credits。
+- Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
+- Suno 歌曲缓存和下载唯一性按当前歌词与 `songUrl` 判断：缓存组使用 `lyricsHash` / `contentHash`，`versions` 可保留旧 `stylePrompt` / `styleKey` metadata 但不再按风格分组，`detectedSongUrls` 记录当前歌词已检测到的完整歌曲链接，`downloadComplete=true` 只表示这些链接都有本地音频版本。重新检测下载时只下载缺失链接，不要重复下载已存在的同一 `songUrl`；用户再次选择生成新歌时仍应重新生成 Suno 风格并进入 Create 确认流程。
 - Suno 歌曲字幕时间轴使用 App 提交给 Suno 的原歌词作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
 - Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
 - 听力播放、全屏播放和普通录制只播放英文 TTS；中文翻译只作为字幕/对照文本显示，不再触发听力中文 TTS 预加载或播放。`listening.fullscreenReady` 只检查当前和下一句英文音频，绘本图片只预取当前和下一张；文章保存时应优先保存导入译文，缺失时可用 `PracticeTextService.translateToChinese` 生成逐句字幕，后续听力/跟读只读库中译文，不在打开页面时批量翻译。
@@ -242,6 +242,8 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 章节组图 prompt 必须基于书籍名、章节标题、当前章节故事内容和结构化分镜，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。
 - Web UI 中“书籍”就是 `story_series`；新增文章页不再展示绘本开关，保存时默认异步生成连续绘本组图。只有内部测试或显式 payload 才可以传 `pictureBookEnabled=false` 跳过生成。
 - 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
+- 绘本图片 prompt 使用 `chapter_storyboard_group_v2` / `picture_book_chapter_plan_v2`：强调 full-frame 16:9 连续绘本、当前分镜动作/角色/道具/地点/情绪匹配和自然场景构图。不要再把 `open clean space for subtitles`、`app-rendered subtitles`、`captions` 等 UI/字幕留白要求写进图片 prompt；字幕由 App 单独叠加或导出。
+- `pictureBook.pageImage` 支持 `variant: "full" | "thumbnail"`；创作中心和书籍封面应优先请求 `thumbnail`，缩略图持久缓存在 `picture_book_thumbnails`，不要在列表页一次性把整章原图作为 data URI 加载。听力播放、全屏和导出需要原图时再请求 full/original。
 - 绘本 prompt 默认使用本地安全模板和系列设定，不要每章都调用方舟文本模型润色；AI prompt 润色只在显式打开 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS=true` 时启用。
 - 系列设定集默认本地合并章节摘要；AI 更新系列 bible 只在显式打开 `TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE=true` 时启用。
 - 自动生成风格/角色参考图默认关闭以节省费用；只有显式打开 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true` 时才创建或使用自动参考图。正式冷缓存流程应尽量保持每章一次结构化分镜调用和一次顺序组图调用。

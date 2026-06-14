@@ -402,27 +402,6 @@ function App() {
               }
               rememberSeriesKey(book.key);
             }}
-            onDelete={async (articleId) => {
-              const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
-                'article.delete',
-                { articleId },
-              );
-              setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
-            }}
-            onDeleteSeries={async (seriesId) => {
-              try {
-                const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
-                  'series.delete',
-                  { seriesId },
-                );
-                setArticles(payload.articles);
-                if (payload.series) setSeries(payload.series);
-                setNotice('空书籍已删除');
-              } catch (err) {
-                setNotice(err instanceof Error ? err.message : String(err));
-              }
-            }}
             onRename={async (articleId, title) => {
               const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
                 'article.rename',
@@ -458,14 +437,6 @@ function App() {
             series={series}
             onNavigate={navigate}
             onRecentBookKeyChange={rememberSeriesKey}
-            onDelete={async (articleId) => {
-              const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
-                'article.delete',
-                { articleId },
-              );
-              setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
-            }}
             onRename={async (articleId, title) => {
               const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
                 'article.rename',
@@ -535,6 +506,28 @@ function App() {
               if (payload.articles) setArticles(payload.articles);
               if (payload.series) setSeries(payload.series);
             }}
+            onDelete={async (articleId) => {
+              const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
+                'article.delete',
+                { articleId },
+              );
+              setArticles(payload.articles);
+              if (payload.series) setSeries(payload.series);
+              setNotice('章节已删除');
+            }}
+            onDeleteSeries={async (seriesId) => {
+              try {
+                const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
+                  'series.delete',
+                  { seriesId },
+                );
+                setArticles(payload.articles);
+                if (payload.series) setSeries(payload.series);
+                setNotice('空书籍已删除');
+              } catch (err) {
+                setNotice(err instanceof Error ? err.message : String(err));
+              }
+            }}
           />
         )}
 
@@ -592,8 +585,6 @@ function HomePage({
   onRecentBookKeyChange,
   onNavigate,
   onOpenBook,
-  onDelete,
-  onDeleteSeries,
   onRename,
 }: {
   articles: Article[];
@@ -603,8 +594,6 @@ function HomePage({
   onRecentBookKeyChange: (key: string | null) => void;
   onNavigate: (path: string) => void;
   onOpenBook: (book: BookGroup) => void;
-  onDelete: (articleId: number) => Promise<void>;
-  onDeleteSeries: (seriesId: number) => Promise<void>;
   onRename: (articleId: number, title: string) => Promise<void>;
 }) {
   const [selectedBookKey, setSelectedBookKey] = useState<string | null>(null);
@@ -723,7 +712,6 @@ function HomePage({
           setChapterOrder(nextOrder);
           setChapterPage(0);
         }}
-        onDeleteSeries={onDeleteSeries}
         renderChapterRow={({ selectedBook: book, article, imageSrc }) => (
           <MissionRow
             key={article.id}
@@ -745,7 +733,6 @@ function HomePage({
               onRecentBookKeyChange(book.key);
               onNavigate(`/chat/${article.id}`);
             }}
-            onDelete={() => onDelete(article.id)}
             onRename={() => {
               setRenameDraft({ article, title: article.title });
               setRenameError(null);
@@ -792,7 +779,6 @@ function BookDetailPage({
   series,
   onNavigate,
   onRecentBookKeyChange,
-  onDelete,
   onRename,
 }: {
   seriesId: number;
@@ -800,7 +786,6 @@ function BookDetailPage({
   series: StorySeries[];
   onNavigate: (path: string) => void;
   onRecentBookKeyChange: (key: string | null) => void;
-  onDelete: (articleId: number) => Promise<void>;
   onRename: (articleId: number, title: string) => Promise<void>;
 }) {
   const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
@@ -894,7 +879,6 @@ function BookDetailPage({
                 onListen={() => openPlayer('listening', article.id)}
                 onFollow={() => onNavigate(`/follow/${article.id}`)}
                 onChat={() => onNavigate(`/chat/${article.id}`)}
-                onDelete={() => onDelete(article.id)}
                 onRename={() => {
                   setRenameDraft({ article, title: article.title });
                   setRenameError(null);
@@ -1369,6 +1353,8 @@ function CreationCenterPage({
   onNavigate,
   onNotice,
   onArticlesUpdated,
+  onDelete,
+  onDeleteSeries,
 }: {
   articles: Article[];
   series: StorySeries[];
@@ -1378,6 +1364,8 @@ function CreationCenterPage({
   onNavigate: (path: string) => void;
   onNotice: (message: string) => void;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
+  onDelete: (articleId: number) => Promise<void>;
+  onDeleteSeries: (seriesId: number) => Promise<void>;
 }) {
   const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
   const routeBook = books.find((book) => book.seriesId === initialSeriesId) ??
@@ -1489,6 +1477,7 @@ function CreationCenterPage({
           setChapterOrder(nextOrder);
           setChapterPage(0);
         }}
+        onDeleteSeries={onDeleteSeries}
         renderChapterRow={({ article, imageSrc }) => (
           <MissionRow
             key={article.id}
@@ -1531,6 +1520,11 @@ function CreationCenterPage({
                 </button>
               </>
             }
+            onDelete={() => {
+              void onDelete(article.id).catch((error) => {
+                onNotice(error instanceof Error ? error.message : '章节删除失败');
+              });
+            }}
           />
         )}
       />
@@ -1569,13 +1563,20 @@ function PictureBookCreationPanel({
 
   const loadState = () => {
     setLoading(true);
-    sendNative<PictureBookState>('pictureBook.state', { articleId: article.id, includeImageUris: true })
+    sendNative<PictureBookState>('pictureBook.state', { articleId: article.id, includeImageUris: false })
       .then(setState)
       .catch((error) => onNotice(error instanceof Error ? error.message : '绘本状态加载失败'))
       .finally(() => setLoading(false));
   };
 
   useEffect(loadState, [article.id]);
+  useEnsureAllPictureBookPageImages({
+    articleId: article.id,
+    state,
+    enabled: Boolean(state),
+    imageVariant: 'thumbnail',
+    onPictureBookLoaded: setState,
+  });
 
   const retryPage = (page: PictureBookPage) => {
     if (!pictureBookRetryGate.begin(article.id, page.pageIndex)) return;
@@ -1613,14 +1614,14 @@ function PictureBookCreationPanel({
           ) : (
             state.pages.map((page, index) => {
               const safePageIndex = Number.isFinite(page.pageIndex) ? page.pageIndex : index;
-              const imageSource = directImageSource(page.imageUri) || directImageSource(page.imagePath);
+              const imageSource = directImageSource(page.imageUri);
               return (
                 <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
                   <div className="picture-creation-media">
                     {imageSource ? (
                       <img src={imageSource} alt="" />
                     ) : (
-                      <span>{page.status === 'error' ? '生成失败' : '等待图片'}</span>
+                      <span>{page.status === 'error' ? '生成失败' : '加载缩略图'}</span>
                     )}
                   </div>
                   <div>
@@ -1696,13 +1697,12 @@ function SongCreationPanel({
   };
 
   const versions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
-  const groupedVersions = groupSongVersionsByStyle(versions);
+  const groupedVersions = groupSongVersionsForDisplay(versions);
   const waitingConfirm = isSunoWaitingConfirm(songState);
   const canDownloadMissing =
     songState?.source === 'suno' &&
-    Boolean(songState.songUrl?.trim()) &&
     songState.status !== 'playing' &&
-    songState.downloadComplete === false &&
+    songState.status !== 'generating' &&
     !waitingConfirm;
 
   return (
@@ -1714,7 +1714,7 @@ function SongCreationPanel({
         </button>
       </div>
       <p className="creation-panel-note">
-        歌曲生成只保留 Suno 网页自动化。本页负责生成、确认 credits、下载缺失版本、生成歌词时间轴和导出歌曲视频。
+        歌曲生成只保留 Suno 网页自动化。本页负责生成、确认 credits、按歌词查找未下载版本、生成歌词时间轴和导出歌曲视频。
       </p>
       <div className="creation-resource-grid" aria-label="歌曲资源状态">
         <ResourceRow label="Suno 音频" value="保存在程序目录 suno-music/" />
@@ -1759,9 +1759,9 @@ function SongCreationPanel({
             className="ghost-action"
             type="button"
             disabled={busy}
-            onClick={() => runSongCommand('listening.songDownloadSunoExisting', {}, '已开始下载缺失版本')}
+            onClick={() => runSongCommand('listening.songDownloadSunoExisting', {}, '已开始检测并下载未保存版本')}
           >
-            <Icon name="download" /> 下载缺失版本
+            <Icon name="download" /> 检测下载
           </button>
         )}
       </div>
@@ -1771,7 +1771,7 @@ function SongCreationPanel({
         ) : groupedVersions.map((group) => (
           <div className="song-style-group" key={group.key}>
             <div className="song-style-group-heading">
-              <span>风格</span>
+              <span>版本</span>
               <b>{group.label}</b>
             </div>
             <div className="song-version-row">
@@ -2276,7 +2276,6 @@ type SongDialogTab = 'play' | 'settings';
 type SongDialogState = {
   activeTab: SongDialogTab;
   source: SongSource;
-  stylePrompt: string;
   suggesting: boolean;
   submitting: boolean;
   error: string | null;
@@ -2474,7 +2473,6 @@ function ListeningPage({
           articleId,
           status: 'error',
           source: 'suno',
-          stylePrompt: '',
           audioPath: null,
           errorMessage: loadError instanceof Error ? loadError.message : '本地歌曲状态读取失败',
         });
@@ -2560,7 +2558,6 @@ function ListeningPage({
                 activeTab: 'play',
                 submitting: false,
                 suggesting: false,
-                stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
                 error: null,
               }
             : current,
@@ -2574,7 +2571,6 @@ function ListeningPage({
                 activeTab: 'play',
                 submitting: false,
                 suggesting: false,
-                stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
                 error: null,
               }
             : current,
@@ -2612,6 +2608,12 @@ function ListeningPage({
   }, [songState?.articleId, songState?.versions]);
 
   useEffect(() => {
+    if (mode === 'song') {
+      fullscreenReadyTokenRef.current += 1;
+      setFullscreenReady(null);
+      setFullscreenReadyLoading(false);
+      return;
+    }
     if (items.length === 0) {
       setFullscreenReady(null);
       setFullscreenReadyLoading(false);
@@ -2660,6 +2662,7 @@ function ListeningPage({
     articleId,
     currentIndex,
     items,
+    mode,
     englishPreloadState?.runId,
     englishPreloadState?.status,
   ]);
@@ -2894,24 +2897,18 @@ function ListeningPage({
     setSongDialog({
       activeTab: mode === 'song' || versions.length > 0 ? 'play' : 'settings',
       source: 'suno',
-      stylePrompt: currentSongState?.stylePrompt?.trim() ?? '',
       suggesting: false,
       submitting: false,
       error: currentSongState?.status === 'error' ? currentSongState.errorMessage?.trim() || null : null,
     });
   };
 
-  const suggestSongStyle = async () => {
-    return undefined;
-  };
-
   const generateSong = async () => {
     if (!songDialog || songDialog.submitting || songDialog.suggesting) return;
-    const stylePrompt = songDialog.stylePrompt.trim();
 
     const lyrics = songLyricsFromItems(items);
     const confirmed = window.confirm(
-      '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词；如果这篇文章已有上次 Suno 自动风格会直接复用，否则点击 Suno 蓝色魔法棒根据歌词生成风格，并在点击 Create 前再次确认消耗 Suno credits。是否继续？',
+      '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词，并每次点击 Suno 蓝色魔法棒根据歌词重新生成风格；点击 Create 前会再次确认消耗 Suno credits。是否继续？',
     );
     if (!confirmed) return;
 
@@ -2919,7 +2916,6 @@ function ListeningPage({
     setSongState({
       articleId,
       status: 'generating',
-      stylePrompt,
       errorMessage: null,
       source: 'suno',
     });
@@ -2927,7 +2923,6 @@ function ListeningPage({
       const payload = await sendNative<ListeningSongStatePayload>('listening.songGenerate', {
         articleId,
         source: 'suno',
-        stylePrompt,
         lyrics,
       });
       setSongState(payload);
@@ -2937,7 +2932,6 @@ function ListeningPage({
                 ...current,
                 activeTab: payload.status === 'ready' || isSunoWaitingConfirm(payload) ? 'play' : current.activeTab,
                 submitting: false,
-                stylePrompt: payload.stylePrompt?.trim() ?? current.stylePrompt,
               }
             : current,
       );
@@ -2946,7 +2940,6 @@ function ListeningPage({
       setSongState({
         articleId,
         status: 'error',
-        stylePrompt,
         source: 'suno',
         errorMessage: message,
       });
@@ -2987,7 +2980,7 @@ function ListeningPage({
   };
 
   const retrySunoDownload = async () => {
-    if (!songState?.songUrl || songState.source !== 'suno') return;
+    if (songState?.source !== 'suno') return;
     const previousState = songState;
     setSongState({
       ...previousState,
@@ -3017,7 +3010,6 @@ function ListeningPage({
       setSongState((current) => ({
         articleId,
         status: 'error',
-        stylePrompt: current?.stylePrompt ?? '',
         source: current?.source,
         versions: current?.versions,
         errorMessage: songError instanceof Error ? songError.message : '歌曲播放失败',
@@ -3039,7 +3031,6 @@ function ListeningPage({
       setSongState((current) => ({
         articleId,
         status: 'error',
-        stylePrompt: current?.stylePrompt ?? '',
         source: current?.source,
         versions: current?.versions,
         errorMessage: songError instanceof Error ? songError.message : '默认歌曲设置失败',
@@ -3122,7 +3113,6 @@ function ListeningPage({
       setSongState((current) => ({
         articleId,
         status: 'error',
-        stylePrompt: current?.stylePrompt ?? '',
         source: current?.source,
         versions: current?.versions,
         errorMessage: songError instanceof Error ? songError.message : '歌曲停止失败',
@@ -3428,11 +3418,11 @@ function ListeningPage({
     songVersions.find((version) => version.isDefault) ??
     songVersions[0] ??
     null;
+  const selectedSongSubtitleNotice = songSubtitleNoticeForVersion(selectedSongVersion);
   const canRetrySunoDownload =
     songState?.source === 'suno' &&
-    Boolean(songState?.songUrl?.trim()) &&
     songState?.status !== 'playing' &&
-    (songState?.status !== 'ready' || songState.downloadComplete === false) &&
+    songState?.downloadComplete !== true &&
     !songWaitingConfirm &&
     !(songGenerating && songState?.automationStatus !== 'manualAction');
   const modeSwitch = onSwitchMode ? (
@@ -3584,6 +3574,9 @@ function ListeningPage({
                 {songVersions.length === 0 && (
                   <p className="fullscreen-ready-hint">还没有本地歌曲，请到创作中心生成或下载。</p>
                 )}
+                {selectedSongSubtitleNotice && (
+                  <p className="fullscreen-ready-hint">{selectedSongSubtitleNotice}</p>
+                )}
               </div>
             ) : (
               <div className="button-row">
@@ -3614,7 +3607,7 @@ function ListeningPage({
                 </button>
               </div>
             )}
-            {!fullscreenReadiness.ready && (
+            {mode !== 'song' && !fullscreenReadiness.ready && (
               <p className="fullscreen-ready-hint">{fullscreenReadiness.reason}</p>
             )}
             {songState?.status === 'error' && songState.errorMessage?.trim() && (
@@ -3727,10 +3720,6 @@ function ListeningPage({
           onTabChange={(activeTab) =>
             setSongDialog((current) => (current ? { ...current, activeTab } : current))
           }
-          onStyleChange={(stylePrompt) =>
-            setSongDialog((current) => (current ? { ...current, stylePrompt, error: null } : current))
-          }
-          onSuggest={() => void suggestSongStyle()}
           onCancel={() => {
             setSongDialog(null);
           }}
@@ -3847,8 +3836,6 @@ function SongDialog({
   recordingBusy,
   onTabChange,
   onSourceChange,
-  onStyleChange,
-  onSuggest,
   onCancel,
   onConfirm,
   onConfirmSunoCreate,
@@ -3869,8 +3856,6 @@ function SongDialog({
   recordingBusy: boolean;
   onTabChange: (tab: SongDialogTab) => void;
   onSourceChange: (source: SongSource) => void;
-  onStyleChange: (stylePrompt: string) => void;
-  onSuggest: () => void;
   onCancel: () => void;
   onConfirm: () => void;
   onConfirmSunoCreate: () => void;
@@ -3880,23 +3865,16 @@ function SongDialog({
   onRecordSongVideo: (versionId: string) => void;
   onStopSong: () => void;
 }) {
-  const styleRef = useRef<HTMLTextAreaElement | null>(null);
   const busy = state.suggesting || state.submitting;
-  const groupedVersions = useMemo(() => groupSongVersionsByStyle(songVersions), [songVersions]);
-
-  useEffect(() => {
-    if (state.activeTab === 'settings') {
-      styleRef.current?.focus({ preventScroll: true });
-    }
-  }, [state.activeTab]);
+  const groupedVersions = useMemo(() => groupSongVersionsForDisplay(songVersions), [songVersions]);
 
   return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog song-style-dialog" role="dialog" aria-modal="true" aria-label="歌曲风格设置">
+      <section className="edit-dialog song-style-dialog" role="dialog" aria-modal="true" aria-label="Suno 歌曲设置">
         <div className="edit-dialog-heading">
           <div>
-            <b>歌曲风格设置</b>
-            <small>{state.activeTab === 'play' ? '选择本地已下载的完整歌曲版本播放。' : '已有 Suno 风格会复用；没有时由 Suno 根据歌词生成。'}</small>
+            <b>Suno 歌曲设置</b>
+            <small>{state.activeTab === 'play' ? '选择本地已下载的完整歌曲版本播放。' : '每次由 Suno 根据歌词重新生成风格。'}</small>
           </div>
           <div className="song-style-heading-actions">
             <button className="icon-button small" type="button" onClick={onCancel} aria-label="关闭">
@@ -3944,7 +3922,7 @@ function SongDialog({
                 {groupedVersions.map((group) => (
                   <div className="song-style-group" key={group.key}>
                     <div className="song-style-group-heading">
-                      <span>风格</span>
+                      <span>版本</span>
                       <b>{group.label}</b>
                     </div>
                     <div className="song-version-row" aria-label={`${group.label} 歌曲版本`}>
@@ -4005,7 +3983,7 @@ function SongDialog({
               )}
               {canRetrySunoDownload && (
                 <button className="ghost-action small" type="button" onClick={onRetrySunoDownload} disabled={busy}>
-                  <Icon name="download" /> 下载缺失版本
+                  <Icon name="download" /> 检测下载
                 </button>
               )}
               {allowGeneration && (
@@ -4029,17 +4007,8 @@ function SongDialog({
             </div>
             <div className="song-source-note suno-style-preview">
               <p>
-                将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，复用本篇文章上次 Suno 风格；没有已保存风格时，优先点击 Suno 自带的魔法棒根据歌词生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
+                将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，并清空旧 Styles，让 Suno 自带魔法棒每次根据歌词重新生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
               </p>
-              <label>
-                <span>Suno 自动风格</span>
-                <textarea
-                  ref={styleRef}
-                  value={state.stylePrompt || '没有已保存风格，登录后由 Suno 蓝色魔法棒根据歌词自动生成'}
-                  rows={3}
-                  readOnly
-                />
-              </label>
             </div>
           </>
         )}
@@ -5155,14 +5124,24 @@ function useEnsureAllPictureBookPageImages({
   articleId,
   state,
   enabled,
+  imageVariant = 'full',
   onPictureBookLoaded,
 }: {
   articleId: number;
   state: PictureBookState | null;
   enabled: boolean;
+  imageVariant?: 'full' | 'thumbnail';
   onPictureBookLoaded: PictureBookStateSetter;
 }) {
   const requestedRef = useRef<Set<string>>(new Set());
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     requestedRef.current = new Set();
@@ -5177,7 +5156,7 @@ function useEnsureAllPictureBookPageImages({
           imagePath: page.imagePath?.trim() ?? '',
         }))
         .filter((page) => {
-          const key = `${articleId}:${page.pageIndex}:${page.imagePath}`;
+          const key = `${imageVariant}:${articleId}:${page.pageIndex}:${page.imagePath}`;
           return !requestedRef.current.has(key);
         })
     : [];
@@ -5187,30 +5166,23 @@ function useEnsureAllPictureBookPageImages({
 
   useEffect(() => {
     if (!enabled || missing.length === 0) return;
-    let cancelled = false;
-    void (async () => {
-      for (const page of missing) {
-        if (cancelled) return;
-        const key = `${articleId}:${page.pageIndex}:${page.imagePath}`;
-        requestedRef.current.add(key);
-        try {
-          const payload = await sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
-            articleId,
-            pageIndex: page.pageIndex,
-          });
-          if (!cancelled) {
-            onPictureBookLoaded((current) => mergePictureBookPageImage(current, payload));
-          }
-        } catch {
-          requestedRef.current.delete(key);
+    const page = missing[0];
+    const key = `${imageVariant}:${articleId}:${page.pageIndex}:${page.imagePath}`;
+    requestedRef.current.add(key);
+    void sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
+      articleId,
+      pageIndex: page.pageIndex,
+      variant: imageVariant,
+    })
+      .then((payload) => {
+        if (mountedRef.current) {
+          onPictureBookLoaded((current) => mergePictureBookPageImage(current, payload));
         }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [articleId, enabled, missingKey, onPictureBookLoaded]);
+      })
+      .catch(() => {
+        requestedRef.current.delete(key);
+      });
+  }, [articleId, enabled, imageVariant, missingKey, onPictureBookLoaded]);
 }
 
 function decodeImageSource(src: string): Promise<boolean> {
@@ -6882,26 +6854,32 @@ function normalizeSongSource(source?: string | null): SongSource {
   return 'suno';
 }
 
-function groupSongVersionsByStyle(versions: SongVersionPayload[]): SongVersionGroup[] {
-  const groups = new Map<string, SongVersionGroup>();
-  for (const version of versions) {
-    const stylePrompt = version.stylePrompt?.trim() ?? '';
-    const key = version.styleKey?.trim() || `legacy:${stylePrompt || 'unknown'}`;
-    const label = stylePrompt || '未命名风格';
-    const group = groups.get(key);
-    if (group) {
-      group.versions.push(version);
-    } else {
-      groups.set(key, { key, label, versions: [version] });
-    }
-  }
-  return Array.from(groups.values());
+function groupSongVersionsForDisplay(versions: SongVersionPayload[]): SongVersionGroup[] {
+  return versions.length > 0
+    ? [{ key: 'suno-local-versions', label: '本地完整歌曲', versions }]
+    : [];
 }
 
 function normalizeTimelineStatus(status?: string | null, timelinePath?: string | null): string {
   const value = (status ?? '').trim();
   if (value) return value;
   return timelinePath?.trim() ? 'ready' : 'missing';
+}
+
+function songSubtitleNoticeForVersion(version?: SongVersionPayload | null): string | null {
+  if (!version) return null;
+  const status = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
+  if (status === 'ready') return null;
+  if (status === 'generating') {
+    return '这首歌的字幕正在生成，生成完成后会同步歌词。';
+  }
+  if (status === 'error') {
+    const detail = version.timelineError?.trim();
+    return detail
+      ? `这首歌字幕生成失败：${detail}。请到创作中心重新生成歌曲字幕。`
+      : '这首歌字幕生成失败，请到创作中心重新生成歌曲字幕。';
+  }
+  return '这首歌还没有生成字幕，请到创作中心生成歌曲字幕。';
 }
 
 function songTimelineLabel(status?: string | null): string {
@@ -6932,7 +6910,7 @@ function songAutomationStatusText(state: ListeningSongStatePayload): string {
     case 'waitingLogin':
       return 'Suno 页面已打开，请先在页面中自行登录。';
     case 'filling':
-      return '正在自动填写 Suno 歌词和风格...';
+      return '正在自动填写 Suno 歌词并生成风格...';
     case 'waitingConfirm':
       return '已填写完成，等待确认消耗 Suno credits。';
     case 'creating':

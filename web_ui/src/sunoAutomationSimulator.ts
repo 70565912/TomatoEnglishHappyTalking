@@ -12,6 +12,8 @@ export interface SunoControlFixture {
   className?: string;
   disabled?: boolean;
   interactive?: boolean;
+  visible?: boolean;
+  hitTestVisible?: boolean;
   rect?: {
     x?: number;
     y?: number;
@@ -21,6 +23,7 @@ export interface SunoControlFixture {
   active?: boolean;
   selected?: boolean;
   pressed?: boolean;
+  expanded?: boolean;
   inOpenMenu?: boolean;
   expectedScore?: number;
 }
@@ -50,18 +53,19 @@ export interface SunoCreateFillDecision {
   action:
     | 'acceptCookies'
     | 'switchAdvanced'
+    | 'expandStyles'
     | 'clickStyleMagic'
     | 'waitStyleMagic'
-    | 'fillGeneratedStyle'
     | 'readyToConfirm'
     | 'manualAction';
   missing: string[];
   advancedActive: boolean;
   stylePrompt?: string;
-  styleSource?: 'sunoMagic' | 'fallback';
+  styleSource?: 'sunoMagic';
   lyricsField?: SunoCreateFieldFixture;
   styleField?: SunoCreateFieldFixture;
   magicControl?: SunoControlFixture;
+  styleExpandControl?: SunoControlFixture;
   message?: string;
 }
 
@@ -136,6 +140,7 @@ export function selectSunoCreateFields(fields: SunoCreateFieldFixture[]): SunoCr
     );
   const scored = fields
     .filter((field) => !field.disabled)
+    .filter((field) => field.visible !== false && field.hitTestVisible !== false)
     .map((field) => {
       const context = normalize([field.label, field.text, field.placeholder, field.context, field.value].join(' '));
       const height = field.rect?.height ?? 0;
@@ -158,9 +163,25 @@ export function selectSunoCreateFields(fields: SunoCreateFieldFixture[]): SunoCr
     });
 
   const formScored = scored.filter((item) => !isUtilityField(item.field));
+  const hasLyricEvidence = (item: { field: SunoCreateFieldFixture; lyricScore: number }) =>
+    item.lyricScore >= 8 ||
+    /lyrics?|歌词|歌詞/i.test(
+      normalize([item.field.label, item.field.text, item.field.placeholder, item.field.context].join(' ')),
+    );
+  const hasStyleEvidence = (item: { field: SunoCreateFieldFixture; styleScore: number }) => {
+    const labeledText = normalize([item.field.label, item.field.text, item.field.context].join(' '));
+    const valueText = normalize([item.field.value, item.field.placeholder].join(' '));
+    return (
+      item.styleScore >= 8 ||
+      /style|styles|genre|music|describe|description|风格|曲风/i.test(labeledText) ||
+      looksLikeSunoGeneratedStyle(valueText)
+    );
+  };
   const choose = (scoreName: 'lyricScore' | 'styleScore', exclude?: SunoCreateFieldFixture) =>
     [...formScored]
       .filter((item) => item.field !== exclude)
+      .filter((item) => scoreName !== 'lyricScore' || hasLyricEvidence(item))
+      .filter((item) => scoreName !== 'styleScore' || hasStyleEvidence(item))
       .sort((left, right) => {
         const scoreDiff = right[scoreName] - left[scoreName];
         if (scoreDiff !== 0) return scoreDiff;
@@ -177,6 +198,7 @@ export function selectSunoCreateFields(fields: SunoCreateFieldFixture[]): SunoCr
     const lyricsRight = lyricsX + lyricsWidth;
     const styleBelowLyrics = formScored
       .filter((item) => item.field !== selectedLyricsField)
+      .filter(hasStyleEvidence)
       .filter((item) => (item.field.rect?.y ?? Number.NEGATIVE_INFINITY) > lyricsY + 20)
       .filter((item) => (item.field.rect?.height ?? 0) >= 60)
       .filter((item) => {
@@ -190,10 +212,9 @@ export function selectSunoCreateFields(fields: SunoCreateFieldFixture[]): SunoCr
   }
   if (formScored.length >= 2 && (!lyricsField || !styleField || lyricsField === styleField)) {
     const byHeight = [...formScored].sort((left, right) => right.height - left.height);
-    lyricsField = byHeight[0]?.field;
-    styleField = byHeight.find((item) => item.field !== lyricsField)?.field;
+    lyricsField = byHeight.find(hasLyricEvidence)?.field;
+    styleField = byHeight.find((item) => item.field !== lyricsField && hasStyleEvidence(item))?.field;
   }
-  if (!lyricsField && formScored.length === 1) lyricsField = formScored[0].field;
   return { lyricsField, styleField };
 }
 
@@ -202,7 +223,6 @@ export function simulateSunoCreateFill(params: {
   controls: SunoControlFixture[];
   fields: SunoCreateFieldFixture[];
   lyrics: string;
-  fallbackStyle?: string;
   ignoredStyle?: string;
   magicAlreadyRequested?: boolean;
   allowMagicClick?: boolean;
@@ -240,33 +260,57 @@ export function simulateSunoCreateFill(params: {
   const { lyricsField, styleField } = selectSunoCreateFields(params.fields);
   const missing: string[] = [];
   if (!lyricsField || !normalize(params.lyrics)) missing.push('lyrics');
-  if (!styleField) missing.push('style');
+
+  const styleExpandControl = params.controls
+    .map((control) => {
+      const label = normalize(control.label || control.text);
+      const context = normalize(control.context);
+      const className = normalize(control.className);
+      const text = normalize(`${label} ${context}`);
+      const styleText = /\bstyles?\b|style of music|style prompt|music style|genre|风格|曲风/i.test(text);
+      const collapsed = control.expanded === false || /closed|collapsed|折叠|收起/i.test(`${context} ${className}`);
+      if (control.disabled) return null;
+      if (control.visible === false || control.hitTestVisible === false) return null;
+      if (!styleText) return null;
+      if (/more options|additional options|options|更多选项|更多设置/i.test(label)) return null;
+      if (/advanced|simple|create song|lyrics?|download|login|sign in|credits|refresh recommended|add style|save prompt|clear all|instrumental|创建|歌词|下载|登录|推荐风格|添加风格/i.test(label)) return null;
+      if (!collapsed && styleField) return null;
+      let score = 0;
+      if (styleText) score += 24;
+      if (collapsed) score += 10;
+      if (/chevron|accordion|collapse|expand/i.test(className)) score += 4;
+      return { control, score };
+    })
+    .filter((item): item is { control: SunoControlFixture; score: number } => Boolean(item))
+    .sort((left, right) => right.score - left.score)[0]?.control;
+
+  if (!styleField) {
+    if (missing.length === 0 && styleExpandControl) {
+      return {
+        action: 'expandStyles',
+        missing: [],
+        advancedActive,
+        lyricsField,
+        styleField,
+        styleExpandControl,
+        message: 'expand-collapsed-styles',
+      };
+    }
+    missing.push('style');
+  }
   if (missing.length > 0) {
-    return { action: 'manualAction', missing, advancedActive, lyricsField, styleField };
+    return { action: 'manualAction', missing, advancedActive, lyricsField, styleField, styleExpandControl };
   }
 
   const styleValue = normalize(styleField?.value);
-  const fallbackStyle = normalize(params.fallbackStyle);
   const ignoredStyle = normalize(params.ignoredStyle);
-  if (styleValue.length >= 6 && styleValue !== ignoredStyle) {
+  if (params.magicAlreadyRequested && styleValue.length >= 6 && styleValue !== ignoredStyle) {
     return {
       action: 'readyToConfirm',
       missing: [],
       advancedActive,
       stylePrompt: styleValue,
       styleSource: 'sunoMagic',
-      lyricsField,
-      styleField,
-    };
-  }
-
-  if (fallbackStyle) {
-    return {
-      action: 'readyToConfirm',
-      missing: [],
-      advancedActive,
-      stylePrompt: fallbackStyle,
-      styleSource: 'fallback',
       lyricsField,
       styleField,
     };
@@ -281,6 +325,7 @@ export function simulateSunoCreateFill(params: {
       const strongMagic = /personalize style prompt|magic wand|magic|wand|spark|魔法|自动.*风格|生成.*风格|曲风.*生成|inspire/i;
       const hasAccent = /accent|aura|magic|wand|spark|blue/i.test(className);
       if (control.disabled || isRejectedStyleMagicControl(control)) return null;
+      if (control.visible === false || control.hitTestVisible === false) return null;
       if (!positive.test(label) && !positive.test(context) && !hasAccent) return null;
       let score = 0;
       if (strongMagic.test(label)) score += 18;
@@ -291,7 +336,19 @@ export function simulateSunoCreateFill(params: {
       return { control, score };
     })
     .filter((item): item is { control: SunoControlFixture; score: number } => Boolean(item))
-    .sort((left, right) => right.score - left.score)[0]?.control;
+      .sort((left, right) => right.score - left.score)[0]?.control;
+
+  if (!magicControl && styleExpandControl) {
+    return {
+      action: 'expandStyles',
+      missing: [],
+      advancedActive,
+      lyricsField,
+      styleField,
+      styleExpandControl,
+      message: 'expand-collapsed-styles',
+    };
+  }
 
   if (magicControl && params.allowMagicClick) {
     return {

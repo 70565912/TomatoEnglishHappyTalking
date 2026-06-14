@@ -36,6 +36,7 @@
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
 | 绘本提示词润色 | 默认使用结构化分镜 + 本地模板；只有 env 开启才远程润色 | 方舟文本 | `picture_book_page_prompt` / `ark_text` | 图片 prompt JSON |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 方舟图片 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
+| 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
 
 ## 新增文章保存流程
 
@@ -343,13 +344,14 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 当前策略：
 
 - 先调用 `ChapterStoryOutlineService.prepareOutline` 生成或读取 `chapter_story_outline_v1`。
+- 图片 prompt / 页面策略版本为 `chapter_storyboard_group_v2`，章节图片计划缓存为 `picture_book_chapter_plan_v2`。
 - 正常为每个分镜生成一个 `PictureBookPage`：
   - `pageIndex = segment.index`
   - `sentenceStartIndex = segment.sentenceStartIndex`
   - `sentenceEndIndex = segment.sentenceEndIndex`
   - `paragraphText = 当前分镜覆盖的英文句子`
 - 分镜数量最多 14 段。超长章节在分镜阶段合并相邻场景，确保一次组图请求覆盖整章。
-- 如果已有页面符合当前 `chapter_storyboard_group_v1` 策略且状态是 ready/skipped/error，不重复生成。
+- 如果已有页面符合当前 `chapter_storyboard_group_v2` 策略且状态是 ready/skipped/error，不重复生成。
 - 如果页面数量、句子范围或 prompt policy 与当前分镜不一致，会删除旧页并按新分镜重建。
 
 ### 章节分镜文本构造
@@ -373,7 +375,32 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - `storyboardCount`
 - `segmentSummary`
 - `segmentText`
-- `promptPolicyVersion: chapter_storyboard_group_v1`
+- `promptPolicyVersion: chapter_storyboard_group_v2`
+
+v2 prompt 约束：
+
+- 使用 full-frame 16:9 连续绘本构图，每张图必须匹配对应分镜的动作、角色、道具、地点和情绪。
+- 自然可见文字只作为故事世界里的物件细节出现，例如书名、标牌、地图、扑克牌花色或手写便条。
+- 不把 `open clean space for subtitles`、`app-rendered subtitles`、`captions` 等 UI/字幕留白要求传给图片模型；App 字幕和导出 SRT 独立处理。
+
+### 绘本图片载入与缩略图
+
+`pictureBook.state` 可以只返回页面 metadata，不携带整章 `imageUri`。Web UI 需要图片时再调用：
+
+```json
+{
+  "type": "pictureBook.pageImage",
+  "payload": {
+    "articleId": 1,
+    "pageIndex": 0,
+    "variant": "thumbnail"
+  }
+}
+```
+
+- `variant: "thumbnail"`：从原图本地生成并缓存到 `picture_book_thumbnails/`，最大 640x360，适合书籍封面和创作中心网格。
+- `variant: "full"` 或省略：返回原图 data URI，适合听力播放、全屏和导出前确认。
+- 缩略图生成失败只影响列表预览，不应触发重新调用图片生成 API。
 
 ### 可选 AI prompt 润色
 

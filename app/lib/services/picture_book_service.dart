@@ -1,8 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as path_lib;
 
 import '../data/models/article_model.dart';
 import '../data/models/picture_book_model.dart';
@@ -18,10 +21,13 @@ typedef PictureBookProgressCallback = FutureOr<void> Function(
 
 class PictureBookService {
   static final Map<String, String> _imageUriCache = <String, String>{};
-  static const String _promptPolicyVersion = 'chapter_storyboard_group_v1';
-  static const String _chapterPlanCachePurpose = 'picture_book_chapter_plan_v1';
+  static final Map<String, String> _thumbnailPathCache = <String, String>{};
+  static const int _creationThumbnailMaxWidth = 640;
+  static const int _creationThumbnailMaxHeight = 360;
+  static const String _promptPolicyVersion = 'chapter_storyboard_group_v2';
+  static const String _chapterPlanCachePurpose = 'picture_book_chapter_plan_v2';
   static const String _chapterPlanPolicyVersion =
-      'picture_book_chapter_plan_v1';
+      'picture_book_chapter_plan_v2';
   static const int _maxReferenceImagesPerRequest = int.fromEnvironment(
     'TOMATO_PICTURE_BOOK_MAX_REFERENCE_IMAGES',
     defaultValue: 6,
@@ -36,7 +42,7 @@ class PictureBookService {
   );
 
   static const String _naturalTextPolicy =
-      'NATURAL TEXT POLICY: visible text is allowed when it naturally belongs in the chapter illustration, such as a book title, sign, playing-card markings, map details, labels, handwritten notes, or decorative lettering. Text is optional; do not rely on text alone to explain the story because the app displays subtitles separately.';
+      'TEXT POLICY: visible letters and words are optional and should appear only as physical story-world details, such as a book cover, sign, playing-card marks, map details, handwritten note, or decorative lettering. The illustration should remain understandable through action, expression, props, and setting.';
 
   static const String _safeClassicStoryPolicy =
       'SAFETY ADAPTATION FOR CLASSIC STORY NONSENSE: reinterpret severe royal threats or aggressive old-fashioned phrases as harmless theatrical royal anger, comic panic, exaggerated gestures, and confused reactions. Keep every character safe, whole, expressive, and storybook-friendly.';
@@ -48,7 +54,7 @@ class PictureBookService {
     'safety':
         'safe, warm, child-appropriate storybook imagery; no frightening adult content, no graphic violence, no adult sexual content, no hateful content, no realistic gore',
     'layout':
-        'a coherent sequence of 16:9 story illustrations, one image per storyboard segment, cinematic picture-book framing, enough visual focus for app-rendered subtitles, natural text-bearing props are allowed when useful',
+        'a coherent sequence of full-frame 16:9 story illustrations, one image per storyboard segment, cinematic picture-book framing, clear visual focus on the current story action, natural story-world composition',
   };
 
   static Future<StorySeries> createSeries({
@@ -665,6 +671,7 @@ class PictureBookService {
   static Future<Map<String, dynamic>> pageImagePayload({
     required int articleId,
     required int pageIndex,
+    String variant = 'full',
   }) async {
     final pages = await DatabaseService.getPictureBookPages(articleId);
     PictureBookPage? targetPage;
@@ -683,15 +690,23 @@ class PictureBookService {
       };
     }
 
-    final imageUri = await _imageUriForPath(targetPage.imagePath);
+    final normalizedVariant = variant.trim().toLowerCase();
+    final useThumbnail = normalizedVariant == 'thumbnail';
+    final imageUri = useThumbnail
+        ? await _thumbnailImageUriForPath(targetPage.imagePath)
+        : await _imageUriForPath(targetPage.imagePath);
     final imagePath = targetPage.imagePath?.trim() ?? '';
     return {
       'articleId': articleId,
       'pageIndex': pageIndex,
+      'variant': useThumbnail ? 'thumbnail' : 'full',
       'imageUri': imageUri,
       'missing': imageUri == null && imagePath.isNotEmpty,
-      'errorMessage':
-          imageUri == null && imagePath.isNotEmpty ? '绘本缓存文件丢失，请重试生成' : null,
+      'errorMessage': imageUri == null && imagePath.isNotEmpty
+          ? useThumbnail
+              ? '绘本缩略图缓存生成失败，请重试'
+              : '绘本缓存文件丢失，请重试生成'
+          : null,
     };
   }
 
@@ -732,13 +747,14 @@ class PictureBookService {
       if (imagePath.isEmpty) {
         continue;
       }
-      final imageUri = await _imageUriForPath(imagePath);
+      final imageUri = await _thumbnailImageUriForPath(imagePath);
       if (imageUri == null) {
         continue;
       }
       return {
         'coverImagePath': imagePath,
         'coverImageUri': imageUri,
+        'coverImageVariant': 'thumbnail',
       };
     }
     return null;
@@ -1110,6 +1126,8 @@ class PictureBookService {
           '- Each page prompt must be a concrete 16:9 illustration prompt and must include visual continuity details for recurring characters, costumes, palette, story world, setting logic, mood, and action.',
           '- Preserve known recurring character identity from the book title and series bible, but prioritize the current chapter content.',
           '- Keep every image safe, warm, child-appropriate, and suitable for a coherent sequential group image request.',
+          '- Each prompt must visibly match its assigned sentence range: include the main action, characters, props, setting, and mood from that segment.',
+          '- If a calm area is needed for composition, describe natural scenery that belongs in the scene.',
           '',
           'Numbered chapter sentences:',
           numberedSentences.isEmpty
@@ -1304,7 +1322,7 @@ class PictureBookService {
       'characters':
           segment.characters.isNotEmpty ? segment.characters : storyCharacters,
       'prompt':
-          '${defaultStyleGuide['visualStyle']}. Create image ${segment.pageIndex + 1} of ${segment.pageCount} in a continuous 16:9 picture-book sequence for the book/story series "${series.title}" and chapter "${chapter.chapterTitle}". This image corresponds only to this storyboard segment, but it must visually match the same characters, costumes, setting logic, color palette, and story world used by the other images in the same generated group. Segment title: ${segment.title}. Segment summary: ${segment.summary}. Visual direction: ${segment.visualPrompt}. Segment story text: $safeChapterStory. $_naturalTextPolicy $_safeClassicStoryPolicy',
+          '${defaultStyleGuide['visualStyle']}. Create image ${segment.pageIndex + 1} of ${segment.pageCount} in a continuous full-frame 16:9 picture-book sequence for the book/story series "${series.title}" and chapter "${chapter.chapterTitle}". This image corresponds only to this storyboard segment, but it must visually match the same characters, costumes, setting logic, color palette, and story world used by the other images in the same generated group. Segment title: ${segment.title}. Segment summary: ${segment.summary}. Visual direction: ${segment.visualPrompt}. Segment story text: $safeChapterStory. $_naturalTextPolicy $_safeClassicStoryPolicy',
       'negativePrompt': defaultStyleGuide['safety'],
       'textPolicy': _naturalTextPolicy,
       'safeClassicStoryPolicy': _safeClassicStoryPolicy,
@@ -1489,6 +1507,112 @@ class PictureBookService {
     return imageUri;
   }
 
+  static Future<String?> _thumbnailImageUriForPath(String? rawPath) async {
+    final thumbnailPath = await _thumbnailPathForImage(rawPath);
+    if (thumbnailPath == null || thumbnailPath.trim().isEmpty) {
+      return null;
+    }
+    return _imageUriForPath(thumbnailPath);
+  }
+
+  static Future<String?> _thumbnailPathForImage(String? rawPath) async {
+    final imagePath = rawPath?.trim() ?? '';
+    if (imagePath.isEmpty) {
+      return null;
+    }
+
+    final source = File(imagePath);
+    if (!await source.exists()) {
+      return null;
+    }
+
+    final stat = await source.stat();
+    final cacheIdentity = ApiCacheService.canonicalJson({
+      'version': 1,
+      'sourcePath': path_lib.normalize(path_lib.absolute(source.path)),
+      'sourceLength': stat.size,
+      'sourceModifiedMs': stat.modified.millisecondsSinceEpoch,
+      'maxWidth': _creationThumbnailMaxWidth,
+      'maxHeight': _creationThumbnailMaxHeight,
+    });
+    final cachedPath = _thumbnailPathCache[cacheIdentity];
+    if (cachedPath != null && await File(cachedPath).exists()) {
+      return cachedPath;
+    }
+
+    final cacheKey = await ApiCacheService.hashUtf8(cacheIdentity);
+    final directory =
+        await ApiCacheService.cacheDirectory('picture_book_thumbnails');
+    final target = File(path_lib.join(directory.path, '$cacheKey.png'));
+    if (await target.exists() && await target.length() > 0) {
+      _thumbnailPathCache[cacheIdentity] = target.path;
+      return target.path;
+    }
+
+    try {
+      final bytes = await source.readAsBytes();
+      final thumbnail = await _resizeImageToPng(
+        bytes,
+        maxWidth: _creationThumbnailMaxWidth,
+        maxHeight: _creationThumbnailMaxHeight,
+      );
+      if (thumbnail.isEmpty) {
+        return null;
+      }
+      await target.writeAsBytes(thumbnail, flush: true);
+      _thumbnailPathCache[cacheIdentity] = target.path;
+      return target.path;
+    } catch (error, stackTrace) {
+      debugPrint('PictureBook thumbnail generation failed: $error');
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'picture_book_service',
+          context: ErrorDescription('generating picture-book thumbnail'),
+        ),
+      );
+      return null;
+    }
+  }
+
+  static Future<Uint8List> _resizeImageToPng(
+    Uint8List bytes, {
+    required int maxWidth,
+    required int maxHeight,
+  }) async {
+    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.FrameInfo? frame;
+    try {
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= 0 || height <= 0) {
+        return Uint8List(0);
+      }
+      final scale = math.min(
+        1.0,
+        math.min(maxWidth / width, maxHeight / height),
+      );
+      final targetWidth = math.max(1, (width * scale).round());
+      final targetHeight = math.max(1, (height * scale).round());
+      codec = await descriptor.instantiateCodec(
+        targetWidth: targetWidth,
+        targetHeight: targetHeight,
+      );
+      frame = await codec.getNextFrame();
+      final data = await frame.image.toByteData(format: ui.ImageByteFormat.png);
+      return data?.buffer.asUint8List() ?? Uint8List(0);
+    } finally {
+      frame?.image.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer.dispose();
+    }
+  }
+
   static String _imageContentType(String imagePath) {
     final lower = imagePath.toLowerCase();
     if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
@@ -1548,8 +1672,7 @@ class PictureBookService {
         promptContinuity.isNotEmpty ? promptContinuity : knownContinuity;
     final storyContext = _seriesStoryContext(seriesTitle);
     final sceneGuard = _knownSeriesSceneGuard(seriesTitle);
-    final style = promptJson['styleGuide']?.toString() ??
-        defaultStyleGuide['visualStyle'].toString();
+    final style = _styleGuideSummary(promptJson['styleGuide']);
     final pageIndex = (promptJson['pageIndex'] as num?)?.toInt();
     final pageCount = (promptJson['pageCount'] as num?)?.toInt();
     final imageNumber = pageIndex == null ? '' : '${pageIndex + 1}';
@@ -1572,8 +1695,22 @@ class PictureBookService {
       'Use the book title, chapter title, and current storyboard segment as the priority. Show the segment setting, main characters, props, mood, and action in one cohesive scene.',
       'Keep recurring characters, costumes, color palette, and setting logic visually consistent with the other images in the same generated group.',
       'Do not import unrelated characters or locations from earlier segments unless the current segment mentions or strongly implies them.',
-      'The app overlays subtitles separately, so readable text can be decorative or atmospheric, but facial expression, posture, action, and setting should carry the story.',
     ].join('\n');
+  }
+
+  static String _styleGuideSummary(Object? raw) {
+    final styleGuide = _mapValue(raw);
+    final visualStyle =
+        styleGuide['visualStyle']?.toString().trim().isNotEmpty == true
+            ? styleGuide['visualStyle'].toString().trim()
+            : defaultStyleGuide['visualStyle'].toString();
+    final audience =
+        styleGuide['audience']?.toString().trim().isNotEmpty == true
+            ? styleGuide['audience'].toString().trim()
+            : defaultStyleGuide['audience'].toString();
+    return _sanitizeForImagePrompt(
+      '$visualStyle. Audience: $audience. Full-frame natural scene composition focused on current story action.',
+    );
   }
 
   static String _sanitizeForImagePrompt(String text) {
@@ -1583,6 +1720,19 @@ class PictureBookService {
     }
 
     final replacements = <RegExp, String>{
+      RegExp(r'\bopen clean space for subtitles\b', caseSensitive: false):
+          'natural scene composition',
+      RegExp(
+        r'\benough clean open space for app-rendered subtitles outside the generated artwork\b',
+        caseSensitive: false,
+      ): 'natural scene composition',
+      RegExp(r'\bapp[- ]rendered subtitles?\b', caseSensitive: false): 'text',
+      RegExp(r'\bapp displays subtitles separately\b', caseSensitive: false):
+          '',
+      RegExp(r'\bthe app overlays subtitles separately\b',
+          caseSensitive: false): '',
+      RegExp(r'\bsubtitles?\b', caseSensitive: false): 'text',
+      RegExp(r'\bcaptions?\b', caseSensitive: false): 'text',
       RegExp(r'\bunder sentence of execution\b', caseSensitive: false):
           'in serious trouble with the Queen',
       RegExp(r'\bsentence of execution\b', caseSensitive: false):

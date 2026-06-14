@@ -85,6 +85,7 @@ export interface PictureBookState {
 export interface PictureBookPageImagePayload {
   articleId: number;
   pageIndex: number;
+  variant?: 'full' | 'thumbnail' | string;
   imageUri?: string | null;
   missing?: boolean;
   errorMessage?: string | null;

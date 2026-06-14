@@ -321,7 +321,7 @@ class ArticleSongVersion {
 }
 ```
 
-Suno metadata 继续按 `styleKey` 分组；timeline 是版本级数据，因为不同版本的歌唱节奏和哼唱长度可能不同。
+Suno metadata 按当前歌词的 `lyricsHash` / `contentHash` 恢复缓存组；timeline 是版本级数据，因为不同版本的歌唱节奏和哼唱长度可能不同。
 
 ## 失败处理
 

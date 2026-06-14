@@ -492,13 +492,13 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 
 处理：
 
-- 同一篇文章如果已经保存过上一次 Suno 自动生成的风格，再次进入 Suno 时直接把这个旧风格填入 `Styles`，不要再次点魔法棒。
-- 没有已保存风格时，自动化只点击 `Styles` 工具栏里的蓝色 `Personalize style prompt to match your taste` 按钮，然后等待 Suno 把生成结果写入真实 `textarea.value`。
+- 每次进入 Suno 生成流程时，只填当前歌词；如果 `Styles` 折叠，先点击 `Styles` 折叠头展开到能看到 `Styles` 工具栏魔法棒，再清空旧值并点击蓝色 `Personalize style prompt to match your taste` 按钮；不要把 `More Options` 当成 `Styles` 展开入口。
+- 保存过的风格只作为歌曲 metadata 便于排查，不再回填 `Styles`，也不再作为下载筛选或缓存分组条件。
 - 不要点击 `Refresh recommended styles`，不要点击 `Add style: ...` 推荐标签，不要把默认 placeholder / 推荐串当成最终风格。
 - 填表前先确认当前 URL 是 `https://suno.com/create`；如果 Suno 跳到其它页面，先导航回 Create，再开始定位 Lyrics / Styles。
 - `Styles` 优先选择 Lyrics 下方同一列的大 textarea，排除 Search、Current page、Song Title、Enhance lyrics 等工具输入框。
 - 歌词和风格填入后需要等待下一轮检测确认页面真实 value 已稳定，避免直接注入后被 React 重绘覆盖。
-- 在 Tomato 听力页显示“当前 Suno 自动风格”，便于用户确认本次实际采用的风格。
+- Tomato 听力页不再显示或编辑 Suno 自动风格；风格由 Suno 每次根据当前歌词重新生成。
 
 验证：
 
@@ -511,7 +511,7 @@ $r.payload.diagnostics.editors | Select-Object tag,placeholder,text,rect
 成功信号：
 
 - `listening.songState` 返回 `automationStatus = waitingConfirm`。
-- `stylePrompt` 非空。
+- `stylePrompt` 可以为空；若返回非空只代表 Suno 本轮写入过 Styles metadata。
 - `suno.debugInspect` 中 `Styles` 对应编辑器的 `value` 非空；不能只看 `placeholder`。
 - `suno.debugFill` / 状态消息中 `magicTarget.ariaLabel` 应为 `Personalize style prompt to match your taste`，不应是 `Refresh recommended styles`。
 - 对含有 `search` 等普通英文单词的歌词，`suno.debugFill` 仍能选中真正的 Lyrics / Styles textarea，而不是返回缺少 `lyrics` / `style`。
@@ -523,7 +523,7 @@ $r.payload.diagnostics.editors | Select-Object tag,placeholder,text,rect
 症状：
 
 - 在当前文章点击生成后，Suno 自动化跳到上一首或其它文章的歌曲详情页。
-- Tomato 没有确认歌词和风格是否对应，就开始下载，例如 Alice 文章误下载到 `Wrong Seat Apology`。
+- Tomato 没有确认歌词是否对应，就开始下载，例如 Alice 文章误下载到 `Wrong Seat Apology`。
 - 删除 `.tmp/qa-suno-song/downloads` 下的旧 metadata JSON 后，`listening.songState` 仍然返回旧 `songUrl`。
 
 原因：
@@ -534,8 +534,8 @@ $r.payload.diagnostics.editors | Select-Object tag,placeholder,text,rect
 
 处理：
 
-- 完成检测和下载检测都必须计算当前页面 / Library 行 / 菜单上下文里的风格 token 与歌词片段匹配分。
-- 当前文章有 16 个风格 token 时，下载候选至少要达到 13 分；少量 token 时按约 80% 计算，最低 1 分。
+- 完成检测和下载检测都必须计算当前页面 / Library 行 / 菜单上下文里的歌词 token 与歌词片段匹配分。
+- 下载候选必须达到当前歌词匹配阈值；短歌词按 token 数动态降低阈值，但最低仍需要 1 分。
 - `pendingSongUrl` 只能在匹配详情页、匹配 Library 行或已经打开且匹配的菜单中使用；不能让侧栏、顶部 `Audio` tab 或全局 `More` 借用页面正文成为下载按钮。
 - WebView 触发的媒体下载必须校验 `cdn1.suno.ai/<song-id>` 与目标 `https://suno.com/song/<song-id>` 一致，不一致就取消并提示人工处理。
 - 缓存恢复时，如果只有 `metadataPath`，但文件已经不存在，且没有任何本地音频版本，应返回空状态，不再暴露旧 `songUrl`。
@@ -555,7 +555,7 @@ $debug.payload.downloadProbe | Select-Object ok,stage,currentPageExpectedScore,e
 成功信号：
 
 - 当前文章没有真实音频时，缺失 metadata 文件的旧缓存不会再返回旧 `songUrl`。
-- `Wrong Seat Apology` 等旧歌详情页即使包含部分相同风格词，未达到阈值也不会下载。
+- `Wrong Seat Apology` 等旧歌详情页即使包含部分相同词，未达到歌词匹配阈值也不会下载。
 - `downloadProbe` 不会把侧栏折叠按钮、顶部 `Audio` tab、全局 `More` 误判为下载入口。
 
 ## Suno Library 里有 Download 但自动下载卡住
@@ -591,42 +591,42 @@ $state.payload.audioPath
 
 成功信号：
 
-- `listening.songState` 返回 `status = ready`、`automationStatus = complete`；若当前风格所有检测到的完整歌曲都已有本地版本，则 `downloadComplete = true`。
+- `listening.songState` 返回 `status = ready`、`automationStatus = complete`；若当前歌词所有检测到的完整歌曲都已有本地版本，则 `downloadComplete = true`。
 - 本地音频文件存在，文件头为 `ID3` 或其它可播放媒体头，文件大小不是几十 KB 的占位音。
 - 再次触发同一 `songUrl` 下载时，文件数量不增加，直接返回已下载版本。
 
-## Suno 同一风格多首歌曲只下载一首或重复下载
+## Suno 同一歌词多首歌曲只下载一首或重复下载
 
 症状：
 
-- Suno 一次生成同一风格的多首完整歌曲，但 Tomato 只保存第一首，后续“重新检测下载”又重复打开已下载歌曲。
-- 听力页显示已有歌曲版本，但不能看出这些版本属于哪个风格。
-- 用户想沿用已下载完整歌曲时，App 仍进入创建流程，可能再次消耗 Suno credits。
+- Suno 一次生成同一歌词的多首完整歌曲，但 Tomato 只保存第一首，后续“检测下载”又重复打开已下载歌曲。
+- 听力页已有本地版本，但无法判断哪些 `songUrl` 已经下载过。
+- 用户只想补下载已手工生成的歌曲时，App 误进入创建流程，可能再次消耗 Suno credits。
 
 原因：
 
-- 旧缓存只保存一个 `songUrl` / 最新 metadata，无法表达同一风格检测到多首完整歌曲。
-- `versions` 没有记录 `stylePrompt` / `styleKey`，不同风格的歌曲版本混在一起。
+- 旧缓存只保存一个 `songUrl` / 最新 metadata，无法表达同一歌词检测到多首完整歌曲。
+- `versions` 没有稳定记录 `lyricsHash` / `songUrl`，无法用当前歌词判断哪些链接已经落成本地音频。
 - 没有区分“检测到的完整歌曲链接”和“已经下载到本地的音频版本”，因此无法判断是否还有缺失版本。
 
 处理：
 
-- Suno metadata 必须按 `styleKey` 恢复缓存组；每个 `ArticleSongVersion` 写入 `stylePrompt` 和 `styleKey`。
-- `detectedSongUrls` 保存当前风格页面或 Library 中检测到的完整歌曲链接；`downloadComplete=true` 只在这些链接都已经有本地版本时返回。
-- “下载缺失版本”只针对 `missingSongUrls`，同一 `songUrl` 已存在本地版本时跳过，不重复下载。
-- 同一风格已完整下载时，重新进入 Suno 只填好歌词和风格并进入完成待命状态；用户需要新版本时手动切到设置页生成，不自动点击 Create。
-- 听力页歌曲弹窗使用“播放 / 设置”页签，播放页按风格分组展示本地歌曲版本，设置页用于生成新版本。
+- Suno metadata 必须按当前歌词的 `lyricsHash` / `contentHash` 恢复缓存组；`stylePrompt` / `styleKey` 只作为旧版本兼容 metadata。
+- `detectedSongUrls` 保存当前歌词页面或 Library 中检测到的完整歌曲链接；`downloadComplete=true` 只在这些链接都已经有本地版本时返回。
+- “检测下载”只针对 `missingSongUrls`，同一 `songUrl` 已存在本地版本时跳过，不重复下载。
+- 用户点击生成新版本时，仍进入 Create 并让 Suno 根据歌词重新生成风格；用户点击检测下载时，只补当前歌词下未下载的 `songUrl`。
+- 听力页歌曲弹窗使用“播放 / 生成”页签，播放页按本地版本展示歌曲，生成页用于新建 Suno 版本。
 
 验证：
 
 ```powershell
 $body = @{ type = 'listening.songState'; payload = @{ articleId = 25 } } | ConvertTo-Json -Depth 8
 $state = Invoke-RestMethod -Uri 'http://127.0.0.1:39317/bridge' -Method Post -ContentType 'application/json' -Body $body
-$state.payload | Select-Object status,source,stylePrompt,downloadComplete,detectedSongUrls,versions
+$state.payload | Select-Object status,source,downloadComplete,detectedSongUrls,versions
 ```
 
 成功信号：
 
-- 同一风格下 `versions[].styleKey` 一致，不同风格在听力页播放弹窗中分组显示。
-- `detectedSongUrls` 包含所有已检测到的完整歌曲链接；若只下载了一部分，`downloadComplete = false` 且“下载缺失版本”只补缺失项。
+- `versions[]` 中同一 `songUrl` 不会重复新增本地音频版本；旧 `styleKey` 不再影响分组。
+- `detectedSongUrls` 包含所有已检测到的完整歌曲链接；若只下载了一部分，`downloadComplete = false` 且“检测下载”只补缺失项。
 - 同一 `songUrl` 已下载后再次检测不会新增重复音频文件。

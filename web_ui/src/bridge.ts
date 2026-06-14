@@ -570,7 +570,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const sunoResult = {
       articleId,
       status: 'generating',
-      stylePrompt: String(payload.stylePrompt ?? 'bright children musical'),
+      stylePrompt: '',
       audioPath: null,
       errorMessage: '',
       durationMs: null,
@@ -588,7 +588,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const result = {
       articleId,
       status: 'generating',
-      stylePrompt: 'bright children musical',
+      stylePrompt: '',
       audioPath: null,
       errorMessage: '',
       durationMs: null,
@@ -606,7 +606,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const result = {
       articleId,
       status: 'generating',
-      stylePrompt: 'bright children musical',
+      stylePrompt: '',
       audioPath: null,
       errorMessage: '',
       durationMs: null,
@@ -629,7 +629,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         payload: {
           articleId,
           status: 'playing',
-          stylePrompt: 'bright children musical',
+          stylePrompt: '',
           audioPath: 'mock-song.mp3',
           errorMessage: '',
           versions: [
@@ -638,8 +638,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
               audioPath: 'mock-song.mp3',
               title: 'Suno 版本 1',
               durationMs: 32000,
-              stylePrompt: 'bright children musical',
-              styleKey: 'suno:bright children musical',
               timelineStatus: 'ready',
               timelinePath: 'mock-song-timeline.json',
               timelineConfidence: 0.92,
@@ -674,7 +672,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const result = {
       articleId,
       status: 'ready',
-      stylePrompt: 'bright children musical',
+      stylePrompt: '',
       audioPath: 'mock-song.mp3',
       errorMessage: '',
       source: 'suno',
@@ -684,8 +682,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
           audioPath: 'mock-song.mp3',
           title: 'Suno 版本 1',
           durationMs: 32000,
-          stylePrompt: 'bright children musical',
-          styleKey: 'suno:bright children musical',
           timelineStatus: 'ready',
           timelinePath: 'mock-song-timeline.json',
           timelineConfidence: 0.92,
