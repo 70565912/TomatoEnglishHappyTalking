@@ -10,6 +10,7 @@ import type {
   PictureBookState,
   RecordingSettings,
   SettingsState,
+  SongSource,
   StorySeries,
   VoiceOption,
 } from './types';
@@ -501,6 +502,12 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'series.list') {
     return { series: mockSeries };
   }
+  if (type === 'series.suggestDescription') {
+    const seriesTitle = String(payload.seriesTitle ?? '').trim() || 'New Story Series';
+    return {
+      description: `${seriesTitle} as a warm child-friendly picture-book world, with consistent recurring characters, bright natural colors, and expressive storybook illustration.`,
+    };
+  }
   if (type === 'series.create') {
     const series: StorySeries = {
       id: 12,
@@ -643,10 +650,41 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       stylePrompt: '',
       audioPath: null,
       errorMessage: '',
+      source: mockSettings.song?.songProvider ?? 'suno',
     };
   }
   if (type === 'listening.songGenerate') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const source = String(payload.source ?? mockSettings.song?.songProvider ?? 'suno');
+    if (source === 'bailian_fun_music') {
+      const result = {
+        articleId,
+        status: 'ready',
+        stylePrompt: '',
+        audioPath: 'mock-bailian-fun-music.mp3',
+        errorMessage: '',
+        durationMs: 42000,
+        source: 'bailian_fun_music',
+        automationStatus: 'complete',
+        manualActionMessage: '百炼 fun-music 已生成 mock 歌曲。',
+        downloadComplete: true,
+        versions: [
+          {
+            id: 'mock-bailian-fun-music-1',
+            audioPath: 'mock-bailian-fun-music.mp3',
+            title: '百炼 fun-music 版本 1',
+            durationMs: 42000,
+            source: 'bailian_fun_music',
+            timelineStatus: 'missing',
+            isDefault: true,
+          },
+        ],
+      };
+      window.setTimeout(() => {
+        emitNativeEvent({ type: 'listening.song.state', payload: result });
+      }, 40);
+      return result;
+    }
     const sunoResult = {
       articleId,
       status: 'generating',
@@ -1004,6 +1042,40 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       song: {
         sunoOutputDirectory: String(payload.sunoOutputDirectory ?? mockSettings.song?.sunoOutputDirectory ?? ''),
         sunoTimeoutMinutes: Number(payload.sunoTimeoutMinutes ?? mockSettings.song?.sunoTimeoutMinutes ?? 20),
+        songProvider: String(payload.songProvider ?? mockSettings.song?.songProvider ?? 'suno') as SongSource,
+      },
+    };
+    return mockSettings;
+  }
+  if (type === 'settings.saveCloud') {
+    mockSettings = {
+      ...mockSettings,
+      cloud: {
+        aiProvider: String(payload.aiProvider ?? mockSettings.cloud?.aiProvider ?? 'aliyun_bailian'),
+        aliyunBailian: {
+          apiKeyConfigured:
+            Boolean(payload.aliyunBailianApiKey) ||
+            (mockSettings.cloud?.aliyunBailian.apiKeyConfigured ?? false),
+          apiKeyMask: payload.aliyunBailianApiKey ? '****MOCK' : mockSettings.cloud?.aliyunBailian.apiKeyMask ?? '',
+          baseUrl: String(payload.aliyunBailianBaseUrl ?? mockSettings.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
+          textModel: String(payload.aliyunBailianTextModel ?? mockSettings.cloud?.aliyunBailian.textModel ?? 'qwen3.7-max'),
+          musicModel: String(payload.aliyunBailianMusicModel ?? mockSettings.cloud?.aliyunBailian.musicModel ?? 'fun-music-v1'),
+        },
+        volcengine: {
+          arkApiKeyConfigured:
+            Boolean(payload.volcArkApiKey) ||
+            (mockSettings.cloud?.volcengine.arkApiKeyConfigured ?? false),
+          arkApiKeyMask: payload.volcArkApiKey ? '****MOCK' : mockSettings.cloud?.volcengine.arkApiKeyMask ?? '',
+          arkBaseUrl: String(payload.volcArkBaseUrl ?? mockSettings.cloud?.volcengine.arkBaseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3'),
+          arkTextModel: String(payload.volcArkTextModel ?? mockSettings.cloud?.volcengine.arkTextModel ?? 'doubao-seed-2-0-lite-260215'),
+          arkImageModel: String(payload.volcArkImageModel ?? mockSettings.cloud?.volcengine.arkImageModel ?? 'doubao-seedream-5-0-260128'),
+          speechApiKeyConfigured:
+            Boolean(payload.volcSpeechApiKey) ||
+            (mockSettings.cloud?.volcengine.speechApiKeyConfigured ?? false),
+          speechApiKeyMask: payload.volcSpeechApiKey ? '****MOCK' : mockSettings.cloud?.volcengine.speechApiKeyMask ?? '',
+          ttsResourceId: String(payload.volcTtsResourceId ?? mockSettings.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0'),
+          ttsSpeakerId: String(payload.volcTtsSpeakerId ?? mockSettings.cloud?.volcengine.ttsSpeakerId ?? mockSettings.tts.speakerId),
+        },
       },
     };
     return mockSettings;
@@ -1515,6 +1587,28 @@ let mockSettings: SettingsState = {
   song: {
     sunoOutputDirectory: 'mock-suno-output',
     sunoTimeoutMinutes: 20,
+    songProvider: 'suno',
+  },
+  cloud: {
+    aiProvider: 'aliyun_bailian',
+    aliyunBailian: {
+      apiKeyConfigured: false,
+      apiKeyMask: '',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      textModel: 'qwen3.7-max',
+      musicModel: 'fun-music-v1',
+    },
+    volcengine: {
+      arkApiKeyConfigured: false,
+      arkApiKeyMask: '',
+      arkBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      arkTextModel: 'doubao-seed-2-0-lite-260215',
+      arkImageModel: 'doubao-seedream-5-0-260128',
+      speechApiKeyConfigured: false,
+      speechApiKeyMask: '',
+      ttsResourceId: 'seed-tts-2.0',
+      ttsSpeakerId: 'en_female_dacey_uranus_bigtts',
+    },
   },
   voices: mockVoiceOptions,
   contentSafety: {

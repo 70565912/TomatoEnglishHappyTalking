@@ -1,9 +1,23 @@
-import 'dart:convert';
-import 'dart:io';
-
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+class OpenAiTextConfig {
+  const OpenAiTextConfig({
+    required this.provider,
+    required this.apiKey,
+    required this.baseUrl,
+    required this.model,
+  });
+
+  final String provider;
+  final String apiKey;
+  final String baseUrl;
+  final String model;
+
+  String get chatCompletionsEndpoint =>
+      '${baseUrl.trim().replaceFirst(RegExp(r'/+$'), '')}/chat/completions';
+}
 
 /// App 配置 — 存储统一 API Key 等敏感信息
 /// 使用 flutter_secure_storage 加密存储在本机
@@ -11,46 +25,47 @@ class AppConfig {
   static const _storage = FlutterSecureStorage();
   static final Map<String, String> _runtimeSecrets = <String, String>{};
 
-  static const _maxConfigParentSearchDepth = 8;
+  static const aiProviderAliyunBailian = 'aliyun_bailian';
+  static const aiProviderVolcengine = 'volcengine';
+  static const songProviderSuno = 'suno';
+  static const songProviderBailianFunMusic = 'bailian_fun_music';
 
-  // ===== Local bootstrap via --dart-define =====
+  static const defaultAiProvider = aiProviderAliyunBailian;
+  static const defaultSongProvider = songProviderSuno;
+  static const defaultAliyunBailianBaseUrl =
+      'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  static const defaultAliyunBailianTextModel = 'qwen3.7-max';
+  static const defaultAliyunBailianMusicModel = 'fun-music-v1';
+  static const defaultVolcArkBaseUrl =
+      'https://ark.cn-beijing.volces.com/api/v3';
+  static const defaultVolcArkTextModel = 'doubao-seed-2-0-lite-260215';
+  static const defaultVolcArkImageModel = 'doubao-seedream-5-0-260128';
+
+  // ===== Local non-key bootstrap via --dart-define =====
   static const _envVolcTtsResourceId =
       String.fromEnvironment('TOMATO_VOLC_TTS_RESOURCE_ID');
   static const _envVolcTtsSpeakerId =
       String.fromEnvironment('TOMATO_VOLC_TTS_SPEAKER_ID');
-  static const _envVolcSpeechApiKey =
-      String.fromEnvironment('TOMATO_VOLC_SPEECH_API_KEY');
-  static const _envVolcArkApiKey =
-      String.fromEnvironment('TOMATO_VOLC_ARK_API_KEY');
-  static const _envVolcArkTextModel =
-      String.fromEnvironment('TOMATO_VOLC_ARK_TEXT_MODEL');
-  static const defaultVolcArkTextModel = 'doubao-seed-2-0-lite-260215';
-
-  static const _speechApiKeyFileCandidates = [
-    'speech-api-key.txt',
-    'security/speech-api-key.txt',
-    '../speech-api-key.txt',
-    '../security/speech-api-key.txt',
-  ];
-
-  static const _arkApiKeyFileCandidates = [
-    'ark.txt',
-    'security/ark.txt',
-    '../ark.txt',
-    '../security/ark.txt',
-  ];
 
   // ===== 火山引擎 TTS =====
   static const _volcTtsResourceId = 'volc_tts_resource_id';
   static const _volcTtsSpeakerId = 'volc_tts_speaker_id';
 
   // ===== 实时语音与 BigASR =====
+  static const _aiProvider = 'ai_provider';
+  static const _aliyunBailianApiKey = 'aliyun_bailian_api_key';
+  static const _aliyunBailianBaseUrl = 'aliyun_bailian_base_url';
+  static const _aliyunBailianTextModel = 'aliyun_bailian_text_model';
+  static const _aliyunBailianMusicModel = 'aliyun_bailian_music_model';
   static const _volcSpeechApiKey = 'volc_speech_api_key';
   static const _volcArkApiKey = 'volc_ark_api_key';
+  static const _volcArkBaseUrl = 'volc_ark_base_url';
   static const _volcArkTextModel = 'volc_ark_text_model';
+  static const _volcArkImageModel = 'volc_ark_image_model';
   static const _recordingCodec = 'recording_codec';
   static const _recordingResolution = 'recording_resolution';
   static const _recordingPageTransition = 'recording_page_transition';
+  static const _songProvider = 'song_provider';
   static const _sunoOutputDirectory = 'suno_output_directory';
   static const _sunoTimeoutMinutes = 'suno_timeout_minutes';
 
@@ -65,27 +80,15 @@ class AppConfig {
     return _runtimeSecrets[_volcTtsSpeakerId]?.trim() ?? '';
   }
 
-  static Future<String> get volcSpeechApiKey async {
-    final speechApiKeyFile = _findExistingFile(_speechApiKeyFileCandidates);
-    if (speechApiKeyFile != null) {
-      try {
-        final value =
-            _parseSpeechApiKeyFile(await speechApiKeyFile.readAsString());
-        if (value.isNotEmpty) {
-          return value;
-        }
-      } catch (e) {
-        debugPrint('[AppConfig] speech-api-key.txt read failed: $e');
-      }
-    }
+  static Future<String> get aiProvider async => _normalizeAiProvider(
+        await _readSecret(
+          key: _aiProvider,
+          defaultValue: defaultAiProvider,
+        ),
+      );
 
-    final envValue = _envVolcSpeechApiKey.trim();
-    if (envValue.isNotEmpty) {
-      return envValue;
-    }
-
-    return _readSecret(key: _volcSpeechApiKey);
-  }
+  static Future<String> get volcSpeechApiKey async =>
+      _readSecret(key: _volcSpeechApiKey);
 
   static Future<String> get volcTtsApiKey async => await volcSpeechApiKey;
 
@@ -93,234 +96,78 @@ class AppConfig {
 
   static Future<String> get volcBigAsrApiKey async => await volcSpeechApiKey;
 
-  static Future<String> get volcArkTextApiKey async {
-    final arkApiKeyFile = _findExistingFile(_arkApiKeyFileCandidates);
-    if (arkApiKeyFile != null) {
-      try {
-        final value = _parseArkApiKeyFile(await arkApiKeyFile.readAsString());
-        if (value.isNotEmpty) {
-          return value;
-        }
-      } catch (e) {
-        debugPrint('[AppConfig] ark.txt read failed: $e');
-      }
-    }
+  static Future<String> get volcArkTextApiKey async =>
+      _stripBearerPrefix(await _readSecret(key: _volcArkApiKey));
 
-    final envValue = _envVolcArkApiKey.trim();
-    if (envValue.isNotEmpty) {
-      return _stripBearerPrefix(envValue);
-    }
-
-    return _readSecret(key: _volcArkApiKey);
-  }
+  static Future<String> get volcArkBaseUrl async => _normalizeBaseUrl(
+        await _readSecret(
+          key: _volcArkBaseUrl,
+          defaultValue: defaultVolcArkBaseUrl,
+        ),
+        defaultVolcArkBaseUrl,
+      );
 
   static Future<String> get volcArkTextModel async {
-    final arkApiKeyFile = _findExistingFile(_arkApiKeyFileCandidates);
-    if (arkApiKeyFile != null) {
-      try {
-        final value =
-            _parseArkTextModelFile(await arkApiKeyFile.readAsString());
-        if (value.isNotEmpty) {
-          return value;
-        }
-      } catch (e) {
-        debugPrint('[AppConfig] ark.txt model read failed: $e');
-      }
-    }
-
-    final envValue = _envVolcArkTextModel.trim();
-    if (envValue.isNotEmpty) {
-      return envValue;
-    }
-
     final stored = await _readSecret(key: _volcArkTextModel);
     return stored.isNotEmpty ? stored : defaultVolcArkTextModel;
   }
 
-  static Future<String> get volcArkImageApiKey async {
-    final arkApiKeyFile = _findExistingFile(_arkApiKeyFileCandidates);
-    if (arkApiKeyFile != null) {
-      try {
-        final value = _parseArkApiKeyFile(await arkApiKeyFile.readAsString());
-        if (value.isNotEmpty) {
-          return value;
-        }
-      } catch (e) {
-        debugPrint('[AppConfig] ark.txt image key read failed: $e');
-      }
-    }
+  static Future<String> get volcArkImageApiKey async =>
+      _stripBearerPrefix(await _readSecret(key: _volcArkApiKey));
 
-    final envValue = _envVolcArkApiKey.trim();
-    if (envValue.isNotEmpty) {
-      return _stripBearerPrefix(envValue);
-    }
-
-    return _readSecret(key: _volcArkApiKey);
+  static Future<String> get volcArkImageModel async {
+    final stored = await _readSecret(key: _volcArkImageModel);
+    return stored.isNotEmpty ? stored : defaultVolcArkImageModel;
   }
 
-  static String _parseSpeechApiKeyFile(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      return '';
-    }
+  static Future<String> get volcArkImageEndpoint async =>
+      '${await volcArkBaseUrl}/images/generations';
 
-    try {
-      final decoded = jsonDecode(trimmed);
-      if (decoded is Map) {
-        return _firstNonEmpty([
-          decoded['X-Api-Key']?.toString(),
-          decoded['x_api_key']?.toString(),
-          decoded['speech_api_key']?.toString(),
-          decoded['volc_speech_api_key']?.toString(),
-          decoded['api_key']?.toString(),
-          decoded['apiKey']?.toString(),
-        ]);
-      }
-    } catch (_) {
-      // Plain text is the common local format.
-    }
+  static Future<String> get aliyunBailianApiKey async =>
+      _stripBearerPrefix(await _readSecret(key: _aliyunBailianApiKey));
 
-    final labeledPattern = RegExp(
-      r'^\s*(?:X-Api-Key|SPEECH_API_KEY|TOMATO_VOLC_SPEECH_API_KEY|volc_speech_api_key|api[_ -]?key)\s*[:=]\s*(.+?)\s*$',
-      caseSensitive: false,
-    );
-    final values = <String>[];
-    for (final rawLine in trimmed.split(RegExp(r'[\r\n]+'))) {
-      final line = rawLine.trim();
-      if (line.isEmpty || line.startsWith('#')) {
-        continue;
-      }
-      final match = labeledPattern.firstMatch(line);
-      if (match != null) {
-        return match.group(1)?.trim() ?? '';
-      }
-      values.add(line);
-    }
-    if (values.isEmpty) {
-      return '';
-    }
+  static Future<String> get aliyunBailianBaseUrl async => _normalizeBaseUrl(
+        await _readSecret(
+          key: _aliyunBailianBaseUrl,
+          defaultValue: defaultAliyunBailianBaseUrl,
+        ),
+        defaultAliyunBailianBaseUrl,
+      );
 
-    final uuidLike = values.where((value) {
-      return RegExp(
-        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-        caseSensitive: false,
-      ).hasMatch(value);
-    }).toList(growable: false);
-    if (uuidLike.isNotEmpty) {
-      return uuidLike.first;
-    }
-
-    final longValues =
-        values.where((value) => value.length >= 32).toList(growable: false);
-    if (longValues.isNotEmpty) {
-      return longValues.first;
-    }
-
-    return values.first;
+  static Future<String> get aliyunBailianTextModel async {
+    final stored = await _readSecret(key: _aliyunBailianTextModel);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianTextModel;
   }
 
-  static String _parseArkApiKeyFile(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      return '';
-    }
-
-    try {
-      final decoded = jsonDecode(trimmed);
-      if (decoded is Map) {
-        return _stripBearerPrefix(
-          _firstNonEmpty([
-            decoded['ARK_API_KEY']?.toString(),
-            decoded['TOMATO_VOLC_ARK_API_KEY']?.toString(),
-            decoded['volc_ark_api_key']?.toString(),
-            decoded['api_key']?.toString(),
-            decoded['apiKey']?.toString(),
-          ]),
-        );
-      }
-    } catch (_) {
-      // Plain text and key:value lines are the common local formats.
-    }
-
-    final labeledPattern = RegExp(
-      r'^(?:ARK_API_KEY|TOMATO_VOLC_ARK_API_KEY|volc_ark_api_key|api[_ -]?key)\s*[:=]\s*(.+)$',
-      caseSensitive: false,
-    );
-    final unlabeledValues = <String>[];
-    for (final rawLine in trimmed.split(RegExp(r'[\r\n]+'))) {
-      final line = rawLine.trim();
-      if (line.isEmpty || line.startsWith('#')) {
-        continue;
-      }
-      final match = labeledPattern.firstMatch(line);
-      if (match != null) {
-        return _stripBearerPrefix(match.group(1) ?? '');
-      }
-      if (RegExp(r'^[A-Za-z_][A-Za-z0-9_\- ]*\s*[:=]').hasMatch(line)) {
-        continue;
-      }
-      unlabeledValues.add(line);
-    }
-
-    if (RegExp(
-      r'AccessKeyId|SecretAccessKey',
-      caseSensitive: false,
-    ).hasMatch(trimmed)) {
-      return '';
-    }
-
-    if (unlabeledValues.isEmpty) {
-      return '';
-    }
-    if (unlabeledValues.length == 1) {
-      return _stripBearerPrefix(unlabeledValues.first);
-    }
-
-    final longValues = unlabeledValues
-        .where((value) => value.length >= 32)
-        .toList(growable: false)
-      ..sort((left, right) => right.length.compareTo(left.length));
-    if (longValues.isNotEmpty) {
-      return _stripBearerPrefix(longValues.first);
-    }
-    return '';
+  static Future<String> get aliyunBailianMusicModel async {
+    final stored = await _readSecret(key: _aliyunBailianMusicModel);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianMusicModel;
   }
 
-  static String _parseArkTextModelFile(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) {
-      return '';
-    }
+  static Future<String> get songGenerationProvider async =>
+      _normalizeSongProvider(
+        await _readSecret(
+          key: _songProvider,
+          defaultValue: defaultSongProvider,
+        ),
+      );
 
-    try {
-      final decoded = jsonDecode(trimmed);
-      if (decoded is Map) {
-        return _firstNonEmpty([
-          decoded['ARK_TEXT_MODEL']?.toString(),
-          decoded['TOMATO_VOLC_ARK_TEXT_MODEL']?.toString(),
-          decoded['volc_ark_text_model']?.toString(),
-          decoded['model']?.toString(),
-        ]).trim();
-      }
-    } catch (_) {
-      // Plain text and key:value lines are the common local formats.
+  static Future<OpenAiTextConfig> get openAiTextConfig async {
+    final provider = await aiProvider;
+    if (provider == aiProviderVolcengine) {
+      return OpenAiTextConfig(
+        provider: aiProviderVolcengine,
+        apiKey: await volcArkTextApiKey,
+        baseUrl: await volcArkBaseUrl,
+        model: await volcArkTextModel,
+      );
     }
-
-    final labeledPattern = RegExp(
-      r'^(?:ARK_TEXT_MODEL|TOMATO_VOLC_ARK_TEXT_MODEL|volc_ark_text_model|model)\s*[:=]\s*(.+)$',
-      caseSensitive: false,
+    return OpenAiTextConfig(
+      provider: aiProviderAliyunBailian,
+      apiKey: await aliyunBailianApiKey,
+      baseUrl: await aliyunBailianBaseUrl,
+      model: await aliyunBailianTextModel,
     );
-    for (final rawLine in trimmed.split(RegExp(r'[\r\n]+'))) {
-      final line = rawLine.trim();
-      if (line.isEmpty || line.startsWith('#')) {
-        continue;
-      }
-      final match = labeledPattern.firstMatch(line);
-      if (match != null) {
-        return match.group(1)?.trim() ?? '';
-      }
-    }
-    return '';
   }
 
   static String _stripBearerPrefix(String value) {
@@ -336,13 +183,6 @@ class AppConfig {
           key: _volcTtsResourceId, value: _envVolcTtsResourceId);
       await _writeIfProvided(
           key: _volcTtsSpeakerId, value: _envVolcTtsSpeakerId);
-      await _writeIfProvided(
-        key: _volcSpeechApiKey,
-        value: _envVolcSpeechApiKey,
-      );
-      await _writeIfProvided(key: _volcArkApiKey, value: _envVolcArkApiKey);
-      await _writeIfProvided(
-          key: _volcArkTextModel, value: _envVolcArkTextModel);
     } catch (e) {
       debugPrint('[AppConfig] secure storage bootstrap failed: $e');
     }
@@ -405,26 +245,156 @@ class AppConfig {
           key: _sunoTimeoutMinutes,
           defaultValue: '20',
         ),
+        'songProvider': await songGenerationProvider,
       };
 
   static Future<void> saveSongSettings({
     required String sunoOutputDirectory,
     required int sunoTimeoutMinutes,
+    String? songProvider,
   }) async {
     final timeout = sunoTimeoutMinutes.clamp(5, 120).toString();
+    final provider = songProvider == null
+        ? await songGenerationProvider
+        : _normalizeSongProvider(songProvider);
     await _storage.write(
       key: _sunoOutputDirectory,
       value: sunoOutputDirectory.trim(),
     );
     await _storage.write(key: _sunoTimeoutMinutes, value: timeout);
+    await _storage.write(key: _songProvider, value: provider);
     _runtimeSecrets[_sunoOutputDirectory] = sunoOutputDirectory.trim();
     _runtimeSecrets[_sunoTimeoutMinutes] = timeout;
+    _runtimeSecrets[_songProvider] = provider;
   }
 
   static Future<void> saveVolcBigAsr({
     required String apiKey,
   }) async {
     await _writeIfProvided(key: _volcSpeechApiKey, value: apiKey);
+  }
+
+  static Future<void> saveCloudSettings({
+    String? aiProvider,
+    String? aliyunBailianApiKey,
+    bool clearAliyunBailianApiKey = false,
+    String? aliyunBailianBaseUrl,
+    String? aliyunBailianTextModel,
+    String? aliyunBailianMusicModel,
+    String? volcArkApiKey,
+    bool clearVolcArkApiKey = false,
+    String? volcArkBaseUrl,
+    String? volcArkTextModel,
+    String? volcArkImageModel,
+    String? volcSpeechApiKey,
+    bool clearVolcSpeechApiKey = false,
+    String? volcTtsResourceId,
+    String? volcTtsSpeakerId,
+  }) async {
+    if (aiProvider != null) {
+      final provider = _normalizeAiProvider(aiProvider);
+      await _storage.write(key: _aiProvider, value: provider);
+      _runtimeSecrets[_aiProvider] = provider;
+    }
+    if (clearAliyunBailianApiKey) {
+      await _deleteSecret(_aliyunBailianApiKey);
+    } else if (aliyunBailianApiKey != null) {
+      await _writeIfProvided(
+        key: _aliyunBailianApiKey,
+        value: _stripBearerPrefix(aliyunBailianApiKey),
+      );
+    }
+    if (clearVolcArkApiKey) {
+      await _deleteSecret(_volcArkApiKey);
+    } else if (volcArkApiKey != null) {
+      await _writeIfProvided(
+        key: _volcArkApiKey,
+        value: _stripBearerPrefix(volcArkApiKey),
+      );
+    }
+    if (clearVolcSpeechApiKey) {
+      await _deleteSecret(_volcSpeechApiKey);
+    } else if (volcSpeechApiKey != null) {
+      await _writeIfProvided(key: _volcSpeechApiKey, value: volcSpeechApiKey);
+    }
+    await _writeConfigValue(
+      key: _aliyunBailianBaseUrl,
+      value: aliyunBailianBaseUrl,
+      defaultValue: defaultAliyunBailianBaseUrl,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianTextModel,
+      value: aliyunBailianTextModel,
+      defaultValue: defaultAliyunBailianTextModel,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianMusicModel,
+      value: aliyunBailianMusicModel,
+      defaultValue: defaultAliyunBailianMusicModel,
+    );
+    await _writeConfigValue(
+      key: _volcArkBaseUrl,
+      value: volcArkBaseUrl,
+      defaultValue: defaultVolcArkBaseUrl,
+    );
+    await _writeConfigValue(
+      key: _volcArkTextModel,
+      value: volcArkTextModel,
+      defaultValue: defaultVolcArkTextModel,
+    );
+    await _writeConfigValue(
+      key: _volcArkImageModel,
+      value: volcArkImageModel,
+      defaultValue: defaultVolcArkImageModel,
+    );
+    await _writeConfigValue(
+      key: _volcTtsResourceId,
+      value: volcTtsResourceId,
+      defaultValue: 'seed-tts-2.0',
+    );
+    await _writeConfigValue(
+      key: _volcTtsSpeakerId,
+      value: volcTtsSpeakerId,
+      defaultValue: '',
+    );
+  }
+
+  static Future<Map<String, dynamic>> cloudSettingsPayload() async {
+    final aliyunKey = await aliyunBailianApiKey;
+    final volcArkKey = await volcArkTextApiKey;
+    final volcSpeechKey = await volcSpeechApiKey;
+    return {
+      'aiProvider': await aiProvider,
+      'aliyunBailian': {
+        'apiKeyConfigured': aliyunKey.isNotEmpty,
+        'apiKeyMask': maskSecret(aliyunKey),
+        'baseUrl': await aliyunBailianBaseUrl,
+        'textModel': await aliyunBailianTextModel,
+        'musicModel': await aliyunBailianMusicModel,
+      },
+      'volcengine': {
+        'arkApiKeyConfigured': volcArkKey.isNotEmpty,
+        'arkApiKeyMask': maskSecret(volcArkKey),
+        'arkBaseUrl': await volcArkBaseUrl,
+        'arkTextModel': await volcArkTextModel,
+        'arkImageModel': await volcArkImageModel,
+        'speechApiKeyConfigured': volcSpeechKey.isNotEmpty,
+        'speechApiKeyMask': maskSecret(volcSpeechKey),
+        'ttsResourceId': await volcTtsResourceId,
+        'ttsSpeakerId': await volcTtsSpeakerId,
+      },
+    };
+  }
+
+  static String maskSecret(String value) {
+    final trimmed = _stripBearerPrefix(value);
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    if (trimmed.length <= 4) {
+      return '****';
+    }
+    return '****${trimmed.substring(trimmed.length - 4)}';
   }
 
   static Future<void> _writeIfProvided({
@@ -442,84 +412,34 @@ class AppConfig {
     }
 
     await _storage.write(key: key, value: trimmedValue);
+    _runtimeSecrets[key] = trimmedValue;
   }
 
-  static File? _findExistingFile(List<String> filePathCandidates) {
-    final checkedPaths = <String>{};
-    for (final file in _configFileCandidates(filePathCandidates)) {
-      if (!checkedPaths.add(file.absolute.path)) {
-        continue;
-      }
-      if (file.existsSync()) {
-        return file;
-      }
+  static Future<void> _writeConfigValue({
+    required String key,
+    required String? value,
+    required String defaultValue,
+  }) async {
+    if (value == null) {
+      return;
     }
-
-    return null;
+    final trimmedValue = value.trim();
+    if (trimmedValue.isEmpty || trimmedValue == defaultValue) {
+      await _deleteSecret(key);
+      return;
+    }
+    await _storage.write(key: key, value: trimmedValue);
+    _runtimeSecrets[key] = trimmedValue;
   }
 
-  @visibleForTesting
-  static File? findExistingFileForTest(List<String> filePathCandidates) =>
-      _findExistingFile(filePathCandidates);
-
-  static Iterable<File> _configFileCandidates(
-    List<String> filePathCandidates,
-  ) sync* {
-    for (final path in filePathCandidates) {
-      yield File(path);
+  static Future<void> _deleteSecret(String key) async {
+    try {
+      await _storage.delete(key: key);
+    } catch (e) {
+      final message = e.toString().split('\n').first;
+      debugPrint('[AppConfig] secure storage delete failed for $key: $message');
     }
-
-    for (final baseDirectory in _candidateBaseDirectories()) {
-      for (final directory in _selfAndParents(baseDirectory)) {
-        for (final path in filePathCandidates) {
-          final file = File(path);
-          if (file.isAbsolute) {
-            continue;
-          }
-          yield File(_joinPath(directory.path, path));
-        }
-      }
-    }
-  }
-
-  static List<Directory> _candidateBaseDirectories() {
-    final directories = <String, Directory>{};
-
-    void addDirectory(Directory directory) {
-      final absoluteDirectory = directory.absolute;
-      directories[absoluteDirectory.path] = absoluteDirectory;
-    }
-
-    addDirectory(Directory.current);
-
-    final executablePath = Platform.resolvedExecutable.trim();
-    if (executablePath.isNotEmpty) {
-      addDirectory(File(executablePath).parent);
-    }
-
-    return directories.values.toList(growable: false);
-  }
-
-  static Iterable<Directory> _selfAndParents(Directory start) sync* {
-    var directory = start.absolute;
-    for (var depth = 0; depth <= _maxConfigParentSearchDepth; depth += 1) {
-      yield directory;
-      final parent = directory.parent.absolute;
-      if (parent.path == directory.path) {
-        break;
-      }
-      directory = parent;
-    }
-  }
-
-  static String _joinPath(String basePath, String childPath) {
-    final separator = Platform.pathSeparator;
-    final normalizedChild =
-        childPath.replaceAll('/', separator).replaceAll(r'\', separator);
-    if (basePath.endsWith(separator)) {
-      return '$basePath$normalizedChild';
-    }
-    return '$basePath$separator$normalizedChild';
+    _runtimeSecrets.remove(key);
   }
 
   static Future<String> _readSecret({
@@ -545,15 +465,74 @@ class AppConfig {
     }
   }
 
-  static String _firstNonEmpty(List<String?> values) {
-    for (final value in values) {
-      final trimmedValue = value?.trim() ?? '';
-      if (trimmedValue.isNotEmpty) {
-        return trimmedValue;
+  static String _normalizeAiProvider(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized == aiProviderVolcengine
+        ? aiProviderVolcengine
+        : aiProviderAliyunBailian;
+  }
+
+  static String _normalizeSongProvider(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized == songProviderBailianFunMusic
+        ? songProviderBailianFunMusic
+        : songProviderSuno;
+  }
+
+  static String _normalizeBaseUrl(String value, String fallback) {
+    final normalized = _trimTrailingSlash(value);
+    return normalized.isEmpty ? fallback : normalized;
+  }
+
+  static String _trimTrailingSlash(String value) =>
+      value.trim().replaceFirst(RegExp(r'/+$'), '');
+
+  @visibleForTesting
+  static void resetRuntimeConfigForTest() {
+    _runtimeSecrets.clear();
+  }
+
+  @visibleForTesting
+  static void setRuntimeConfigForTest({
+    String? aiProvider,
+    String? aliyunBailianApiKey,
+    String? aliyunBailianBaseUrl,
+    String? aliyunBailianTextModel,
+    String? aliyunBailianMusicModel,
+    String? volcSpeechApiKey,
+    String? volcArkApiKey,
+    String? volcArkBaseUrl,
+    String? volcArkTextModel,
+    String? volcArkImageModel,
+    String? songProvider,
+    String? sunoOutputDirectory,
+    String? sunoTimeoutMinutes,
+  }) {
+    void put(String key, String? value) {
+      if (value == null) {
+        return;
+      }
+      final trimmedValue = value.trim();
+      if (trimmedValue.isEmpty) {
+        _runtimeSecrets.remove(key);
+      } else {
+        _runtimeSecrets[key] = trimmedValue;
       }
     }
 
-    return '';
+    put(_aiProvider, aiProvider);
+    put(_aliyunBailianApiKey, aliyunBailianApiKey);
+    put(_aliyunBailianBaseUrl, aliyunBailianBaseUrl);
+    put(_aliyunBailianTextModel, aliyunBailianTextModel);
+    put(_aliyunBailianMusicModel, aliyunBailianMusicModel);
+    put(_volcSpeechApiKey, volcSpeechApiKey);
+    put(_volcArkApiKey, volcArkApiKey);
+    put(_volcArkBaseUrl, volcArkBaseUrl);
+    put(_volcArkTextModel, volcArkTextModel);
+    put(_volcArkImageModel, volcArkImageModel);
+    put(_songProvider, songProvider);
+    put(_sunoOutputDirectory, sunoOutputDirectory);
+    put(_sunoTimeoutMinutes, sunoTimeoutMinutes);
   }
 }
 

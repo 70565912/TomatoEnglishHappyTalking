@@ -161,7 +161,7 @@ class StreamingAsrService {
     if (apiKey.trim().isEmpty) {
       throw const AsrException(
         AsrFailureType.missingApiKey,
-        '未读取到 speech-api-key.txt 里的新版语音 API Key',
+        '未配置火山语音 API Key，请在设置的云服务中配置。',
       );
     }
 
@@ -299,7 +299,7 @@ class StreamingAsrService {
     if (apiKey.trim().isEmpty) {
       throw const AsrException(
         AsrFailureType.missingApiKey,
-        '未读取到 speech-api-key.txt 里的新版语音 API Key',
+        '未配置火山语音 API Key，请在设置的云服务中配置。',
       );
     }
 
@@ -445,7 +445,7 @@ class StreamingAsrService {
     if (apiKey.trim().isEmpty) {
       throw const AsrException(
         AsrFailureType.missingApiKey,
-        '未读取到 speech-api-key.txt 里的新版语音 API Key',
+        '未配置火山语音 API Key，请在设置的云服务中配置。',
       );
     }
 

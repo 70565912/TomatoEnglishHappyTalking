@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/practice_text_service.dart';
@@ -25,10 +26,12 @@ void main() {
     DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
     await DatabaseService.resetForTest();
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
   });
 
   tearDown(() async {
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
     Directory.current = previousDirectory;
@@ -125,10 +128,10 @@ I can't stand it when people don't attend to the rules.
       purpose: 'translate_to_english_practice',
       maxTokens: 1600,
     );
-    final cacheKey = await ApiCacheService.keyForJson('ark_text', request);
+    final cacheKey = await ApiCacheService.keyForJson('openai_text', request);
     await ApiCacheService.putText(
       cacheKey: cacheKey,
-      kind: 'ark_text',
+      kind: 'openai_text',
       purpose: 'translate_to_english_practice',
       request: request,
       textValue: 'A mother makes a choice for her child.',
@@ -289,9 +292,9 @@ I can't stand it when people don't attend to the rules.
 }
 
 void _writeArkConfig() {
-  final securityDir = Directory('security')..createSync();
-  File('${securityDir.path}${Platform.pathSeparator}ark.txt').writeAsStringSync(
-    'ARK_API_KEY=ark-practice-key-12345678901234567890\n'
-    'ARK_TEXT_MODEL=doubao-seed-2-0-lite-260215\n',
+  AppConfig.setRuntimeConfigForTest(
+    aiProvider: AppConfig.aiProviderVolcengine,
+    volcArkApiKey: 'ark-practice-key-12345678901234567890',
+    volcArkTextModel: 'doubao-seed-2-0-lite-260215',
   );
 }

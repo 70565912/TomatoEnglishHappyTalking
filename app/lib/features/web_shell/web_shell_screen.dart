@@ -19,6 +19,7 @@ import '../../data/models/article_song_model.dart';
 import '../../data/models/picture_book_model.dart';
 import '../../services/api_cache_service.dart';
 import '../../services/asset_path_service.dart';
+import '../../services/bailian_music_service.dart';
 import '../../services/database_service.dart';
 import '../../services/content_safety_service.dart';
 import '../../services/nlp_service.dart';
@@ -57,6 +58,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       const String.fromEnvironment('TOMATO_QA_TOKEN');
   static const _articleContentMaxChars = 8000;
   static const _sunoSongPurpose = 'article_suno_song_v1';
+  static const _bailianSongPurpose = BailianMusicService.cachePurpose;
   static const _englishVoicePreviewText =
       "Hello, I am your tomato tutor. Let's practice English together.";
   static const _chineseVoicePreviewText = '你好，我是番茄助教。让我们一起快乐练英语。';
@@ -139,6 +141,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'article.rename': _handleArticleRename,
         'article.delete': _handleArticleDelete,
         'series.list': _handleSeriesList,
+        'series.suggestDescription': _handleSeriesSuggestDescription,
         'series.create': _handleSeriesCreate,
         'series.update': _handleSeriesUpdate,
         'series.delete': _handleSeriesDelete,
@@ -204,6 +207,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'settings.load': _handleSettingsLoad,
         'settings.saveVoice': _handleSettingsSaveVoice,
         'settings.saveSong': _handleSettingsSaveSong,
+        'settings.saveCloud': _handleSettingsSaveCloud,
         'diagnostics.logsRecent': _handleDiagnosticsLogsRecent,
         'diagnostics.logsExport': _handleDiagnosticsLogsExport,
         'diagnostics.clientLog': _handleDiagnosticsClientLog,
@@ -767,6 +771,70 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Future<Map<String, dynamic>> _handleSeriesList(BridgeMessage message) async {
     return _storySeriesListPayload();
+  }
+
+  Future<Map<String, dynamic>> _handleSeriesSuggestDescription(
+    BridgeMessage message,
+  ) async {
+    final requestedSeriesTitle =
+        _payloadString(message.payload, 'seriesTitle').trim();
+    final requestedArticleTitle =
+        _payloadString(message.payload, 'articleTitle').trim();
+    final currentDescription =
+        _payloadString(message.payload, 'description').trim();
+    final content = _payloadString(message.payload, 'content').trim();
+    if (content.isEmpty) {
+      throw const FormatException('请先填写文章内容');
+    }
+    _ensureArticleContentWithinLimit(content);
+
+    final parsedInput = PracticeInputParser.parse(content);
+    final englishContent = await _englishPracticeContent(
+      content,
+      parsedInput: parsedInput,
+    );
+    final sentences = NlpService.splitSentences(englishContent);
+    if (sentences.isEmpty) {
+      throw const FormatException('文章内容需要能转换为英文练习句子');
+    }
+    final articleTitle = _firstNonEmptyString([
+          requestedArticleTitle,
+          parsedInput.titleCandidate,
+          _fallbackArticleTitle(englishContent),
+        ]) ??
+        'English Story';
+    final seriesTitle = _firstNonEmptyString([
+          requestedSeriesTitle,
+          articleTitle,
+          'Picture Book Story',
+        ]) ??
+        'Picture Book Story';
+    final now = DateTime.now();
+    final article = Article(
+      title: articleTitle,
+      content: englishContent,
+      sentences: sentences,
+      createdAt: now,
+    );
+    final chapter = StoryChapter(
+      seriesId: 0,
+      articleId: 0,
+      chapterOrder: 1,
+      chapterTitle: articleTitle,
+      summaryJson: '{}',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final description = await PictureBookService.suggestBookDescription(
+      article: article,
+      chapter: chapter,
+      seriesTitle: seriesTitle,
+      currentDescription: currentDescription,
+    );
+    if (description.trim().isEmpty) {
+      throw const FormatException('自动书籍简介暂时生成失败');
+    }
+    return {'description': description.trim()};
   }
 
   Future<Map<String, dynamic>> _handleSeriesCreate(
@@ -1460,6 +1528,121 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
   }
 
+  Future<ArticleSongState?> _cachedBailianSongState(Article article) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      return null;
+    }
+    final entries = await ApiCacheService.getEntriesForArticlePurpose(
+      articleId: articleId,
+      purpose: _bailianSongPurpose,
+      limit: 80,
+    );
+    if (entries.isEmpty) {
+      return null;
+    }
+    final contentHash = await _articleSongContentHash(article);
+    final lyricsHash = await _articleSongLyricsHash(article);
+    final versions = <ArticleSongVersion>[];
+    String? metadataPath;
+    String? songUrl;
+    for (final entry in entries) {
+      if ((entry.jsonValue ?? '').trim().isEmpty) {
+        continue;
+      }
+      final request = _decodeJsonObject(entry.requestJson);
+      final requestContentHash = _nonEmptyString(request['contentHash']);
+      final requestLyricsHash = _nonEmptyString(request['lyricsHash']);
+      if (requestContentHash != contentHash &&
+          requestLyricsHash != lyricsHash) {
+        continue;
+      }
+      final metadata = _decodeJsonObject(entry.jsonValue);
+      metadataPath ??= _nonEmptyString(metadata['metadataPath']);
+      songUrl ??= _nonEmptyString(metadata['songUrl']);
+      final rawVersions = metadata['versions'];
+      if (rawVersions is List) {
+        for (final rawVersion in rawVersions) {
+          final version = ArticleSongVersion.fromJson(rawVersion);
+          if (version == null) {
+            continue;
+          }
+          final audioPath =
+              await ApiCacheService.migrateLegacyCacheFileIfNeeded(
+            version.audioPath,
+          );
+          if (!await File(audioPath).exists()) {
+            continue;
+          }
+          final timelinePath = version.timelinePath == null
+              ? null
+              : await ApiCacheService.migrateLegacyCacheFileIfNeeded(
+                  version.timelinePath!,
+                );
+          final hasTimeline = timelinePath != null &&
+              timelinePath.trim().isNotEmpty &&
+              await File(timelinePath).exists();
+          versions.add(
+            version.copyWith(
+              audioPath: audioPath,
+              lyricsHash: version.lyricsHash ?? lyricsHash,
+              source: AppConfig.songProviderBailianFunMusic,
+              timelinePath: hasTimeline ? timelinePath : null,
+              timelineStatus:
+                  hasTimeline ? _versionTimelineStatus(version) : 'missing',
+              timelineConfidence:
+                  hasTimeline ? version.timelineConfidence : null,
+              timelineError: hasTimeline ? version.timelineError : null,
+            ),
+          );
+        }
+      }
+      if (versions.isEmpty) {
+        final legacyAudioPath =
+            await ApiCacheService.migrateLegacyCacheFileIfNeeded(
+          (metadata['audioPath'] ?? '').toString(),
+        );
+        if (legacyAudioPath.trim().isNotEmpty &&
+            await File(legacyAudioPath).exists()) {
+          versions.add(
+            ArticleSongVersion(
+              id: 'bailian_fun_music_${articleId}_${legacyAudioPath.hashCode}',
+              audioPath: legacyAudioPath,
+              title: '百炼 fun-music 版本 1',
+              songUrl: _nonEmptyString(metadata['songUrl']),
+              durationMs: (metadata['durationMs'] as num?)?.toInt(),
+              createdAt: _nonEmptyString(metadata['createdAt']),
+              stylePrompt: _nonEmptyString(metadata['model']),
+              styleKey: _nonEmptyString(metadata['model']),
+              lyricsHash: lyricsHash,
+              source: AppConfig.songProviderBailianFunMusic,
+              isDefault: true,
+            ),
+          );
+        }
+      }
+    }
+    if (versions.isEmpty) {
+      return null;
+    }
+    final payloadVersions = _songVersionsForPayload(articleId, versions);
+    final selected =
+        _defaultSongVersion(payloadVersions) ?? payloadVersions.first;
+    return ArticleSongState(
+      articleId: articleId,
+      status: 'ready',
+      stylePrompt: '',
+      audioPath: selected.audioPath,
+      durationMs: selected.durationMs,
+      source: AppConfig.songProviderBailianFunMusic,
+      songUrl: selected.songUrl ?? songUrl,
+      metadataPath: metadataPath,
+      versions: payloadVersions,
+      downloadComplete: true,
+      automationStatus: 'complete',
+    );
+  }
+
   Future<List<ArticleSongVersion>> _sunoVersionsFromMetadata(
     Map<String, dynamic> metadata, {
     required String fallbackStylePrompt,
@@ -1496,6 +1679,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               stylePrompt: version.stylePrompt ?? fallbackStylePrompt,
               styleKey: version.styleKey,
               lyricsHash: version.lyricsHash ?? fallbackLyricsHash,
+              source: version.source,
               timelinePath: hasTimeline ? timelinePath : null,
               timelineStatus:
                   hasTimeline ? _versionTimelineStatus(version) : 'missing',
@@ -1526,10 +1710,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     String? statusOverride,
     String? stylePromptOverride,
     String? errorMessageOverride,
+    String? sourceOverride,
   }) async {
     final article = await _songArticle(articleId);
     final activeSuno = await _activeSunoSongState(articleId);
-    if (activeSuno != null) {
+    final preferredSource = _normalizeSongProvider(
+      sourceOverride ?? await AppConfig.songGenerationProvider,
+    );
+    if (activeSuno != null &&
+        _normalizeSongProvider(sourceOverride ?? AppConfig.songProviderSuno) ==
+            AppConfig.songProviderSuno) {
       var state = activeSuno;
       if (statusOverride != null) {
         state = state.copyWith(status: statusOverride);
@@ -1543,13 +1733,40 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return state.toJson();
     }
     final cachedSuno = await _cachedSunoSongState(article);
-    var state = cachedSuno ??
+    final cachedBailian = await _cachedBailianSongState(article);
+    final preferredState =
+        preferredSource == AppConfig.songProviderBailianFunMusic
+            ? cachedBailian
+            : cachedSuno;
+    final otherState = preferredSource == AppConfig.songProviderBailianFunMusic
+        ? cachedSuno
+        : cachedBailian;
+    final combinedVersions = <ArticleSongVersion>[
+      ...?preferredState?.versions,
+      ...?otherState?.versions,
+    ];
+    var state = preferredState ??
+        otherState ??
         ArticleSongState(
           articleId: articleId,
           status: 'empty',
           stylePrompt: '',
-          source: 'suno',
+          source: preferredSource,
         );
+    if (combinedVersions.isNotEmpty) {
+      final versions = _songVersionsForPayload(articleId, combinedVersions);
+      final selected = _defaultSongVersion(versions) ?? versions.first;
+      state = state.copyWith(
+        status: 'ready',
+        source: preferredSource,
+        audioPath: selected.audioPath,
+        durationMs: selected.durationMs,
+        songUrl: selected.songUrl ?? state.songUrl,
+        versions: versions,
+      );
+    } else if (state.source != preferredSource) {
+      state = state.copyWith(source: preferredSource);
+    }
     if (statusOverride != null) {
       state = state.copyWith(status: statusOverride);
     }
@@ -1567,6 +1784,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     String? statusOverride,
     String? stylePromptOverride,
     String? errorMessageOverride,
+    String? sourceOverride,
   }) async {
     try {
       final payload = await _songStatePayload(
@@ -1574,6 +1792,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         statusOverride: statusOverride,
         stylePromptOverride: stylePromptOverride,
         errorMessageOverride: errorMessageOverride,
+        sourceOverride: sourceOverride,
       );
       await _pushEvent('listening.song.state', payload);
     } catch (error) {
@@ -2051,6 +2270,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     final article = await _songArticle(articleId);
     final lyrics = _payloadString(message.payload, 'lyrics').trim();
+    final requestedSource = _payloadString(message.payload, 'source').trim();
+    final source = requestedSource.isEmpty
+        ? await AppConfig.songGenerationProvider
+        : _normalizeSongProvider(requestedSource);
+    if (source == AppConfig.songProviderBailianFunMusic) {
+      return _generateBailianFunMusic(
+        article: article,
+        lyrics: lyrics.isEmpty ? _articleSongLyrics(article) : lyrics,
+      );
+    }
     return _startSunoAutomation(
       article: article,
       stylePrompt: '',
@@ -2262,11 +2491,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (_sunoArticleId == articleId) {
       _sunoVersions
         ..clear()
-        ..addAll(updatedVersions);
+        ..addAll(updatedVersions.where(
+          (version) =>
+              _normalizeSongProvider(version.source) ==
+              AppConfig.songProviderSuno,
+        ));
     }
-    await _saveSunoMetadataForVersions(
+    await _saveSongMetadataForVersions(
       article: article,
       versions: updatedVersions,
+      source: updatedVersions
+          .firstWhere(
+            (version) => version.id == versionId,
+            orElse: () => updatedVersions.first,
+          )
+          .source,
     );
     return _songStatePayload(articleId);
   }
@@ -2330,7 +2569,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       audioPath: version.audioPath,
       lyricLines: lyricLines,
       translations: translations,
-      source: 'suno',
+      source: version.source,
     );
     final updated = ArticleSongVersion(
       id: version.id,
@@ -2342,17 +2581,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       stylePrompt: version.stylePrompt,
       styleKey: version.styleKey,
       lyricsHash: result.lyricsHash,
+      source: version.source,
       timelinePath: result.timelinePath,
       timelineStatus: 'ready',
       timelineConfidence: result.timeline.confidence,
       timelineError: null,
       isDefault: version.isDefault,
     );
-    await _persistUpdatedSunoVersion(article, updated);
+    await _persistUpdatedSongVersion(article, updated);
     return updated;
   }
 
-  Future<void> _persistUpdatedSunoVersion(
+  Future<void> _persistUpdatedSongVersion(
     Article article,
     ArticleSongVersion updated,
   ) async {
@@ -2378,11 +2618,40 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (_sunoArticleId == articleId) {
       _sunoVersions
         ..clear()
-        ..addAll(currentVersions);
+        ..addAll(currentVersions.where(
+          (version) =>
+              _normalizeSongProvider(version.source) ==
+              AppConfig.songProviderSuno,
+        ));
+    }
+    await _saveSongMetadataForVersions(
+      article: article,
+      versions: currentVersions,
+      source: updated.source,
+    );
+  }
+
+  Future<void> _saveSongMetadataForVersions({
+    required Article article,
+    required List<ArticleSongVersion> versions,
+    required String source,
+  }) async {
+    final normalizedSource = _normalizeSongProvider(source);
+    final scopedVersions = versions
+        .where((version) =>
+            _normalizeSongProvider(version.source) == normalizedSource)
+        .toList(growable: false);
+    if (normalizedSource == AppConfig.songProviderBailianFunMusic) {
+      await _saveBailianMusicMetadataForVersions(
+        article: article,
+        versions: scopedVersions,
+        model: await AppConfig.aliyunBailianMusicModel,
+      );
+      return;
     }
     await _saveSunoMetadataForVersions(
       article: article,
-      versions: currentVersions,
+      versions: scopedVersions.isEmpty ? versions : scopedVersions,
     );
   }
 
@@ -2394,12 +2663,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (articleId == null) {
       return;
     }
-    final currentVersions = versions.toList(growable: false);
-    final settings = await _songSettingsPayload();
-    final directory = Directory(
-      (settings['sunoOutputDirectory'] ?? _defaultSunoOutputDirectory())
-          .toString(),
-    );
+    final currentVersions = versions
+        .map((version) => version.copyWith(source: AppConfig.songProviderSuno))
+        .toList(growable: false);
+    final directory = Directory(await _resolvedSunoOutputDirectorySetting());
     await directory.create(recursive: true);
     final metadataPath = path_lib.join(
       directory.path,
@@ -2469,6 +2736,156 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       cacheKey: cacheKey,
       kind: 'suno_music',
       purpose: _sunoSongPurpose,
+      request: request,
+      jsonValue: metadata,
+      articleId: articleId,
+    );
+  }
+
+  Future<Map<String, dynamic>> _generateBailianFunMusic({
+    required Article article,
+    required String lyrics,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      throw const FormatException('文章尚未保存，不能生成歌曲');
+    }
+    final trimmedLyrics = lyrics.trim();
+    if (trimmedLyrics.isEmpty) {
+      throw const FormatException('文章没有可用于百炼 fun-music 的英文歌词');
+    }
+    _stopSunoAutomation(clearVisible: false);
+    await _pushEvent(
+      'listening.song.state',
+      ArticleSongState(
+        articleId: articleId,
+        status: 'generating',
+        source: AppConfig.songProviderBailianFunMusic,
+        manualActionMessage: '百炼 fun-music 正在根据当前歌词生成歌曲。',
+      ).toJson(),
+    );
+    final result = await BailianMusicService.generateFromLyrics(
+      lyrics: trimmedLyrics,
+      title: article.title,
+      articleId: articleId,
+    );
+    if (result.source == BailianMusicResultSource.skippedNoKey ||
+        result.source == BailianMusicResultSource.failed ||
+        (result.filePath ?? '').trim().isEmpty) {
+      final message = result.errorMessage ?? '百炼 fun-music 生成失败';
+      await _pushSongState(
+        articleId,
+        statusOverride: 'error',
+        errorMessageOverride: message,
+        sourceOverride: AppConfig.songProviderBailianFunMusic,
+      );
+      throw FormatException(message);
+    }
+
+    final existingState = await _cachedBailianSongState(article);
+    final existingVersions = existingState?.versions.toList(growable: true) ??
+        <ArticleSongVersion>[];
+    final cacheId = (result.cacheKey ?? DateTime.now().millisecondsSinceEpoch)
+        .toString()
+        .replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_');
+    final lyricsHash = await _articleSongLyricsHash(article);
+    final model = await AppConfig.aliyunBailianMusicModel;
+    final newVersion = ArticleSongVersion(
+      id: 'bailian_fun_music_$cacheId',
+      audioPath: result.filePath!.trim(),
+      title: '百炼 fun-music 版本 ${existingVersions.length + 1}',
+      songUrl: result.audioUrl,
+      durationMs: result.durationMs,
+      createdAt: DateTime.now().toIso8601String(),
+      stylePrompt: model,
+      styleKey: model,
+      lyricsHash: lyricsHash,
+      source: AppConfig.songProviderBailianFunMusic,
+      isDefault: existingVersions.every((version) => !version.isDefault),
+    );
+    final versions = <ArticleSongVersion>[
+      newVersion,
+      for (final version in existingVersions)
+        if (version.id != newVersion.id &&
+            version.audioPath.trim() != newVersion.audioPath.trim())
+          version,
+    ];
+    await _saveBailianMusicMetadataForVersions(
+      article: article,
+      versions: versions,
+      songUrl: result.audioUrl,
+      durationMs: result.durationMs,
+      requestId: result.requestId,
+      model: model,
+    );
+    return _songStatePayload(
+      articleId,
+      statusOverride: 'ready',
+      sourceOverride: AppConfig.songProviderBailianFunMusic,
+    );
+  }
+
+  Future<void> _saveBailianMusicMetadataForVersions({
+    required Article article,
+    required List<ArticleSongVersion> versions,
+    String? songUrl,
+    int? durationMs,
+    String? requestId,
+    required String model,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      return;
+    }
+    final currentVersions = versions
+        .map((version) =>
+            version.copyWith(source: AppConfig.songProviderBailianFunMusic))
+        .toList(growable: false);
+    final directory = Directory(await _resolvedSunoOutputDirectorySetting());
+    await directory.create(recursive: true);
+    final metadataPath = path_lib.join(
+      directory.path,
+      'article_${articleId}_bailian_fun_music_${DateTime.now().millisecondsSinceEpoch}.json',
+    );
+    final selected = _defaultSongVersion(currentVersions) ??
+        (currentVersions.isNotEmpty ? currentVersions.first : null);
+    final lyricsHash = await _articleSongLyricsHash(article);
+    final metadata = {
+      'provider': AppConfig.songProviderBailianFunMusic,
+      'articleId': articleId,
+      'articleTitle': article.title,
+      'lyricsHash': lyricsHash,
+      'model': model,
+      'songUrl': songUrl ?? selected?.songUrl,
+      'durationMs': durationMs ?? selected?.durationMs,
+      'requestId': requestId,
+      'audioPath': selected?.audioPath,
+      'metadataPath': metadataPath,
+      'downloadComplete': true,
+      'versions': currentVersions.map((version) => version.toJson()).toList(),
+      'createdAt': DateTime.now().toIso8601String(),
+    };
+    await File(metadataPath).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(metadata),
+      flush: true,
+    );
+    final request = {
+      'version': 1,
+      'provider': AppConfig.songProviderBailianFunMusic,
+      'articleId': articleId,
+      'articleTitle': article.title,
+      'contentHash': await _articleSongContentHash(article),
+      'lyricsHash': lyricsHash,
+      'model': model,
+    };
+    final cacheKey = await ApiCacheService.keyForJson(
+      'article_bailian_fun_music',
+      request,
+    );
+    await ApiCacheService.putJson(
+      cacheKey: cacheKey,
+      kind: 'bailian_fun_music',
+      purpose: _bailianSongPurpose,
       request: request,
       jsonValue: metadata,
       articleId: articleId,
@@ -3448,11 +3865,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _sunoDownloadInFlightKeys.add(downloadKey);
     await _setSunoStatus('downloading', '正在下载 Suno 生成的歌曲...');
     try {
-      final settings = await _songSettingsPayload();
-      final directory = Directory(
-        (settings['sunoOutputDirectory'] ?? _defaultSunoOutputDirectory())
-            .toString(),
-      );
+      final directory = Directory(await _resolvedSunoOutputDirectorySetting());
       await directory.create(recursive: true);
       final filename = _safeSunoFilename(request.suggestedFilename);
       final target = _uniqueSunoTargetFile(directory, filename);
@@ -3809,11 +4222,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     String? fallbackMediaUrl,
   }) async {
     var downloadedCount = 0;
-    final settings = await _songSettingsPayload();
-    final directory = Directory(
-      (settings['sunoOutputDirectory'] ?? _defaultSunoOutputDirectory())
-          .toString(),
-    );
+    final directory = Directory(await _resolvedSunoOutputDirectorySetting());
     await directory.create(recursive: true);
     final lyricsHash = await _articleSongLyricsHash(
       await _songArticle(articleId),
@@ -4058,11 +4467,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return;
     }
     final article = await _songArticle(articleId);
-    final settings = await _songSettingsPayload();
-    final directory = Directory(
-      (settings['sunoOutputDirectory'] ?? _defaultSunoOutputDirectory())
-          .toString(),
-    );
+    final directory = Directory(await _resolvedSunoOutputDirectorySetting());
     await directory.create(recursive: true);
     final metadataPath = path_lib.join(
       directory.path,
@@ -6516,6 +6921,48 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     await AppConfig.saveSongSettings(
       sunoOutputDirectory: safeSunoOutputDirectory,
       sunoTimeoutMinutes: timeout,
+      songProvider: _payloadString(
+        message.payload,
+        'songProvider',
+        fallback: await AppConfig.songGenerationProvider,
+      ),
+    );
+    final payload = await _settingsPayload();
+    unawaited(_pushEvent('settings.state', payload));
+    return payload;
+  }
+
+  Future<Map<String, dynamic>> _handleSettingsSaveCloud(
+    BridgeMessage message,
+  ) async {
+    String? optionalString(String key) => message.payload.containsKey(key)
+        ? _payloadString(message.payload, key).trim()
+        : null;
+    await AppConfig.saveCloudSettings(
+      aiProvider: optionalString('aiProvider'),
+      aliyunBailianApiKey: optionalString('aliyunBailianApiKey'),
+      clearAliyunBailianApiKey: _payloadBool(
+        message.payload,
+        'clearAliyunBailianApiKey',
+      ),
+      aliyunBailianBaseUrl: optionalString('aliyunBailianBaseUrl'),
+      aliyunBailianTextModel: optionalString('aliyunBailianTextModel'),
+      aliyunBailianMusicModel: optionalString('aliyunBailianMusicModel'),
+      volcArkApiKey: optionalString('volcArkApiKey'),
+      clearVolcArkApiKey: _payloadBool(
+        message.payload,
+        'clearVolcArkApiKey',
+      ),
+      volcArkBaseUrl: optionalString('volcArkBaseUrl'),
+      volcArkTextModel: optionalString('volcArkTextModel'),
+      volcArkImageModel: optionalString('volcArkImageModel'),
+      volcSpeechApiKey: optionalString('volcSpeechApiKey'),
+      clearVolcSpeechApiKey: _payloadBool(
+        message.payload,
+        'clearVolcSpeechApiKey',
+      ),
+      volcTtsResourceId: optionalString('volcTtsResourceId'),
+      volcTtsSpeakerId: optionalString('volcTtsSpeakerId'),
     );
     final payload = await _settingsPayload();
     unawaited(_pushEvent('settings.state', payload));
@@ -8022,6 +8469,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'speakerId': resolvedSpeakerId,
       },
       'song': songSettings,
+      'cloud': await AppConfig.cloudSettingsPayload(),
       'voices': TtsService.voices
           .map(
             (voice) => {
@@ -8044,9 +8492,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final rawOutputDirectory = (settings['sunoOutputDirectory'] ?? '').trim();
     final timeout =
         int.tryParse((settings['sunoTimeoutMinutes'] ?? '').trim()) ?? 20;
-    final outputDirectory = _resolveSunoOutputDirectory(rawOutputDirectory);
     if (rawOutputDirectory.isNotEmpty &&
-        AssetPathService.isTemporaryAssetDirectory(rawOutputDirectory)) {
+        AssetPathService.isTemporaryAssetDirectory(
+          rawOutputDirectory,
+          baseDirectory: AssetPathService.programDirectory(),
+        )) {
+      final defaultSetting = _defaultSunoOutputDirectorySetting();
+      final outputDirectory = _resolveSunoOutputDirectory(defaultSetting);
       await AppConfig.saveSongSettings(
         sunoOutputDirectory: '',
         sunoTimeoutMinutes: timeout,
@@ -8059,10 +8511,25 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           'resolvedDirectory': outputDirectory,
         },
       );
+      return {
+        'sunoOutputDirectory': defaultSetting,
+        'resolvedSunoOutputDirectory': outputDirectory,
+        'sunoTimeoutMinutes': timeout.clamp(5, 120),
+        'songProvider':
+            settings['songProvider'] ?? AppConfig.defaultSongProvider,
+      };
     }
+    final defaultSetting = _defaultSunoOutputDirectorySetting();
+    final configured = rawOutputDirectory.isEmpty ||
+            _isDefaultSunoOutputDirectory(rawOutputDirectory)
+        ? defaultSetting
+        : rawOutputDirectory;
+    final outputDirectory = _resolveSunoOutputDirectory(configured);
     return {
-      'sunoOutputDirectory': outputDirectory,
+      'sunoOutputDirectory': configured,
+      'resolvedSunoOutputDirectory': outputDirectory,
       'sunoTimeoutMinutes': timeout.clamp(5, 120),
+      'songProvider': settings['songProvider'] ?? AppConfig.defaultSongProvider,
     };
   }
 
@@ -8879,6 +9346,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return value.toString();
   }
 
+  String _normalizeSongProvider(String value) {
+    final normalized = value.trim().toLowerCase();
+    return normalized == AppConfig.songProviderBailianFunMusic
+        ? AppConfig.songProviderBailianFunMusic
+        : AppConfig.songProviderSuno;
+  }
+
   List<Map<String, dynamic>> _payloadMapList(
     Map<String, dynamic> payload,
     String key,
@@ -9189,23 +9663,50 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         RecordingExportService.programDirectory(), 'suno-fixtures');
   }
 
-  String _defaultSunoOutputDirectory() => path_lib.join(
-        AssetPathService.programDirectory(),
-        'suno-music',
-      );
+  String _defaultSunoOutputDirectorySetting() =>
+      AssetPathService.defaultSunoOutputDirectorySetting();
+
+  String _defaultSunoOutputDirectory() =>
+      AssetPathService.defaultSunoOutputDirectory();
 
   String _resolveSunoOutputDirectory(String configured) =>
       AssetPathService.resolvePersistentDirectory(
         configured: configured,
         defaultDirectory: _defaultSunoOutputDirectory(),
+        baseDirectory: AssetPathService.programDirectory(),
       );
+
+  bool _isDefaultSunoOutputDirectory(String configured) {
+    final trimmed = configured.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    return path_lib.equals(
+      path_lib.normalize(_resolveSunoOutputDirectory(trimmed)),
+      path_lib.normalize(_defaultSunoOutputDirectory()),
+    );
+  }
 
   String _sunoOutputDirectorySettingForSave(String configured) {
     final trimmed = configured.trim();
     if (trimmed.isEmpty) {
       return '';
     }
-    return AssetPathService.isTemporaryAssetDirectory(trimmed) ? '' : trimmed;
+    return AssetPathService.isTemporaryAssetDirectory(
+      trimmed,
+      baseDirectory: AssetPathService.programDirectory(),
+    )
+        ? ''
+        : trimmed;
+  }
+
+  Future<String> _resolvedSunoOutputDirectorySetting() async {
+    final settings = await _songSettingsPayload();
+    return (settings['resolvedSunoOutputDirectory'] ??
+            _resolveSunoOutputDirectory(
+              (settings['sunoOutputDirectory'] ?? '').toString(),
+            ))
+        .toString();
   }
 
   Future<String> _migrateSunoAssetPathIfNeeded(String audioPath) async {

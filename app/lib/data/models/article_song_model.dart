@@ -99,6 +99,7 @@ class ArticleSongVersion {
     this.stylePrompt,
     this.styleKey,
     this.lyricsHash,
+    this.source = 'suno',
     this.timelinePath,
     this.timelineStatus,
     this.timelineConfidence,
@@ -115,6 +116,7 @@ class ArticleSongVersion {
   final String? stylePrompt;
   final String? styleKey;
   final String? lyricsHash;
+  final String source;
   final String? timelinePath;
   final String? timelineStatus;
   final double? timelineConfidence;
@@ -131,6 +133,7 @@ class ArticleSongVersion {
         if (stylePrompt != null) 'stylePrompt': stylePrompt,
         if (styleKey != null) 'styleKey': styleKey,
         if (lyricsHash != null) 'lyricsHash': lyricsHash,
+        'source': source,
         if (timelinePath != null) 'timelinePath': timelinePath,
         if (timelineStatus != null) 'timelineStatus': timelineStatus,
         if (timelineConfidence != null)
@@ -149,6 +152,7 @@ class ArticleSongVersion {
     String? stylePrompt,
     String? styleKey,
     String? lyricsHash,
+    String? source,
     String? timelinePath,
     String? timelineStatus,
     double? timelineConfidence,
@@ -165,6 +169,7 @@ class ArticleSongVersion {
         stylePrompt: stylePrompt ?? this.stylePrompt,
         styleKey: styleKey ?? this.styleKey,
         lyricsHash: lyricsHash ?? this.lyricsHash,
+        source: source ?? this.source,
         timelinePath: timelinePath ?? this.timelinePath,
         timelineStatus: timelineStatus ?? this.timelineStatus,
         timelineConfidence: timelineConfidence ?? this.timelineConfidence,
@@ -191,6 +196,7 @@ class ArticleSongVersion {
       stylePrompt: _nonEmpty(value['stylePrompt']),
       styleKey: _nonEmpty(value['styleKey']),
       lyricsHash: _nonEmpty(value['lyricsHash']),
+      source: _nonEmpty(value['source']) ?? 'suno',
       timelinePath: _nonEmpty(value['timelinePath']),
       timelineStatus: _nonEmpty(value['timelineStatus']),
       timelineConfidence: (value['timelineConfidence'] as num?)?.toDouble(),

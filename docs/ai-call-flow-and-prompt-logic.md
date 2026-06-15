@@ -15,9 +15,10 @@
 
 | 能力 | 读取入口 | 文件/配置 |
 | --- | --- | --- |
-| 方舟文本生成 | `AppConfig.volcArkTextApiKey` | `ark.txt` / `TOMATO_VOLC_ARK_API_KEY` / secure storage |
-| 方舟图片生成 | `AppConfig.volcArkImageApiKey` | `ark.txt` / `TOMATO_VOLC_ARK_API_KEY` / secure storage |
-| TTS / Realtime / BigASR | `AppConfig.volcSpeechApiKey` | `speech-api-key.txt` |
+| OpenAI-compatible 文本生成 | `AppConfig.openAiTextConfig` | secure storage：`ai_provider`、百炼或方舟文本配置 |
+| 方舟图片生成 | `AppConfig.volcArkImageApiKey` | secure storage：`volc_ark_api_key` |
+| 百炼 fun-music | `AppConfig.aliyunBailianApiKey` / `AppConfig.aliyunBailianMusicModel` | secure storage：百炼 key 与音乐模型 |
+| TTS / Realtime / BigASR | `AppConfig.volcSpeechApiKey` | secure storage：`volc_speech_api_key` |
 | 图片模型 | `AppConfig` / env | 默认 `doubao-seedream-5-0-260128` |
 | 图片尺寸 | `VolcImageService` env | 远程默认 `2560x1440`，本地显示按 16:9 缩放 |
 
@@ -25,18 +26,19 @@
 
 | 场景 | 本地优先逻辑 | 远程服务 | cachePurpose / kind | 输出 |
 | --- | --- | --- | --- | --- |
-| 新增文章正文处理 | `PracticeInputParser` 判定纯英文/标准中英对照直接使用 | 方舟文本 | `translate_to_english_practice` / `ark_text` | 英文练习正文 |
-| 自动标题 | 用户标题 > 本地英文标题候选 > 本地 fallback | 方舟文本 | `suggest_article_title` / `ark_text` | 2-5 词英文标题 |
-| 中文对照 | 导入时保存的 `article_sentence_translations` > 内存 Future cache | 方舟文本 | `follow_translation` / `listening_translation` / `chat_translation` | 简体中文翻译 |
-| 单词释义 | 规范化单词与句子，缓存命中直接返回 | 方舟文本 | `word_lookup` / `ark_text` | JSON: 拼写、音标、含义、句中义 |
-| 章节结构化分镜/对话提纲 | 同一章节分镜缓存或 `story_chapters.summary_json` 命中直接返回 | 方舟文本 | `chapter_story_outline_v1` / `ark_text` | JSON: 章节摘要、分镜、句子范围、角色/地点连续性 |
+| 新增文章正文处理 | `PracticeInputParser` 判定纯英文/标准中英对照直接使用 | OpenAI-compatible 文本 | `translate_to_english_practice` / `openai_text` | 英文练习正文 |
+| 自动标题 | 用户标题 > 本地英文标题候选 > 本地 fallback | OpenAI-compatible 文本 | `suggest_article_title` / `openai_text` | 2-5 词英文标题 |
+| 中文对照 | 导入时保存的 `article_sentence_translations` > 内存 Future cache | OpenAI-compatible 文本 | `follow_translation` / `listening_translation` / `chat_translation` | 简体中文翻译 |
+| 单词释义 | 规范化单词与句子，缓存命中直接返回 | OpenAI-compatible 文本 | `word_lookup` / `openai_text` | JSON: 拼写、音标、含义、句中义 |
+| 章节结构化分镜/对话提纲 | 同一章节分镜缓存或 `story_chapters.summary_json` 命中直接返回 | OpenAI-compatible 文本 | `chapter_story_outline_v1` / `openai_text` | JSON: 章节摘要、分镜、句子范围、角色/地点连续性 |
 | AI 对话 | 完整 turns 转 textQuery，但 turns 只包含提纲、进度和历史，不重复带全文 | Realtime V3 | `chat_start` / `chat_reply` / `realtime` | AI 英文回复 |
 | 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | Doubao TTS 2.0 | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
 | 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | BigASR | `asr_recognize` / `asr` | 识别文本 |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
-| 绘本提示词审核 | 保存后生成/读取 v4 章节计划，用户确认前不提交图片 | 方舟文本 | `picture_book_chapter_plan_v4` / `ark_text` | `storyBrief`、`chapterBrief`、`scenes[]`、group prompt |
+| 绘本提示词审核 | 保存后生成/读取 v4 章节计划，用户确认前不提交图片 | OpenAI-compatible 文本 | `picture_book_chapter_plan_v4` / `openai_text` | `storyBrief`、`chapterBrief`、`scenes[]`、group prompt |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 方舟图片 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 | 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
+| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 百炼 fun-music 或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频与版本 metadata |
 
 ## 新增文章保存流程
 
@@ -55,25 +57,27 @@
 6. 标题解析顺序：
    - 用户填写标题：直接规范化后使用。
    - 标准中英对照/本地解析得到标题候选：直接使用。
-   - 仍为空：调用方舟生成短标题。
-   - 方舟失败：用首句前几个英文词本地 fallback。
+   - 仍为空：调用当前文本 provider 生成短标题。
+   - 文本 provider 失败：用首句前几个英文词本地 fallback。
 7. 保存文章、句子和导入中文对照。
 8. 如果正文处理或标题生成在保存前已经调用过远程，保存后调用 `attachExistingCache` 把全局缓存引用绑定到新文章。
 9. 默认创建/复用“书籍”系列与章节关系；保存返回后 Web UI 调用 `pictureBook.promptReview` 打开提示词审核弹窗，用户确认后才提交顺序组图生成。
 
-## 方舟文本生成统一层
+## OpenAI-compatible 文本生成统一层
 
 入口：`TextGenerationService.generate`。
 
 请求：
 
-- endpoint: `https://ark.cn-beijing.volces.com/api/v3/chat/completions`
+- endpoint: `AppConfig.openAiTextConfig.chatCompletionsEndpoint`，默认 `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`，可切换火山方舟 `/api/v3/chat/completions`
 - body: `model`、`messages`、`max_tokens`、`stream:false`
-- 鉴权：`Authorization: Bearer <ark key>`
+- 鉴权：`Authorization: Bearer <provider key>`
 
 缓存请求 JSON 包含：
 
-- `service: ark_chat_completions`
+- `service: openai_chat_completions`
+- `provider`
+- `baseUrl`
 - `endpoint`
 - `model`
 - `purpose`
@@ -86,7 +90,7 @@
 提交前安全规则：
 
 - `TextGenerationService.generate` 会先调用 `ContentSafetyService.prepareTextForApi`，把已启用的本地规则应用到每条 `messages.content`，再计算缓存 key 和提交远程。
-- 规则只改变提交给方舟的 prompt/request 文本，不改变文章正文、字幕、跟读文本或数据库原文。
+- 规则只改变提交给文本 provider 的 prompt/request 文本，不改变文章正文、字幕、跟读文本或数据库原文。
 - 规则优先使用连字符或空格拆分，例如 `heads -> he-ads`、`beheaded -> be-headed`；避免使用 `*`，因为语音链路可能把星号读出来。
 - 远程返回疑似安全拒绝时，记录 `content_safety_failures`，但不缓存 fallback。
 - 用户修改后同一用途提交成功时，程序比较失败文本和成功文本，只把明显的词级拆分学习到 `content_safety_rules`。整句改写不泛化成规则。
@@ -119,7 +123,7 @@ Keep names readable and return only the translation:
 前置节省逻辑：
 
 - 如果传入已经是纯中文，直接返回。
-- 跟读/听力如果 `article_sentence_translations` 有导入译文，优先使用导入译文，不再调用方舟。
+- 跟读/听力如果 `article_sentence_translations` 有导入译文，优先使用导入译文，不再调用文本 provider。
 - `TranslationService` 还有进程内 Future cache，避免同一轮 UI 中重复请求。
 
 ### 2. 中英混杂提取英文原文
@@ -233,7 +237,7 @@ sentenceMeaning is the meaning of this word in this exact sentence.
 
 入口：
 
-- `ChapterStoryOutlineService.prepareOutline`：把完整章节英文句子提交给方舟一次，让方舟按场景、事件、冲突、角色决定和结尾自然切分并生成结构化分镜 JSON；结果通过 `TextGenerationService` / `ApiCacheService` 持久缓存，并同步写入 `story_chapters.summary_json`。
+- `ChapterStoryOutlineService.prepareOutline`：把完整章节英文句子提交给当前文本 provider 一次，让远程模型按场景、事件、冲突、角色决定和结尾自然切分并生成结构化分镜 JSON；结果通过 `TextGenerationService` / `ApiCacheService` 持久缓存，并同步写入 `story_chapters.summary_json`。
 - `ChatChapterGuideService.prepareGuide`：不再单独生成聊天提纲，而是复用 `chapter_story_outline_v1`，把结构化分镜转成可复用的紧凑教学提纲。
 - `RealtimeVoiceService`：使用火山 Realtime V3 文本 query 模式，后续只带分镜提纲、进度判断指令和对话历史，不再重复提交完整章节原文。
 
@@ -241,14 +245,14 @@ sentenceMeaning is the meaning of this word in this exact sentence.
 
 远程语义切分：
 
-- 方舟输入使用完整章节编号句子，不再使用固定 8 条本地均分提纲作为远程输入。
-- 方舟自己根据故事内容决定 `segments` 数量：短章节可 3-5 条，普通章节常见 6-10 条，长章节最多 14 条。
+- 文本 provider 输入使用完整章节编号句子，不再使用固定 8 条本地均分提纲作为远程输入。
+- 远程模型自己根据故事内容决定 `segments` 数量：短章节可 3-5 条，普通章节常见 6-10 条，长章节最多 14 条。
 - 每个分镜包含 `sentenceStartIndex`、`sentenceEndIndex`、`title`、`summary`、`visualPrompt`、`characters`、`locations`、`continuityNotes`。
 - 切分依据应是自然场景、事件、冲突、角色决定和结尾变化，不是固定句数或固定段数；如果文章特别长，在分镜阶段合并相邻场景，不拆成多组图片请求。
 - 程序本地 fallback 也生成最多 14 段结构化分镜，只作为无 key/远程失败兜底，不能代表远程语义切分结果。
-- 提交方舟前，由 `ContentSafetyService` 按已验证/已学习规则做词级拆分，例如 `heads -> he-ads`。
+- 提交文本 provider 前，由 `ContentSafetyService` 按已验证/已学习规则做词级拆分，例如 `heads -> he-ads`。
 
-方舟文本生成 prompt：
+文本生成 prompt：
 
 ```text
 [SYSTEM] You analyze complete English story chapters and create structured storyboards for picture-book generation and speaking practice.
@@ -272,7 +276,7 @@ visualPrompt, characters, locations, continuityNotes.
 Segments must follow chapter order and cover the whole chapter, including the ending and meaning.
 ```
 
-缓存请求包含应用安全规则后的完整章节句子、模型、`maxTokens: 2400` 和 `cachePurpose: chapter_story_outline_v1`。同一章节命中缓存后，绘本生成和打开对话都复用这份分镜，不再单独调用方舟生成聊天提纲，也不再重复提交完整章节。缺 key 或失败时使用本地 fallback 分镜，本地 fallback 不写入远程结果缓存；疑似安全失败另写入 `content_safety_failures`。
+缓存请求包含 provider、base URL、endpoint、应用安全规则后的完整章节句子、模型、`maxTokens: 2400` 和 `cachePurpose: chapter_story_outline_v1`。同一章节命中缓存后，绘本生成和打开对话都复用这份分镜，不再单独调用文本 provider 生成聊天提纲，也不再重复提交完整章节。缺 key 或失败时使用本地 fallback 分镜，本地 fallback 不写入远程结果缓存；疑似安全失败另写入 `content_safety_failures`。
 
 全局系统角色：
 
@@ -555,7 +559,7 @@ Visual direction: ...
 
 建议重点审核以下问题：
 
-1. 标准中英对照是否所有路径都能本地解析，避免调用方舟提取英文。
+1. 标准中英对照是否所有路径都能本地解析，避免调用文本 provider 提取英文。
 2. `pictureBookEnabled` 在正式 UI 中是否始终默认 true，内部测试才允许 false。
 3. 绘本 prompt 是否足够强调书名和当前章节，但没有固化 Alice 或其它单本书。
 4. 标题 prompt 是否满足短标题和所有格要求。

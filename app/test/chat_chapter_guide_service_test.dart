@@ -2,7 +2,9 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/services/chat_chapter_guide_service.dart';
+import 'package:tomato_english_happy_talking/services/content_safety_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
 
@@ -23,10 +25,12 @@ void main() {
     DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
     await DatabaseService.resetForTest();
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
   });
 
   tearDown(() async {
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
     Directory.current = previousDirectory;
@@ -153,6 +157,8 @@ void main() {
 
   test('submits chapter guide with content-safety rules applied', () async {
     _writeArkConfig();
+    await _insertContentSafetyRule('heads', 'he-ads');
+    await _insertContentSafetyRule('execution', 'exe-cution');
     Map<String, dynamic>? seenBody;
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
@@ -207,9 +213,29 @@ void main() {
 }
 
 void _writeArkConfig() {
-  final securityDir = Directory('security')..createSync();
-  File('${securityDir.path}${Platform.pathSeparator}ark.txt').writeAsStringSync(
-    'ARK_API_KEY=ark-chat-guide-key-12345678901234567890\n'
-    'ARK_TEXT_MODEL=doubao-seed-2-0-lite-260215\n',
+  AppConfig.setRuntimeConfigForTest(
+    aiProvider: AppConfig.aiProviderVolcengine,
+    volcArkApiKey: 'ark-chat-guide-key-12345678901234567890',
+    volcArkTextModel: 'doubao-seed-2-0-lite-260215',
   );
+}
+
+Future<void> _insertContentSafetyRule(
+  String sourceTerm,
+  String replacement,
+) async {
+  final db = await DatabaseService.database;
+  final now = DateTime.now().toIso8601String();
+  await db.insert('content_safety_rules', {
+    'source_term': sourceTerm,
+    'replacement': replacement,
+    'service_kind': ContentSafetyService.serviceOpenAiText,
+    'purpose_scope': ContentSafetyService.purposeAny,
+    'match_type': 'word',
+    'confidence': 0.9,
+    'enabled': 1,
+    'source_failure_id': null,
+    'created_at': now,
+    'updated_at': now,
+  });
 }

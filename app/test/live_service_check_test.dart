@@ -34,8 +34,7 @@ void main() {
 
     test('loads runtime configuration summary', () async {
       final speechApiKey = await AppConfig.volcSpeechApiKey;
-      final arkApiKey = await AppConfig.volcArkTextApiKey;
-      final arkTextModel = await AppConfig.volcArkTextModel;
+      final textConfig = await AppConfig.openAiTextConfig;
       final ttsResourceId = await AppConfig.volcTtsResourceId;
       final ttsSpeakerId = await AppConfig.volcTtsSpeakerId;
 
@@ -43,8 +42,10 @@ void main() {
       // Do not print secret values.
       debugPrint(
         'CONFIG speechApiKey=${speechApiKey.isNotEmpty} '
-        'arkApiKey=${arkApiKey.isNotEmpty} '
-        'arkTextModel=$arkTextModel '
+        'textProvider=${textConfig.provider} '
+        'textApiKey=${textConfig.apiKey.isNotEmpty} '
+        'textModel=${textConfig.model} '
+        'textBaseUrl=${textConfig.baseUrl} '
         'ttsResourceId=${ttsResourceId.isNotEmpty ? ttsResourceId : '(empty)'} '
         'ttsSpeakerId=${ttsSpeakerId.isNotEmpty ? ttsSpeakerId : '(empty)'}',
       );
@@ -52,11 +53,13 @@ void main() {
       expect(ttsResourceId, isNotEmpty);
     });
 
-    test('validates Ark text generation smoke path (skippable)', () async {
-      final arkApiKey = await AppConfig.volcArkTextApiKey;
+    test('validates OpenAI-compatible text smoke path (skippable)', () async {
+      final textConfig = await AppConfig.openAiTextConfig;
 
-      if (arkApiKey.isEmpty) {
-        debugPrint('Ark text validation skipped: Ark api key is empty.');
+      if (textConfig.apiKey.isEmpty) {
+        debugPrint(
+          'Text validation skipped: ${textConfig.provider} api key is empty.',
+        );
         return;
       }
 
@@ -64,13 +67,14 @@ void main() {
         turns: const [
           TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
         ],
-        cachePurpose: 'ark_live_smoke',
+        cachePurpose: 'openai_text_live_smoke',
         fallbackText: 'OK',
         maxTokens: 8,
       );
 
       debugPrint(
-        'Ark smoke source=${reply.source.name} '
+        'Text smoke provider=${textConfig.provider} '
+        'source=${reply.source.name} '
         'replyPreview=${reply.text.length > 80 ? reply.text.substring(0, 80) : reply.text} '
         'error=${reply.errorMessage ?? '(none)'}',
       );
@@ -86,6 +90,12 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 60)));
 
     test('validates tts success path', () async {
+      final speechApiKey = await AppConfig.volcSpeechApiKey;
+      if (speechApiKey.isEmpty) {
+        debugPrint('TTS validation skipped: speech api key is empty.');
+        return;
+      }
+
       final bytes = await TtsService.synthesize(
         text:
             'Hello. This is a live validation for Tomato English Happy Talking.',
@@ -97,14 +107,17 @@ void main() {
     }, timeout: const Timeout(Duration(seconds: 60)));
 
     test('validates realtime service smoke path (non-blocking)', () async {
-      final speechApiKey = await AppConfig.volcSpeechApiKey;
+      final textConfig = await AppConfig.openAiTextConfig;
 
-      if (speechApiKey.isEmpty) {
-        debugPrint('Realtime validation skipped: speech api key is empty.');
+      if (textConfig.apiKey.isEmpty) {
+        debugPrint(
+          'Realtime validation skipped: ${textConfig.provider} api key is empty.',
+        );
         return;
       }
 
-      debugPrint('Speech API key configured=true');
+      debugPrint(
+          'Realtime text provider=${textConfig.provider} configured=true');
 
       final reply = await RealtimeVoiceService.startSession(
         articleTitle: 'Realtime smoke check',

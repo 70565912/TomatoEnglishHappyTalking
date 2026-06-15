@@ -671,7 +671,7 @@ class TtsService {
 
     final apiKey = await AppConfig.volcTtsApiKey;
     if (apiKey.isEmpty) {
-      throw const TtsException('未读取到 speech-api-key.txt 里的新版语音 API Key');
+      throw const TtsException('未配置火山语音 API Key，请在设置的云服务中配置。');
     }
 
     TtsException? firstError;

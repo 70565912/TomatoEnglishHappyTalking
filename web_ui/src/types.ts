@@ -188,7 +188,8 @@ export interface ListeningSynthesisPayload {
   error?: string | null;
 }
 
-export type SongSource = 'suno';
+export type SongSource = 'suno' | 'bailian_fun_music';
+export type AiProvider = 'aliyun_bailian' | 'volcengine';
 
 export interface ListeningSongStatePayload {
   articleId: number;
@@ -216,6 +217,7 @@ export interface ListeningSongStatePayload {
     stylePrompt?: string | null;
     styleKey?: string | null;
     lyricsHash?: string | null;
+    source?: SongSource | string;
     timelinePath?: string | null;
     timelineStatus?: 'missing' | 'generating' | 'ready' | 'error' | string | null;
     timelineConfidence?: number | null;
@@ -385,9 +387,31 @@ export interface SettingsState {
     resourceId: string;
     speakerId: string;
   };
+  cloud?: {
+    aiProvider: AiProvider | string;
+    aliyunBailian: {
+      apiKeyConfigured: boolean;
+      apiKeyMask?: string;
+      baseUrl: string;
+      textModel: string;
+      musicModel: string;
+    };
+    volcengine: {
+      arkApiKeyConfigured: boolean;
+      arkApiKeyMask?: string;
+      arkBaseUrl: string;
+      arkTextModel: string;
+      arkImageModel: string;
+      speechApiKeyConfigured: boolean;
+      speechApiKeyMask?: string;
+      ttsResourceId: string;
+      ttsSpeakerId: string;
+    };
+  };
   song?: {
     sunoOutputDirectory: string;
     sunoTimeoutMinutes: number;
+    songProvider?: SongSource | string;
   };
   voices: VoiceOption[];
   contentSafety?: {

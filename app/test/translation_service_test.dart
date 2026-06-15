@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
 import 'package:tomato_english_happy_talking/data/models/article_sentence_translation_model.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
@@ -25,11 +26,13 @@ void main() {
     DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
     await DatabaseService.resetForTest();
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
     TranslationService.clearCacheForTest();
   });
 
   tearDown(() async {
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
     TranslationService.clearCacheForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
@@ -82,7 +85,8 @@ void main() {
     expect(translated, '汤姆发现了一个明亮的零食盒。');
   });
 
-  test('evicts unavailable in-memory translation results so retries can recover',
+  test(
+      'evicts unavailable in-memory translation results so retries can recover',
       () async {
     const sentence = 'Very," said Alice.';
     const importedTranslation = '爱丽丝说：“非常。"';
@@ -140,9 +144,9 @@ void main() {
 }
 
 void _writeArkConfig() {
-  final securityDir = Directory('security')..createSync();
-  File('${securityDir.path}${Platform.pathSeparator}ark.txt').writeAsStringSync(
-    'ARK_API_KEY=ark-translation-key-12345678901234567890\n'
-    'ARK_TEXT_MODEL=doubao-seed-2-0-lite-260215\n',
+  AppConfig.setRuntimeConfigForTest(
+    aiProvider: AppConfig.aiProviderVolcengine,
+    volcArkApiKey: 'ark-translation-key-12345678901234567890',
+    volcArkTextModel: 'doubao-seed-2-0-lite-260215',
   );
 }

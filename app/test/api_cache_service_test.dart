@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path_lib;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
 import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
@@ -32,11 +33,13 @@ void main() {
     await DatabaseService.resetForTest();
     TextGenerationService.setPostOverrideForTest(null);
     VolcImageService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
   });
 
   tearDown(() async {
     TextGenerationService.setPostOverrideForTest(null);
     VolcImageService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
     DatabaseService.setRuntimeDataRootOverrideForTest(null);
@@ -108,6 +111,49 @@ void main() {
     );
 
     expect(await DatabaseService.getStorySeriesById(emptySeries.id!), isNull);
+  });
+
+  test(
+      'suggests draft book description with local fallback when Ark key is missing',
+      () async {
+    var textCalled = false;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textCalled = true;
+        return const {};
+      },
+    );
+    final now = DateTime(2026, 1, 1);
+    final article = Article(
+      title: 'The Little Gate',
+      content:
+          'Lily opens a little green gate. A rabbit waves from the flowers.',
+      sentences: const [
+        'Lily opens a little green gate.',
+        'A rabbit waves from the flowers.',
+      ],
+      createdAt: now,
+    );
+    final chapter = StoryChapter(
+      seriesId: 0,
+      articleId: 0,
+      chapterOrder: 1,
+      chapterTitle: article.title,
+      summaryJson: '{}',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    final description = await PictureBookService.suggestBookDescription(
+      article: article,
+      chapter: chapter,
+      seriesTitle: 'Lily Garden',
+    );
+
+    expect(textCalled, isFalse);
+    expect(description, contains('Lily Garden'));
+    expect(description, contains('picture-book world'));
+    expect(description, contains('Lily opens a little green gate'));
   });
 
   test('deleting an article removes its exclusive cached file', () async {
@@ -328,7 +374,8 @@ void main() {
     );
   });
 
-  test('picture-book generation records planning error when Ark key is missing',
+  test(
+      'picture-book generation records planning error when text provider key is missing',
       () async {
     final articleId = await _saveArticle(
       'Tom finds a bright snack box. He shares it with his team.',
@@ -358,7 +405,7 @@ void main() {
     expect(page['status'], 'error');
     expect(
       page['errorMessage'],
-      contains('文本提交处理失败：未读取到方舟 API Key'),
+      contains('文本提交处理失败：未配置 阿里云百炼 API Key'),
     );
   });
 
@@ -1563,9 +1610,10 @@ Future<File> _writeTestPng(
   }
 }
 
-void _writeImageArkKey(Directory root, String key) {
-  File('${root.path}${Platform.pathSeparator}ark.txt').writeAsStringSync(
-    'ARK_API_KEY=$key\n',
+void _writeImageArkKey(Directory _, String key) {
+  AppConfig.setRuntimeConfigForTest(
+    aiProvider: AppConfig.aiProviderVolcengine,
+    volcArkApiKey: key,
   );
 }
 

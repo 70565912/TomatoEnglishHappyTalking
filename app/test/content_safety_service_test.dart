@@ -51,8 +51,7 @@ void main() {
     expect(result.errorCode, 'http_400');
   });
 
-  test('records failure snapshots and seeds pronounceable built-in rules',
-      () async {
+  test('records failure snapshots and starts with empty rule state', () async {
     final db = await DatabaseService.database;
     final id = await ContentSafetyService.recordFailure(
       serviceKind: ContentSafetyService.serviceArkText,
@@ -68,14 +67,55 @@ void main() {
     expect(failures, hasLength(1));
     expect(failures.single['failed_hash']?.toString(), isNotEmpty);
 
+    final rules = await db.query('content_safety_rules');
+    expect(rules, isEmpty);
+
     final prepared = await ContentSafetyService.prepareTextForApi(
       'Heads were mentioned before the execution.',
       serviceKind: ContentSafetyService.serviceArkText,
       purpose: 'unit_prompt',
     );
-    expect(prepared, contains('He-ads'));
-    expect(prepared, contains('exe-cution'));
+    expect(prepared, 'Heads were mentioned before the execution.');
     expect(prepared, isNot(contains('*')));
+  });
+
+  test('removes legacy built-in rules without deleting learned rules',
+      () async {
+    final db = await DatabaseService.database;
+    final now = DateTime.now().toIso8601String();
+    await db.insert('content_safety_rules', {
+      'source_term': 'heads',
+      'replacement': 'he-ads',
+      'service_kind': '*',
+      'purpose_scope': '*',
+      'match_type': 'word',
+      'confidence': 0.55,
+      'enabled': 1,
+      'source_failure_id': null,
+      'created_at': now,
+      'updated_at': now,
+    });
+    await db.insert('content_safety_rules', {
+      'source_term': 'daggers',
+      'replacement': 'dag-gers',
+      'service_kind': ContentSafetyService.serviceArkText,
+      'purpose_scope': ContentSafetyService.purposeAny,
+      'match_type': 'word',
+      'confidence': 0.9,
+      'enabled': 1,
+      'source_failure_id': 12,
+      'created_at': now,
+      'updated_at': now,
+    });
+
+    await DatabaseService.resetForTest();
+    final reopened = await DatabaseService.database;
+    final rules = await reopened.query(
+      'content_safety_rules',
+      orderBy: 'source_term ASC',
+    );
+
+    expect(rules.map((row) => row['source_term']), ['daggers']);
   });
 
   test('learns word-level replacement after a successful user retry', () async {

@@ -108,12 +108,13 @@ web_ui/
 - 当前产品 UI 以“书库 / 创作中心 / 练习中心 / 设置”为主导航，不再把首页、听力、跟读和对话包装成游戏大厅、任务、闯关、XP 或奖励流程。新页面和文案应延续书籍、章节、绘本、歌曲、视频导出的工作台心智。
 - `app/lib/features/home|article|follow_read|chat|profile` 下的原生 Screen 仍可作为参考/兼容层，但默认路由进入 `WebShellScreen`。
 - Web UI 与 Flutter 交互时必须通过 `web_bridge_protocol.dart` / `bridge.ts` 的 typed command/event 协议，不要从 Web UI 直接访问云 API 或本地文件系统。
-- 歌曲生成来源固定为 Suno 网页自动化和本地版本库；不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt`、`song_default_source` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供 Suno 缓存、播放、字幕时间轴和视频导出复用。
+- 歌曲生成来源支持阿里云百炼 fun-music 与 Suno 网页自动化；默认 provider 仍是 Suno，但设置页可选择 `bailian_fun_music`。不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供本地歌曲缓存、播放、字幕时间轴和视频导出复用。
+- 百炼 fun-music 入口为 `app/lib/services/bailian_music_service.dart`，通过阿里云 DashScope `https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation` 直接按当前英文歌词生成音频；使用 `AppConfig.aliyunBailianApiKey` 与 `AppConfig.aliyunBailianMusicModel`，提交前走 `ContentSafetyService`，成功音频写入 `ApiCacheService` 的 `music/` 子目录。供应商错误直接显示，不自动回退到 Suno。
 - Suno 网页自动化在 `WebShellScreen` 内执行：每次生成都只用当前歌词填表；如果 `Styles` 折叠，必须先点击 `Styles` 折叠头展开到能看到 `Styles` 工具栏魔法棒，再清空旧 `Styles` value 并点击蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把 `More Options` 当成 `Styles` 展开入口。保存下来的风格只作为本次歌曲 metadata，不再回填或作为下载筛选条件；不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
 - Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
 - Suno 歌曲缓存和下载唯一性按当前歌词与 `songUrl` 判断：缓存组使用 `lyricsHash` / `contentHash`，`versions` 可保留旧 `stylePrompt` / `styleKey` metadata 但不再按风格分组，`detectedSongUrls` 记录当前歌词已检测到的完整歌曲链接，`downloadComplete=true` 只表示这些链接都有本地音频版本。重新检测下载时只下载缺失链接，不要重复下载已存在的同一 `songUrl`；用户再次选择生成新歌时仍应重新生成 Suno 风格并进入 Create 确认流程。
-- Suno 歌曲字幕时间轴使用 App 提交给 Suno 的原歌词作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
+- 歌曲字幕时间轴使用 App 提交给歌曲 provider 的原歌词作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
 - Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
 - 听力播放、全屏播放和普通录制只播放英文 TTS；中文翻译只作为字幕/对照文本显示，不再触发听力中文 TTS 预加载或播放。`listening.fullscreenReady` 只检查当前和下一句英文音频，绘本图片只预取当前和下一张；文章保存时应优先保存导入译文，缺失时可用 `PracticeTextService.translateToChinese` 生成逐句字幕，后续听力/跟读只读库中译文，不在打开页面时批量翻译。
 - 跟读录音可根据 BigASR 实时识别文本自动停止：只有识别结果达到参考句覆盖率并匹配句尾时才触发，避免只说末尾短语就结束。相关启发式在 `follow_read_provider.dart`，更新阈值时同步 `follow_recording_auto_stop_test.dart`。
@@ -265,7 +266,7 @@ ExampleService exampleService(ExampleServiceRef ref) {
 
 1. 纯英文输入：本地规范化连字符、撇号、空白和标题行后直接使用，不调用 AI 提取或翻译。
 2. 标准中英对照输入：优先本地解析英文原文和中文对照，不调用 AI 提取英文。典型格式是英文段落/中文翻译交替，前面有 `Chapter ...`、英文标题、中文标题，末尾可能有“注：”。英文原文应保留段落边界；中文对照应保存为可复用的字幕/翻译映射；译注不进入正文。
-3. 中英混杂但不是标准对照：不要把本地启发式结果直接当最终正文；这类输入必须调用方舟提取英文故事原文。
+3. 中英混杂但不是标准对照：不要把本地启发式结果直接当最终正文；这类输入必须调用当前文本 provider 提取英文故事原文。
 4. 纯中文故事：才调用 AI 转成英文练习文。
 5. 用户未输入标题：优先从导入文本的英文标题行、章节标题或系列信息本地生成；无法确定时再调用 AI 生成短标题。
 
@@ -288,7 +289,7 @@ Alice 回归测试用例：
 
 - 文章保存入口：`app/lib/features/web_shell/web_shell_screen.dart` 的 `article.create` / `_englishPracticeContent` / `_resolveArticleTitle`。
 - 本地输入解析：`app/lib/services/practice_input_parser.dart`，标准中英对照必须从这里本地解析直用。
-- 方舟文本处理：`app/lib/services/practice_text_service.dart` / `app/lib/services/text_generation_service.dart`，只用于非标准 mixed、纯中文和必要标题生成。
+- 文本生成处理：`app/lib/services/practice_text_service.dart` / `app/lib/services/text_generation_service.dart`，只用于非标准 mixed、纯中文和必要标题生成。
 - 持久缓存：`app/lib/services/api_cache_service.dart`。
 - 内容安全规则：`app/lib/services/content_safety_service.dart`，负责提交前替换、疑似安全失败记录和用户成功修正规则学习。
 - 分句：`app/lib/services/nlp_service.dart` 与 `web_ui/src/sentenceSplitter.ts`。
@@ -328,18 +329,20 @@ BigASR：
 
 配置与密钥：
 
-- 语音密钥字段：`volc_speech_api_key` / `TOMATO_VOLC_SPEECH_API_KEY`
-- 推荐本机注入：`security/speech-api-key.txt`
-- 方舟密钥文件：`security/ark.txt`，保存火山方舟 Bearer API Key，可写成裸 key、`Bearer ...` 或 `ARK_API_KEY=...`；这是方舟文本处理和方舟图片生成的唯一本地 key 文件。
+- 语音密钥字段：`volc_speech_api_key`，供 TTS、Realtime 和 BigASR 共用。
+- 文本生成 provider 由 `ai_provider` 控制，默认 `aliyun_bailian`，可切换 `volcengine`。`TextGenerationService` 使用 `AppConfig.openAiTextConfig` 统一走 OpenAI-compatible Chat Completions。
+- 阿里云百炼配置字段：`aliyun_bailian_api_key`、`aliyun_bailian_base_url`、`aliyun_bailian_text_model`、`aliyun_bailian_music_model`；默认 base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，默认文本模型 `qwen3.7-max`，默认音乐模型 `fun-music-v1`。
+- 火山方舟配置字段：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`；方舟仍用于可选文本 provider 和 Seedream 图片生成。
+- 当前代码不再从工作目录 `security/speech-api-key.txt` 或 `security/ark.txt` 自动读取 legacy 明文 key。设置页可保存/清除百炼、方舟和语音 key，返回状态只显示 mask，不返回明文。
 - 绘本图片只使用方舟 `/api/v3/images/generations`；不要恢复旧 Visual / AK-SK 图片备用链路。
-- 方舟文本规划和 Seedream 组图能力只在成功读取到 `ark.txt` / `TOMATO_VOLC_ARK_API_KEY` 时启用；没有方舟 Bearer key 时应跳过远程规划和图片生成，不调用其它图片模型。
+- Seedream 组图能力只在成功读取到 `volc_ark_api_key` 时启用；没有方舟 Bearer key 时应跳过图片生成，不调用其它图片模型。
 - 绘本图片默认使用方舟 `doubao-seedream-5-0-260128`。用户侧展示按产品需求使用 16:9 `1280x720` 体验，但真实方舟网络探针已确认远程 `1280x720` 会返回 `InvalidParameter: image size must be at least 3686400 pixels`；因此远程请求使用最小满足限制的 16:9 `2560x1440`。下载后保存远程原图，UI 负责缩小显示；不要为了缩放再调用一次图片生成 API。
 - 注意 `flutter_test` 默认会拦截 `HttpClient` 并让 HTTP 请求本地返回 400；任何 live API 测试都必须先清除测试框架的 HTTP override，否则 400 不能当作火山接口真实错误。
 - 如果 live probe 在普通测试环境里返回空 body 的 HTTP 400，先按“测试环境拦截”处理：检查 `HttpOverrides.global = null`、网络权限/沙箱授权、API Key 是否真实读取，再讨论内容安全。不要先猜敏感词。
 - Seedream 图片 API 笔记放在 `docs/volc_ark_seedream_image_api_notes.md`；涉及模型、endpoint、鉴权、组图、尺寸、缓存 key 的改动时先看这份文档。
-- 调试兼容注入：`--dart-define TOMATO_VOLC_SPEECH_API_KEY=...`
+- 调试兼容注入：`--dart-define TOMATO_VOLC_TTS_RESOURCE_ID=...`、`--dart-define TOMATO_VOLC_TTS_SPEAKER_ID=...`
 - 旧的统一语音 key 和分服务语音 key 字段不再作为兜底
-- 设置页只展示运行时读取状态，不提供手动录入 API Key 的表单
+- 设置页可以保存/清除百炼、方舟和语音 key；UI 与 bridge payload 只能展示配置状态和脱敏 mask，不得回传明文 key。
 
 ## Android 原生目录规范
 

@@ -41,9 +41,12 @@ void main() {
     );
     DatabaseService.setDatabaseDirectoryOverrideForTest(releaseDbDir);
 
-    final arkKey = await AppConfig.volcArkTextApiKey;
-    if (arkKey.trim().isEmpty) {
-      fail('ark.txt / TOMATO_VOLC_ARK_API_KEY is empty; cannot run live probe');
+    final textConfig = await AppConfig.openAiTextConfig;
+    if (textConfig.apiKey.trim().isEmpty) {
+      debugPrint(
+        'Live chat guide probe skipped: ${textConfig.provider} api key is empty.',
+      );
+      return;
     }
 
     final articles = await DatabaseService.getArticles();

@@ -55,9 +55,7 @@ typedef TextGenerationPostOverride = Future<Object?> Function({
 });
 
 class TextGenerationService {
-  static const _endpoint =
-      'https://ark.cn-beijing.volces.com/api/v3/chat/completions';
-  static const _cacheNamespace = 'ark_text';
+  static const _cacheNamespace = 'openai_text';
 
   static final _dio = Dio(
     BaseOptions(
@@ -84,9 +82,9 @@ class TextGenerationService {
       turns,
       purpose: cachePurpose,
     );
-    final model = await AppConfig.volcArkTextModel;
+    final config = await AppConfig.openAiTextConfig;
     final request = _cacheRequest(
-      model: model,
+      config: config,
       turns: preparedTurns,
       purpose: cachePurpose,
       maxTokens: maxTokens,
@@ -107,30 +105,31 @@ class TextGenerationService {
       );
     }
 
-    final apiKey = await AppConfig.volcArkTextApiKey;
+    final apiKey = config.apiKey;
     if (apiKey.trim().isEmpty) {
       return TextGenerationReply(
         text: fallbackText,
         source: TextGenerationReplySource.mockNoKey,
-        errorMessage: 'ark api key is empty',
+        errorMessage: '${config.provider} api key is empty',
       );
     }
 
     try {
       final body = <String, dynamic>{
-        'model': model,
+        'model': config.model,
         'messages':
             preparedTurns.map((turn) => turn.toJson()).toList(growable: false),
         'max_tokens': maxTokens,
         'stream': false,
       };
       final responseData = await _postJson(
-        apiKey: apiKey,
+        config: config,
         body: body,
       );
       final text = _extractMessageContent(responseData).trim();
       if (text.isEmpty) {
-        throw const FormatException('Ark response has no message content');
+        throw const FormatException(
+            'OpenAI-compatible response has no message content');
       }
       await ApiCacheService.putText(
         cacheKey: cacheKey,
@@ -141,7 +140,7 @@ class TextGenerationService {
         articleId: articleId,
       );
       await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
-        serviceKind: ContentSafetyService.serviceArkText,
+        serviceKind: ContentSafetyService.serviceOpenAiText,
         purpose: cachePurpose,
         articleId: articleId,
         successfulText: _requestTranscript(preparedTurns),
@@ -155,7 +154,7 @@ class TextGenerationService {
       final safety = ContentSafetyService.classifyFailure(e);
       if (safety.suspectedSafetyBlock) {
         await ContentSafetyService.recordFailure(
-          serviceKind: ContentSafetyService.serviceArkText,
+          serviceKind: ContentSafetyService.serviceOpenAiText,
           purpose: cachePurpose,
           articleId: articleId,
           failedText: _requestTranscript(turns),
@@ -185,9 +184,9 @@ class TextGenerationService {
       turns,
       purpose: cachePurpose,
     );
-    final model = await AppConfig.volcArkTextModel;
+    final config = await AppConfig.openAiTextConfig;
     final request = _cacheRequest(
-      model: model,
+      config: config,
       turns: preparedTurns,
       purpose: cachePurpose,
       maxTokens: maxTokens,
@@ -211,16 +210,16 @@ class TextGenerationService {
       }
     }
 
-    final apiKey = await AppConfig.volcArkTextApiKey;
+    final apiKey = config.apiKey;
     if (apiKey.trim().isEmpty) {
-      throw const TextGenerationException(
-        '文本提交处理失败：未读取到方舟 API Key，请配置后重试。',
+      throw TextGenerationException(
+        '文本提交处理失败：未配置 ${_providerLabel(config.provider)} API Key，请在设置中配置后重试。',
       );
     }
 
     try {
       final body = <String, dynamic>{
-        'model': model,
+        'model': config.model,
         'messages':
             preparedTurns.map((turn) => turn.toJson()).toList(growable: false),
         'max_tokens': maxTokens,
@@ -228,13 +227,14 @@ class TextGenerationService {
         if (jsonResponse) 'response_format': {'type': 'json_object'},
       };
       final responseData = await _postJson(
-        apiKey: apiKey,
+        config: config,
         body: body,
         receiveTimeout: receiveTimeout,
       );
       final text = _extractMessageContent(responseData).trim();
       if (text.isEmpty) {
-        throw const FormatException('Ark response has no message content');
+        throw const FormatException(
+            'OpenAI-compatible response has no message content');
       }
       await ApiCacheService.putText(
         cacheKey: cacheKey,
@@ -245,7 +245,7 @@ class TextGenerationService {
         articleId: articleId,
       );
       await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
-        serviceKind: ContentSafetyService.serviceArkText,
+        serviceKind: ContentSafetyService.serviceOpenAiText,
         purpose: cachePurpose,
         articleId: articleId,
         successfulText: _requestTranscript(preparedTurns),
@@ -259,7 +259,7 @@ class TextGenerationService {
       final safety = ContentSafetyService.classifyFailure(error);
       if (safety.suspectedSafetyBlock) {
         await ContentSafetyService.recordFailure(
-          serviceKind: ContentSafetyService.serviceArkText,
+          serviceKind: ContentSafetyService.serviceOpenAiText,
           purpose: cachePurpose,
           articleId: articleId,
           failedText: _requestTranscript(turns),
@@ -285,9 +285,9 @@ class TextGenerationService {
       turns,
       purpose: cachePurpose,
     );
-    final model = await AppConfig.volcArkTextModel;
+    final config = await AppConfig.openAiTextConfig;
     final request = _cacheRequest(
-      model: model,
+      config: config,
       turns: preparedTurns,
       purpose: cachePurpose,
       maxTokens: maxTokens,
@@ -311,9 +311,9 @@ class TextGenerationService {
       turns,
       purpose: purpose,
     );
-    final model = await AppConfig.volcArkTextModel;
+    final config = await AppConfig.openAiTextConfig;
     return _cacheRequest(
-      model: model,
+      config: config,
       turns: preparedTurns,
       purpose: purpose,
       maxTokens: maxTokens,
@@ -332,7 +332,7 @@ class TextGenerationService {
           role: turn.role,
           content: await ContentSafetyService.prepareTextForApi(
             turn.content,
-            serviceKind: ContentSafetyService.serviceArkText,
+            serviceKind: ContentSafetyService.serviceOpenAiText,
             purpose: purpose,
           ),
         ),
@@ -345,10 +345,11 @@ class TextGenerationService {
       turns.map((turn) => '${turn.role}: ${turn.content}').join('\n\n').trim();
 
   static Future<Object?> _postJson({
-    required String apiKey,
+    required OpenAiTextConfig config,
     required Map<String, dynamic> body,
     Duration? receiveTimeout,
   }) async {
+    final apiKey = config.apiKey;
     final headers = <String, String>{
       'Authorization': 'Bearer $apiKey',
       'Content-Type': 'application/json',
@@ -356,14 +357,14 @@ class TextGenerationService {
     final override = _postOverrideForTest;
     if (override != null) {
       return override(
-        endpoint: _endpoint,
+        endpoint: config.chatCompletionsEndpoint,
         headers: headers,
         body: body,
       );
     }
 
     final response = await _dio.post<dynamic>(
-      _endpoint,
+      config.chatCompletionsEndpoint,
       data: body,
       options: Options(
         headers: headers,
@@ -392,22 +393,27 @@ class TextGenerationService {
   }
 
   static Map<String, dynamic> _cacheRequest({
-    required String model,
+    required OpenAiTextConfig config,
     required List<TextGenerationTurn> turns,
     required String purpose,
     required int maxTokens,
     bool jsonResponse = false,
   }) =>
       {
-        'service': 'ark_chat_completions',
-        'endpoint': _endpoint,
-        'model': model,
+        'service': 'openai_chat_completions',
+        'provider': config.provider,
+        'baseUrl': config.baseUrl,
+        'endpoint': config.chatCompletionsEndpoint,
+        'model': config.model,
         'purpose': purpose,
         'maxTokens': maxTokens,
         'stream': false,
         if (jsonResponse) 'responseFormat': 'json_object',
         'messages': turns.map((turn) => turn.toJson()).toList(growable: false),
       };
+
+  static String _providerLabel(String provider) =>
+      provider == AppConfig.aiProviderVolcengine ? '火山方舟' : '阿里云百炼';
 
   static String _extractMessageContent(Object? responseData) {
     final decoded =

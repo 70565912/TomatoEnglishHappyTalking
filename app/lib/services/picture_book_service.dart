@@ -38,6 +38,8 @@ class PictureBookService {
       'picture_book_chapter_plan_v4';
   static const String _bookDescriptionRefreshPurpose =
       'picture_book_prompt_v4_book_description_refresh';
+  static const String _bookDescriptionDraftPurpose =
+      'picture_book_prompt_v4_book_description_draft';
   static const String _storyBriefRefreshPurpose =
       'picture_book_prompt_v4_story_refresh';
   static const String _chapterBriefRefreshPurpose =
@@ -61,6 +63,40 @@ class PictureBookService {
     );
     final id = await DatabaseService.saveStorySeries(series);
     return series.copyWith(id: id);
+  }
+
+  static Future<String> suggestBookDescription({
+    required Article article,
+    required StoryChapter chapter,
+    required String seriesTitle,
+    String currentDescription = '',
+  }) async {
+    final fallback = _fallbackBookDescription(
+      seriesTitle: seriesTitle,
+      article: article,
+    );
+    final reply = await TextGenerationService.generate(
+      turns: _bookDescriptionRefreshPromptTurns(
+        article: article,
+        chapter: chapter,
+        seriesTitle: seriesTitle.trim().isEmpty
+            ? article.title.trim()
+            : seriesTitle.trim(),
+        bookDescription: currentDescription,
+        storyBrief: '',
+        chapterBrief: '',
+      ),
+      cachePurpose: _bookDescriptionDraftPurpose,
+      fallbackText: jsonEncode({'bookDescription': fallback}),
+      articleId: article.id,
+      maxTokens: 700,
+    );
+    final raw = _decodeJson(reply.text, const <String, dynamic>{});
+    final generated = _sanitizeForImagePrompt(
+      raw['bookDescription']?.toString().trim() ?? reply.text.trim(),
+    );
+    final description = generated.isEmpty ? fallback : generated;
+    return _shorten(description, 1000);
   }
 
   static Future<StoryChapter> ensureChapterForArticle({
@@ -2266,6 +2302,22 @@ class PictureBookService {
   static String _fallbackChapterSummary(String content) {
     final normalized = content.replaceAll(RegExp(r'\s+'), ' ').trim();
     return _shorten(normalized, 260);
+  }
+
+  static String _fallbackBookDescription({
+    required String seriesTitle,
+    required Article article,
+  }) {
+    final title =
+        seriesTitle.trim().isEmpty ? article.title.trim() : seriesTitle.trim();
+    final subject = title.isEmpty ? 'This English picture book' : title;
+    final excerpt = _fallbackChapterSummary(article.content);
+    return _sanitizeForImagePrompt(
+      [
+        '$subject as a warm child-friendly picture-book world, with consistent recurring characters, bright natural colors, expressive storybook illustration, and clear scene details.',
+        if (excerpt.isNotEmpty) 'Chapter mood and anchors: $excerpt',
+      ].join(' '),
+    );
   }
 
   static String _shorten(String text, int maxLength) {

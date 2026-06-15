@@ -613,6 +613,63 @@ describe('App', () => {
     expect(saveButton).not.toBeDisabled();
   });
 
+  it('auto-generates the new book description before saving a chapter', async () => {
+    window.location.hash = '/article/new';
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+          return ok(message.id, type, { articles: [], series: [] });
+        }
+        if (type === 'series.suggestDescription') {
+          return ok(message.id, type, {
+            description: 'A gentle garden picture book with Lily, soft watercolor colors, and cozy animal friends.',
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    const bookTitleInput = await screen.findByLabelText('新书籍名称');
+    const articleTitleInput = screen.getByLabelText(/文章标题/);
+    const contentInput = screen.getByLabelText(/文章内容/);
+    const descriptionInput = screen.getByLabelText('书籍简介');
+    const generateButton = screen.getByRole('button', { name: 'AI 自动生成新书籍简介' });
+
+    expect(generateButton).toBeDisabled();
+    fireEvent.change(bookTitleInput, { target: { value: 'Lily Garden' } });
+    fireEvent.change(articleTitleInput, { target: { value: 'The Little Gate' } });
+    fireEvent.change(contentInput, {
+      target: { value: 'Lily opens a little green gate. A rabbit waves from the flowers.' },
+    });
+
+    expect(generateButton).not.toBeDisabled();
+    fireEvent.click(generateButton);
+
+    await waitFor(() => {
+      expect(descriptionInput).toHaveValue(
+        'A gentle garden picture book with Lily, soft watercolor colors, and cozy animal friends.',
+      );
+      expect(calls.find((call) => call.type === 'series.suggestDescription')?.payload).toMatchObject({
+        seriesTitle: 'Lily Garden',
+        articleTitle: 'The Little Gate',
+        content: 'Lily opens a little green gate. A rabbit waves from the flowers.',
+      });
+    });
+  });
+
   it('moves empty-book deletion to the creation center', async () => {
     window.location.hash = '/';
     const article = {
@@ -3249,7 +3306,7 @@ describe('App', () => {
     render(<App />);
 
     await clickSelectedCreationAction('歌曲');
-    expect(await screen.findByText('Suno 歌曲')).toBeInTheDocument();
+    expect(await screen.findByText('歌曲生成')).toBeInTheDocument();
     const generateButton = await screen.findByRole('button', { name: /生成 Suno 歌曲/ });
     await waitFor(() => expect(generateButton).not.toBeDisabled());
     fireEvent.click(generateButton);
@@ -3342,7 +3399,7 @@ describe('App', () => {
     render(<App />);
 
     await clickSelectedCreationAction('歌曲');
-    expect(await screen.findByText('Suno 歌曲')).toBeInTheDocument();
+    expect(await screen.findByText('歌曲生成')).toBeInTheDocument();
     const generateButton = await screen.findByRole('button', { name: /生成 Suno 歌曲/ });
     await waitFor(() => expect(generateButton).not.toBeDisabled());
     fireEvent.click(generateButton);
@@ -3429,7 +3486,7 @@ describe('App', () => {
     render(<App />);
 
     await clickSelectedCreationAction('歌曲');
-    expect(await screen.findByText('Suno 歌曲')).toBeInTheDocument();
+    expect(await screen.findByText('歌曲生成')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: /生成 Suno 歌曲/ }));
 
     await waitFor(() =>
@@ -3437,7 +3494,7 @@ describe('App', () => {
         screen.getAllByText('Suno 生成结果已出现，但没有找到 Download 或 Audio 下载按钮。').length,
       ).toBeGreaterThan(0),
     );
-    expect(screen.queryByRole('dialog', { name: 'Suno 歌曲设置' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: '歌曲设置' })).not.toBeInTheDocument();
     confirmSpy.mockRestore();
   });
 

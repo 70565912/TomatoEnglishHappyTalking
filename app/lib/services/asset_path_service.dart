@@ -11,24 +11,35 @@ class AssetPathService {
   static String defaultSunoOutputDirectory() =>
       path_lib.join(programDirectory(), 'suno-music');
 
+  static String defaultSunoOutputDirectorySetting() => 'suno-music';
+
   static String resolvePersistentDirectory({
     required String configured,
     required String defaultDirectory,
+    String? baseDirectory,
   }) {
     final trimmed = configured.trim();
-    if (trimmed.isEmpty || isTemporaryAssetDirectory(trimmed)) {
+    final base = _baseDirectory(baseDirectory);
+    if (trimmed.isEmpty ||
+        isTemporaryAssetDirectory(trimmed, baseDirectory: base)) {
       return defaultDirectory;
+    }
+    if (!path_lib.isAbsolute(trimmed)) {
+      return path_lib.normalize(path_lib.join(base, trimmed));
     }
     return path_lib.normalize(path_lib.absolute(trimmed));
   }
 
-  static bool isTemporaryAssetDirectory(String value) {
+  static bool isTemporaryAssetDirectory(
+    String value, {
+    String? baseDirectory,
+  }) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) {
       return false;
     }
 
-    final normalized = path_lib.normalize(path_lib.absolute(trimmed));
+    final normalized = _absolutePath(trimmed, baseDirectory: baseDirectory);
     final segments = path_lib
         .split(normalized)
         .map((segment) => segment.toLowerCase())
@@ -115,6 +126,23 @@ class AssetPathService {
     return cleaned.isEmpty
         ? 'asset_${DateTime.now().millisecondsSinceEpoch}'
         : cleaned;
+  }
+
+  static String _absolutePath(String value, {String? baseDirectory}) {
+    final trimmed = value.trim();
+    if (path_lib.isAbsolute(trimmed)) {
+      return path_lib.normalize(trimmed);
+    }
+    return path_lib
+        .normalize(path_lib.join(_baseDirectory(baseDirectory), trimmed));
+  }
+
+  static String _baseDirectory(String? baseDirectory) {
+    final trimmed = (baseDirectory ?? '').trim();
+    if (trimmed.isNotEmpty) {
+      return path_lib.normalize(path_lib.absolute(trimmed));
+    }
+    return programDirectory();
   }
 
   static bool _sameOrWithin(String parent, String child) {

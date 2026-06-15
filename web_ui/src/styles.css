@@ -4557,6 +4557,10 @@ select:disabled {
   gap: 10px;
 }
 
+.cloud-settings-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .settings-label {
   display: grid;
   gap: 6px;
@@ -4568,6 +4572,16 @@ select:disabled {
 .settings-label input,
 .settings-label select {
   width: 100%;
+}
+
+.settings-label.checkbox-label {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  align-content: center;
+}
+
+.settings-label.checkbox-label input {
+  width: auto;
 }
 
 .settings-help {

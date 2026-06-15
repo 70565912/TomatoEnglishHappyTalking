@@ -48,6 +48,32 @@ void main() {
     expect(resolved, defaultDirectory);
   });
 
+  test('resolves relative configured directory from program directory', () {
+    final programDir = path_lib.join(Directory.current.path, 'program-root');
+    final defaultDirectory = path_lib.join(programDir, 'suno-music');
+
+    expect(
+      AssetPathService.defaultSunoOutputDirectorySetting(),
+      'suno-music',
+    );
+    expect(
+      AssetPathService.resolvePersistentDirectory(
+        configured: 'songs/suno',
+        defaultDirectory: defaultDirectory,
+        baseDirectory: programDir,
+      ),
+      path_lib.join(programDir, 'songs', 'suno'),
+    );
+    expect(
+      AssetPathService.resolvePersistentDirectory(
+        configured: defaultDirectory,
+        defaultDirectory: path_lib.join(programDir, 'fallback'),
+        baseDirectory: programDir,
+      ),
+      defaultDirectory,
+    );
+  });
+
   test('copies temporary asset file into persistent target directory',
       () async {
     final temporaryDir = Directory(path_lib.join(tempDir.path, '.tmp'));

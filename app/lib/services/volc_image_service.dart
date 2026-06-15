@@ -54,14 +54,8 @@ typedef VolcImagePostOverride = Future<Object?> Function({
 class VolcImageService {
   static const supportsReferenceImages = true;
   static const _missingArkImageKeyMessage =
-      '缺少 Ark 图片 Bearer Key，已跳过绘本图片生成。请配置 security/ark.txt 或 TOMATO_VOLC_ARK_API_KEY。';
+      '缺少火山方舟 API Key，已跳过绘本图片生成。请在设置的云服务中配置火山引擎方舟 Key。';
 
-  static const _arkEndpoint =
-      'https://ark.cn-beijing.volces.com/api/v3/images/generations';
-  static const _arkModel = String.fromEnvironment(
-    'TOMATO_VOLC_ARK_IMAGE_MODEL',
-    defaultValue: 'doubao-seedream-5-0-260128',
-  );
   static const _arkSize = String.fromEnvironment(
     'TOMATO_VOLC_ARK_IMAGE_SIZE',
     defaultValue: '2560x1440',
@@ -139,8 +133,12 @@ class VolcImageService {
     );
     final arkApiKey = await AppConfig.volcArkImageApiKey;
     if (arkApiKey.trim().isNotEmpty) {
+      final endpoint = await AppConfig.volcArkImageEndpoint;
+      final model = await AppConfig.volcArkImageModel;
       return _generateArkPictureBookImage(
         apiKey: arkApiKey,
+        endpoint: endpoint,
+        model: model,
         prompt: preparedPrompt,
         promptMetadata: promptMetadata,
         articleId: articleId,
@@ -213,9 +211,13 @@ class VolcImageService {
           )
           .toList(growable: false),
     };
+    final endpoint = await AppConfig.volcArkImageEndpoint;
+    final model = await AppConfig.volcArkImageModel;
     final cacheRequests = <Map<String, dynamic>>[
       for (var index = 0; index < cleaned.length; index += 1)
         _arkCacheRequest(
+          endpoint: endpoint,
+          model: model,
           prompt: groupPrompt,
           promptMetadata: groupMetadata,
           seriesId: seriesId,
@@ -309,6 +311,7 @@ class VolcImageService {
 
     try {
       final body = _arkRequestBody(
+        model: model,
         prompt: groupPrompt,
         referenceImages: referenceImages,
         sequential: true,
@@ -316,6 +319,7 @@ class VolcImageService {
       );
       final responseData = await _postArkImages(
         apiKey: apiKey,
+        endpoint: endpoint,
         body: body,
         imageCount: cleaned.length,
       );
@@ -393,6 +397,8 @@ class VolcImageService {
 
   static Future<VolcImageResult> _generateArkPictureBookImage({
     required String apiKey,
+    required String endpoint,
+    required String model,
     required String prompt,
     required Map<String, dynamic> promptMetadata,
     required int? articleId,
@@ -402,6 +408,8 @@ class VolcImageService {
     required String cachePurpose,
   }) async {
     final requestForCache = _arkCacheRequest(
+      endpoint: endpoint,
+      model: model,
       prompt: prompt,
       promptMetadata: promptMetadata,
       seriesId: seriesId,
@@ -430,7 +438,9 @@ class VolcImageService {
     try {
       final responseData = await _postArkImages(
         apiKey: apiKey,
+        endpoint: endpoint,
         body: _arkRequestBody(
+          model: model,
           prompt: prompt,
           referenceImages: referenceImages,
           sequential: false,
@@ -494,6 +504,8 @@ class VolcImageService {
   }
 
   static Map<String, dynamic> _arkCacheRequest({
+    required String endpoint,
+    required String model,
     required String prompt,
     required Map<String, dynamic> promptMetadata,
     required int? seriesId,
@@ -505,8 +517,8 @@ class VolcImageService {
   }) =>
       {
         'engine': 'ark_images_generations',
-        'endpoint': _arkEndpoint,
-        'model': _arkModel,
+        'endpoint': endpoint,
+        'model': model,
         'size': _arkSize,
         'response_format': _arkResponseFormat,
         'output_format': _outputFormat,
@@ -526,13 +538,14 @@ class VolcImageService {
       };
 
   static Map<String, dynamic> _arkRequestBody({
+    required String model,
     required String prompt,
     required List<_ReferenceImage> referenceImages,
     required bool sequential,
     int? maxImages,
   }) {
     final body = <String, dynamic>{
-      'model': _arkModel,
+      'model': model,
       'prompt': prompt,
       'size': _arkSize,
       'response_format': _arkResponseFormat,
@@ -554,6 +567,7 @@ class VolcImageService {
 
   static Future<Object?> _postArkImages({
     required String apiKey,
+    required String endpoint,
     required Map<String, dynamic> body,
     required int imageCount,
   }) async {
@@ -564,13 +578,13 @@ class VolcImageService {
     final override = _postOverrideForTest;
     if (override != null) {
       return override(
-        endpoint: _arkEndpoint,
+        endpoint: endpoint,
         headers: headers,
         body: body,
       );
     }
     final response = await _dio.post<Object?>(
-      _arkEndpoint,
+      endpoint,
       data: body,
       options: Options(
         headers: headers,

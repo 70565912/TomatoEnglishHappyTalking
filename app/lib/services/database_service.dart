@@ -13,6 +13,19 @@ class DatabaseService {
   static const _desktopDataRootDefine =
       String.fromEnvironment('TOMATO_DESKTOP_DATA_ROOT');
   static const _desktopDataRootEnvKey = 'TOMATO_DESKTOP_DATA_ROOT';
+  static const _legacyBuiltInContentSafetyRules = <(String, String)>[
+    ('execution', 'exe-cution'),
+    ('beheading', 'be-heading'),
+    ('beheaded', 'be-headed'),
+    ('behead', 'be-head'),
+    ('heads', 'he-ads'),
+    ('head', 'he-ad'),
+    ('killing', 'ki-lling'),
+    ('killed', 'ki-lled'),
+    ('kills', 'ki-lls'),
+    ('kill', 'ki-ll'),
+    ('violent', 'vio-lent'),
+  ];
   static Database? _db;
   static String? _databaseDirectoryOverrideForTest;
   static String? _runtimeDataRootOverrideForTest;
@@ -53,6 +66,9 @@ class DatabaseService {
         await _createPictureBookTables(db);
         await _createArticleSentenceTranslationTables(db);
         await _createContentSafetyTables(db);
+      },
+      onOpen: (db) async {
+        await _removeLegacyBuiltInContentSafetyRules(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -417,40 +433,31 @@ class DatabaseService {
       'CREATE INDEX IF NOT EXISTS idx_content_safety_rules_enabled '
       'ON content_safety_rules (service_kind, purpose_scope, enabled)',
     );
-    await _seedBuiltInContentSafetyRules(db);
   }
 
-  static Future<void> _seedBuiltInContentSafetyRules(Database db) async {
-    final now = DateTime.now().toIso8601String();
-    final rules = <(String, String)>[
-      ('execution', 'exe-cution'),
-      ('beheading', 'be-heading'),
-      ('beheaded', 'be-headed'),
-      ('behead', 'be-head'),
-      ('heads', 'he-ads'),
-      ('head', 'he-ad'),
-      ('killing', 'ki-lling'),
-      ('killed', 'ki-lled'),
-      ('kills', 'ki-lls'),
-      ('kill', 'ki-ll'),
-      ('violent', 'vio-lent'),
-    ];
-    for (final rule in rules) {
-      await db.insert(
+  static Future<void> _removeLegacyBuiltInContentSafetyRules(
+    Database db,
+  ) async {
+    for (final rule in _legacyBuiltInContentSafetyRules) {
+      await db.delete(
         'content_safety_rules',
-        {
-          'source_term': rule.$1,
-          'replacement': rule.$2,
-          'service_kind': '*',
-          'purpose_scope': '*',
-          'match_type': 'word',
-          'confidence': 0.55,
-          'enabled': 1,
-          'source_failure_id': null,
-          'created_at': now,
-          'updated_at': now,
-        },
-        conflictAlgorithm: ConflictAlgorithm.ignore,
+        where: '''
+          source_term = ?
+          AND replacement = ?
+          AND service_kind = ?
+          AND purpose_scope = ?
+          AND match_type = ?
+          AND source_failure_id IS NULL
+          AND ABS(confidence - ?) < 0.000001
+        ''',
+        whereArgs: [
+          rule.$1,
+          rule.$2,
+          '*',
+          '*',
+          'word',
+          0.55,
+        ],
       );
     }
   }

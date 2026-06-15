@@ -25,10 +25,12 @@ void main() {
     DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
     await DatabaseService.resetForTest();
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
   });
 
   tearDown(() async {
     TextGenerationService.setPostOverrideForTest(null);
+    AppConfig.resetRuntimeConfigForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
     Directory.current = previousDirectory;
@@ -37,11 +39,12 @@ void main() {
     }
   });
 
-  test('posts Ark chat body, parses content, and caches with ark_text kind',
+  test('posts OpenAI-compatible chat body and caches with openai_text kind',
       () async {
-    _writeArkConfig(
-      key: 'ark-request-key-12345678901234567890',
-      model: 'doubao-unit-model',
+    AppConfig.setRuntimeConfigForTest(
+      aliyunBailianApiKey: 'bailian-request-key-12345678901234567890',
+      aliyunBailianBaseUrl: 'https://dashscope.example.com/compatible/v1',
+      aliyunBailianTextModel: 'qwen-unit-model',
     );
 
     String? seenEndpoint;
@@ -55,7 +58,7 @@ void main() {
         return jsonEncode({
           'choices': [
             {
-              'message': {'content': ' OK from Ark '},
+              'message': {'content': ' OK from Bailian '},
             }
           ],
         });
@@ -73,19 +76,19 @@ void main() {
       maxTokens: 42,
     );
 
-    expect(reply.text, 'OK from Ark');
+    expect(reply.text, 'OK from Bailian');
     expect(reply.source, TextGenerationReplySource.remote);
     expect(
       seenEndpoint,
-      'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+      'https://dashscope.example.com/compatible/v1/chat/completions',
     );
     expect(
       seenHeaders,
       containsPair(
-          'Authorization', 'Bearer ark-request-key-12345678901234567890'),
+          'Authorization', 'Bearer bailian-request-key-12345678901234567890'),
     );
     expect(seenHeaders, containsPair('Content-Type', 'application/json'));
-    expect(seenBody, containsPair('model', 'doubao-unit-model'));
+    expect(seenBody, containsPair('model', 'qwen-unit-model'));
     expect(seenBody, containsPair('max_tokens', 42));
     expect(seenBody, containsPair('stream', false));
     expect(seenBody?['messages'], [
@@ -96,13 +99,13 @@ void main() {
     final db = await DatabaseService.database;
     final rows = await db.query('api_cache_entries');
     expect(rows, hasLength(1));
-    expect(rows.single['kind'], 'ark_text');
+    expect(rows.single['kind'], 'openai_text');
     expect(rows.single['purpose'], 'unit_ark_request');
-    expect(rows.single['cache_key'], startsWith('ark_text_'));
+    expect(rows.single['cache_key'], startsWith('openai_text_'));
 
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
-        fail('cached Ark text should not call HTTP again');
+        fail('cached OpenAI-compatible text should not call HTTP again');
       },
     );
     final cached = await TextGenerationService.generate(
@@ -112,11 +115,36 @@ void main() {
       maxTokens: 42,
     );
 
-    expect(cached.text, 'OK from Ark');
+    expect(cached.text, 'OK from Bailian');
     expect(cached.source, TextGenerationReplySource.cached);
   });
 
-  test('returns fallback without calling HTTP when Ark key is empty', () async {
+  test('switches cache request by provider, baseUrl, and model', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aiProvider: AppConfig.aiProviderVolcengine,
+      volcArkApiKey: 'volc-key-1234567890',
+      volcArkBaseUrl: 'https://ark.example.com/api/v3',
+      volcArkTextModel: 'doubao-unit-model',
+    );
+
+    final request = await TextGenerationService.cacheRequestForTest(
+      turns: const [
+        TextGenerationTurn(role: 'user', content: 'Hello'),
+      ],
+      purpose: 'unit_provider_cache',
+    );
+
+    expect(request['provider'], AppConfig.aiProviderVolcengine);
+    expect(request['baseUrl'], 'https://ark.example.com/api/v3');
+    expect(
+        request['endpoint'], 'https://ark.example.com/api/v3/chat/completions');
+    expect(request['model'], 'doubao-unit-model');
+    expect(request['service'], 'openai_chat_completions');
+  });
+
+  test(
+      'returns fallback without calling HTTP when selected provider key is empty',
+      () async {
     var called = false;
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
@@ -138,8 +166,10 @@ void main() {
     expect(reply.source, TextGenerationReplySource.mockNoKey);
   });
 
-  test('returns fallback on Ark HTTP error', () async {
-    _writeArkConfig(key: 'ark-error-key-12345678901234567890');
+  test('returns fallback on OpenAI-compatible HTTP error', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aliyunBailianApiKey: 'bailian-error-key-12345678901234567890',
+    );
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
         throw Exception('network failed');
@@ -160,7 +190,9 @@ void main() {
   });
 
   test('records suspected safety failures without caching fallback', () async {
-    _writeArkConfig(key: 'ark-safety-key-12345678901234567890');
+    AppConfig.setRuntimeConfigForTest(
+      aliyunBailianApiKey: 'bailian-safety-key-12345678901234567890',
+    );
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
         final requestOptions = RequestOptions(path: endpoint);
@@ -198,8 +230,10 @@ void main() {
     expect(cacheRows, isEmpty);
   });
 
-  test('returns fallback on empty Ark message content', () async {
-    _writeArkConfig(key: 'ark-empty-key-12345678901234567890');
+  test('returns fallback on empty OpenAI-compatible message content', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aliyunBailianApiKey: 'bailian-empty-key-12345678901234567890',
+    );
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
         return {
@@ -223,15 +257,4 @@ void main() {
     expect(reply.text, 'fallback empty');
     expect(reply.source, TextGenerationReplySource.mockOnError);
   });
-}
-
-void _writeArkConfig({
-  required String key,
-  String model = AppConfig.defaultVolcArkTextModel,
-}) {
-  final securityDir = Directory('security')..createSync();
-  File('${securityDir.path}${Platform.pathSeparator}ark.txt').writeAsStringSync(
-    'ARK_API_KEY=$key\n'
-    'ARK_TEXT_MODEL=$model\n',
-  );
 }

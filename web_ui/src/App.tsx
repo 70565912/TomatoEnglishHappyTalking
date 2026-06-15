@@ -32,6 +32,7 @@ import type {
   SettingsState,
   RecordingSettings,
   SongSource,
+  AiProvider,
   StorySeries,
 } from './types';
 import './styles.css';
@@ -2281,16 +2282,16 @@ function SongCreationPanel({
   return (
     <section className="creation-panel">
       <div className="section-heading with-action">
-        <span>Suno 歌曲</span>
+        <span>歌曲生成</span>
         <button className="ghost-action small" type="button" onClick={loadState} disabled={busy}>
           <Icon name="refresh" /> 刷新状态
         </button>
       </div>
       <p className="creation-panel-note">
-        歌曲生成只保留 Suno 网页自动化。本页负责生成、确认 credits、按歌词查找未下载版本、生成歌词时间轴和导出歌曲视频。
+        可使用百炼 fun-music 直接生成，也可继续使用 Suno 网页自动化；本页负责管理本地版本、字幕时间轴和歌曲视频导出。
       </p>
       <div className="creation-resource-grid" aria-label="歌曲资源状态">
-        <ResourceRow label="Suno 音频" value="保存在程序目录 suno-music/" />
+        <ResourceRow label="歌曲资产" value="保存在程序运行目录的歌曲资产目录" />
         <ResourceRow label="本地歌曲版本" value={versions.length > 0 ? `${versions.length} 个可播放版本` : '暂无完整版本'} />
       </div>
       {songState?.manualActionMessage && <p className="playback-cue">{songState.manualActionMessage}</p>}
@@ -2306,13 +2307,24 @@ function SongCreationPanel({
           type="button"
           disabled={busy || songState?.status === 'generating'}
           onClick={() => runSongCommand('listening.songGenerate', {
+            source: 'bailian_fun_music',
+            lyrics: '',
+          }, '已提交百炼 fun-music 生成任务')}
+        >
+          <Icon name="music" /> 生成百炼歌曲
+        </button>
+        <button
+          className="ghost-action"
+          type="button"
+          disabled={busy || songState?.status === 'generating'}
+          onClick={() => runSongCommand('listening.songGenerate', {
             source: 'suno',
             lyrics: '',
           }, '已打开 Suno 歌曲生成流程')}
         >
           <Icon name="music" /> 生成 Suno 歌曲
         </button>
-        {waitingConfirm && (
+        {songState?.source === 'suno' && waitingConfirm && (
           <button
             className="primary-action"
             type="button"
@@ -2327,7 +2339,7 @@ function SongCreationPanel({
             <Icon name="music" /> 确认创建歌曲
           </button>
         )}
-        {canDownloadMissing && (
+        {songState?.source === 'suno' && canDownloadMissing && (
           <button
             className="ghost-action"
             type="button"
@@ -2631,12 +2643,16 @@ function ArticlePage({
   const [selectedSeriesId, setSelectedSeriesId] = useState<string>(() => 'new');
   const [newSeriesTitle, setNewSeriesTitle] = useState('');
   const [seriesDescription, setSeriesDescription] = useState('');
+  const [generatingSeriesDescription, setGeneratingSeriesDescription] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sentences = useMemo(() => splitSentences(content), [content]);
   const contentTooLong = content.length > ARTICLE_CONTENT_MAX_CHARS;
-  const canSave = Boolean(content.trim()) && !contentTooLong && !saving;
+  const canSave = Boolean(content.trim()) && !contentTooLong && !saving && !generatingSeriesDescription;
+  const creatingNewSeries = selectedSeriesId === 'new' || series.length === 0;
+  const canGenerateSeriesDescription =
+    creatingNewSeries && Boolean(content.trim()) && !contentTooLong && !saving && !generatingSeriesDescription;
   const selectedSeries = useMemo(
     () => series.find((item) => String(item.id) === selectedSeriesId) ?? null,
     [selectedSeriesId, series],
@@ -2684,6 +2700,32 @@ function ArticlePage({
     }
     setContent(cleaned);
     setError(null);
+  };
+
+  const generateSeriesDescription = async () => {
+    if (!content.trim()) {
+      setError('请先填写文章内容');
+      return;
+    }
+    if (contentTooLong) {
+      setError(`文章内容不能超过 ${ARTICLE_CONTENT_MAX_CHARS} 个字符`);
+      return;
+    }
+    setGeneratingSeriesDescription(true);
+    setError(null);
+    try {
+      const payload = await sendNative<{ description: string }>('series.suggestDescription', {
+        seriesTitle: newSeriesTitle.trim(),
+        articleTitle: title.trim(),
+        content,
+        description: seriesDescription.trim(),
+      });
+      setSeriesDescription(payload.description ?? '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGeneratingSeriesDescription(false);
+    }
   };
 
   const submit = async (event: FormEvent) => {
@@ -2771,7 +2813,7 @@ function ArticlePage({
                 ))}
                 <option value="new">新建书籍</option>
               </select>
-              {(selectedSeriesId === 'new' || series.length === 0) && (
+              {creatingNewSeries && (
                 <input
                   aria-label="新书籍名称"
                   value={newSeriesTitle}
@@ -2780,7 +2822,24 @@ function ArticlePage({
                   onChange={(event) => setNewSeriesTitle(event.target.value)}
                 />
               )}
+              <div className="field-label-row">
+                <label htmlFor="series-description">书籍简介</label>
+                {creatingNewSeries && (
+                  <button
+                    className="icon-button small prompt-magic-button"
+                    type="button"
+                    aria-label="AI 自动生成新书籍简介"
+                    title="AI 自动生成新书籍简介"
+                    disabled={!canGenerateSeriesDescription}
+                    onClick={() => void generateSeriesDescription()}
+                  >
+                    <Icon name={generatingSeriesDescription ? 'refresh' : 'wand'} />
+                    <span>{generatingSeriesDescription ? '生成中' : '自动生成'}</span>
+                  </button>
+                )}
+              </div>
               <textarea
+                id="series-description"
                 aria-label="书籍简介"
                 value={seriesDescription}
                 rows={4}
@@ -3165,6 +3224,7 @@ function ListeningPage({
             ? {
                 ...current,
                 activeTab: 'play',
+                source: normalizeSongSource(payload.source ?? current.source),
                 submitting: false,
                 suggesting: false,
                 error: null,
@@ -3178,6 +3238,7 @@ function ListeningPage({
             ? {
                 ...current,
                 activeTab: 'play',
+                source: normalizeSongSource(payload.source ?? current.source),
                 submitting: false,
                 suggesting: false,
                 error: null,
@@ -3503,9 +3564,12 @@ function ListeningPage({
       }
     }
     const versions = currentSongState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
+    const preferredSource = normalizeSongSource(
+      currentSongState?.source ?? songSettings?.songProvider ?? 'suno',
+    );
     setSongDialog({
       activeTab: mode === 'song' || versions.length > 0 ? 'play' : 'settings',
-      source: 'suno',
+      source: preferredSource,
       suggesting: false,
       submitting: false,
       error: currentSongState?.status === 'error' ? currentSongState.errorMessage?.trim() || null : null,
@@ -3516,9 +3580,12 @@ function ListeningPage({
     if (!songDialog || songDialog.submitting || songDialog.suggesting) return;
 
     const lyrics = songLyricsFromItems(items);
-    const confirmed = window.confirm(
-      '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词，并每次点击 Suno 蓝色魔法棒根据歌词重新生成风格；点击 Create 前会再次确认消耗 Suno credits。是否继续？',
-    );
+    const selectedSource = normalizeSongSource(songDialog.source);
+    const confirmed = selectedSource === 'suno'
+      ? window.confirm(
+          '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词，并每次点击 Suno 蓝色魔法棒根据歌词重新生成风格；点击 Create 前会再次确认消耗 Suno credits。是否继续？',
+        )
+      : window.confirm('将调用阿里云百炼 fun-music 根据当前英文歌词生成歌曲。若 Key 未开通该能力，供应商错误会直接显示，且不会自动回退到 Suno。是否继续？');
     if (!confirmed) return;
 
     setSongDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
@@ -3526,12 +3593,16 @@ function ListeningPage({
       articleId,
       status: 'generating',
       errorMessage: null,
-      source: 'suno',
+      source: selectedSource,
+      manualActionMessage:
+        selectedSource === 'suno'
+          ? 'Suno 页面已打开，请先在页面中自行登录。'
+          : '百炼 fun-music 正在根据当前歌词生成歌曲。',
     });
     try {
       const payload = await sendNative<ListeningSongStatePayload>('listening.songGenerate', {
         articleId,
-        source: 'suno',
+        source: selectedSource,
         lyrics,
       });
       setSongState(payload);
@@ -3540,6 +3611,7 @@ function ListeningPage({
             ? {
                 ...current,
                 activeTab: payload.status === 'ready' || isSunoWaitingConfirm(payload) ? 'play' : current.activeTab,
+                source: normalizeSongSource(payload.source ?? selectedSource),
                 submitting: false,
               }
             : current,
@@ -3549,7 +3621,7 @@ function ListeningPage({
       setSongState({
         articleId,
         status: 'error',
-        source: 'suno',
+        source: selectedSource,
         errorMessage: message,
       });
       setSongDialog((current) =>
@@ -4473,11 +4545,11 @@ function SongDialog({
 
   return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog song-style-dialog" role="dialog" aria-modal="true" aria-label="Suno 歌曲设置">
+      <section className="edit-dialog song-style-dialog" role="dialog" aria-modal="true" aria-label="歌曲设置">
         <div className="edit-dialog-heading">
           <div>
-            <b>Suno 歌曲设置</b>
-            <small>{state.activeTab === 'play' ? '选择本地已下载的完整歌曲版本播放。' : '每次由 Suno 根据歌词重新生成风格。'}</small>
+            <b>歌曲设置</b>
+            <small>{state.activeTab === 'play' ? '选择本地完整歌曲版本播放。' : '选择百炼 fun-music 或 Suno 网页自动化生成。'}</small>
           </div>
           <div className="song-style-heading-actions">
             <button className="icon-button small" type="button" onClick={onCancel} aria-label="关闭">
@@ -4579,12 +4651,12 @@ function SongDialog({
                   <Icon name="stop" /> 停止播放
                 </button>
               )}
-              {songWaitingConfirm && (
+              {state.source === 'suno' && songWaitingConfirm && (
                 <button className="primary-action small" type="button" onClick={onConfirmSunoCreate} disabled={busy}>
                   <Icon name="music" /> 确认创建歌曲
                 </button>
               )}
-              {canRetrySunoDownload && (
+              {state.source === 'suno' && canRetrySunoDownload && (
                 <button className="ghost-action small" type="button" onClick={onRetrySunoDownload} disabled={busy}>
                   <Icon name="download" /> 检测下载
                 </button>
@@ -4601,6 +4673,14 @@ function SongDialog({
             <div className="song-source-options" aria-label="生成来源">
               <button
                 type="button"
+                className={state.source === 'bailian_fun_music' ? 'active' : ''}
+                disabled={busy}
+                onClick={() => onSourceChange('bailian_fun_music')}
+              >
+                百炼 fun-music
+              </button>
+              <button
+                type="button"
                 className={state.source === 'suno' ? 'active' : ''}
                 disabled={busy}
                 onClick={() => onSourceChange('suno')}
@@ -4609,9 +4689,15 @@ function SongDialog({
               </button>
             </div>
             <div className="song-source-note suno-style-preview">
-              <p>
-                将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，并清空旧 Styles，让 Suno 自带魔法棒每次根据歌词重新生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
-              </p>
+              {state.source === 'suno' ? (
+                <p>
+                  将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，并清空旧 Styles，让 Suno 自带魔法棒每次根据歌词重新生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
+                </p>
+              ) : (
+                <p>
+                  将调用阿里云百炼 fun-music 生成音频，使用当前英文歌词作为 lyrics。该能力可能需要百炼账号开通权限，失败时会直接显示供应商返回错误。
+                </p>
+              )}
             </div>
           </>
         )}
@@ -6530,6 +6616,27 @@ function SettingsPage({
   const [selectedVoiceId, setSelectedVoiceId] = useState(settings?.tts.speakerId ?? '');
   const [sunoOutputDirectory, setSunoOutputDirectory] = useState(settings?.song?.sunoOutputDirectory ?? '');
   const [sunoTimeoutMinutes, setSunoTimeoutMinutes] = useState(settings?.song?.sunoTimeoutMinutes ?? 20);
+  const [songProvider, setSongProvider] = useState<SongSource>(
+    normalizeSongSource(settings?.song?.songProvider ?? 'suno'),
+  );
+  const [aiProvider, setAiProvider] = useState<AiProvider>(
+    normalizeAiProvider(settings?.cloud?.aiProvider),
+  );
+  const [aliyunBailianApiKey, setAliyunBailianApiKey] = useState('');
+  const [clearAliyunBailianApiKey, setClearAliyunBailianApiKey] = useState(false);
+  const [aliyunBailianBaseUrl, setAliyunBailianBaseUrl] = useState(settings?.cloud?.aliyunBailian.baseUrl ?? '');
+  const [aliyunBailianTextModel, setAliyunBailianTextModel] = useState(settings?.cloud?.aliyunBailian.textModel ?? '');
+  const [aliyunBailianMusicModel, setAliyunBailianMusicModel] = useState(settings?.cloud?.aliyunBailian.musicModel ?? '');
+  const [volcArkApiKey, setVolcArkApiKey] = useState('');
+  const [clearVolcArkApiKey, setClearVolcArkApiKey] = useState(false);
+  const [volcArkBaseUrl, setVolcArkBaseUrl] = useState(settings?.cloud?.volcengine.arkBaseUrl ?? '');
+  const [volcArkTextModel, setVolcArkTextModel] = useState(settings?.cloud?.volcengine.arkTextModel ?? '');
+  const [volcArkImageModel, setVolcArkImageModel] = useState(settings?.cloud?.volcengine.arkImageModel ?? '');
+  const [volcSpeechApiKey, setVolcSpeechApiKey] = useState('');
+  const [clearVolcSpeechApiKey, setClearVolcSpeechApiKey] = useState(false);
+  const [volcTtsResourceId, setVolcTtsResourceId] = useState(settings?.cloud?.volcengine.ttsResourceId ?? '');
+  const [volcTtsSpeakerId, setVolcTtsSpeakerId] = useState(settings?.cloud?.volcengine.ttsSpeakerId ?? '');
+  const [savingCloudSettings, setSavingCloudSettings] = useState(false);
   const [savingSongSettings, setSavingSongSettings] = useState(false);
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -6537,15 +6644,35 @@ function SettingsPage({
   const [status, setStatus] = useState<string | null>(null);
   const selectedVoiceButtonRef = useRef<HTMLDivElement | null>(null);
 
+  const syncSettingsDraft = (payload: SettingsState) => {
+    setCurrent(payload);
+    setSelectedVoiceId(payload.tts.speakerId);
+    setSunoOutputDirectory(payload.song?.sunoOutputDirectory ?? '');
+    setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
+    setSongProvider(normalizeSongSource(payload.song?.songProvider ?? 'suno'));
+    setAiProvider(normalizeAiProvider(payload.cloud?.aiProvider));
+    setAliyunBailianApiKey('');
+    setClearAliyunBailianApiKey(false);
+    setAliyunBailianBaseUrl(payload.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1');
+    setAliyunBailianTextModel(payload.cloud?.aliyunBailian.textModel ?? 'qwen3.7-max');
+    setAliyunBailianMusicModel(payload.cloud?.aliyunBailian.musicModel ?? 'fun-music-v1');
+    setVolcArkApiKey('');
+    setClearVolcArkApiKey(false);
+    setVolcArkBaseUrl(payload.cloud?.volcengine.arkBaseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3');
+    setVolcArkTextModel(payload.cloud?.volcengine.arkTextModel ?? 'doubao-seed-2-0-lite-260215');
+    setVolcArkImageModel(payload.cloud?.volcengine.arkImageModel ?? 'doubao-seedream-5-0-260128');
+    setVolcSpeechApiKey('');
+    setClearVolcSpeechApiKey(false);
+    setVolcTtsResourceId(payload.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0');
+    setVolcTtsSpeakerId(payload.cloud?.volcengine.ttsSpeakerId ?? payload.tts.speakerId);
+  };
+
   useEffect(() => {
     let isMounted = true;
     sendNative<SettingsState>('settings.load')
       .then((payload) => {
         if (!isMounted) return;
-        setCurrent(payload);
-        setSelectedVoiceId(payload.tts.speakerId);
-        setSunoOutputDirectory(payload.song?.sunoOutputDirectory ?? '');
-        setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
+        syncSettingsDraft(payload);
         onLoaded(payload);
       })
       .catch((error) => {
@@ -6557,11 +6684,10 @@ function SettingsPage({
   }, [onLoaded]);
 
   useEffect(() => {
-    setCurrent(settings);
     if (settings) {
-      setSelectedVoiceId(settings.tts.speakerId);
-      setSunoOutputDirectory(settings.song?.sunoOutputDirectory ?? '');
-      setSunoTimeoutMinutes(settings.song?.sunoTimeoutMinutes ?? 20);
+      syncSettingsDraft(settings);
+    } else {
+      setCurrent(settings);
     }
   }, [settings]);
 
@@ -6578,7 +6704,24 @@ function SettingsPage({
   const safetyRules = current.contentSafety?.rules ?? [];
   const songSettingsUnchanged =
     sunoOutputDirectory.trim() === (current.song?.sunoOutputDirectory ?? '').trim() &&
-    Number(sunoTimeoutMinutes) === Number(current.song?.sunoTimeoutMinutes ?? 20);
+    Number(sunoTimeoutMinutes) === Number(current.song?.sunoTimeoutMinutes ?? 20) &&
+    songProvider === normalizeSongSource(current.song?.songProvider ?? 'suno');
+  const cloudSettingsUnchanged =
+    aiProvider === normalizeAiProvider(current.cloud?.aiProvider) &&
+    !aliyunBailianApiKey.trim() &&
+    !clearAliyunBailianApiKey &&
+    aliyunBailianBaseUrl.trim() === (current.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1') &&
+    aliyunBailianTextModel.trim() === (current.cloud?.aliyunBailian.textModel ?? 'qwen3.7-max') &&
+    aliyunBailianMusicModel.trim() === (current.cloud?.aliyunBailian.musicModel ?? 'fun-music-v1') &&
+    !volcArkApiKey.trim() &&
+    !clearVolcArkApiKey &&
+    volcArkBaseUrl.trim() === (current.cloud?.volcengine.arkBaseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3') &&
+    volcArkTextModel.trim() === (current.cloud?.volcengine.arkTextModel ?? 'doubao-seed-2-0-lite-260215') &&
+    volcArkImageModel.trim() === (current.cloud?.volcengine.arkImageModel ?? 'doubao-seedream-5-0-260128') &&
+    !volcSpeechApiKey.trim() &&
+    !clearVolcSpeechApiKey &&
+    volcTtsResourceId.trim() === (current.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0') &&
+    volcTtsSpeakerId.trim() === (current.cloud?.volcengine.ttsSpeakerId ?? current.tts.speakerId);
 
   const selectVoice = (voiceId: string) => {
     setSelectedVoiceId(voiceId);
@@ -6612,8 +6755,7 @@ function SettingsPage({
       const payload = await sendNative<SettingsState>('settings.saveVoice', {
         speakerId: selectedVoiceId,
       });
-      setCurrent(payload);
-      setSelectedVoiceId(payload.tts.speakerId);
+      syncSettingsDraft(payload);
       onLoaded(payload);
       setStatus('声音设置已保存');
     } catch (error) {
@@ -6630,16 +6772,46 @@ function SettingsPage({
       const payload = await sendNative<SettingsState>('settings.saveSong', {
         sunoOutputDirectory: sunoOutputDirectory.trim(),
         sunoTimeoutMinutes: Number(sunoTimeoutMinutes) || 20,
+        songProvider,
       });
-      setCurrent(payload);
-      setSunoOutputDirectory(payload.song?.sunoOutputDirectory ?? '');
-      setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
+      syncSettingsDraft(payload);
       onLoaded(payload);
       setStatus('歌曲设置已保存');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : '歌曲设置保存失败');
     } finally {
       setSavingSongSettings(false);
+    }
+  };
+
+  const saveCloudSettings = async () => {
+    setSavingCloudSettings(true);
+    setStatus(null);
+    try {
+      const payload = await sendNative<SettingsState>('settings.saveCloud', {
+        aiProvider,
+        aliyunBailianApiKey: aliyunBailianApiKey.trim(),
+        clearAliyunBailianApiKey,
+        aliyunBailianBaseUrl: aliyunBailianBaseUrl.trim(),
+        aliyunBailianTextModel: aliyunBailianTextModel.trim(),
+        aliyunBailianMusicModel: aliyunBailianMusicModel.trim(),
+        volcArkApiKey: volcArkApiKey.trim(),
+        clearVolcArkApiKey,
+        volcArkBaseUrl: volcArkBaseUrl.trim(),
+        volcArkTextModel: volcArkTextModel.trim(),
+        volcArkImageModel: volcArkImageModel.trim(),
+        volcSpeechApiKey: volcSpeechApiKey.trim(),
+        clearVolcSpeechApiKey,
+        volcTtsResourceId: volcTtsResourceId.trim(),
+        volcTtsSpeakerId: volcTtsSpeakerId.trim(),
+      });
+      syncSettingsDraft(payload);
+      onLoaded(payload);
+      setStatus('云服务设置已保存');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : '云服务设置保存失败');
+    } finally {
+      setSavingCloudSettings(false);
     }
   };
 
@@ -6756,8 +6928,166 @@ function SettingsPage({
             </aside>
           </div>
 
+          <FieldGroup title="云服务">
+            <div className="settings-grid cloud-settings-grid">
+              <label className="settings-label">
+                <span>AI 文本供应商</span>
+                <select
+                  value={aiProvider}
+                  onChange={(event) => setAiProvider(normalizeAiProvider(event.target.value))}
+                >
+                  <option value="aliyun_bailian">阿里云百炼</option>
+                  <option value="volcengine">火山引擎</option>
+                </select>
+              </label>
+              <label className="settings-label">
+                <span>百炼 Key {current.cloud?.aliyunBailian.apiKeyConfigured ? `（${current.cloud.aliyunBailian.apiKeyMask || '已配置'}）` : '（未配置）'}</span>
+                <input
+                  type="password"
+                  value={aliyunBailianApiKey}
+                  onChange={(event) => {
+                    setAliyunBailianApiKey(event.target.value);
+                    if (event.target.value.trim()) setClearAliyunBailianApiKey(false);
+                  }}
+                  placeholder="留空保持不变"
+                />
+              </label>
+              <label className="settings-label checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={clearAliyunBailianApiKey}
+                  onChange={(event) => {
+                    setClearAliyunBailianApiKey(event.target.checked);
+                    if (event.target.checked) setAliyunBailianApiKey('');
+                  }}
+                />
+                <span>清除百炼 Key</span>
+              </label>
+              <label className="settings-label">
+                <span>百炼 Base URL</span>
+                <input
+                  value={aliyunBailianBaseUrl}
+                  onChange={(event) => setAliyunBailianBaseUrl(event.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                <span>百炼文本模型</span>
+                <input
+                  value={aliyunBailianTextModel}
+                  onChange={(event) => setAliyunBailianTextModel(event.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                <span>百炼音乐模型</span>
+                <input
+                  value={aliyunBailianMusicModel}
+                  onChange={(event) => setAliyunBailianMusicModel(event.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                <span>方舟 Key {current.cloud?.volcengine.arkApiKeyConfigured ? `（${current.cloud.volcengine.arkApiKeyMask || '已配置'}）` : '（未配置）'}</span>
+                <input
+                  type="password"
+                  value={volcArkApiKey}
+                  onChange={(event) => {
+                    setVolcArkApiKey(event.target.value);
+                    if (event.target.value.trim()) setClearVolcArkApiKey(false);
+                  }}
+                  placeholder="留空保持不变"
+                />
+              </label>
+              <label className="settings-label checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={clearVolcArkApiKey}
+                  onChange={(event) => {
+                    setClearVolcArkApiKey(event.target.checked);
+                    if (event.target.checked) setVolcArkApiKey('');
+                  }}
+                />
+                <span>清除方舟 Key</span>
+              </label>
+              <label className="settings-label">
+                <span>方舟 Base URL</span>
+                <input
+                  value={volcArkBaseUrl}
+                  onChange={(event) => setVolcArkBaseUrl(event.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                <span>方舟文本模型</span>
+                <input
+                  value={volcArkTextModel}
+                  onChange={(event) => setVolcArkTextModel(event.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                <span>方舟图片模型</span>
+                <input
+                  value={volcArkImageModel}
+                  onChange={(event) => setVolcArkImageModel(event.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                <span>火山语音 Key {current.cloud?.volcengine.speechApiKeyConfigured ? `（${current.cloud.volcengine.speechApiKeyMask || '已配置'}）` : '（未配置）'}</span>
+                <input
+                  type="password"
+                  value={volcSpeechApiKey}
+                  onChange={(event) => {
+                    setVolcSpeechApiKey(event.target.value);
+                    if (event.target.value.trim()) setClearVolcSpeechApiKey(false);
+                  }}
+                  placeholder="留空保持不变"
+                />
+              </label>
+              <label className="settings-label checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={clearVolcSpeechApiKey}
+                  onChange={(event) => {
+                    setClearVolcSpeechApiKey(event.target.checked);
+                    if (event.target.checked) setVolcSpeechApiKey('');
+                  }}
+                />
+                <span>清除火山语音 Key</span>
+              </label>
+              <label className="settings-label">
+                <span>TTS Resource</span>
+                <input
+                  value={volcTtsResourceId}
+                  onChange={(event) => setVolcTtsResourceId(event.target.value)}
+                />
+              </label>
+              <label className="settings-label">
+                <span>TTS Speaker</span>
+                <input
+                  value={volcTtsSpeakerId}
+                  onChange={(event) => setVolcTtsSpeakerId(event.target.value)}
+                />
+              </label>
+            </div>
+            <button
+              className="ghost-action"
+              type="button"
+              disabled={savingCloudSettings || cloudSettingsUnchanged}
+              onClick={() => void saveCloudSettings()}
+            >
+              <Icon name="save" /> {savingCloudSettings ? '保存中' : '保存云服务设置'}
+            </button>
+          </FieldGroup>
+
           <FieldGroup title="歌曲生成">
             <div className="song-settings-grid">
+              <label className="settings-label">
+                <span>默认歌曲来源</span>
+                <select
+                  value={songProvider}
+                  onChange={(event) => setSongProvider(normalizeSongSource(event.target.value))}
+                >
+                  <option value="suno">Suno 网页自动化</option>
+                  <option value="bailian_fun_music">百炼 fun-music</option>
+                </select>
+              </label>
               <label className="settings-label">
                 <span>Suno 输出目录</span>
                 <input
@@ -7513,14 +7843,30 @@ function songLyricsFromItems(items: ListeningItem[]): string {
 }
 
 function normalizeSongSource(source?: string | null): SongSource {
-  void source;
-  return 'suno';
+  return source === 'bailian_fun_music' ? 'bailian_fun_music' : 'suno';
+}
+
+function normalizeAiProvider(provider?: string | null): AiProvider {
+  return provider === 'volcengine' ? 'volcengine' : 'aliyun_bailian';
+}
+
+function songSourceLabel(source?: string | null): string {
+  return normalizeSongSource(source) === 'bailian_fun_music'
+    ? '百炼 fun-music'
+    : 'Suno 网页自动化';
 }
 
 function groupSongVersionsForDisplay(versions: SongVersionPayload[]): SongVersionGroup[] {
-  return versions.length > 0
-    ? [{ key: 'suno-local-versions', label: '本地完整歌曲', versions }]
-    : [];
+  const groups = new Map<SongSource, SongVersionPayload[]>();
+  versions.forEach((version) => {
+    const source = normalizeSongSource(version.source);
+    groups.set(source, [...(groups.get(source) ?? []), version]);
+  });
+  return Array.from(groups.entries()).map(([source, groupVersions]) => ({
+    key: `${source}-local-versions`,
+    label: songSourceLabel(source),
+    versions: groupVersions,
+  }));
 }
 
 function normalizeTimelineStatus(status?: string | null, timelinePath?: string | null): string {
@@ -7569,6 +7915,9 @@ function isSunoWaitingConfirm(state?: ListeningSongStatePayload | null): boolean
 function songAutomationStatusText(state: ListeningSongStatePayload): string {
   const manual = state.manualActionMessage?.trim();
   if (manual) return manual;
+  if (state.source === 'bailian_fun_music') {
+    return '百炼 fun-music 正在生成歌曲...';
+  }
   switch ((state.automationStatus ?? '').trim()) {
     case 'waitingLogin':
       return 'Suno 页面已打开，请先在页面中自行登录。';
