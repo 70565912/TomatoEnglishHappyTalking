@@ -20,11 +20,10 @@ Last checked: 2026-06-07
 - User-facing display frame: CSS/layout scales the image to the app's 16:9
   picture-book viewport, typically equivalent to `1280x720`.
 - Picture-book generation policy: one sequential image group per
-  article/chapter. Each storyboard segment maps to exactly one
+  article/chapter. Each confirmed v4 scene maps to exactly one
   `picture_book_pages` row and one returned image.
-- Automatic reference-image generation is disabled by default to minimize API
-  calls. Existing or new reference-image experiments require
-  `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true`.
+- Picture-book prompt v4 does not pass reference images. Book-level continuity
+  comes from the editable book description plus the confirmed chapter plan.
 - Visible text is allowed when it naturally belongs in the illustration, such
   as book-title lettering, signs, playing-card marks, labels, notes, or map
   details. Do not reintroduce a blanket text-free restriction.
@@ -107,14 +106,13 @@ Sequential/group request:
 ## Prompt Rules For This App
 
 - Generate one coherent picture-book image sequence per chapter/article. The
-  structured storyboard has at most 14 segments; image 1 maps to segment 1,
-  image N maps to segment N, and the app does not use the group as candidate
-  alternatives.
-- `picture_book_pages` stores one row per storyboard segment, with
-  `sentenceStartIndex` and `sentenceEndIndex` covering that segment. All rows
+  confirmed v4 plan has at most 14 scenes; image 1 maps to scene 1, image N
+  maps to scene N, and the app does not use the group as candidate alternatives.
+- `picture_book_pages` stores one row per confirmed scene, with
+  `sentenceStartIndex` and `sentenceEndIndex` covering that scene. All rows
   together must cover the full chapter sentence range.
-- Base each prompt on the book/series title, chapter title, current storyboard
-  segment, chapter summary, and continuity notes. Prioritize the current
+- Base each prompt on the book/series title, book description, chapter title,
+  current v4 scene, story brief, and chapter brief. Prioritize the current
   chapter over unrelated earlier-chapter characters or settings.
 - Visible text is allowed when it naturally belongs in the story world. The app
   overlays subtitles separately, so generated text should be optional decoration
@@ -123,19 +121,17 @@ Sequential/group request:
   one specific book title globally.
 - For public-domain classics, include the current book title and chapter
   context to improve character accuracy.
-- Use local safe prompt templates by default. Do not call Ark text generation
-  once per chapter in normal runtime. AI chapter-prompt refinement is an explicit
-  experiment switch: `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS=true`.
-- Series bible AI updates are also opt-in:
-  `TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE=true`.
-- Automatic style/character reference-image generation is also opt-in:
-  `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true`. Default production flow should
-  spend one structured-outline text call and one sequential image-group call per
-  chapter when the cache is cold.
+- Prompt review uses `picture_book_prompt_v4` /
+  `picture_book_chapter_plan_v4`. It produces editable `storyBrief`,
+  `chapterBrief`, `scenes[]`, and `groupPrompt`, then waits for
+  `pictureBook.confirmPromptReview` before submitting any image request.
+- Do not restore the old series bible, character-card, or reference-image
+  switches. Default cold-cache production flow should spend one v4 planning text
+  call and one sequential image-group call per confirmed chapter.
 - `PictureBookService` calls `generatePictureBookImageGroup(...,
   useSequential: true)` directly for the product flow. It sets
-  `sequential_image_generation_options.max_images` to the storyboard segment
-  count and does not fall back to single-image generation when the group fails.
+  `sequential_image_generation_options.max_images` to the confirmed scene count
+  and does not fall back to single-image generation when the group fails.
 - The lower-level `TOMATO_VOLC_IMAGE_GROUP_PAGES` switch is still useful for
   legacy/probe paths that call batch helpers without explicitly requesting
   sequential generation.

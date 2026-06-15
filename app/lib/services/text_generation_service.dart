@@ -179,6 +179,7 @@ class TextGenerationService {
     int maxTokens = 1024,
     Duration? receiveTimeout,
     bool jsonResponse = false,
+    bool skipCacheRead = false,
   }) async {
     final preparedTurns = await _prepareTurnsForApi(
       turns,
@@ -196,16 +197,18 @@ class TextGenerationService {
       _cacheNamespace,
       request,
     );
-    final cachedText = await ApiCacheService.getText(
-      cacheKey,
-      articleId: articleId,
-      purpose: cachePurpose,
-    );
-    if (cachedText != null && cachedText.trim().isNotEmpty) {
-      return TextGenerationReply(
-        text: cachedText,
-        source: TextGenerationReplySource.cached,
+    if (!skipCacheRead) {
+      final cachedText = await ApiCacheService.getText(
+        cacheKey,
+        articleId: articleId,
+        purpose: cachePurpose,
       );
+      if (cachedText != null && cachedText.trim().isNotEmpty) {
+        return TextGenerationReply(
+          text: cachedText,
+          source: TextGenerationReplySource.cached,
+        );
+      }
     }
 
     final apiKey = await AppConfig.volcArkTextApiKey;

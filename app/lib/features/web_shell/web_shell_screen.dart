@@ -140,10 +140,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'article.delete': _handleArticleDelete,
         'series.list': _handleSeriesList,
         'series.create': _handleSeriesCreate,
+        'series.update': _handleSeriesUpdate,
         'series.delete': _handleSeriesDelete,
         'series.attachArticle': _handleSeriesAttachArticle,
         'pictureBook.state': _handlePictureBookState,
         'pictureBook.pageImage': _handlePictureBookPageImage,
+        'pictureBook.promptReview': _handlePictureBookPromptReview,
+        'pictureBook.refreshPromptReview':
+            _handlePictureBookRefreshPromptReview,
+        'pictureBook.confirmPromptReview':
+            _handlePictureBookConfirmPromptReview,
+        'pictureBook.cancelPromptReview': _handlePictureBookCancelPromptReview,
         'pictureBook.generate': _handlePictureBookGenerate,
         'pictureBook.retryPage': _handlePictureBookRetryPage,
         'pictureBook.clearArticleCache': _handlePictureBookClearArticleCache,
@@ -595,11 +602,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final pictureBookEnabled = _payloadBool(
       message.payload,
       'pictureBookEnabled',
-      fallback: false,
+      fallback: true,
     );
     final requestedSeriesId = _payloadOptionalInt(message.payload, 'seriesId');
     final requestedSeriesTitle =
         _payloadString(message.payload, 'seriesTitle').trim();
+    final requestedSeriesDescription =
+        _payloadString(message.payload, 'seriesDescription').trim();
     if (content.isEmpty) {
       throw const FormatException('请填写文章内容');
     }
@@ -628,30 +637,36 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       createdAt: DateTime.now(),
     );
     final id = await DatabaseService.saveArticle(article);
-    await _saveArticleTranslationsAtCreate(
-      articleId: id,
-      sentences: sentences,
-      parsedInput: parsedInput,
-    );
-    if (!parsedInput.usesLocalEnglish) {
-      await PracticeTextService.attachTranslateToEnglishForPracticeCache(
-        content: content,
+    int? seriesIdForRollback;
+    var shouldRollbackArticle = true;
+    try {
+      // Translation stays inside the create path on purpose. If Ark rejects the
+      // text, the user must be able to edit the submitted content before the
+      // article appears as saved.
+      await _saveArticleTranslationsAtCreate(
         articleId: id,
+        sentences: sentences,
+        parsedInput: parsedInput,
       );
-    }
-    if (requestedTitle.isEmpty && parsedInput.titleCandidate.trim().isEmpty) {
-      await PracticeTextService.attachSuggestArticleTitleCache(
-        content: englishContent,
-        articleId: id,
-      );
-    }
-    if (pictureBookEnabled) {
+      if (!parsedInput.usesLocalEnglish) {
+        await PracticeTextService.attachTranslateToEnglishForPracticeCache(
+          content: content,
+          articleId: id,
+        );
+      }
+      if (requestedTitle.isEmpty && parsedInput.titleCandidate.trim().isEmpty) {
+        await PracticeTextService.attachSuggestArticleTitleCache(
+          content: englishContent,
+          articleId: id,
+        );
+      }
+
       final savedArticle = article.copyWith(id: id);
-      int? seriesIdForRollback;
-      try {
+      if (pictureBookEnabled) {
         final series = await _resolveStorySeries(
           requestedSeriesId: requestedSeriesId,
           requestedSeriesTitle: requestedSeriesTitle,
+          requestedSeriesDescription: requestedSeriesDescription,
           fallbackTitle: title,
         );
         final seriesId = series.id;
@@ -663,34 +678,34 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           seriesId: seriesId,
           article: savedArticle,
         );
-        await PictureBookService.ensureChapterPlanForArticle(
-          article: savedArticle,
-          chapter: chapter,
-          series: series,
-        );
-        unawaited(
-          PictureBookService.generateForArticle(
-            article: savedArticle,
-            chapter: chapter,
-            onProgress: (state) => _pushEvent('pictureBook.state', state),
-          ),
-        );
-      } catch (_) {
+        // Saving only persists the chapter relationship. The Web UI must open
+        // pictureBook.promptReview next; image API calls happen only after the
+        // user confirms pictureBook.confirmPromptReview.
+        unawaited(_pushEvent(
+          'pictureBook.state',
+          await PictureBookService.statePayload(chapter.articleId),
+        ));
+      }
+
+      final payload = await _articleListPayload();
+      unawaited(_pushEvent('article.state', payload));
+      shouldRollbackArticle = false;
+      return {
+        'article': await _articleJsonWithStory(
+          savedArticle,
+          averageScore: 0,
+        ),
+        'articles': payload['articles'],
+        'series': payload['series'],
+      };
+    } finally {
+      if (shouldRollbackArticle) {
         await DatabaseService.deleteArticle(id);
         if (seriesIdForRollback != null && requestedSeriesId == null) {
           await DatabaseService.deleteStorySeriesIfEmpty(seriesIdForRollback);
         }
-        rethrow;
       }
     }
-    final payload = await _articleListPayload();
-    unawaited(_pushEvent('article.state', payload));
-    return {
-      'article': await _articleJsonWithStory(article.copyWith(id: id),
-          averageScore: 0),
-      'articles': payload['articles'],
-      'series': payload['series'],
-    };
   }
 
   Future<Map<String, dynamic>> _handleArticleDelete(
@@ -758,10 +773,42 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     BridgeMessage message,
   ) async {
     final title = _payloadString(message.payload, 'title').trim();
+    final description = _payloadString(message.payload, 'description').trim();
     if (title.isEmpty) {
       throw const FormatException('请填写书籍名称');
     }
-    await PictureBookService.createSeries(title: title);
+    await PictureBookService.createSeries(
+      title: title,
+      description: description,
+    );
+    final payload = await _articleListPayload();
+    unawaited(_pushEvent('article.state', payload));
+    return payload;
+  }
+
+  Future<Map<String, dynamic>> _handleSeriesUpdate(
+    BridgeMessage message,
+  ) async {
+    final seriesId = _payloadInt(message.payload, 'seriesId');
+    final title = _payloadString(message.payload, 'title').trim();
+    final description = _payloadString(message.payload, 'description').trim();
+    if (title.isEmpty) {
+      throw const FormatException('请填写书籍名称');
+    }
+    if (title.length > 120) {
+      throw const FormatException('书籍名称不能超过 120 个字符');
+    }
+    final series = await DatabaseService.getStorySeriesById(seriesId);
+    if (series == null) {
+      throw FormatException('书籍不存在（id=$seriesId）');
+    }
+    await DatabaseService.updateStorySeries(
+      series.copyWith(
+        title: title,
+        description: description,
+        updatedAt: DateTime.now(),
+      ),
+    );
     final payload = await _articleListPayload();
     unawaited(_pushEvent('article.state', payload));
     return payload;
@@ -787,6 +834,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final requestedSeriesId = _payloadOptionalInt(message.payload, 'seriesId');
     final requestedSeriesTitle =
         _payloadString(message.payload, 'seriesTitle').trim();
+    final requestedSeriesDescription =
+        _payloadString(message.payload, 'seriesDescription').trim();
     final rawArticle = await DatabaseService.getArticleById(articleId);
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
@@ -796,6 +845,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final series = await _resolveStorySeries(
       requestedSeriesId: requestedSeriesId,
       requestedSeriesTitle: requestedSeriesTitle,
+      requestedSeriesDescription: requestedSeriesDescription,
       fallbackTitle: article.title,
     );
     final seriesId = series.id;
@@ -849,6 +899,78 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
   }
 
+  Future<Map<String, dynamic>> _handlePictureBookPromptReview(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final regenerate = _payloadBool(
+      message.payload,
+      'regenerate',
+      fallback: false,
+    );
+    return _pictureBookPromptReviewForArticle(
+      articleId: articleId,
+      regenerate: regenerate,
+    );
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookRefreshPromptReview(
+    BridgeMessage message,
+  ) async {
+    final reviewId = _payloadString(message.payload, 'reviewId').trim();
+    if (reviewId.isEmpty) {
+      throw const FormatException('缺少绘本提示词审核 ID');
+    }
+    return PictureBookService.refreshPromptReview(
+      reviewId: reviewId,
+      target: _payloadString(message.payload, 'target').trim(),
+      bookDescription:
+          _payloadString(message.payload, 'bookDescription').trim(),
+      storyBrief: _payloadString(message.payload, 'storyBrief').trim(),
+      chapterBrief: _payloadString(message.payload, 'chapterBrief').trim(),
+      scenes: _payloadMapList(message.payload, 'scenes'),
+    );
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookConfirmPromptReview(
+    BridgeMessage message,
+  ) async {
+    final reviewId = _payloadString(message.payload, 'reviewId').trim();
+    if (reviewId.isEmpty) {
+      throw const FormatException('缺少绘本提示词审核 ID');
+    }
+    final groupPrompt = _payloadString(message.payload, 'groupPrompt').trim();
+    final bookDescription =
+        _payloadString(message.payload, 'bookDescription').trim();
+    final storyBrief = _payloadString(message.payload, 'storyBrief').trim();
+    final chapterBrief = _payloadString(message.payload, 'chapterBrief').trim();
+    final scenes = _payloadMapList(message.payload, 'scenes');
+    final state = await PictureBookService.confirmPromptReview(
+      reviewId: reviewId,
+      groupPrompt: groupPrompt,
+      bookDescription: bookDescription,
+      storyBrief: storyBrief,
+      chapterBrief: chapterBrief,
+      scenes: scenes,
+      onProgress: (payload) => _pushEvent('pictureBook.state', payload),
+    );
+    unawaited(_pushEvent('pictureBook.state', state));
+    return state;
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookCancelPromptReview(
+    BridgeMessage message,
+  ) async {
+    final reviewId = _payloadString(message.payload, 'reviewId').trim();
+    if (reviewId.isEmpty) {
+      return {
+        'reviewId': reviewId,
+        'cancelled': false,
+      };
+    }
+    return PictureBookService.cancelPromptReview(reviewId);
+  }
+
   Future<Map<String, dynamic>> _handlePictureBookGenerate(
     BridgeMessage message,
   ) async {
@@ -862,31 +984,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    final article = await _articleWithCurrentSentences(rawArticle);
-    var chapter = await DatabaseService.getStoryChapterForArticle(articleId);
-    if (chapter == null) {
-      final series =
-          await PictureBookService.createSeries(title: article.title);
-      final seriesId = series.id;
-      if (seriesId == null) {
-        throw const FormatException('书籍创建失败');
-      }
-      chapter = await PictureBookService.ensureChapterForArticle(
-        seriesId: seriesId,
-        article: article,
-      );
-    }
-    unawaited(
-      PictureBookService.generateForArticle(
-        article: article,
-        chapter: chapter,
-        regenerate: regenerate,
-        onProgress: (state) => _pushEvent('pictureBook.state', state),
-      ),
+    return _pictureBookPromptReviewForArticle(
+      articleId: articleId,
+      regenerate: regenerate,
     );
-    final state = await PictureBookService.statePayload(articleId);
-    unawaited(_pushEvent('pictureBook.state', state));
-    return state;
   }
 
   Future<Map<String, dynamic>> _handlePictureBookRetryPage(
@@ -899,16 +1000,45 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     _retryingPictureBookPages.add(retryKey);
     try {
-      await PictureBookService.regenerateArticle(
+      return await _pictureBookPromptReviewForArticle(
         articleId: articleId,
-        onProgress: (state) => _pushEvent('pictureBook.state', state),
+        regenerate: true,
       );
-      final state = await PictureBookService.statePayload(articleId);
-      unawaited(_pushEvent('pictureBook.state', state));
-      return state;
     } finally {
       _retryingPictureBookPages.remove(retryKey);
     }
+  }
+
+  Future<Map<String, dynamic>> _pictureBookPromptReviewForArticle({
+    required int articleId,
+    required bool regenerate,
+  }) async {
+    final rawArticle = await DatabaseService.getArticleById(articleId);
+    if (rawArticle == null) {
+      throw FormatException('文章不存在（id=$articleId）');
+    }
+    final article = await _articleWithCurrentSentences(rawArticle);
+    var chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    if (chapter == null) {
+      final series = await PictureBookService.createSeries(
+        title: article.title,
+      );
+      final seriesId = series.id;
+      if (seriesId == null) {
+        throw const FormatException('书籍创建失败');
+      }
+      chapter = await PictureBookService.ensureChapterForArticle(
+        seriesId: seriesId,
+        article: article,
+      );
+      final payload = await _articleListPayload();
+      unawaited(_pushEvent('article.state', payload));
+    }
+    return PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: regenerate,
+    );
   }
 
   Future<Map<String, dynamic>> _handlePictureBookClearArticleCache(
@@ -7430,6 +7560,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     json['pictureBookEnabled'] = true;
     json['seriesId'] = chapter.seriesId;
     json['seriesTitle'] = series?.title ?? '';
+    json['seriesDescription'] = series?.description ?? '';
     json['chapterOrder'] = chapter.chapterOrder;
     final coverPayload =
         await PictureBookService.coverImagePayloadForArticle(articleId);
@@ -7442,12 +7573,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Future<StorySeries> _resolveStorySeries({
     required int? requestedSeriesId,
     required String requestedSeriesTitle,
+    required String requestedSeriesDescription,
     required String fallbackTitle,
   }) async {
     if (requestedSeriesId != null) {
       final series =
           await DatabaseService.getStorySeriesById(requestedSeriesId);
       if (series != null) {
+        final description = requestedSeriesDescription.trim();
+        if (description.isNotEmpty && description != series.description) {
+          final updated = series.copyWith(
+            description: description,
+            updatedAt: DateTime.now(),
+          );
+          await DatabaseService.updateStorySeries(updated);
+          return updated;
+        }
         return series;
       }
     }
@@ -7460,12 +7601,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final existingSeries = await DatabaseService.getStorySeries();
     for (final series in existingSeries) {
       if (series.title.trim().toLowerCase() == title.trim().toLowerCase()) {
+        final description = requestedSeriesDescription.trim();
+        if (description.isNotEmpty && description != series.description) {
+          final updated = series.copyWith(
+            description: description,
+            updatedAt: DateTime.now(),
+          );
+          await DatabaseService.updateStorySeries(updated);
+          return updated;
+        }
         return series;
       }
     }
 
     return PictureBookService.createSeries(
       title: title,
+      description: requestedSeriesDescription,
     );
   }
 
@@ -7563,28 +7714,28 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
 
-    const batchSize = 4;
-    for (var start = 0; start < sentences.length; start += batchSize) {
-      final futures = <Future<ArticleSentenceTranslation?>>[];
-      for (var offset = 0; offset < batchSize; offset += 1) {
-        final index = start + offset;
-        if (index >= sentences.length || rowsByIndex.containsKey(index)) {
-          continue;
-        }
-        futures.add(
-          _generatedArticleTranslationRow(
-            articleId: articleId,
-            sentenceIndex: index,
-            sentence: sentences[index],
-            createdAt: createdAt,
-          ),
+    final missingSentences = <int, String>{
+      for (var index = 0; index < sentences.length; index += 1)
+        if (!rowsByIndex.containsKey(index)) index: sentences[index],
+    };
+    if (missingSentences.isNotEmpty) {
+      final batch = await PracticeTextService.translateSentencesToChineseStrict(
+        sentencesByIndex: missingSentences,
+        articleId: articleId,
+      );
+      final source = batch.source == TextGenerationReplySource.cached
+          ? 'cached_batch_at_create'
+          : 'generated_batch_at_create';
+      for (final entry in batch.translationsByIndex.entries) {
+        rowsByIndex[entry.key] = ArticleSentenceTranslation(
+          articleId: articleId,
+          sentenceIndex: entry.key,
+          englishSentence: sentences[entry.key],
+          chineseText: entry.value,
+          source: source,
+          createdAt: createdAt,
+          updatedAt: createdAt,
         );
-      }
-
-      for (final row in await Future.wait(futures)) {
-        if (row != null) {
-          rowsByIndex[row.sentenceIndex] = row;
-        }
       }
     }
 
@@ -7592,54 +7743,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       ..sort((a, b) => a.sentenceIndex.compareTo(b.sentenceIndex));
     if (rows.isNotEmpty) {
       await DatabaseService.saveArticleSentenceTranslations(articleId, rows);
-    }
-  }
-
-  Future<ArticleSentenceTranslation?> _generatedArticleTranslationRow({
-    required int articleId,
-    required int sentenceIndex,
-    required String sentence,
-    required DateTime createdAt,
-  }) async {
-    final english = sentence.trim();
-    if (english.isEmpty) {
-      return null;
-    }
-
-    try {
-      final reply = await PracticeTextService.translateToChinese(
-        text: english,
-        articleId: articleId,
-        cachePurpose: 'article_sentence_translation',
-      ).timeout(const Duration(seconds: 20));
-      if (reply.source != TextGenerationReplySource.remote &&
-          reply.source != TextGenerationReplySource.cached) {
-        return null;
-      }
-      final chinese = reply.text.trim();
-      if (chinese.isEmpty || chinese.startsWith('中文翻译暂不可用')) {
-        return null;
-      }
-      return ArticleSentenceTranslation(
-        articleId: articleId,
-        sentenceIndex: sentenceIndex,
-        englishSentence: english,
-        chineseText: chinese,
-        source: reply.source == TextGenerationReplySource.cached
-            ? 'cached_at_create'
-            : 'generated_at_create',
-        createdAt: createdAt,
-        updatedAt: createdAt,
-      );
-    } catch (error) {
-      TomatoLogger.warn(
-        category: 'article',
-        event: 'translation_at_create.failed',
-        articleId: articleId,
-        data: {'sentenceIndex': sentenceIndex},
-        error: error,
-      );
-      return null;
     }
   }
 
@@ -8774,6 +8877,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return value;
     }
     return value.toString();
+  }
+
+  List<Map<String, dynamic>> _payloadMapList(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! List) {
+      return const <Map<String, dynamic>>[];
+    }
+    return value
+        .whereType<Map>()
+        .map(
+            (item) => item.map((key, value) => MapEntry(key.toString(), value)))
+        .toList(growable: false);
   }
 
   Map<String, dynamic> _decodeJsonObject(String? text) {

@@ -284,7 +284,8 @@ class ChapterStoryOutlineService {
         content: [
           'Book or series title: ${series?.title.trim().isNotEmpty == true ? series!.title : title}',
           'Chapter title: $title',
-          if (series != null) 'Series bible JSON: ${series.bibleJson}',
+          if (series != null && series.description.trim().isNotEmpty)
+            'Book description: ${series.description.trim()}',
           '',
           'Return JSON with this shape:',
           '{"summary":"...","characters":["..."],"locations":["..."],"continuityNotes":["..."],"segments":[{"title":"...","sentenceStartIndex":0,"sentenceEndIndex":2,"summary":"...","visualPrompt":"...","characters":["..."],"locations":["..."],"continuityNotes":["..."]}]}',
@@ -294,7 +295,7 @@ class ChapterStoryOutlineService {
           '- Segments must be in order, cover every sentence from 0 to ${max(0, cleanSentences.length - 1)}, and must not overlap.',
           '- Use the smallest number of segments that preserves the story beats; short chapters may need 3-5, ordinary chapters 6-10, long chapters up to 14.',
           '- visualPrompt must describe the exact illustration for that segment and mention continuity details needed for the sequential group.',
-          '- Keep all imagery safe, warm, child-appropriate, and faithful to the current chapter.',
+          '- Keep the storyboard faithful to the current chapter.',
           '',
           'Numbered chapter sentences:',
           numberedSentences.isEmpty

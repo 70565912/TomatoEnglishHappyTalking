@@ -4,8 +4,7 @@ class StorySeries {
   const StorySeries({
     this.id,
     required this.title,
-    required this.styleGuideJson,
-    required this.bibleJson,
+    this.description = '',
     this.coverImagePath,
     required this.createdAt,
     required this.updatedAt,
@@ -13,8 +12,7 @@ class StorySeries {
 
   final int? id;
   final String title;
-  final String styleGuideJson;
-  final String bibleJson;
+  final String description;
   final String? coverImagePath;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -22,8 +20,7 @@ class StorySeries {
   Map<String, dynamic> toMap() => {
         if (id != null) 'id': id,
         'title': title,
-        'style_guide_json': styleGuideJson,
-        'bible_json': bibleJson,
+        'description': description,
         'cover_image_path': coverImagePath,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
@@ -32,8 +29,7 @@ class StorySeries {
   Map<String, dynamic> toJson() => {
         'id': id,
         'title': title,
-        'styleGuide': _decodeJsonObject(styleGuideJson),
-        'bible': _decodeJsonObject(bibleJson),
+        'description': description,
         'coverImagePath': coverImagePath,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
@@ -42,8 +38,7 @@ class StorySeries {
   StorySeries copyWith({
     int? id,
     String? title,
-    String? styleGuideJson,
-    String? bibleJson,
+    String? description,
     String? coverImagePath,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -51,8 +46,7 @@ class StorySeries {
       StorySeries(
         id: id ?? this.id,
         title: title ?? this.title,
-        styleGuideJson: styleGuideJson ?? this.styleGuideJson,
-        bibleJson: bibleJson ?? this.bibleJson,
+        description: description ?? this.description,
         coverImagePath: coverImagePath ?? this.coverImagePath,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
@@ -61,8 +55,7 @@ class StorySeries {
   factory StorySeries.fromMap(Map<String, dynamic> map) => StorySeries(
         id: (map['id'] as num?)?.toInt(),
         title: map['title'] as String,
-        styleGuideJson: map['style_guide_json'] as String? ?? '{}',
-        bibleJson: map['bible_json'] as String? ?? '{}',
+        description: map['description'] as String? ?? '',
         coverImagePath: map['cover_image_path'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
         updatedAt: DateTime.parse(map['updated_at'] as String),
@@ -258,55 +251,6 @@ class PictureBookPage {
         imagePath: map['image_path'] as String?,
         status: map['status'] as String,
         errorMessage: map['error_message'] as String?,
-        createdAt: DateTime.parse(map['created_at'] as String),
-        updatedAt: DateTime.parse(map['updated_at'] as String),
-      );
-}
-
-class StoryReferenceAsset {
-  const StoryReferenceAsset({
-    this.id,
-    required this.seriesId,
-    required this.kind,
-    required this.name,
-    required this.filePath,
-    required this.promptJson,
-    this.cacheKey,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-
-  final int? id;
-  final int seriesId;
-  final String kind;
-  final String name;
-  final String filePath;
-  final String promptJson;
-  final String? cacheKey;
-  final DateTime createdAt;
-  final DateTime updatedAt;
-
-  Map<String, dynamic> toMap() => {
-        if (id != null) 'id': id,
-        'series_id': seriesId,
-        'kind': kind,
-        'name': name,
-        'file_path': filePath,
-        'prompt_json': promptJson,
-        'cache_key': cacheKey,
-        'created_at': createdAt.toIso8601String(),
-        'updated_at': updatedAt.toIso8601String(),
-      };
-
-  factory StoryReferenceAsset.fromMap(Map<String, dynamic> map) =>
-      StoryReferenceAsset(
-        id: (map['id'] as num?)?.toInt(),
-        seriesId: (map['series_id'] as num).toInt(),
-        kind: map['kind'] as String,
-        name: map['name'] as String,
-        filePath: map['file_path'] as String,
-        promptJson: map['prompt_json'] as String? ?? '{}',
-        cacheKey: map['cache_key'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
         updatedAt: DateTime.parse(map['updated_at'] as String),
       );

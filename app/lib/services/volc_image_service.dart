@@ -163,6 +163,7 @@ class VolcImageService {
     int? articleId,
     int? seriesId,
     List<String> referenceImagePaths = const [],
+    String? groupPromptOverride,
     String cachePurpose = 'picture_book_image',
     bool useSequential = false,
     bool reusePartialCache = true,
@@ -192,8 +193,11 @@ class VolcImageService {
     }
 
     final referenceImages = await _referenceImages(referenceImagePaths);
+    final rawGroupPrompt = groupPromptOverride?.trim().isNotEmpty == true
+        ? groupPromptOverride!.trim()
+        : _groupPrompt(cleaned);
     final groupPrompt = await ContentSafetyService.prepareTextForApi(
-      _groupPrompt(cleaned),
+      rawGroupPrompt,
       serviceKind: ContentSafetyService.servicePictureBookImage,
       purpose: cachePurpose,
     );
@@ -268,6 +272,7 @@ class VolcImageService {
         articleId: articleId,
         seriesId: seriesId,
         referenceImagePaths: referenceImagePaths,
+        groupPromptOverride: groupPromptOverride,
         cachePurpose: cachePurpose,
         useSequential: useSequential,
         reusePartialCache: reusePartialCache,
@@ -601,16 +606,20 @@ class VolcImageService {
   static String _groupPrompt(List<VolcImageBatchRequest> requests) {
     final buffer = StringBuffer()
       ..writeln(
-        'Generate exactly ${requests.length} separate full-frame 16:9 English picture-book illustrations as a coherent visual sequence.',
+        'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.',
       )
       ..writeln(
-        'Keep the same book title, character appearances, costumes, color palette, and picture-book style across all images.',
+        'Each image corresponds to exactly one storyboard scene below, in order.',
       )
       ..writeln(
-        'Use any reference images only for character and style consistency. Natural story text, signs, playing-card marks, or book-title lettering may appear when useful, but the image sequence should stay visual and readable without relying on text alone.',
+        'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
       )
       ..writeln(
-        'For every image, match the listed segment action, characters, props, location, and mood.',
+        'For every image, match the assigned scene action, characters, setting, props, mood, and composition.',
+      )
+      ..writeln('Do not treat the images as alternate candidates.')
+      ..writeln(
+        'Natural story-world text may appear only when it belongs to the scene, such as signs, book covers, maps, labels, or playing-card marks.',
       );
     for (var index = 0; index < requests.length; index += 1) {
       buffer
@@ -623,30 +632,90 @@ class VolcImageService {
 
   static String _sanitizePromptArtifacts(String prompt) {
     var cleaned = prompt.replaceAll(RegExp(r'\s+'), ' ').trim();
+    // Prompt hygiene rule: remove unwanted positive layout hints at the source.
+    // Once they are gone, do not add matching "do not ..." constraints.
     final replacements = <RegExp, String>{
+      RegExp(
+        r'\b(?:enough|large|wide|clear|keep|leave|with)?\s*(?:open\s+clean|clean\s+open|clean)\s+space\b[^.;,\n]*(?:subtitles?|captions?|app[- ]rendered|text|bottom|edge|lower|margin|outside)[^.;,\n]*',
+        caseSensitive: false,
+      ): 'natural scene composition',
+      RegExp(
+        r'\b(?:enough|large|wide|clear|keep|leave|with)?\s*open\s+space\s+(?:at|along|on|near|around|for|outside|below|under)\b[^.;,\n]*(?:subtitles?|captions?|app[- ]rendered|text|bottom|edge|lower|margin|outside)[^.;,\n]*',
+        caseSensitive: false,
+      ): 'natural scene composition',
+      RegExp(
+        r'\b(?:blank|empty|white)\s+(?:area|band|space|panel|margin|lower area|bottom area)\b[^.;,\n]*(?:subtitles?|captions?|app[- ]rendered|text)[^.;,\n]*',
+        caseSensitive: false,
+      ): 'natural scene composition',
+      RegExp(
+        r'\b(?:reserved|reserve)\s+(?:space|area|band|panel|margin)\b[^.;,\n]*(?:subtitles?|captions?|app[- ]rendered|text)[^.;,\n]*',
+        caseSensitive: false,
+      ): 'natural scene composition',
+      RegExp(
+        r'\b(?:bottom|lower)\s+(?:third|edge|area|band|margin)\b[^.;,\n]*(?:subtitles?|captions?|app[- ]rendered|text)[^.;,\n]*',
+        caseSensitive: false,
+      ): 'natural scene composition',
       RegExp(r'\bopen clean space for subtitles\b', caseSensitive: false):
           'natural scene composition',
       RegExp(
         r'\benough clean open space for app-rendered subtitles outside the generated artwork\b',
         caseSensitive: false,
       ): 'natural scene composition',
-      RegExp(r'\bapp[- ]rendered subtitles?\b', caseSensitive: false): 'text',
+      RegExp(r'\bapp[- ]rendered subtitles?\b', caseSensitive: false): '',
+      RegExp(r'\bapp[- ]rendered captions?\b', caseSensitive: false): '',
       RegExp(r'\bapp displays subtitles separately\b', caseSensitive: false):
           '',
       RegExp(r'\bthe app overlays subtitles separately\b',
           caseSensitive: false): '',
-      RegExp(r'\bsubtitles?\b', caseSensitive: false): 'text',
-      RegExp(r'\bcaptions?\b', caseSensitive: false): 'text',
+      RegExp(r'\bsubtitles?\b', caseSensitive: false): '',
+      RegExp(r'\bcaptions?\b', caseSensitive: false): '',
+      RegExp(r'\bapp[- ]rendered\b', caseSensitive: false): '',
+      RegExp(r'\bUI overlays?\b', caseSensitive: false): '',
+      RegExp(r'\btext[- ]free\b', caseSensitive: false):
+          'full-frame story-world',
+      RegExp(r'\bno visible text\b', caseSensitive: false): '',
+      RegExp(r'\bno letters\b', caseSensitive: false): '',
+      RegExp(r'\bno words\b', caseSensitive: false): '',
+      RegExp(r'\bno pseudo text\b', caseSensitive: false): '',
+      RegExp(r'\bspeech bubbles?\b', caseSensitive: false): '',
+      RegExp(r'\bnarration bars?\b', caseSensitive: false): '',
     };
     for (final entry in replacements.entries) {
       cleaned = cleaned.replaceAll(entry.key, entry.value);
     }
-    return cleaned.trim();
+    return _cleanPromptPunctuation(cleaned);
+  }
+
+  static String _cleanPromptPunctuation(String text) {
+    var cleaned = text.replaceAll(RegExp(r'\s+'), ' ');
+    cleaned = cleaned.replaceAllMapped(
+      RegExp(r'\s+([,.;:])'),
+      (match) => match.group(1) ?? '',
+    );
+    cleaned = cleaned
+        .replaceAll(RegExp(r'(?:,\s*){2,}'), ', ')
+        .replaceAll(RegExp(r'(?:;\s*){2,}'), '; ')
+        .replaceAll(RegExp(r'\(\s*\)'), '')
+        .trim();
+    cleaned = cleaned.replaceAll(RegExp(r'^[,.;:\-\s]+'), '').trim();
+    return cleaned.replaceAll(RegExp(r'[,;:\-\s]+$'), '').trim();
   }
 
   @visibleForTesting
   static String groupPromptForTest(List<VolcImageBatchRequest> requests) {
     return _groupPrompt(requests);
+  }
+
+  static String pictureBookGroupPromptForReview(
+    List<VolcImageBatchRequest> requests,
+  ) {
+    final cleaned = requests
+        .where((request) => request.prompt.trim().isNotEmpty)
+        .toList(growable: false);
+    if (cleaned.isEmpty) {
+      return '';
+    }
+    return _groupPrompt(cleaned);
   }
 
   static Future<List<int>> _extractImageBytes(Object? responseData) async {

@@ -20,10 +20,22 @@ class PracticeWordLookup {
   final TextGenerationReplySource source;
 }
 
+class PracticeSentenceTranslationBatch {
+  const PracticeSentenceTranslationBatch({
+    required this.translationsByIndex,
+    required this.source,
+  });
+
+  final Map<int, String> translationsByIndex;
+  final TextGenerationReplySource source;
+}
+
 class PracticeTextService {
   // Stability budget per Ark request; long source text is chunked, not cut.
   static const _englishPracticePromptChunkTarget = 8000;
   static const _titlePromptInputLimit = 1600;
+  static const _sentenceTranslationCachePurpose =
+      'article_sentence_translation_batch_v1';
 
   static Future<TextGenerationReply> translateToChinese({
     required String text,
@@ -69,6 +81,41 @@ class PracticeTextService {
       text: _cleanTranslation(reply.text),
       source: reply.source,
       errorMessage: reply.errorMessage,
+    );
+  }
+
+  static Future<PracticeSentenceTranslationBatch>
+      translateSentencesToChineseStrict({
+    required Map<int, String> sentencesByIndex,
+    int? articleId,
+  }) async {
+    final entries = sentencesByIndex.entries
+        .map((entry) => MapEntry(entry.key, entry.value.trim()))
+        .where((entry) => entry.value.isNotEmpty)
+        .toList(growable: false)
+      ..sort((a, b) => a.key.compareTo(b.key));
+    if (entries.isEmpty) {
+      return const PracticeSentenceTranslationBatch(
+        translationsByIndex: {},
+        source: TextGenerationReplySource.remote,
+      );
+    }
+
+    // Article creation deliberately uses one strict remote task for sentence
+    // translations: it must block save so safety failures can be edited, but it
+    // must not fan out into one API call per sentence again.
+    final reply = await TextGenerationService.generateStrict(
+      turns: _sentenceTranslationPromptTurns(entries),
+      cachePurpose: _sentenceTranslationCachePurpose,
+      articleId: articleId,
+      maxTokens: _sentenceTranslationMaxTokens(entries.length),
+      receiveTimeout: _sentenceTranslationReceiveTimeout(entries.length),
+      jsonResponse: true,
+    );
+    final translations = _parseSentenceTranslationBatch(reply.text, entries);
+    return PracticeSentenceTranslationBatch(
+      translationsByIndex: translations,
+      source: reply.source,
     );
   }
 
@@ -313,6 +360,154 @@ class PracticeTextService {
             'Create one short English title for this article. Return only the title:\n\n$excerpt',
       ),
     ];
+  }
+
+  static List<TextGenerationTurn> _sentenceTranslationPromptTurns(
+    List<MapEntry<int, String>> entries,
+  ) {
+    final payload = jsonEncode({
+      'sentences': [
+        for (final entry in entries)
+          {
+            'index': entry.key,
+            'english': entry.value,
+          },
+      ],
+    });
+    return <TextGenerationTurn>[
+      const TextGenerationTurn(
+        role: 'system',
+        content:
+            'You are a precise English-to-Chinese translation engine. Return only valid compact JSON shaped as {"translations":[{"index":0,"chinese":"..."}]}. Preserve every input index exactly once. Use natural Simplified Chinese. Do not explain.',
+      ),
+      TextGenerationTurn(
+        role: 'user',
+        content:
+            'Translate each English sentence into Simplified Chinese for subtitle display. Keep the same indexes, do not omit or merge items, and return JSON only.\n\n$payload',
+      ),
+    ];
+  }
+
+  static int _sentenceTranslationMaxTokens(int sentenceCount) {
+    final raw = 768 + sentenceCount * 96;
+    return raw.clamp(1024, 12000).toInt();
+  }
+
+  static Duration _sentenceTranslationReceiveTimeout(int sentenceCount) {
+    final rawSeconds = 90 + sentenceCount * 2;
+    return Duration(seconds: rawSeconds.clamp(90, 240).toInt());
+  }
+
+  static Map<int, String> _parseSentenceTranslationBatch(
+    String text,
+    List<MapEntry<int, String>> expectedEntries,
+  ) {
+    final decoded = _decodeJsonValue(text);
+    final translations = <int, String>{};
+
+    void addTranslation(Object? rawIndex, Object? rawValue) {
+      final index = _jsonInt(rawIndex);
+      if (index == null) {
+        return;
+      }
+      final value = rawValue is Map
+          ? rawValue['chinese'] ??
+              rawValue['chineseText'] ??
+              rawValue['translation']
+          : rawValue;
+      final chinese = _cleanTranslation(value?.toString() ?? '');
+      if (chinese.isEmpty || chinese.startsWith('中文翻译暂不可用')) {
+        return;
+      }
+      translations[index] = chinese;
+    }
+
+    void parseList(Object? value) {
+      if (value is! List) {
+        return;
+      }
+      for (final item in value) {
+        if (item is Map) {
+          addTranslation(
+            item['index'] ?? item['sentenceIndex'] ?? item['id'],
+            item['chinese'] ?? item['chineseText'] ?? item['translation'],
+          );
+        }
+      }
+    }
+
+    void parseMap(Object? value) {
+      if (value is! Map) {
+        return;
+      }
+      for (final entry in value.entries) {
+        addTranslation(entry.key, entry.value);
+      }
+    }
+
+    if (decoded is List) {
+      parseList(decoded);
+    } else if (decoded is Map) {
+      final body =
+          decoded['translations'] ?? decoded['sentences'] ?? decoded['items'];
+      parseList(body);
+      parseMap(body);
+      if (translations.isEmpty) {
+        parseMap(decoded);
+      }
+    }
+
+    final missing = <int>[
+      for (final entry in expectedEntries)
+        if (!translations.containsKey(entry.key)) entry.key,
+    ];
+    if (missing.isNotEmpty) {
+      throw TextGenerationException(
+        '文本提交处理失败：AI 未返回完整中文对照（缺少第 ${missing.first + 1} 句），请重试。',
+      );
+    }
+    return {
+      for (final entry in expectedEntries) entry.key: translations[entry.key]!,
+    };
+  }
+
+  static Object? _decodeJsonValue(String text) {
+    final raw = text.trim();
+    if (raw.isEmpty) {
+      return null;
+    }
+    try {
+      return jsonDecode(raw);
+    } catch (_) {
+      // Continue with a tolerant extraction below.
+    }
+
+    Object? trySlice(int start, int end) {
+      if (start < 0 || end <= start) {
+        return null;
+      }
+      try {
+        return jsonDecode(raw.substring(start, end + 1));
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final object = trySlice(raw.indexOf('{'), raw.lastIndexOf('}'));
+    if (object != null) {
+      return object;
+    }
+    return trySlice(raw.indexOf('['), raw.lastIndexOf(']'));
+  }
+
+  static int? _jsonInt(Object? value) {
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value.trim());
+    }
+    return null;
   }
 
   static String _mockTranslation(String text) {

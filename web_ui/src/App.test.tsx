@@ -14,6 +14,33 @@ async function clickSelectedCreationAction(name: string | RegExp) {
   fireEvent.click(within(actions).getByRole('button', { name }));
 }
 
+function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
+  const scenes = [
+    {
+      pageIndex: 0,
+      sentenceStartIndex: 0,
+      sentenceEndIndex: 0,
+      paragraphText: 'Tom finds a bright snack box.',
+      title: 'The Box',
+      story: 'Tom discovers the snack box.',
+      visual: 'Tom finds a bright snack box in a cozy spaceship kitchen.',
+    },
+  ];
+  return {
+    reviewId: `review-${articleId}`,
+    articleId,
+    chapterId: 1,
+    seriesId: 1,
+    regenerate,
+    bookDescription: 'A warm space picture book; Tom is a curious child in a red hoodie.',
+    storyBrief: 'Tom explores small discoveries with a friendly team.',
+    chapterBrief: 'Tom finds a bright snack box.',
+    groupPrompt: `Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\n\nImage 1:\nVisual direction: ${scenes[0].visual}`,
+    scenes,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 describe('App', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -66,8 +93,7 @@ describe('App', () => {
       {
         id: 7,
         title: "Alice's Adventures in Wonderland",
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -182,8 +208,7 @@ describe('App', () => {
       {
         id: 7,
         title: "Alice's Adventures in Wonderland",
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -277,8 +302,7 @@ describe('App', () => {
       {
         id: 1,
         title: 'Alpha Book',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -286,8 +310,7 @@ describe('App', () => {
       {
         id: 2,
         title: 'Beta Book',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -348,8 +371,7 @@ describe('App', () => {
       {
         id: 1,
         title: 'Alpha Book',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -357,8 +379,7 @@ describe('App', () => {
       {
         id: 2,
         title: 'Beta Book',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -412,8 +433,7 @@ describe('App', () => {
       {
         id: 2,
         title: 'Alice Series',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -566,8 +586,8 @@ describe('App', () => {
     expect(screen.getByText('Tom opens a lunch box.')).toBeInTheDocument();
 
     fireEvent.click(saveButton);
-    expect(await screen.findByText('章节已加入书库')).toBeInTheDocument();
-    expect(await screen.findByText('Opens Lunch Shares')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: '绘本提示词审核' })).toBeInTheDocument();
+    expect((await screen.findAllByText('Opens Lunch Shares')).length).toBeGreaterThan(0);
   });
 
   it('rejects article content over 8000 characters without truncating it', async () => {
@@ -610,8 +630,7 @@ describe('App', () => {
     const emptySeries = {
       id: 1,
       title: 'Empty Book',
-      styleGuide: {},
-      bible: {},
+        description: '',
       coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -619,8 +638,7 @@ describe('App', () => {
     const filledSeries = {
       id: 2,
       title: 'Alice Series',
-      styleGuide: {},
-      bible: {},
+        description: '',
       coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -697,8 +715,7 @@ describe('App', () => {
     const series = [{
       id: 9,
       title: 'Draft Book',
-      styleGuide: {},
-      bible: {},
+        description: '',
       coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -754,6 +771,176 @@ describe('App', () => {
     expect(await screen.findByText('章节已删除')).toBeInTheDocument();
   });
 
+  it('updates creation-center picture-book status from native events', async () => {
+    window.location.hash = '/';
+    const article = {
+      id: 42,
+      title: 'Draft Chapter',
+      content: 'Alice keeps walking.',
+      sentences: ['Alice keeps walking.', 'She sees the garden.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 0,
+      pictureBookEnabled: true,
+      seriesId: 9,
+      seriesTitle: 'Draft Book',
+      chapterOrder: 1,
+    };
+    const series = [{
+      id: 9,
+      title: 'Draft Book',
+        description: '',
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    const generatingPictureBook = {
+      articleId: article.id,
+      enabled: true,
+      status: 'generating',
+      pages: [
+        {
+          articleId: article.id,
+          pageIndex: 0,
+          sentenceStartIndex: 0,
+          sentenceEndIndex: 0,
+          paragraphText: 'Alice keeps walking.',
+          status: 'generating',
+        },
+        {
+          articleId: article.id,
+          pageIndex: 1,
+          sentenceStartIndex: 1,
+          sentenceEndIndex: 1,
+          paragraphText: 'She sees the garden.',
+          status: 'queued',
+        },
+      ],
+    };
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            ...generatingPictureBook,
+            articleId: Number(payload.articleId ?? article.id),
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('Draft Chapter')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '创作中心' }));
+    expect(await screen.findByRole('heading', { name: '创作中心' })).toBeInTheDocument();
+    expect(await screen.findByText('2 页 · 生成中')).toBeInTheDocument();
+
+    await act(async () => {
+      window.__tomatoNativeEvent?.({
+        type: 'pictureBook.state',
+        payload: {
+          ...generatingPictureBook,
+          status: 'ready',
+          pages: generatingPictureBook.pages.map((page) => ({
+            ...page,
+            status: 'ready',
+            imageUri: 'data:image/png;base64,ready',
+          })),
+        },
+      });
+    });
+
+    expect(await screen.findByText('2 页 · 已完成')).toBeInTheDocument();
+  });
+
+  it('collapses the creation-center chapter list after selecting a chapter', async () => {
+    window.location.hash = '/';
+    const now = new Date().toISOString();
+    const article = {
+      id: 42,
+      title: 'Fold Me Chapter',
+      content: 'Alice keeps walking.',
+      sentences: ['Alice keeps walking.'],
+      sentenceCount: 1,
+      createdAt: now,
+      averageScore: 0,
+      pictureBookEnabled: true,
+      seriesId: 9,
+      seriesTitle: 'Foldable Book',
+      chapterOrder: 1,
+    };
+    const series = [{
+      id: 9,
+      title: 'Foldable Book',
+      description: '',
+      coverImagePath: null,
+      createdAt: now,
+      updatedAt: now,
+    }];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: Number(payload.articleId ?? article.id),
+            enabled: true,
+            status: 'ready',
+            pages: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('Fold Me Chapter')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '创作中心' }));
+    expect(await screen.findByText('章节列表')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '绘本' }));
+
+    expect(await screen.findByText('章节列表已折叠')).toBeInTheDocument();
+    const expandToggle = screen.getByRole('button', { name: '展开章节列表' });
+    expect(expandToggle).toHaveTextContent('＞');
+    expect(expandToggle).toHaveTextContent('Fold Me Chapter');
+    expect(screen.getByText('Fold Me Chapter')).toBeInTheDocument();
+
+    fireEvent.click(expandToggle);
+
+    expect(await screen.findByText('章节列表')).toBeInTheDocument();
+    const collapseToggle = screen.getByRole('button', { name: '折叠章节列表' });
+    expect(collapseToggle).toHaveTextContent('∨');
+
+    fireEvent.click(collapseToggle);
+
+    expect(await screen.findByText('章节列表已折叠')).toBeInTheDocument();
+  });
+
   it('sends picture-book series choices when saving a new chapter', async () => {
     window.location.hash = '/article/new';
     const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -761,8 +948,7 @@ describe('App', () => {
       {
         id: 7,
         title: 'Alice Series',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -798,9 +984,32 @@ describe('App', () => {
             pictureBookEnabled: true,
             seriesId: Number(payload.seriesId),
             seriesTitle: 'Alice Series',
+            seriesDescription: String(payload.seriesDescription ?? ''),
             chapterOrder: 2,
           };
           return ok(message.id, type, { article, articles: [article], series });
+        }
+        if (type === 'pictureBook.promptReview') {
+          return ok(
+            message.id,
+            type,
+            promptReviewPayloadForTest(Number(payload.articleId ?? 42), false),
+          );
+        }
+        if (type === 'pictureBook.refreshPromptReview') {
+          return ok(message.id, type, {
+            ...promptReviewPayloadForTest(42, false),
+            bookDescription: 'Refreshed book description with a consistent Alice look.',
+            refreshedTarget: payload.target,
+          });
+        }
+        if (type === 'pictureBook.confirmPromptReview') {
+          return ok(message.id, type, {
+            articleId: 42,
+            enabled: true,
+            status: 'generating',
+            pages: [],
+          });
         }
         return ok(message.id, type, {});
       }),
@@ -826,6 +1035,47 @@ describe('App', () => {
         pictureBookEnabled: true,
         seriesId: 7,
       });
+    });
+    const reviewDialog = await screen.findByRole('dialog', { name: '绘本提示词审核' });
+    expect(reviewDialog).toBeInTheDocument();
+    expect(calls.some((call) => call.type === 'pictureBook.promptReview')).toBe(true);
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' })).toHaveTextContent(
+      '自动生成书籍简介',
+    );
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成章节简述' })).toHaveTextContent(
+      '自动生成章节简述',
+    );
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成分镜组图简述' })).toHaveTextContent(
+      '自动生成分镜组图简述',
+    );
+    fireEvent.click(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' }));
+    await waitFor(() => {
+      expect(calls.some((call) => call.type === 'pictureBook.refreshPromptReview')).toBe(true);
+      expect(within(reviewDialog).getByLabelText('书籍简介')).toHaveValue(
+        'Refreshed book description with a consistent Alice look.',
+      );
+    });
+    fireEvent.change(within(reviewDialog).getByLabelText('书籍简介'), {
+      target: { value: 'Alice keeps a blue dress and white apron.' },
+    });
+    fireEvent.change(within(reviewDialog).getByLabelText('第 1 个分镜画面描述'), {
+      target: { value: 'Alice sees a bright table in a Victorian fantasy room.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /保存提示词并生成组图/ }));
+
+    await waitFor(() => {
+      const confirmCall = calls.find((call) => call.type === 'pictureBook.confirmPromptReview');
+      expect(confirmCall?.payload).toMatchObject({
+        reviewId: 'review-42',
+        bookDescription: 'Alice keeps a blue dress and white apron.',
+      });
+      expect(confirmCall?.payload.scenes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            visual: 'Alice sees a bright table in a Victorian fantasy room.',
+          }),
+        ]),
+      );
     });
   });
 
@@ -874,8 +1124,7 @@ describe('App', () => {
               {
                 id: 12,
                 title: 'I Quit My Job',
-                styleGuide: {},
-                bible: {},
+        description: '',
                 coverImagePath: null,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
@@ -1831,8 +2080,7 @@ describe('App', () => {
       {
         id: 1,
         title: 'Alpha Book',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -1840,8 +2088,7 @@ describe('App', () => {
       {
         id: 2,
         title: 'Beta Book',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -1907,8 +2154,7 @@ describe('App', () => {
       {
         id: 1,
         title: 'Thumbnail Book',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: now,
         updatedAt: now,
@@ -2001,6 +2247,21 @@ describe('App', () => {
         'data:image/png;base64,THUMBNAIL_1',
       ]);
     });
+
+    fireEvent.click(screen.getByRole('button', { name: /刷新状态/ }));
+    await waitFor(() => {
+      const stateCalls = calls.filter((call) => call.type === 'pictureBook.state');
+      expect(stateCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    await waitFor(() => {
+      const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
+        .map((image) => image.getAttribute('src'));
+      expect(thumbnails).toEqual([
+        'data:image/png;base64,THUMBNAIL_0',
+        'data:image/png;base64,THUMBNAIL_1',
+      ]);
+    });
+    expect(screen.queryByText('加载缩略图')).not.toBeInTheDocument();
   });
 
   it('shows preload progress and hides the completed listening preload notice after 3 seconds', async () => {
@@ -2420,8 +2681,12 @@ describe('App', () => {
         if (type === 'pictureBook.state') {
           return ok(message.id, type, failedPicture);
         }
-        if (type === 'pictureBook.retryPage') {
-          return ok(message.id, type, { ...failedPicture, status: 'generating' });
+        if (type === 'pictureBook.promptReview') {
+          return ok(
+            message.id,
+            type,
+            promptReviewPayloadForTest(Number(payload.articleId ?? 1), true),
+          );
         }
         if (type === 'chat.open') {
           return ok(message.id, type, {
@@ -2451,10 +2716,11 @@ describe('App', () => {
 
     await waitFor(() => {
       expect(calls).toContainEqual({
-        type: 'pictureBook.retryPage',
-        payload: { articleId: 1, pageIndex: 0 },
+        type: 'pictureBook.promptReview',
+        payload: { articleId: 1, regenerate: true },
       });
     });
+    expect(await screen.findByRole('dialog', { name: '绘本提示词审核' })).toBeInTheDocument();
   });
 
   it('disables repeated picture-book retry clicks while a retry is running', async () => {
@@ -2479,25 +2745,11 @@ describe('App', () => {
     const retryPromise = new Promise<BridgeResponse>((resolve) => {
       resolveRetry = () => {
         resolve(
-          ok('retry', 'pictureBook.retryPage', {
-            articleId: 1,
-            enabled: true,
-            status: 'ready',
-            pages: [
-              {
-                articleId: 1,
-                seriesId: 1,
-                pageIndex: 0,
-                sentenceStartIndex: 0,
-                sentenceEndIndex: 0,
-                paragraphText: article.content,
-                imagePath: '/tmp/retry.png',
-                imageUri: 'data:image/png;base64,READY',
-                status: 'ready',
-                errorMessage: null,
-              },
-            ],
-          }),
+          ok(
+            'retry',
+            'pictureBook.promptReview',
+            promptReviewPayloadForTest(1, true),
+          ),
         );
       };
     });
@@ -2531,7 +2783,7 @@ describe('App', () => {
             ],
           });
         }
-        if (type === 'pictureBook.retryPage') {
+        if (type === 'pictureBook.promptReview') {
           return retryPromise;
         }
         if (type === 'chat.open') {
@@ -2563,20 +2815,18 @@ describe('App', () => {
     fireEvent.click(retryButton as HTMLElement);
 
     await waitFor(() => {
-      expect(calls.filter((call) => call.type === 'pictureBook.retryPage')).toHaveLength(1);
+      expect(calls.filter((call) => call.type === 'pictureBook.promptReview')).toHaveLength(1);
     });
     expect(retryButton).toBeDisabled();
 
     fireEvent.click(retryButton as HTMLElement);
-    expect(calls.filter((call) => call.type === 'pictureBook.retryPage')).toHaveLength(1);
+    expect(calls.filter((call) => call.type === 'pictureBook.promptReview')).toHaveLength(1);
 
     act(() => {
       resolveRetry?.();
     });
 
-    await waitFor(() => {
-      expect(screen.queryByText('组图接口超时')).not.toBeInTheDocument();
-    });
+    expect(await screen.findByRole('dialog', { name: '绘本提示词审核' })).toBeInTheDocument();
   });
 
   it('turns a missing chat picture-book cache file into a retryable error', async () => {
@@ -3360,8 +3610,7 @@ describe('App', () => {
       {
         id: 7,
         title: 'Space Story Series',
-        styleGuide: {},
-        bible: {},
+        description: '',
         coverImagePath: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),

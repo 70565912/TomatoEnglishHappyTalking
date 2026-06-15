@@ -22,6 +22,8 @@ import type {
   ListeningTranslationsPayload,
   PictureBookPage,
   PictureBookPageImagePayload,
+  PictureBookPromptReview,
+  PictureBookPromptReviewScene,
   PictureBookState,
   PreloadState,
   VoicePreviewPayload,
@@ -50,6 +52,7 @@ const fallbackCards = [
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type PictureBookStateSetter = StateSetter<PictureBookState | null>;
+type PictureBookPromptRefreshTarget = 'bookDescription' | 'storyBrief' | 'chapterBrief' | 'scenes';
 
 type PictureBookRetryGate = {
   begin: (articleId: number, pageIndex: number) => boolean;
@@ -91,16 +94,18 @@ function mergePictureBookState(
     return current;
   }
   if (!current || current.articleId !== next.articleId) {
-    return next;
+    return normalizePictureBookState(next);
   }
 
+  const currentPages = Array.isArray(current.pages) ? current.pages : [];
+  const nextPages = Array.isArray(next.pages) ? next.pages : [];
   const imageUriByPage = new Map(
-    current.pages
+    currentPages
       .filter((page) => page.imageUri?.trim())
       .map((page) => [page.pageIndex, page.imageUri?.trim() ?? '']),
   );
   let changed = false;
-  const pages = next.pages.map((page) => {
+  const pages = nextPages.map((page) => {
     if (page.imageUri?.trim()) {
       return page;
     }
@@ -115,7 +120,7 @@ function mergePictureBookState(
     };
   });
 
-  return changed ? { ...next, pages } : next;
+  return normalizePictureBookState(changed ? { ...next, pages } : next);
 }
 
 function mergePictureBookPageImage(
@@ -128,7 +133,8 @@ function mergePictureBookPageImage(
   }
 
   let changed = false;
-  const pages = current.pages.map((page) => {
+  const currentPages = Array.isArray(current.pages) ? current.pages : [];
+  const pages = currentPages.map((page) => {
     if (page.pageIndex !== payload.pageIndex) {
       return page;
     }
@@ -162,7 +168,37 @@ function mergePictureBookPageImage(
     };
   });
 
-  return changed ? { ...current, pages } : current;
+  return normalizePictureBookState(changed ? { ...current, pages } : current);
+}
+
+function normalizePictureBookState(state: PictureBookState): PictureBookState {
+  const pages = Array.isArray(state.pages) ? state.pages : [];
+  const normalized = pages === state.pages ? state : { ...state, pages };
+  const status = inferPictureBookStatus(normalized);
+  return status === normalized.status ? normalized : { ...normalized, status };
+}
+
+function inferPictureBookStatus(state: PictureBookState): PictureBookState['status'] {
+  if (state.pages.length === 0) {
+    return state.status;
+  }
+  const statuses = state.pages.map((page) => page.status);
+  if (statuses.some((status) => status === 'queued' || status === 'prompting' || status === 'generating')) {
+    return 'generating';
+  }
+  if (statuses.every((status) => status === 'ready')) {
+    return 'ready';
+  }
+  if (statuses.every((status) => status === 'skipped')) {
+    return 'skipped';
+  }
+  if (statuses.some((status) => status === 'ready')) {
+    return 'partial';
+  }
+  if (statuses.some((status) => status === 'error')) {
+    return 'error';
+  }
+  return state.status;
 }
 
 function usePictureBookRetryGate(): PictureBookRetryGate {
@@ -223,6 +259,8 @@ function App() {
     }
   });
   const [notice, setNotice] = useState<string | null>(null);
+  const [picturePromptReview, setPicturePromptReview] = useState<PictureBookPromptReview | null>(null);
+  const [picturePromptReviewLoadingArticleId, setPicturePromptReviewLoadingArticleId] = useState<number | null>(null);
   const pictureBookRetryGate = usePictureBookRetryGate();
 
   const rememberSeriesKey = (key: string | null) => {
@@ -242,6 +280,26 @@ function App() {
     setNotice(null);
     setRoute(path);
     void sendNative('app.navigate', { path });
+  };
+
+  const openPictureBookPromptReview = async (articleId: number, regenerate = false) => {
+    setPicturePromptReviewLoadingArticleId(articleId);
+    setNotice(regenerate ? '正在准备绘本重建提示词' : '章节已保存，正在准备绘本提示词');
+    try {
+      const review = await sendNative<PictureBookPromptReview>('pictureBook.promptReview', {
+        articleId,
+        regenerate,
+      });
+      if (!review?.reviewId || !Array.isArray(review.scenes)) {
+        throw new Error('绘本提示词准备失败');
+      }
+      setPicturePromptReview(review);
+      setNotice(null);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '绘本提示词准备失败');
+    } finally {
+      setPicturePromptReviewLoadingArticleId(null);
+    }
   };
 
   useEffect(() => {
@@ -333,6 +391,16 @@ function App() {
 
   const parsedRoute = parseRoute(route);
   const latestArticle = articles[0];
+  const updateSeries = async (seriesId: number, title: string, description: string) => {
+    const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
+      'series.update',
+      { seriesId, title, description },
+    );
+    setArticles(payload.articles);
+    if (payload.series) setSeries(payload.series);
+    rememberSeriesKey(`series:${seriesId}`);
+    setNotice('书籍信息已更新');
+  };
 
   return (
     <div className="app-shell">
@@ -412,6 +480,7 @@ function App() {
               rememberSeriesKey(bookKeyForArticle(payload.article));
               setNotice('文章标题已更新');
             }}
+            onUpdateSeries={updateSeries}
           />
         )}
 
@@ -426,6 +495,9 @@ function App() {
               rememberSeriesKey(bookKeyForArticle(payload.article));
               navigate(payload.article.seriesId != null ? `/books/${payload.article.seriesId}` : '/');
               setNotice('章节已加入书库');
+              if (payload.article.pictureBookEnabled !== false) {
+                void openPictureBookPromptReview(payload.article.id, false);
+              }
             }}
           />
         )}
@@ -447,6 +519,7 @@ function App() {
               rememberSeriesKey(bookKeyForArticle(payload.article));
               setNotice('章节标题已更新');
             }}
+            onUpdateSeries={updateSeries}
           />
         )}
 
@@ -461,6 +534,7 @@ function App() {
             onNavigate={navigate}
             onPictureBookLoaded={setPictureBookState}
             pictureBookRetryGate={pictureBookRetryGate}
+            onOpenPicturePromptReview={openPictureBookPromptReview}
             englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={setRecordingSettings}
@@ -481,6 +555,7 @@ function App() {
             onNavigate={navigate}
             onPictureBookLoaded={setPictureBookState}
             pictureBookRetryGate={pictureBookRetryGate}
+            onOpenPicturePromptReview={openPictureBookPromptReview}
             englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={setRecordingSettings}
@@ -500,8 +575,10 @@ function App() {
             initialSeriesId={parsedRoute.seriesId}
             initialArticleId={parsedRoute.articleId}
             pictureBookRetryGate={pictureBookRetryGate}
+            picturePromptReviewLoadingArticleId={picturePromptReviewLoadingArticleId}
             onNavigate={navigate}
             onNotice={setNotice}
+            onOpenPicturePromptReview={openPictureBookPromptReview}
             onArticlesUpdated={(payload) => {
               if (payload.articles) setArticles(payload.articles);
               if (payload.series) setSeries(payload.series);
@@ -550,6 +627,7 @@ function App() {
             onLoaded={setFollowState}
             onPictureBookLoaded={setPictureBookState}
             pictureBookRetryGate={pictureBookRetryGate}
+            onOpenPicturePromptReview={openPictureBookPromptReview}
             preloadState={preloadStates[preloadKey('follow', parsedRoute.articleId, 'english')]}
           />
         )}
@@ -563,6 +641,7 @@ function App() {
             onLoaded={setChatState}
             onPictureBookLoaded={setPictureBookState}
             pictureBookRetryGate={pictureBookRetryGate}
+            onOpenPicturePromptReview={openPictureBookPromptReview}
           />
         )}
 
@@ -573,6 +652,22 @@ function App() {
           />
         )}
       </main>
+      {picturePromptReview && (
+        <PictureBookPromptReviewDialog
+          review={picturePromptReview}
+          onClose={() => {
+            const reviewId = picturePromptReview.reviewId;
+            setPicturePromptReview(null);
+            void sendNative('pictureBook.cancelPromptReview', { reviewId }).catch(() => undefined);
+          }}
+          onConfirmed={(payload) => {
+            setPictureBookState(payload);
+            setPicturePromptReview(null);
+            setNotice('已提交绘本组图生成');
+          }}
+          onNotice={setNotice}
+        />
+      )}
     </div>
   );
 }
@@ -586,6 +681,7 @@ function HomePage({
   onNavigate,
   onOpenBook,
   onRename,
+  onUpdateSeries,
 }: {
   articles: Article[];
   series: StorySeries[];
@@ -595,6 +691,7 @@ function HomePage({
   onNavigate: (path: string) => void;
   onOpenBook: (book: BookGroup) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
+  onUpdateSeries: (seriesId: number, title: string, description: string) => Promise<void>;
 }) {
   const [selectedBookKey, setSelectedBookKey] = useState<string | null>(null);
   const [chapterPage, setChapterPage] = useState(0);
@@ -602,6 +699,11 @@ function HomePage({
   const [renameDraft, setRenameDraft] = useState<{ article: Article; title: string } | null>(null);
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [bookEditDraft, setBookEditDraft] = useState<BookGroup | null>(null);
+  const [bookEditTitle, setBookEditTitle] = useState('');
+  const [bookEditDescription, setBookEditDescription] = useState('');
+  const [bookEditSaving, setBookEditSaving] = useState(false);
+  const [bookEditError, setBookEditError] = useState<string | null>(null);
   const totalSentences = articles.reduce((sum, article) => sum + article.sentenceCount, 0);
   const averageScore =
     articles.length === 0
@@ -712,6 +814,12 @@ function HomePage({
           setChapterOrder(nextOrder);
           setChapterPage(0);
         }}
+        onEditSeries={(book) => {
+          setBookEditDraft(book);
+          setBookEditTitle(book.title);
+          setBookEditDescription(book.description ?? '');
+          setBookEditError(null);
+        }}
         renderChapterRow={({ selectedBook: book, article, imageSrc }) => (
           <MissionRow
             key={article.id}
@@ -769,6 +877,44 @@ function HomePage({
           }}
         />
       )}
+      {bookEditDraft && (
+        <BookEditDialog
+          title={bookEditTitle}
+          description={bookEditDescription}
+          error={bookEditError}
+          saving={bookEditSaving}
+          onTitleChange={(title) => {
+            setBookEditTitle(title);
+            setBookEditError(null);
+          }}
+          onDescriptionChange={(description) => {
+            setBookEditDescription(description);
+            setBookEditError(null);
+          }}
+          onCancel={() => {
+            if (bookEditSaving) return;
+            setBookEditDraft(null);
+            setBookEditError(null);
+          }}
+          onSave={async () => {
+            if (!bookEditDraft?.seriesId || bookEditSaving) return;
+            setBookEditSaving(true);
+            setBookEditError(null);
+            try {
+              await onUpdateSeries(
+                bookEditDraft.seriesId,
+                bookEditTitle.trim(),
+                bookEditDescription.trim(),
+              );
+              setBookEditDraft(null);
+            } catch (error) {
+              setBookEditError(error instanceof Error ? error.message : '书籍信息保存失败');
+            } finally {
+              setBookEditSaving(false);
+            }
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -780,6 +926,7 @@ function BookDetailPage({
   onNavigate,
   onRecentBookKeyChange,
   onRename,
+  onUpdateSeries,
 }: {
   seriesId: number;
   articles: Article[];
@@ -787,11 +934,17 @@ function BookDetailPage({
   onNavigate: (path: string) => void;
   onRecentBookKeyChange: (key: string | null) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
+  onUpdateSeries: (seriesId: number, title: string, description: string) => Promise<void>;
 }) {
   const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const [renameDraft, setRenameDraft] = useState<{ article: Article; title: string } | null>(null);
   const [renameSaving, setRenameSaving] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [bookEditOpen, setBookEditOpen] = useState(false);
+  const [bookEditTitle, setBookEditTitle] = useState('');
+  const [bookEditDescription, setBookEditDescription] = useState('');
+  const [bookEditSaving, setBookEditSaving] = useState(false);
+  const [bookEditError, setBookEditError] = useState<string | null>(null);
   const book = useMemo(
     () => bookGroupsForArticles(articles, series).find((item) => item.seriesId === seriesId) ?? null,
     [articles, series, seriesId],
@@ -826,6 +979,18 @@ function BookDetailPage({
   return (
     <section className="page book-detail-page">
       <TopBar title={book.title} onBack={() => onNavigate('/')}>
+        <button
+          className="ghost-action"
+          type="button"
+          onClick={() => {
+            setBookEditTitle(book.title);
+            setBookEditDescription(book.description ?? '');
+            setBookEditError(null);
+            setBookEditOpen(true);
+          }}
+        >
+          <Icon name="edit" /> 编辑书籍
+        </button>
         <button className="ghost-action" type="button" onClick={() => onNavigate('/article/new')}>
           <Icon name="plus" /> 新增章节
         </button>
@@ -838,6 +1003,7 @@ function BookDetailPage({
         <img src={bookCoverSource(book, 0)} alt="" />
         <div className="book-overview-copy">
           <h2>{book.title}</h2>
+          {book.description && <p>{book.description}</p>}
           <p>{book.articles.length} 个章节 · {book.sentenceCount} 句英文 · 平均跟读分 {book.averageScore || '--'}</p>
           <div className="button-row">
             <button className="primary-action" type="button" disabled={!firstChapter} onClick={() => openPlayer('listening')}>
@@ -923,6 +1089,40 @@ function BookDetailPage({
           }}
         />
       )}
+      {bookEditOpen && (
+        <BookEditDialog
+          title={bookEditTitle}
+          description={bookEditDescription}
+          error={bookEditError}
+          saving={bookEditSaving}
+          onTitleChange={(title) => {
+            setBookEditTitle(title);
+            setBookEditError(null);
+          }}
+          onDescriptionChange={(description) => {
+            setBookEditDescription(description);
+            setBookEditError(null);
+          }}
+          onCancel={() => {
+            if (bookEditSaving) return;
+            setBookEditOpen(false);
+            setBookEditError(null);
+          }}
+          onSave={async () => {
+            if (bookEditSaving) return;
+            setBookEditSaving(true);
+            setBookEditError(null);
+            try {
+              await onUpdateSeries(seriesId, bookEditTitle.trim(), bookEditDescription.trim());
+              setBookEditOpen(false);
+            } catch (error) {
+              setBookEditError(error instanceof Error ? error.message : '书籍信息保存失败');
+            } finally {
+              setBookEditSaving(false);
+            }
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -937,6 +1137,7 @@ function BookPlayerPage({
   onNavigate,
   onPictureBookLoaded,
   pictureBookRetryGate,
+  onOpenPicturePromptReview,
   englishPreloadState,
   recordingSettings,
   onRecordingSettingsLoaded,
@@ -953,6 +1154,7 @@ function BookPlayerPage({
   onNavigate: (path: string) => void;
   onPictureBookLoaded: PictureBookStateSetter;
   pictureBookRetryGate: PictureBookRetryGate;
+  onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   englishPreloadState?: PreloadState;
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
@@ -1017,6 +1219,7 @@ function BookPlayerPage({
             onNavigate={onNavigate}
             onPictureBookLoaded={onPictureBookLoaded}
             pictureBookRetryGate={pictureBookRetryGate}
+            onOpenPicturePromptReview={onOpenPicturePromptReview}
             englishPreloadState={englishPreloadState}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={onRecordingSettingsLoaded}
@@ -1121,6 +1324,10 @@ function BookLibrarySelectorPanel({
   onChapterPageChange,
   onChapterOrderChange,
   onDeleteSeries,
+  onEditSeries,
+  chapterListCollapsed = false,
+  collapsedChapterTitle,
+  onChapterListCollapsedChange,
   renderChapterRow,
 }: {
   books: BookGroup[];
@@ -1134,6 +1341,10 @@ function BookLibrarySelectorPanel({
   onChapterPageChange: (page: number | ((current: number) => number)) => void;
   onChapterOrderChange: (order: ChapterOrder) => void;
   onDeleteSeries?: (seriesId: number) => void | Promise<void>;
+  onEditSeries?: (book: BookGroup) => void;
+  chapterListCollapsed?: boolean;
+  collapsedChapterTitle?: string | null;
+  onChapterListCollapsedChange?: (collapsed: boolean) => void;
   renderChapterRow: (context: {
     selectedBook: BookGroup;
     article: Article;
@@ -1201,13 +1412,50 @@ function BookLibrarySelectorPanel({
           </div>
 
           {selectedBook && (
-            <section className="chapter-list-panel" aria-label={`${selectedBook.title} 章节列表`}>
+            chapterListCollapsed ? (
+              <section className="chapter-list-panel collapsed" aria-label={`${selectedBook.title} 章节列表`}>
+                <button
+                  className="chapter-toggle-row collapsed"
+                  type="button"
+                  aria-label="展开章节列表"
+                  aria-expanded="false"
+                  onClick={() => onChapterListCollapsedChange?.(false)}
+                >
+                  <span className="chapter-toggle-label">
+                    <span aria-hidden="true">＞</span>
+                    <span>章节列表已折叠</span>
+                  </span>
+                  <b>{collapsedChapterTitle?.trim() || selectedBook.title}</b>
+                  <small>{selectedBook.title}</small>
+                </button>
+              </section>
+            ) : (
+              <section className="chapter-list-panel" aria-label={`${selectedBook.title} 章节列表`}>
               <div className="chapter-toolbar">
-                <div>
-                  <span>章节列表</span>
+                <button
+                  className="chapter-toggle-row expanded"
+                  type="button"
+                  aria-label="折叠章节列表"
+                  aria-expanded="true"
+                  onClick={() => onChapterListCollapsedChange?.(true)}
+                  disabled={!onChapterListCollapsedChange}
+                >
+                  <span className="chapter-toggle-label">
+                    <span aria-hidden="true">∨</span>
+                    <span>章节列表</span>
+                  </span>
                   <b>{selectedBook.title}</b>
-                </div>
+                  {selectedBook.description && <small>{selectedBook.description}</small>}
+                </button>
                 <div className="chapter-tools">
+                  {onEditSeries && selectedBook.seriesId != null && (
+                    <button
+                      type="button"
+                      onClick={() => onEditSeries(selectedBook)}
+                    >
+                      <Icon name="edit" /> 编辑书籍
+                    </button>
+                  )}
                   <div className="pagination" aria-label="章节分页">
                     <button
                       type="button"
@@ -1246,6 +1494,7 @@ function BookLibrarySelectorPanel({
                 )}
               </div>
             </section>
+            )
           )}
         </>
       )}
@@ -1350,8 +1599,10 @@ function CreationCenterPage({
   initialSeriesId,
   initialArticleId,
   pictureBookRetryGate,
+  picturePromptReviewLoadingArticleId,
   onNavigate,
   onNotice,
+  onOpenPicturePromptReview,
   onArticlesUpdated,
   onDelete,
   onDeleteSeries,
@@ -1361,8 +1612,10 @@ function CreationCenterPage({
   initialSeriesId?: number;
   initialArticleId?: number;
   pictureBookRetryGate: PictureBookRetryGate;
+  picturePromptReviewLoadingArticleId: number | null;
   onNavigate: (path: string) => void;
   onNotice: (message: string) => void;
+  onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onDelete: (articleId: number) => Promise<void>;
   onDeleteSeries: (seriesId: number) => Promise<void>;
@@ -1377,6 +1630,7 @@ function CreationCenterPage({
   const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(() => initialArticleId ?? null);
   const [activeTab, setActiveTab] = useState<'picture' | 'song' | 'video'>('picture');
+  const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
   const resolvedSelectedBookKey =
     selectedBookKey && books.some((book) => book.key === selectedBookKey)
       ? selectedBookKey
@@ -1448,6 +1702,15 @@ function CreationCenterPage({
     }
   }, [orderedChapters, selectedArticle, selectedArticleId]);
 
+  const selectCreationArticle = (
+    articleId: number,
+    tab: 'picture' | 'song' | 'video' = activeTab,
+  ) => {
+    setSelectedArticleId(articleId);
+    setActiveTab(tab);
+    setChapterListCollapsed(true);
+  };
+
   return (
     <section className="page creation-center-page">
       <TopBar title="创作中心" onBack={() => onNavigate('/')}>
@@ -1464,6 +1727,8 @@ function CreationCenterPage({
         chapterPage={chapterPage}
         chapterOrder={chapterOrder}
         className="creation-library-selector"
+        chapterListCollapsed={chapterListCollapsed}
+        collapsedChapterTitle={selectedArticle?.title}
         emptyState={<EmptyMission onNavigate={onNavigate} />}
         onAddChapter={() => onNavigate('/article/new')}
         onSelectBook={(book) => {
@@ -1471,11 +1736,14 @@ function CreationCenterPage({
           setSelectedBookKey(book.key);
           setSelectedArticleId(firstArticle?.id ?? null);
           setChapterPage(0);
+          setChapterListCollapsed(false);
         }}
+        onChapterListCollapsedChange={setChapterListCollapsed}
         onChapterPageChange={setChapterPage}
         onChapterOrderChange={(nextOrder) => {
           setChapterOrder(nextOrder);
           setChapterPage(0);
+          setChapterListCollapsed(false);
         }}
         onDeleteSeries={onDeleteSeries}
         renderChapterRow={({ article, imageSrc }) => (
@@ -1485,36 +1753,27 @@ function CreationCenterPage({
             imageSrc={imageSrc}
             selected={article.id === selectedArticle?.id}
             openLabel="创作"
-            onOpen={() => setSelectedArticleId(article.id)}
+            onOpen={() => selectCreationArticle(article.id)}
             extraAction={
               <>
                 <button
                   className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'picture' ? 'active' : ''}`}
                   type="button"
-                  onClick={() => {
-                    setSelectedArticleId(article.id);
-                    setActiveTab('picture');
-                  }}
+                  onClick={() => selectCreationArticle(article.id, 'picture')}
                 >
                   <Icon name="card" /> 绘本
                 </button>
                 <button
                   className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'song' ? 'active' : ''}`}
                   type="button"
-                  onClick={() => {
-                    setSelectedArticleId(article.id);
-                    setActiveTab('song');
-                  }}
+                  onClick={() => selectCreationArticle(article.id, 'song')}
                 >
                   <Icon name="music" /> 歌曲
                 </button>
                 <button
                   className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'video' ? 'active' : ''}`}
                   type="button"
-                  onClick={() => {
-                    setSelectedArticleId(article.id);
-                    setActiveTab('video');
-                  }}
+                  onClick={() => selectCreationArticle(article.id, 'video')}
                 >
                   <Icon name="recordVideo" /> 视频
                 </button>
@@ -1538,7 +1797,13 @@ function CreationCenterPage({
             </button>
           </section>
         ) : activeTab === 'picture' ? (
-          <PictureBookCreationPanel article={selectedArticle} pictureBookRetryGate={pictureBookRetryGate} onNotice={onNotice} />
+          <PictureBookCreationPanel
+            article={selectedArticle}
+            pictureBookRetryGate={pictureBookRetryGate}
+            promptReviewLoading={picturePromptReviewLoadingArticleId === selectedArticle.id}
+            onNotice={onNotice}
+            onOpenPromptReview={onOpenPicturePromptReview}
+          />
         ) : activeTab === 'song' ? (
           <SongCreationPanel article={selectedArticle} onNotice={onNotice} />
         ) : (
@@ -1552,11 +1817,15 @@ function CreationCenterPage({
 function PictureBookCreationPanel({
   article,
   pictureBookRetryGate,
+  promptReviewLoading,
   onNotice,
+  onOpenPromptReview,
 }: {
   article: Article;
   pictureBookRetryGate: PictureBookRetryGate;
+  promptReviewLoading: boolean;
   onNotice: (message: string) => void;
+  onOpenPromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1564,12 +1833,21 @@ function PictureBookCreationPanel({
   const loadState = () => {
     setLoading(true);
     sendNative<PictureBookState>('pictureBook.state', { articleId: article.id, includeImageUris: false })
-      .then(setState)
+      .then((payload) => setState((current) => mergePictureBookState(current, payload)))
       .catch((error) => onNotice(error instanceof Error ? error.message : '绘本状态加载失败'))
       .finally(() => setLoading(false));
   };
 
   useEffect(loadState, [article.id]);
+  useEffect(() => {
+    return onNativeEvent<PictureBookState>('pictureBook.state', (payload) => {
+      if (payload.articleId !== article.id) {
+        return;
+      }
+      setState((current) => mergePictureBookState(current, payload));
+      setLoading(false);
+    });
+  }, [article.id]);
   useEnsureAllPictureBookPageImages({
     articleId: article.id,
     state,
@@ -1580,14 +1858,8 @@ function PictureBookCreationPanel({
 
   const retryPage = (page: PictureBookPage) => {
     if (!pictureBookRetryGate.begin(article.id, page.pageIndex)) return;
-    sendNative<PictureBookState>('pictureBook.retryPage', {
-      articleId: article.id,
-      pageIndex: page.pageIndex,
-    })
-      .then((payload) => {
-        setState(payload);
-        onNotice('已提交绘本重试');
-      })
+    Promise.resolve(onOpenPromptReview(article.id, true))
+      .then(() => onNotice('请审核提示词后确认重新生成'))
       .catch((error) => onNotice(error instanceof Error ? error.message : '绘本重试失败'))
       .finally(() => pictureBookRetryGate.finish(article.id, page.pageIndex));
   };
@@ -1596,11 +1868,22 @@ function PictureBookCreationPanel({
     <section className="creation-panel">
       <div className="section-heading with-action">
         <span>绘本组图</span>
-        <button className="ghost-action small" type="button" onClick={loadState} disabled={loading}>
-          <Icon name="refresh" /> 刷新状态
-        </button>
+        <div className="button-row compact">
+          <button
+            className="ghost-action small"
+            type="button"
+            onClick={() => void onOpenPromptReview(article.id, true)}
+            disabled={promptReviewLoading}
+          >
+            <Icon name={promptReviewLoading ? 'refresh' : 'wand'} />
+            {promptReviewLoading ? '准备中' : '重新生成组图'}
+          </button>
+          <button className="ghost-action small" type="button" onClick={loadState} disabled={loading}>
+            <Icon name="refresh" /> 刷新状态
+          </button>
+        </div>
       </div>
-      <p className="creation-panel-note">绘本生成使用整章连续分镜组图；失败后从这里重新提交对应章节页。</p>
+      <p className="creation-panel-note">绘本生成使用整章连续分镜组图；提交前会先打开提示词审核。</p>
       <div className="creation-resource-grid" aria-label="绘本资源状态">
         <ResourceRow label="章节正文" value={`${article.sentenceCount} 句英文`} />
         <ResourceRow label="绘本图片" value={state ? `${state.pages.length} 页 · ${pictureBookStatusLabel(state.status)}` : '读取中'} />
@@ -1648,6 +1931,296 @@ function PictureBookCreationPanel({
       )}
     </section>
   );
+}
+
+function PictureBookPromptReviewDialog({
+  review,
+  onClose,
+  onConfirmed,
+  onNotice,
+}: {
+  review: PictureBookPromptReview;
+  onClose: () => void;
+  onConfirmed: (payload: PictureBookState) => void;
+  onNotice: (message: string) => void;
+}) {
+  const [bookDescription, setBookDescription] = useState(review.bookDescription ?? '');
+  const [storyBrief, setStoryBrief] = useState(review.storyBrief ?? '');
+  const [chapterBrief, setChapterBrief] = useState(review.chapterBrief ?? '');
+  const [scenes, setScenes] = useState<PictureBookPromptReviewScene[]>(review.scenes ?? []);
+  const [groupPrompt, setGroupPrompt] = useState(
+    review.groupPrompt || composePictureBookGroupPrompt(review, review.scenes ?? []),
+  );
+  const [groupPromptTouched, setGroupPromptTouched] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [refreshingPrompt, setRefreshingPrompt] = useState<PictureBookPromptRefreshTarget | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const busy = submitting || refreshingPrompt !== null;
+
+  useEffect(() => {
+    const nextScenes = review.scenes ?? [];
+    setBookDescription(review.bookDescription ?? '');
+    setStoryBrief(review.storyBrief ?? '');
+    setChapterBrief(review.chapterBrief ?? '');
+    setScenes(nextScenes);
+    setGroupPrompt(review.groupPrompt || composePictureBookGroupPrompt(review, nextScenes));
+    setGroupPromptTouched(false);
+    setError(null);
+    setSubmitting(false);
+    setRefreshingPrompt(null);
+  }, [review]);
+
+  useEffect(() => {
+    if (groupPromptTouched) return;
+    setGroupPrompt(composePictureBookGroupPrompt({
+      ...review,
+      bookDescription,
+      storyBrief,
+      chapterBrief,
+    }, scenes));
+  }, [bookDescription, chapterBrief, groupPromptTouched, review, scenes, storyBrief]);
+
+  const updateScene = (
+    pageIndex: number,
+    key: keyof Pick<PictureBookPromptReviewScene, 'title' | 'story' | 'visual'>,
+    value: string,
+  ) => {
+    setScenes((current) =>
+      current.map((scene) =>
+        scene.pageIndex === pageIndex ? { ...scene, [key]: value } : scene,
+      ),
+    );
+  };
+
+  const applyReviewUpdate = (nextReview: PictureBookPromptReview) => {
+    const nextScenes = nextReview.scenes ?? [];
+    setBookDescription(nextReview.bookDescription ?? '');
+    setStoryBrief(nextReview.storyBrief ?? '');
+    setChapterBrief(nextReview.chapterBrief ?? '');
+    setScenes(nextScenes);
+    if (!groupPromptTouched) {
+      setGroupPrompt(nextReview.groupPrompt || composePictureBookGroupPrompt(nextReview, nextScenes));
+    }
+  };
+
+  const refreshPrompt = async (target: PictureBookPromptRefreshTarget) => {
+    setRefreshingPrompt(target);
+    setError(null);
+    try {
+      const payload = await sendNative<PictureBookPromptReview>('pictureBook.refreshPromptReview', {
+        reviewId: review.reviewId,
+        target,
+        bookDescription,
+        storyBrief,
+        chapterBrief,
+        scenes,
+      });
+      applyReviewUpdate(payload);
+      if (groupPromptTouched) {
+        onNotice('提示词已刷新；组图总 Prompt 已手动锁定，未自动覆盖。');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      onNotice(message);
+    } finally {
+      setRefreshingPrompt(null);
+    }
+  };
+
+  const confirm = async () => {
+    if (!groupPrompt.trim()) {
+      setError('组图总提示词不能为空');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload = await sendNative<PictureBookState>('pictureBook.confirmPromptReview', {
+        reviewId: review.reviewId,
+        groupPrompt,
+        bookDescription,
+        storyBrief,
+        chapterBrief,
+        scenes,
+      });
+      onConfirmed(payload);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      onNotice(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const confirmLabel = submitting ? '提交中' : '保存提示词并生成组图';
+  const renderRefreshButton = (
+    target: PictureBookPromptRefreshTarget,
+    label: string,
+    ariaLabel: string,
+  ) => (
+    <button
+      className="icon-button small prompt-magic-button"
+      type="button"
+      aria-label={ariaLabel}
+      title={ariaLabel}
+      disabled={busy}
+      onClick={() => void refreshPrompt(target)}
+    >
+      <Icon name={refreshingPrompt === target ? 'refresh' : 'wand'} />
+      <span>{refreshingPrompt === target ? '生成中' : label}</span>
+    </button>
+  );
+
+  return createPortal(
+    <div className="edit-dialog-backdrop picture-prompt-backdrop" role="presentation">
+      <section className="edit-dialog picture-prompt-dialog" role="dialog" aria-modal="true" aria-label="绘本提示词审核">
+        <div className="edit-dialog-heading">
+          <div>
+            <b>绘本提示词审核</b>
+            <small>{review.regenerate ? '确认后会删除旧组图并重新生成' : '确认后才会提交图片生成'}</small>
+          </div>
+          <button className="icon-button small" type="button" aria-label="关闭绘本提示词审核" onClick={onClose} disabled={busy}>
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="picture-prompt-layout">
+          <section className="picture-prompt-section">
+            <div className="picture-prompt-section-heading">
+              <h3>书籍简介</h3>
+              {renderRefreshButton('bookDescription', '自动生成书籍简介', 'AI 自动生成书籍简介')}
+            </div>
+            <textarea
+              aria-label="书籍简介"
+              value={bookDescription}
+              rows={5}
+              placeholder="时代、整体画风、主要角色基础外貌，例如 Victorian fantasy; Alice wears a blue dress and white pinafore."
+              onChange={(event) => setBookDescription(event.target.value)}
+            />
+          </section>
+
+          <section className="picture-prompt-section">
+            <div className="picture-prompt-section-heading">
+              <h3>绘本故事简述</h3>
+              {renderRefreshButton('chapterBrief', '自动生成章节简述', 'AI 自动生成章节简述')}
+            </div>
+            <textarea
+              aria-label="绘本故事简述"
+              value={storyBrief}
+              rows={5}
+              onChange={(event) => setStoryBrief(event.target.value)}
+            />
+          </section>
+
+          <section className="picture-prompt-section full">
+            <div className="picture-prompt-section-heading">
+              <h3>章节组图简述</h3>
+              {renderRefreshButton('scenes', '自动生成分镜组图简述', 'AI 自动生成分镜组图简述')}
+            </div>
+            <textarea
+              aria-label="章节组图简述"
+              value={chapterBrief}
+              rows={5}
+              onChange={(event) => setChapterBrief(event.target.value)}
+            />
+          </section>
+
+          <section className="picture-prompt-section full">
+            <div className="picture-prompt-section-heading">
+              <h3>组图总 Prompt</h3>
+              {groupPromptTouched && <span>已手动锁定</span>}
+            </div>
+            <textarea
+              aria-label="组图总提示词"
+              value={groupPrompt}
+              rows={10}
+              onChange={(event) => {
+                setGroupPrompt(event.target.value);
+                setGroupPromptTouched(true);
+              }}
+            />
+            {groupPromptTouched && (
+              <p className="picture-prompt-note">后续每页 prompt 修改不会自动覆盖组图总 prompt，最终以当前组图总 prompt 为准。</p>
+            )}
+          </section>
+
+          <section className="picture-prompt-section full">
+            <h3>分镜描述</h3>
+            <div className="picture-page-prompt-list">
+              {scenes.map((scene, index) => (
+                <label key={scene.pageIndex}>
+                  <span>第 {index + 1} 张 · 句子 {scene.sentenceStartIndex + 1} - {scene.sentenceEndIndex + 1}</span>
+                  <small>{scene.paragraphText}</small>
+                  <input
+                    aria-label={`第 ${index + 1} 个分镜标题`}
+                    value={scene.title}
+                    placeholder="分镜标题"
+                    onChange={(event) => updateScene(scene.pageIndex, 'title', event.target.value)}
+                  />
+                  <textarea
+                    aria-label={`第 ${index + 1} 个分镜剧情`}
+                    value={scene.story}
+                    rows={3}
+                    placeholder="这一张图对应的剧情"
+                    onChange={(event) => updateScene(scene.pageIndex, 'story', event.target.value)}
+                  />
+                  <textarea
+                    aria-label={`第 ${index + 1} 个分镜画面描述`}
+                    value={scene.visual}
+                    rows={5}
+                    placeholder="画面中应出现的角色、动作、地点、情绪和构图重点"
+                    onChange={(event) => updateScene(scene.pageIndex, 'visual', event.target.value)}
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+        </div>
+
+        {error && <p className="edit-dialog-error">{error}</p>}
+        <div className="edit-dialog-actions">
+          <button className="ghost-action" type="button" onClick={onClose} disabled={busy}>
+            取消
+          </button>
+          <button className="primary-action" type="button" onClick={() => void confirm()} disabled={busy}>
+            <Icon name={submitting ? 'refresh' : 'wand'} /> {confirmLabel}
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+function composePictureBookGroupPrompt(
+  review: Pick<PictureBookPromptReview, 'bookDescription' | 'storyBrief' | 'chapterBrief'>,
+  scenes: PictureBookPromptReviewScene[],
+): string {
+  const lines = [
+    'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.',
+    'Each image corresponds to exactly one storyboard scene below, in order.',
+    'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
+    'For every image, match the assigned scene action, characters, setting, props, mood, and composition.',
+    'Do not treat the images as alternate candidates.',
+    'Natural story-world text may appear only when it belongs to the scene, such as signs, book covers, maps, labels, or playing-card marks.',
+    '',
+    `Book description: ${review.bookDescription ?? ''}`,
+    `Story brief: ${review.storyBrief ?? ''}`,
+    `Chapter brief: ${review.chapterBrief ?? ''}`,
+  ];
+  scenes.forEach((scene, index) => {
+    lines.push(
+      '',
+      `Image ${index + 1}:`,
+      `Sentence range: ${scene.sentenceStartIndex + 1}-${scene.sentenceEndIndex + 1}`,
+      `Scene title: ${scene.title}`,
+      `Scene story: ${scene.story}`,
+      `Visual direction: ${scene.visual}`,
+    );
+  });
+  return lines.join('\n').trim();
 }
 
 function SongCreationPanel({
@@ -1909,6 +2482,8 @@ function pictureBookStatusLabel(status?: string | null): string {
       return '读取中';
     case 'empty':
       return '未生成';
+    case 'queued':
+      return '排队中';
     case 'generating':
       return '生成中';
     case 'ready':
@@ -1928,6 +2503,7 @@ type BookGroup = {
   key: string;
   seriesId?: number;
   title: string;
+  description?: string;
   articles: Article[];
   sentenceCount: number;
   averageScore: number;
@@ -1942,6 +2518,7 @@ function bookGroupsForArticles(articles: Article[], series: StorySeries[]): Book
       key: `series:${item.id}`,
       seriesId: item.id,
       title: item.title,
+      description: item.description ?? '',
       articles: [],
       sentenceCount: 0,
       averageScore: 0,
@@ -1962,6 +2539,7 @@ function bookGroupsForArticles(articles: Article[], series: StorySeries[]): Book
       groups.set(key, {
         key,
         title: fallbackTitle,
+        description: article.seriesDescription ?? '',
         articles: [],
         sentenceCount: 0,
         averageScore: 0,
@@ -2052,12 +2630,17 @@ function ArticlePage({
   const [content, setContent] = useState('');
   const [selectedSeriesId, setSelectedSeriesId] = useState<string>(() => 'new');
   const [newSeriesTitle, setNewSeriesTitle] = useState('');
+  const [seriesDescription, setSeriesDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sentences = useMemo(() => splitSentences(content), [content]);
   const contentTooLong = content.length > ARTICLE_CONTENT_MAX_CHARS;
   const canSave = Boolean(content.trim()) && !contentTooLong && !saving;
+  const selectedSeries = useMemo(
+    () => series.find((item) => String(item.id) === selectedSeriesId) ?? null,
+    [selectedSeriesId, series],
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -2075,6 +2658,13 @@ function ArticlePage({
       isMounted = false;
     };
   }, [onSeriesUpdated]);
+
+  useEffect(() => {
+    if (selectedSeriesId === 'new') {
+      return;
+    }
+    setSeriesDescription(selectedSeries?.description ?? '');
+  }, [selectedSeries, selectedSeriesId]);
 
   const importFile = async (file: File | undefined) => {
     if (!file) return;
@@ -2126,6 +2716,7 @@ function ArticlePage({
           pictureBookEnabled: true,
           seriesId: resolvedSeriesId,
           seriesTitle: resolvedSeriesTitle,
+          seriesDescription: seriesDescription.trim(),
         },
       );
       onSaved(payload);
@@ -2162,7 +2753,16 @@ function ArticlePage({
               <select
                 id="series-select"
                 value={series.length === 0 ? 'new' : selectedSeriesId}
-                onChange={(event) => setSelectedSeriesId(event.target.value)}
+                onChange={(event) => {
+                  const next = event.target.value;
+                  setSelectedSeriesId(next);
+                  if (next === 'new') {
+                    setSeriesDescription('');
+                  } else {
+                    const nextSeries = series.find((item) => String(item.id) === next);
+                    setSeriesDescription(nextSeries?.description ?? '');
+                  }
+                }}
               >
                 {series.map((item) => (
                   <option value={String(item.id)} key={item.id}>
@@ -2180,8 +2780,15 @@ function ArticlePage({
                   onChange={(event) => setNewSeriesTitle(event.target.value)}
                 />
               )}
+              <textarea
+                aria-label="书籍简介"
+                value={seriesDescription}
+                rows={4}
+                placeholder="可写时代、整体画风、主要角色基础外貌；例如 Victorian fantasy, Alice wears a blue dress and white pinafore."
+                onChange={(event) => setSeriesDescription(event.target.value)}
+              />
             </div>
-            <small>保存后会按本章分镜异步生成连续绘本图。</small>
+            <small>保存后会先审核绘本提示词，确认后再生成组图。</small>
           </section>
 
           <div className="article-field title-field">
@@ -2319,6 +2926,7 @@ function ListeningPage({
   onNavigate,
   onPictureBookLoaded,
   pictureBookRetryGate,
+  onOpenPicturePromptReview,
   englishPreloadState,
   recordingSettings,
   onRecordingSettingsLoaded,
@@ -2339,6 +2947,7 @@ function ListeningPage({
   onNavigate: (path: string) => void;
   onPictureBookLoaded: PictureBookStateSetter;
   pictureBookRetryGate: PictureBookRetryGate;
+  onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   englishPreloadState?: PreloadState;
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
@@ -3452,13 +4061,7 @@ function ListeningPage({
       return;
     }
 
-    void sendNative<PictureBookState>('pictureBook.retryPage', {
-      articleId,
-      pageIndex: page.pageIndex,
-    })
-      .then((payload) => {
-        onPictureBookLoaded((current) => mergePictureBookState(current, payload));
-      })
+    void Promise.resolve(onOpenPicturePromptReview(articleId, true))
       .catch(() => undefined)
       .finally(() => {
         pictureBookRetryGate.finish(articleId, page.pageIndex);
@@ -4436,6 +5039,7 @@ function FollowPage({
   onLoaded,
   onPictureBookLoaded,
   pictureBookRetryGate,
+  onOpenPicturePromptReview,
   preloadState,
 }: {
   articleId: number;
@@ -4445,6 +5049,7 @@ function FollowPage({
   onLoaded: (state: FollowState) => void;
   onPictureBookLoaded: PictureBookStateSetter;
   pictureBookRetryGate: PictureBookRetryGate;
+  onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   preloadState?: PreloadState;
 }) {
   const [commandBusy, setCommandBusy] = useState(false);
@@ -4753,13 +5358,7 @@ function FollowPage({
       return;
     }
 
-    void sendNative<PictureBookState>('pictureBook.retryPage', {
-      articleId,
-      pageIndex: page.pageIndex,
-    })
-      .then((payload) => {
-        onPictureBookLoaded((current) => mergePictureBookState(current, payload));
-      })
+    void Promise.resolve(onOpenPicturePromptReview(articleId, true))
       .catch(() => undefined)
       .finally(() => {
         pictureBookRetryGate.finish(articleId, page.pageIndex);
@@ -5710,6 +6309,7 @@ function ChatPage({
   onLoaded,
   onPictureBookLoaded,
   pictureBookRetryGate,
+  onOpenPicturePromptReview,
 }: {
   articleId: number;
   state: ChatState | null;
@@ -5718,6 +6318,7 @@ function ChatPage({
   onLoaded: (state: ChatState) => void;
   onPictureBookLoaded: PictureBookStateSetter;
   pictureBookRetryGate: PictureBookRetryGate;
+  onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
 }) {
   const [text, setText] = useState('');
   const [revealedTranslations, setRevealedTranslations] = useState<Set<string>>(() => new Set());
@@ -5779,13 +6380,7 @@ function ChatPage({
       return;
     }
 
-    void sendNative<PictureBookState>('pictureBook.retryPage', {
-      articleId,
-      pageIndex: page.pageIndex,
-    })
-      .then((payload) => {
-        onPictureBookLoaded((current) => mergePictureBookState(current, payload));
-      })
+    void Promise.resolve(onOpenPicturePromptReview(articleId, true))
       .catch(() => undefined)
       .finally(() => {
         pictureBookRetryGate.finish(articleId, page.pageIndex);
@@ -6340,6 +6935,74 @@ function EditTitleDialog({
             value={title}
             maxLength={120}
             onChange={(event) => onTitleChange(event.target.value)}
+          />
+        </label>
+        {error && <p className="edit-dialog-error">{error}</p>}
+        <div className="edit-dialog-actions">
+          <button className="ghost-action" type="button" onClick={onCancel} disabled={saving}>
+            取消
+          </button>
+          <button className="primary-action" type="button" onClick={onSave} disabled={saving || !title.trim()}>
+            <Icon name="save" /> {saving ? '保存中' : '保存'}
+          </button>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+function BookEditDialog({
+  title,
+  description,
+  error,
+  saving,
+  onTitleChange,
+  onDescriptionChange,
+  onCancel,
+  onSave,
+}: {
+  title: string;
+  description: string;
+  error: string | null;
+  saving: boolean;
+  onTitleChange: (title: string) => void;
+  onDescriptionChange: (description: string) => void;
+  onCancel: () => void;
+  onSave: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus({ preventScroll: true });
+    inputRef.current?.select();
+  }, []);
+
+  return createPortal(
+    <div className="edit-dialog-backdrop" role="presentation">
+      <section className="edit-dialog" role="dialog" aria-modal="true" aria-label="编辑书籍信息">
+        <div className="edit-dialog-heading">
+          <b>编辑书籍信息</b>
+          <button className="icon-button small" type="button" onClick={onCancel} disabled={saving} aria-label="关闭">
+            <Icon name="exit" />
+          </button>
+        </div>
+        <label>
+          <span>书籍名称</span>
+          <input
+            ref={inputRef}
+            value={title}
+            maxLength={120}
+            onChange={(event) => onTitleChange(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>书籍简介</span>
+          <textarea
+            value={description}
+            maxLength={1000}
+            rows={5}
+            onChange={(event) => onDescriptionChange(event.target.value)}
           />
         </label>
         {error && <p className="edit-dialog-error">{error}</p>}

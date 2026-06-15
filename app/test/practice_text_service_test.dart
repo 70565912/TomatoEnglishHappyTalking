@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -144,6 +145,91 @@ I can't stand it when people don't attend to the rules.
 
     expect(reply.source, TextGenerationReplySource.cached);
     expect(reply.text, 'A mother makes a choice for her child.');
+  });
+
+  test('strict sentence translation batches subtitles in one Ark request',
+      () async {
+    _writeArkConfig();
+    var remoteCalls = 0;
+    Map<String, dynamic>? seenBody;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        remoteCalls += 1;
+        seenBody = body;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'translations': [
+                    {'index': 0, 'chinese': '汤姆发现了一个明亮的零食盒。'},
+                    {'index': 1, 'chinese': '他把它分享给自己的队友。'},
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final batch = await PracticeTextService.translateSentencesToChineseStrict(
+      sentencesByIndex: const {
+        0: 'Tom finds a bright snack box.',
+        1: 'He shares it with his team.',
+      },
+      articleId: 42,
+    );
+
+    final messages = seenBody?['messages'] as List;
+    final user = (messages.last as Map)['content'] as String;
+    expect(remoteCalls, 1);
+    expect(seenBody?['response_format'], {'type': 'json_object'});
+    expect(user, contains('"index":0'));
+    expect(user, contains('"index":1'));
+    expect(batch.source, TextGenerationReplySource.remote);
+    expect(batch.translationsByIndex, {
+      0: '汤姆发现了一个明亮的零食盒。',
+      1: '他把它分享给自己的队友。',
+    });
+  });
+
+  test('strict sentence translation fails when Ark omits a sentence', () async {
+    _writeArkConfig();
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'translations': [
+                    {'index': 0, 'chinese': '汤姆发现了一个明亮的零食盒。'},
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    expect(
+      () => PracticeTextService.translateSentencesToChineseStrict(
+        sentencesByIndex: const {
+          0: 'Tom finds a bright snack box.',
+          1: 'He shares it with his team.',
+        },
+        articleId: 42,
+      ),
+      throwsA(
+        isA<TextGenerationException>().having(
+          (error) => error.message,
+          'message',
+          contains('完整中文对照'),
+        ),
+      ),
+    );
   });
 
   test('cleans generated title to a compact English title', () async {

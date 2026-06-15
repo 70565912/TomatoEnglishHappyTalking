@@ -47,10 +47,10 @@ void main() {
   });
 
   test(
-      'creates persistent cache, picture-book, translation, and safety tables at database version 6',
+      'creates persistent cache, picture-book, translation, and safety tables at database version 7',
       () async {
     final db = await DatabaseService.database;
-    expect(await db.getVersion(), 6);
+    expect(await db.getVersion(), 7);
 
     final rows = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -63,10 +63,15 @@ void main() {
     expect(tableNames, contains('story_series'));
     expect(tableNames, contains('story_chapters'));
     expect(tableNames, contains('picture_book_pages'));
-    expect(tableNames, contains('story_reference_assets'));
     expect(tableNames, contains('article_sentence_translations'));
     expect(tableNames, contains('content_safety_failures'));
     expect(tableNames, contains('content_safety_rules'));
+    expect(tableNames, isNot(contains('story_reference_assets')));
+    final seriesColumns = await db.rawQuery('PRAGMA table_info(story_series)');
+    final seriesColumnNames = seriesColumns.map((row) => row['name']).toSet();
+    expect(seriesColumnNames, contains('description'));
+    expect(seriesColumnNames, isNot(contains('style_guide_json')));
+    expect(seriesColumnNames, isNot(contains('bible_json')));
   });
 
   test('deletes empty story series and refuses series with chapters', () async {
@@ -90,34 +95,6 @@ void main() {
       ),
     );
 
-    final cacheKey = await ApiCacheService.keyForJson(
-      'reference',
-      {'seriesId': emptySeries.id, 'kind': 'style'},
-    );
-    final referencePath = await ApiCacheService.putFileBytes(
-      cacheKey: cacheKey,
-      kind: 'image',
-      purpose: 'story_reference',
-      request: {'seriesId': emptySeries.id, 'kind': 'style'},
-      bytes: const [1, 2, 3],
-      subdirectory: 'reference_assets',
-      extension: 'png',
-      contentType: 'image/png',
-    );
-    await DatabaseService.saveStoryReferenceAsset(
-      StoryReferenceAsset(
-        seriesId: emptySeries.id!,
-        kind: 'style',
-        name: 'style',
-        filePath: referencePath,
-        promptJson: '{}',
-        cacheKey: cacheKey,
-        createdAt: now,
-        updatedAt: now,
-      ),
-    );
-
-    expect(await File(referencePath).exists(), isTrue);
     expect(
       await DatabaseService.deleteStorySeriesIfEmpty(filledSeries.id!),
       isFalse,
@@ -131,10 +108,6 @@ void main() {
     );
 
     expect(await DatabaseService.getStorySeriesById(emptySeries.id!), isNull);
-    expect(await DatabaseService.getStoryReferenceAssets(emptySeries.id!),
-        isEmpty);
-    expect(await ApiCacheService.getEntry(cacheKey), isNull);
-    expect(await File(referencePath).exists(), isFalse);
   });
 
   test('deleting an article removes its exclusive cached file', () async {
@@ -408,6 +381,8 @@ void main() {
     final article = await DatabaseService.getArticleById(articleId);
     final series = await PictureBookService.createSeries(
       title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
     );
     final chapter = await PictureBookService.ensureChapterForArticle(
       seriesId: series.id!,
@@ -424,77 +399,29 @@ void main() {
             {
               'message': {
                 'content': jsonEncode({
-                  'outline': {
-                    'summary': 'Alice meets the Queen on the croquet-ground.',
-                    'characters': ['Alice', 'Queen of Hearts'],
-                    'locations': ['croquet-ground'],
-                    'continuityNotes': [
-                      'Alice keeps the same blue dress and curious expression.'
-                    ],
-                    'segments': [
-                      {
-                        'title': 'Alice Enters',
-                        'sentenceStartIndex': 0,
-                        'sentenceEndIndex': 0,
-                        'summary': 'Alice walks into the garden.',
-                        'visualPrompt':
-                            'Alice in a blue dress enters the garden.',
-                        'characters': ['Alice'],
-                        'locations': ['garden'],
-                        'continuityNotes': ['Alice wears a blue dress.'],
-                      },
-                      {
-                        'title': 'Queen Points',
-                        'sentenceStartIndex': 1,
-                        'sentenceEndIndex': 1,
-                        'summary': 'The Queen points at the croquet ground.',
-                        'visualPrompt': 'The Queen points in the same garden.',
-                        'characters': ['Alice', 'Queen of Hearts'],
-                        'locations': ['croquet-ground'],
-                        'continuityNotes': ['Alice keeps the same blue dress.'],
-                      },
-                    ],
-                  },
-                  'seriesBiblePatch': {
-                    'characters': [
-                      {
-                        'name': 'Alice',
-                        'visualContinuity': 'blue dress, apron, curious face'
-                      }
-                    ],
-                    'locations': [
-                      {
-                        'name': 'croquet-ground',
-                        'visualContinuity': 'storybook royal garden'
-                      }
-                    ],
-                    'continuityNotes': [
-                      'Keep Alice visually consistent across pages.'
-                    ],
-                    'chapterSummaries': [
-                      {
-                        'chapterOrder': 1,
-                        'title': 'Test',
-                        'summary': 'Alice reaches the croquet-ground.'
-                      }
-                    ],
-                  },
-                  'pagePrompts': [
+                  'planKind': 'picture_book_chapter_plan_v4',
+                  'storyBrief':
+                      'Alice is a curious Victorian girl in a blue dress and white apron.',
+                  'chapterBrief':
+                      'Alice meets the Queen on the croquet-ground.',
+                  'scenes': [
                     {
                       'pageIndex': 0,
-                      'scene': 'Alice enters the royal garden.',
-                      'characters': ['Alice'],
-                      'prompt':
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 0,
+                      'title': 'Alice Enters',
+                      'story': 'Alice walks into the garden.',
+                      'visual':
                           'Alice in the same blue dress enters a royal garden.',
-                      'negativePrompt': 'unsafe imagery',
                     },
                     {
                       'pageIndex': 1,
-                      'scene': 'The Queen points ahead.',
-                      'characters': ['Alice', 'Queen of Hearts'],
-                      'prompt':
+                      'sentenceStartIndex': 1,
+                      'sentenceEndIndex': 1,
+                      'title': 'Queen Points',
+                      'story': 'The Queen points ahead.',
+                      'visual':
                           'Alice in the same blue dress watches the Queen point.',
-                      'negativePrompt': 'unsafe imagery',
                     },
                   ],
                 }),
@@ -531,6 +458,24 @@ void main() {
       textBody?['response_format'],
       {'type': 'json_object'},
     );
+    final textMessages = (textBody?['messages'] as List?) ?? const [];
+    final planningPrompt = textMessages
+        .map((message) => (message as Map)['content']?.toString() ?? '')
+        .join('\n')
+        .toLowerCase();
+    expect(planningPrompt, contains('storybrief'));
+    expect(planningPrompt, contains('chapterbrief'));
+    expect(planningPrompt, contains('scenes'));
+    expect(planningPrompt, contains('victorian fantasy picture book'));
+    expect(planningPrompt, isNot(contains('audience')));
+    expect(planningPrompt, isNot(contains('safety')));
+    expect(planningPrompt, isNot(contains('negativeprompt')));
+    expect(planningPrompt, isNot(contains('subtitle')));
+    expect(planningPrompt, isNot(contains('caption')));
+    expect(planningPrompt, isNot(contains('app-rendered')));
+    expect(planningPrompt, isNot(contains('open clean space')));
+    expect(planningPrompt, isNot(contains('text-free')));
+    expect(planningPrompt, isNot(contains('no visible text')));
     expect(
       (imageBody?['sequential_image_generation_options'] as Map)['max_images'],
       2,
@@ -542,7 +487,7 @@ void main() {
     final updatedChapter =
         await DatabaseService.getStoryChapterForArticle(articleId);
     expect(
-        updatedChapter?.summaryJson, contains('picture_book_chapter_plan_v2'));
+        updatedChapter?.summaryJson, contains('picture_book_chapter_plan_v4'));
   });
 
   test('Ark image generation sends reference images and reuses cache',
@@ -670,7 +615,7 @@ void main() {
     expect((seenBody?['prompt'] as String), contains('Image 2:'));
     expect(
       (seenBody?['prompt'] as String),
-      contains('match the listed segment action'),
+      contains('match the assigned scene action'),
     );
   });
 
@@ -984,68 +929,30 @@ void main() {
             {
               'message': {
                 'content': jsonEncode({
-                  'outline': {
-                    'summary':
-                        'Alice joins the tea table and watches the group.',
-                    'characters': ['Alice', 'March Hare', 'Hatter', 'Dormouse'],
-                    'locations': ['tea table'],
-                    'continuityNotes': ['Keep the same tea-party setting.'],
-                    'segments': [
-                      {
-                        'title': 'Alice arrives',
-                        'sentenceStartIndex': 0,
-                        'sentenceEndIndex': 2,
-                        'summary': 'Alice sits near the tea table.',
-                        'visualPrompt':
-                            'Alice approaches the March Hare and Hatter at the tea table.',
-                        'characters': ['Alice', 'March Hare', 'Hatter'],
-                        'locations': ['tea table'],
-                        'continuityNotes': ['Use the same costumes.'],
-                      },
-                      {
-                        'title': 'The table continues',
-                        'sentenceStartIndex': 3,
-                        'sentenceEndIndex': 5,
-                        'summary':
-                            'The Hatter lifts a cup while the Dormouse sleeps.',
-                        'visualPrompt':
-                            'The Hatter lifts a cup and the Dormouse sleeps beside the same table.',
-                        'characters': ['Hatter', 'Dormouse'],
-                        'locations': ['tea table'],
-                        'continuityNotes': ['Keep the same table and palette.'],
-                      },
-                    ],
-                  },
-                  'seriesBiblePatch': {
-                    'characters': [
-                      {
-                        'name': 'Alice',
-                        'visualContinuity':
-                            'same storybook Alice outfit and proportions'
-                      }
-                    ],
-                    'locations': [
-                      {
-                        'name': 'tea table',
-                        'visualContinuity': 'same long outdoor tea table'
-                      }
-                    ],
-                    'continuityNotes': ['Keep the tea table consistent.'],
-                  },
-                  'pagePrompts': [
+                  'planKind': 'picture_book_chapter_plan_v4',
+                  'storyBrief':
+                      'Alice joins a whimsical outdoor tea-party world.',
+                  'chapterBrief':
+                      'Alice watches the March Hare, Hatter, and Dormouse around the same tea table.',
+                  'scenes': [
                     {
                       'pageIndex': 0,
-                      'prompt':
-                          'Alice approaches the March Hare and Hatter at the same tea table.',
-                      'scene': 'Alice arrives at the tea table.',
-                      'characters': ['Alice', 'March Hare', 'Hatter'],
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 2,
+                      'title': 'Alice arrives',
+                      'story': 'Alice sits near the tea table.',
+                      'visual':
+                          'Alice approaches the March Hare and Hatter at the tea table.',
                     },
                     {
                       'pageIndex': 1,
-                      'prompt':
-                          'The Hatter lifts a cup while the Dormouse sleeps beside the same table.',
-                      'scene': 'The tea table continues.',
-                      'characters': ['Hatter', 'Dormouse'],
+                      'sentenceStartIndex': 3,
+                      'sentenceEndIndex': 5,
+                      'title': 'The table continues',
+                      'story':
+                          'The Hatter lifts a cup while the Dormouse sleeps.',
+                      'visual':
+                          'The Hatter lifts a cup and the Dormouse sleeps beside the same table.',
                     },
                   ],
                 }),
@@ -1105,9 +1012,6 @@ void main() {
       chapter: chapter,
     );
 
-    final refs = await DatabaseService.getStoryReferenceAssets(series.id!);
-    expect(refs, isEmpty);
-
     final groupBodies = postedBodies
         .where((body) => body['sequential_image_generation'] == 'auto')
         .toList(growable: false);
@@ -1136,46 +1040,25 @@ void main() {
 
   test('picture-book image prompt allows natural story-world text', () {
     final prompt = PictureBookService.imagePromptForTest({
-      'prompt':
-          'A girl smiles over a glowing map in a warm bedroom picture-book scene, open clean space for subtitles.',
-      'negativePrompt': 'avoid scary details, no UI overlays',
-      'seriesTitle': 'Alice\'s Adventures in Wonderland',
-      'styleGuide': {
-        'visualStyle': 'warm English picture book illustration',
-        'layout':
-            'one clear text-free background scene, enough clean open space for app-rendered subtitles outside the generated artwork',
-        'safety':
-            'no visible text, captions, subtitles, speech bubbles, narration bars, UI overlays',
+      'scene': {
+        'title': 'Glowing Map',
+        'story': 'A girl smiles over a glowing map.',
+        'visual':
+            'A girl smiles over a glowing map in a warm bedroom picture-book scene, enough open clean space at the bottom edge for app-rendered subtitles.',
       },
     });
     final lower = prompt.toLowerCase();
 
-    expect(prompt, contains('coherent sequential picture-book storyboard'));
-    expect(prompt, contains('TEXT POLICY'));
-    expect(prompt, contains('visible letters and words are optional'));
     expect(prompt, contains('natural scene composition'));
-    expect(prompt, contains('current story action'));
-    expect(prompt, contains('BOOK TITLE / SERIES TITLE'));
-    expect(prompt, contains('Alice\'s Adventures in Wonderland'));
-    expect(
-        prompt,
-        contains(
-            'one image in a coherent illustrated chapter sequence from the book or story series'));
-    expect(prompt,
-        contains('Use the book title "Alice\'s Adventures in Wonderland"'));
-    expect(prompt, contains('saved series bible'));
-    expect(prompt, contains('current chapter storyboard'));
-    expect(prompt, contains('Do not import unrelated characters'));
-    expect(prompt, contains('Avoid modern classroom'));
-    expect(prompt,
-        isNot(contains('Alice is always the same classic storybook girl')));
-    expect(prompt, isNot(contains('Do not turn Alice into a modern student')));
-    expect(prompt, isNot(contains('no typography')));
-    expect(prompt, isNot(contains('All visible surfaces are simple color')));
+    expect(prompt, contains('glowing map'));
     expect(lower, isNot(contains('subtitle')));
     expect(lower, isNot(contains('caption')));
     expect(lower, isNot(contains('open clean space')));
+    expect(lower, isNot(contains('bottom edge')));
     expect(lower, isNot(contains('app-rendered')));
+    expect(lower, isNot(contains('ui overlay')));
+    expect(lower, isNot(contains('text-free')));
+    expect(lower, isNot(contains('no visible text')));
   });
 
   test('Ark group prompt removes old subtitle-space wording', () {
@@ -1190,50 +1073,44 @@ void main() {
         VolcImageBatchRequest(
           pageIndex: 1,
           prompt:
-              'The King hurries away with enough clean open space for app-rendered subtitles outside the generated artwork.',
+              'The King hurries away with enough open clean space at the bottom edge for text.',
           promptMetadata: {'page': 1},
         ),
       ],
     );
     final lower = prompt.toLowerCase();
 
-    expect(prompt, contains('Generate exactly 2 separate full-frame 16:9'));
-    expect(prompt, contains('match the listed segment action'));
+    expect(prompt, contains('Generate a coherent sequence of full-frame 16:9'));
+    expect(prompt, contains('match the assigned scene action'));
     expect(prompt, contains('natural scene composition'));
     expect(lower, isNot(contains('subtitle')));
     expect(lower, isNot(contains('app-rendered')));
     expect(lower, isNot(contains('open clean space')));
+    expect(lower, isNot(contains('bottom edge')));
   });
 
   test('picture-book image prompt uses any series title without Alice lock-in',
       () {
     final prompt = PictureBookService.imagePromptForTest({
-      'prompt': 'A boy opens a gate into a quiet moonlit garden.',
-      'seriesTitle': 'The Secret Garden',
-      'styleGuide': {
-        'visualStyle': 'warm English picture book illustration',
+      'scene': {
+        'title': 'Moonlit Gate',
+        'story': 'A boy opens a gate into a quiet moonlit garden.',
+        'visual': 'A boy opens a gate into a quiet moonlit garden.',
       },
     });
 
-    expect(prompt, contains('BOOK TITLE / SERIES TITLE: The Secret Garden'));
-    expect(
-      prompt,
-      contains(
-        'one image in a coherent illustrated chapter sequence from the book or story series "The Secret Garden"',
-      ),
-    );
-    expect(prompt, contains('Use the book title "The Secret Garden"'));
+    expect(prompt, contains('moonlit garden'));
     expect(prompt, isNot(contains('Alice is always')));
     expect(prompt, isNot(contains('Wonderland')));
   });
 
   test('picture-book image prompt softens unsafe classic story threats', () {
     final prompt = PictureBookService.imagePromptForTest({
-      'prompt':
-          'Alice hears that the Duchess is under sentence of execution. The Queen shouts "Off with her head!" while players are fighting for hedgehogs.',
-      'seriesTitle': 'Alice\'s Adventures in Wonderland',
-      'styleGuide': {
-        'visualStyle': 'warm English picture book illustration',
+      'scene': {
+        'title': 'Queen Shouts',
+        'story': 'Alice hears that the Duchess is under sentence of execution.',
+        'visual':
+            'The Queen shouts "Off with her head!" while players are fighting for hedgehogs.',
       },
     });
     final lower = prompt.toLowerCase();
@@ -1241,7 +1118,6 @@ void main() {
     expect(lower, isNot(contains('execution')));
     expect(lower, isNot(contains('off with her head')));
     expect(lower, isNot(contains('fighting')));
-    expect(prompt, contains('harmless theatrical royal anger'));
     expect(prompt, contains('serious trouble with the Queen'));
     expect(prompt, contains('exaggerated angry command'));
     expect(prompt, contains('scrambling'));
@@ -1317,6 +1193,273 @@ but the three were all crowded together at one corner of it.
     expect(lastText, contains('full_story_marker_69'));
     expect(firstText, isNot(contains('[middle of chapter]')));
     expect(lastText, isNot(contains('[end of chapter]')));
+  });
+
+  test('picture-book prompt review does not call image API or delete old pages',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-review-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Review Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    var imageCalls = 0;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageCalls += 1;
+        return {'data': const []};
+      },
+    );
+    final now = DateTime(2026, 1, 1);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Old page',
+        promptJson: '{}',
+        imagePath: 'old.png',
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    expect(review['reviewId']?.toString(), startsWith('pb_$articleId'));
+    expect(review['groupPrompt']?.toString(), contains('Image 1:'));
+    expect(review['bookDescription'], isA<String>());
+    expect(review['storyBrief'], contains('Alice'));
+    expect(review['chapterBrief'], contains('Queen'));
+    expect(review['scenes'], isA<List>());
+    expect(review.containsKey('characterCards'), isFalse);
+    expect(review.containsKey('referenceAssets'), isFalse);
+    expect(review.containsKey('styleGuide'), isFalse);
+    expect(imageCalls, 0);
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(1));
+    expect(pages.single.paragraphText, 'Old page');
+  });
+
+  test(
+      'picture-book prompt magic refresh updates draft without image generation',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-refresh-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Refresh Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    final now = DateTime(2026, 1, 1);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Old page',
+        promptJson: '{}',
+        imagePath: 'old.png',
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    var imageCalls = 0;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageCalls += 1;
+        return {'data': const []};
+      },
+    );
+    var textCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textCalls += 1;
+        if (textCalls == 1) {
+          return {
+            'choices': [
+              {
+                'message': {
+                  'content': jsonEncode({
+                    'bookDescription':
+                        'Refreshed Victorian watercolor Alice picture book with a consistent blue dress and white pinafore.',
+                  }),
+                },
+              }
+            ],
+          };
+        }
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'storyBrief':
+                      'Refreshed Alice story world with a consistent blue dress and garden mood.',
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final refreshedBook = await PictureBookService.refreshPromptReview(
+      reviewId: review['reviewId'].toString(),
+      target: 'bookDescription',
+      bookDescription: 'Victorian watercolor Alice picture book.',
+      storyBrief: review['storyBrief'].toString(),
+      chapterBrief: review['chapterBrief'].toString(),
+      scenes: [
+        for (final scene in review['scenes'] as List)
+          Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    expect(refreshedBook['bookDescription'], contains('white pinafore'));
+    expect(refreshedBook['groupPrompt'], contains('white pinafore'));
+    expect(refreshedBook['refreshedTarget'], 'bookDescription');
+
+    final refreshed = await PictureBookService.refreshPromptReview(
+      reviewId: review['reviewId'].toString(),
+      target: 'storyBrief',
+      bookDescription: refreshedBook['bookDescription'].toString(),
+      storyBrief: refreshedBook['storyBrief'].toString(),
+      chapterBrief: refreshedBook['chapterBrief'].toString(),
+      scenes: [
+        for (final scene in refreshedBook['scenes'] as List)
+          Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    expect(refreshed['storyBrief'], contains('Refreshed Alice story world'));
+    expect(refreshed['bookDescription'], contains('Victorian watercolor'));
+    expect(refreshed['groupPrompt'], contains('Refreshed Alice story world'));
+    expect(textCalls, 2);
+    expect(imageCalls, 0);
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(1));
+    expect(pages.single.paragraphText, 'Old page');
+  });
+
+  test('picture-book prompt confirmation submits images only after review',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-confirm-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Confirm Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+    );
+    Map<String, dynamic>? imageBody;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageBody = body;
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 8])
+            },
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 9])
+            },
+          ],
+        };
+      },
+    );
+
+    await PictureBookService.confirmPromptReview(
+      reviewId: review['reviewId'].toString(),
+      groupPrompt: 'Edited group prompt for confirmed image generation.',
+      bookDescription:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+      storyBrief: review['storyBrief'].toString(),
+      chapterBrief: review['chapterBrief'].toString(),
+      scenes: [
+        for (final scene in review['scenes'] as List)
+          {
+            ...Map<String, dynamic>.from(scene as Map),
+            'visual':
+                'Edited scene ${(scene['pageIndex'] as num).toInt() + 1} visual.',
+          },
+      ],
+    );
+
+    expect(imageBody?['prompt'],
+        'Edited group prompt for confirmed image generation.');
+    expect(imageBody?.containsKey('image'), isFalse);
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(2));
+    expect(pages.every((page) => page.status == 'ready'), isTrue);
+    expect(pages.first.promptJson, contains('Edited scene 1 visual.'));
+    final updatedSeries = await DatabaseService.getStorySeriesById(series.id!);
+    expect(updatedSeries?.description, contains('blue dress and white apron'));
   });
 
   test('picture-book cover payload uses the first ready generated image',
@@ -1423,5 +1566,45 @@ Future<File> _writeTestPng(
 void _writeImageArkKey(Directory root, String key) {
   File('${root.path}${Platform.pathSeparator}ark.txt').writeAsStringSync(
     'ARK_API_KEY=$key\n',
+  );
+}
+
+Future<void> _installTwoPageChapterPlanOverride() async {
+  TextGenerationService.setPostOverrideForTest(
+    ({required endpoint, required headers, required body}) async {
+      return {
+        'choices': [
+          {
+            'message': {
+              'content': jsonEncode({
+                'planKind': 'picture_book_chapter_plan_v4',
+                'storyBrief':
+                    'Alice, a curious Victorian girl in a blue dress and white apron, enters a whimsical royal garden.',
+                'chapterBrief':
+                    'Alice meets the Queen on the croquet-ground in two connected storybook scenes.',
+                'scenes': [
+                  {
+                    'pageIndex': 0,
+                    'sentenceStartIndex': 0,
+                    'sentenceEndIndex': 0,
+                    'title': 'Alice Enters',
+                    'story': 'Alice walks into the garden.',
+                    'visual': 'Alice in a blue dress enters the garden.',
+                  },
+                  {
+                    'pageIndex': 1,
+                    'sentenceStartIndex': 1,
+                    'sentenceEndIndex': 1,
+                    'title': 'Queen Points',
+                    'story': 'The Queen points at the croquet ground.',
+                    'visual': 'The Queen points in the same garden.',
+                  },
+                ],
+              }),
+            },
+          }
+        ],
+      };
+    },
   );
 }

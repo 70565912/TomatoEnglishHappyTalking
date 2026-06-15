@@ -46,7 +46,7 @@ class DatabaseService {
     await _copyCurrentLegacyDatabaseIfNeeded(dbPath);
     return openDatabase(
       dbPath,
-      version: 6,
+      version: 7,
       onCreate: (db, _) async {
         await _createCoreTables(db);
         await _createApiCacheTables(db);
@@ -74,6 +74,9 @@ class DatabaseService {
         }
         if (oldVersion < 6) {
           await _createContentSafetyTables(db);
+        }
+        if (oldVersion < 7) {
+          await _migratePictureBookSeriesToV7(db);
         }
       },
     );
@@ -270,8 +273,7 @@ class DatabaseService {
       CREATE TABLE IF NOT EXISTS story_series (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         title            TEXT    NOT NULL,
-        style_guide_json TEXT    NOT NULL,
-        bible_json       TEXT    NOT NULL,
+        description      TEXT    NOT NULL DEFAULT '',
         cover_image_path TEXT,
         created_at       TEXT    NOT NULL,
         updated_at       TEXT    NOT NULL
@@ -320,24 +322,36 @@ class DatabaseService {
       'CREATE INDEX IF NOT EXISTS idx_picture_book_pages_article '
       'ON picture_book_pages (article_id, page_index)',
     );
-    await db.execute('''
-      CREATE TABLE IF NOT EXISTS story_reference_assets (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        series_id   INTEGER NOT NULL,
-        kind        TEXT    NOT NULL,
-        name        TEXT    NOT NULL,
-        file_path   TEXT    NOT NULL,
-        prompt_json TEXT    NOT NULL,
-        cache_key   TEXT,
-        created_at  TEXT    NOT NULL,
-        updated_at  TEXT    NOT NULL,
-        FOREIGN KEY (series_id) REFERENCES story_series (id)
-      )
-    ''');
-    await db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_story_reference_assets_series '
-      'ON story_reference_assets (series_id, kind)',
-    );
+  }
+
+  static Future<void> _migratePictureBookSeriesToV7(Database db) async {
+    final columns = await _tableColumns(db, 'story_series');
+    if (columns.isEmpty) {
+      await _createPictureBookTables(db);
+    } else {
+      if (!columns.contains('description')) {
+        await db.execute(
+          "ALTER TABLE story_series ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+        );
+      }
+      if (columns.contains('style_guide_json')) {
+        await db
+            .execute('ALTER TABLE story_series DROP COLUMN style_guide_json');
+      }
+      if (columns.contains('bible_json')) {
+        await db.execute('ALTER TABLE story_series DROP COLUMN bible_json');
+      }
+    }
+    await db.execute('DROP TABLE IF EXISTS story_reference_assets');
+  }
+
+  static Future<Set<String>> _tableColumns(
+      Database db, String tableName) async {
+    final rows = await db.rawQuery('PRAGMA table_info($tableName)');
+    return rows
+        .map((row) => row['name']?.toString() ?? '')
+        .where((name) => name.isNotEmpty)
+        .toSet();
   }
 
   static Future<void> _createArticleSentenceTranslationTables(
@@ -611,7 +625,6 @@ class DatabaseService {
       );
     }
 
-    final referenceFilePaths = <String>[];
     for (final seriesId in affectedSeriesIds) {
       final remainingChapterCount = Sqflite.firstIntValue(
             await db.rawQuery(
@@ -623,34 +636,6 @@ class DatabaseService {
       if (remainingChapterCount > 0) {
         continue;
       }
-
-      final referenceRows = await db.query(
-        'story_reference_assets',
-        columns: ['file_path', 'cache_key'],
-        where: 'series_id = ?',
-        whereArgs: [seriesId],
-      );
-      referenceFilePaths.addAll(
-        referenceRows
-            .map((row) => row['file_path']?.toString() ?? '')
-            .where((path) => path.isNotEmpty),
-      );
-      for (final row in referenceRows) {
-        final cacheKey = row['cache_key']?.toString() ?? '';
-        if (cacheKey.isEmpty) {
-          continue;
-        }
-        await db.delete(
-          'api_cache_entries',
-          where: 'cache_key = ?',
-          whereArgs: [cacheKey],
-        );
-      }
-      await db.delete(
-        'story_reference_assets',
-        where: 'series_id = ?',
-        whereArgs: [seriesId],
-      );
       await db.delete(
         'story_series',
         where: 'id = ?',
@@ -662,7 +647,6 @@ class DatabaseService {
       ...recordingPaths,
       ...pictureFilePaths,
       ...cacheFilePaths,
-      ...referenceFilePaths,
     ]) {
       try {
         final file = File(filePath);
@@ -915,50 +899,11 @@ class DatabaseService {
       return false;
     }
 
-    final referenceRows = await db.query(
-      'story_reference_assets',
-      columns: ['file_path', 'cache_key'],
-      where: 'series_id = ?',
-      whereArgs: [seriesId],
-    );
-    final referenceFilePaths = referenceRows
-        .map((row) => row['file_path']?.toString() ?? '')
-        .where((path) => path.isNotEmpty)
-        .toList(growable: false);
-
-    for (final row in referenceRows) {
-      final cacheKey = row['cache_key']?.toString() ?? '';
-      if (cacheKey.isEmpty) {
-        continue;
-      }
-      await db.delete(
-        'api_cache_entries',
-        where: 'cache_key = ?',
-        whereArgs: [cacheKey],
-      );
-    }
-
-    await db.delete(
-      'story_reference_assets',
-      where: 'series_id = ?',
-      whereArgs: [seriesId],
-    );
     final deleted = await db.delete(
       'story_series',
       where: 'id = ?',
       whereArgs: [seriesId],
     );
-
-    for (final filePath in referenceFilePaths) {
-      try {
-        final file = File(filePath);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      } catch (_) {
-        // Best-effort cleanup for generated reference assets.
-      }
-    }
     return deleted > 0;
   }
 
@@ -1056,23 +1001,5 @@ class DatabaseService {
       where: 'article_id = ?',
       whereArgs: [articleId],
     );
-  }
-
-  static Future<List<StoryReferenceAsset>> getStoryReferenceAssets(
-    int seriesId,
-  ) async {
-    final db = await _database;
-    final maps = await db.query(
-      'story_reference_assets',
-      where: 'series_id = ?',
-      whereArgs: [seriesId],
-      orderBy: 'created_at ASC',
-    );
-    return maps.map(StoryReferenceAsset.fromMap).toList(growable: false);
-  }
-
-  static Future<int> saveStoryReferenceAsset(StoryReferenceAsset asset) async {
-    final db = await _database;
-    return db.insert('story_reference_assets', asset.toMap());
   }
 }

@@ -35,14 +35,14 @@ export interface Article {
   pictureBookEnabled?: boolean;
   seriesId?: number | null;
   seriesTitle?: string;
+  seriesDescription?: string;
   chapterOrder?: number | null;
 }
 
 export interface StorySeries {
   id: number;
   title: string;
-  styleGuide?: Record<string, unknown>;
-  bible?: Record<string, unknown>;
+  description?: string;
   coverImagePath?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +67,7 @@ export interface PictureBookPage {
   sentenceStartIndex: number;
   sentenceEndIndex: number;
   paragraphText: string;
+  prompt?: Record<string, unknown> | null;
   imagePath?: string | null;
   imageUri?: string | null;
   status: 'queued' | 'prompting' | 'generating' | 'ready' | 'skipped' | 'error' | string;
@@ -76,7 +77,7 @@ export interface PictureBookPage {
 export interface PictureBookState {
   articleId: number;
   enabled: boolean;
-  status: 'loading' | 'empty' | 'generating' | 'ready' | 'partial' | 'skipped' | 'error' | string;
+  status: 'loading' | 'empty' | 'queued' | 'generating' | 'ready' | 'partial' | 'skipped' | 'error' | string;
   series?: StorySeries | null;
   chapter?: Record<string, unknown> | null;
   pages: PictureBookPage[];
@@ -89,6 +90,31 @@ export interface PictureBookPageImagePayload {
   imageUri?: string | null;
   missing?: boolean;
   errorMessage?: string | null;
+}
+
+export interface PictureBookPromptReviewScene {
+  pageIndex: number;
+  sentenceStartIndex: number;
+  sentenceEndIndex: number;
+  paragraphText: string;
+  title: string;
+  story: string;
+  visual: string;
+}
+
+export interface PictureBookPromptReview {
+  reviewId: string;
+  articleId: number;
+  chapterId?: number | null;
+  seriesId?: number | null;
+  regenerate: boolean;
+  bookDescription: string;
+  storyBrief: string;
+  chapterBrief: string;
+  groupPrompt: string;
+  scenes: PictureBookPromptReviewScene[];
+  refreshedTarget?: 'bookDescription' | 'storyBrief' | 'chapterBrief' | 'scenes' | string;
+  createdAt?: string;
 }
 
 export interface WordScore {

@@ -105,24 +105,18 @@ void main() {
         );
 
         final state = await PictureBookService.statePayload(articleId);
-        final refs = await DatabaseService.getStoryReferenceAssets(series.id!);
+        final refreshedSeries = await DatabaseService.getStorySeriesById(
+          series.id!,
+        );
         summary.addAll({
           'articleId': articleId,
           'seriesId': series.id,
+          'seriesDescription': refreshedSeries?.description ?? '',
           'stateStatus': state['status'],
           'readyPageCount': ((state['pages'] as List?) ?? const [])
               .whereType<Map>()
               .where((page) => page['status'] == 'ready')
               .length,
-          'referenceAssets': refs
-              .map(
-                (asset) => {
-                  'kind': asset.kind,
-                  'name': asset.name,
-                  'filePath': asset.filePath,
-                },
-              )
-              .toList(growable: false),
           'pages': ((state['pages'] as List?) ?? const [])
               .whereType<Map>()
               .map(

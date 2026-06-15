@@ -6,6 +6,7 @@ import type {
   FollowState,
   ListeningOpenPayload,
   NativeEvent,
+  PictureBookPromptReview,
   PictureBookState,
   RecordingSettings,
   SettingsState,
@@ -451,6 +452,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const requestedTitle = String(payload.title ?? '').trim();
     const resolvedTitle = requestedTitle || mockSuggestTitle(content);
     const seriesTitle = String(payload.seriesTitle ?? '').trim() || resolvedTitle || 'Space Story Series';
+    const seriesDescription = String(payload.seriesDescription ?? '').trim() || mockSeries[0].description || '';
     const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
     const article: Article = {
       id: 99,
@@ -463,9 +465,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       pictureBookEnabled,
       seriesId: pictureBookEnabled ? seriesId : null,
       seriesTitle: pictureBookEnabled ? seriesTitle : '',
+      seriesDescription: pictureBookEnabled ? seriesDescription : '',
       chapterOrder: pictureBookEnabled ? 2 : null,
     };
-    return { article, articles: [article, ...mockArticles], series: mockSeries };
+    const nextSeries = mockSeries.map((item) =>
+      item.id === seriesId ? { ...item, title: seriesTitle, description: seriesDescription } : item,
+    );
+    return { article, articles: [article, ...mockArticles], series: nextSeries };
   }
   if (type === 'article.rename') {
     const articleId = Number(payload.articleId ?? mockArticles[0].id);
@@ -499,13 +505,28 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const series: StorySeries = {
       id: 12,
       title: String(payload.title ?? 'New Story Series'),
-      styleGuide: {},
-      bible: {},
+      description: String(payload.description ?? '').trim(),
       coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     return { series: [series, ...mockSeries] };
+  }
+  if (type === 'series.update') {
+    const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
+    const title = String(payload.title ?? '').trim() || mockSeries[0].title;
+    const description = String(payload.description ?? '').trim();
+    const series = mockSeries.map((item) =>
+      item.id === seriesId
+        ? { ...item, title, description, updatedAt: new Date().toISOString() }
+        : item,
+    );
+    const articles = mockArticles.map((article) =>
+      article.seriesId === seriesId
+        ? { ...article, seriesTitle: title, seriesDescription: description }
+        : article,
+    );
+    return { articles, series };
   }
   if (type === 'series.delete') {
     const seriesId = Number(payload.seriesId ?? 0);
@@ -518,12 +539,14 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const articleId = Number(payload.articleId ?? mockArticles[0].id);
     const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
     const seriesTitle = String(payload.seriesTitle ?? mockSeries[0].title);
+    const seriesDescription = String(payload.seriesDescription ?? '').trim() || mockSeries[0].description || '';
     const article = {
       ...(mockArticles.find((item) => item.id === articleId) ??
         mockArticles[0]),
       pictureBookEnabled: true,
       seriesId,
       seriesTitle,
+      seriesDescription,
       chapterOrder: 1,
     };
     return {
@@ -550,8 +573,65 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       imageUri: assetUrl('card-space-snacks.png'),
     };
   }
-  if (type === 'pictureBook.generate' || type === 'pictureBook.retryPage') {
+  if (type === 'pictureBook.promptReview') {
+    return mockPictureBookPromptReview(
+      Number(payload.articleId ?? 1),
+      payload.regenerate === true,
+    );
+  }
+  if (type === 'pictureBook.refreshPromptReview') {
+    const review = mockPictureBookPromptReview(1, false);
+    const target = String(payload.target ?? '');
+    if (target === 'bookDescription') {
+      return {
+        ...review,
+        bookDescription: 'Refreshed book description with era, illustration style, and main character appearance.',
+        groupPrompt:
+          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nBook description: Refreshed book description with era, illustration style, and main character appearance.',
+        refreshedTarget: target,
+      };
+    }
+    if (target === 'storyBrief') {
+      return {
+        ...review,
+        storyBrief: 'Refreshed story brief with consistent book world and main character appearance.',
+        groupPrompt:
+          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nStory brief: Refreshed story brief with consistent book world and main character appearance.',
+        refreshedTarget: target,
+      };
+    }
+    if (target === 'chapterBrief') {
+      return {
+        ...review,
+        chapterBrief: 'Refreshed chapter brief describing one coherent visual sequence.',
+        groupPrompt:
+          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nChapter brief: Refreshed chapter brief describing one coherent visual sequence.',
+        refreshedTarget: target,
+      };
+    }
+    return {
+      ...review,
+      scenes: review.scenes.map((scene, index) => ({
+        ...scene,
+        visual: `Refreshed visual direction ${index + 1}`,
+      })),
+      refreshedTarget: target,
+    };
+  }
+  if (type === 'pictureBook.confirmPromptReview') {
     return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
+  }
+  if (type === 'pictureBook.cancelPromptReview') {
+    return {
+      reviewId: String(payload.reviewId ?? ''),
+      cancelled: true,
+    };
+  }
+  if (type === 'pictureBook.generate' || type === 'pictureBook.retryPage') {
+    return mockPictureBookPromptReview(
+      Number(payload.articleId ?? 1),
+      type === 'pictureBook.retryPage' || payload.regenerate === true,
+    );
   }
   if (type === 'listening.open') {
     return mockListening;
@@ -1123,6 +1203,7 @@ const mockArticles: Article[] = [
     pictureBookEnabled: true,
     seriesId: 1,
     seriesTitle: 'Space Story Series',
+    seriesDescription: 'A gentle space-adventure picture book about curious children exploring small wonders together.',
     chapterOrder: 1,
   },
 ];
@@ -1131,8 +1212,7 @@ const mockSeries: StorySeries[] = [
   {
     id: 1,
     title: 'Space Story Series',
-    styleGuide: {},
-    bible: {},
+    description: 'A gentle space-adventure picture book about curious children exploring small wonders together.',
     coverImagePath: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1169,6 +1249,61 @@ function mockPictureBook(
       },
     ],
   };
+}
+
+function mockPictureBookPromptReview(
+  articleId: number,
+  regenerate = false,
+): PictureBookPromptReview {
+  const scenes = [
+    {
+      pageIndex: 0,
+      sentenceStartIndex: 0,
+      sentenceEndIndex: 0,
+      paragraphText: 'Tom finds a bright snack box.',
+      title: 'The Snack Box',
+      story: 'Tom discovers a bright snack box.',
+      visual: 'Tom, a curious child in a red hoodie, finds a bright snack box inside a cozy spaceship kitchen with warm light and clear expression.',
+    },
+    {
+      pageIndex: 1,
+      sentenceStartIndex: 1,
+      sentenceEndIndex: 1,
+      paragraphText: 'He shares it with his team.',
+      title: 'Sharing',
+      story: 'Tom shares the box with his team.',
+      visual: 'Tom, the same curious child in a red hoodie, shares the bright snack box with teammates around a small spaceship table.',
+    },
+  ];
+  return {
+    reviewId: `mock-review-${articleId}`,
+    articleId,
+    chapterId: 1,
+    seriesId: mockSeries[0].id,
+    regenerate,
+    bookDescription: mockSeries[0].description ?? '',
+    storyBrief: 'A gentle space-adventure picture book with Tom, a curious child in a red hoodie, and his small team.',
+    chapterBrief: 'Tom finds a bright snack box and turns the discovery into a warm sharing moment.',
+    groupPrompt: mockGroupPrompt(scenes),
+    scenes,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function mockGroupPrompt(scenes: Array<{ title: string; story: string; visual: string }>): string {
+  return [
+    'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.',
+    'Each image corresponds to exactly one storyboard scene below, in order.',
+    'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
+    'For every image, match the listed segment action, characters, props, location, and mood.',
+    ...scenes.flatMap((scene, index) => [
+      '',
+      `Image ${index + 1}:`,
+      `Scene title: ${scene.title}`,
+      `Scene story: ${scene.story}`,
+      `Visual direction: ${scene.visual}`,
+    ]),
+  ].join('\n').trim();
 }
 
 function assetUrl(name: string): string {

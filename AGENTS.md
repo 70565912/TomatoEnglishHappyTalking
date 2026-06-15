@@ -232,22 +232,20 @@ ExampleService exampleService(ExampleServiceRef ref) {
 
 - 所有云 API 调用必须先查本地持久缓存或已有业务数据；只有缓存未命中且本地无法确定结果时，才请求远程。
 - 只缓存成功的真实远程结果；不要缓存 API Key、请求 Header、失败响应、异常文本或 mock fallback。
-- 同一输入、同一模型/声音/资源 ID/尺寸/参考图/提示词版本应生成稳定缓存 key，避免同内容重复计费。
-- 删除文章时只清理文章独占缓存和引用；全局声音预览、共享 TTS、共享图片参考等不要误删。
+- 同一输入、同一模型/声音/资源 ID/尺寸/提示词版本应生成稳定缓存 key，避免同内容重复计费。
+- 删除文章时只清理文章独占缓存和引用；全局声音预览、共享 TTS、已确认的组图缓存等不要误删。
 - 新增测试时要覆盖二次调用命中缓存、不重复远程请求、删除文章不误删共享缓存。
 - “省 API”约束主要针对正式运行流程和重复调用：正式功能必须最大化复用本地解析、数据库、文件缓存和成功远程结果。
 - 开发验证不能为了省一次测试调用而跳过关键链路；涉及新增文章、方舟提取/翻译、标题、绘本生成、TTS/听力、跟读录音/识别等端到端改动时，必须做足够完整的回归测试。绘本验证要跑全量文章流程，不能只测第一页或只测 prompt 预览。
-- 绘本生成策略为“每篇文章/每章一组连续分镜图”：先生成并缓存 `chapter_story_outline_v1`，再按分镜创建多条 `picture_book_pages`；第 1 张对应第 1 个分镜，第 N 张对应第 N 个分镜，不做候选图筛选。
-- 正常分镜数最多 14 段，`picture_book_pages` 必须覆盖完整句子范围；超长章节在分镜阶段合并相邻场景，不拆成多组图片请求。
-- 章节组图 prompt 必须基于书籍名、章节标题、当前章节故事内容和结构化分镜，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。
-- Web UI 中“书籍”就是 `story_series`；新增文章页不再展示绘本开关，保存时默认异步生成连续绘本组图。只有内部测试或显式 payload 才可以传 `pictureBookEnabled=false` 跳过生成。
+- 绘本生成策略为“每篇文章/每章一组连续分镜图”：用户确认 v4 `scenes[]` 后，按 scene 创建多条 `picture_book_pages`；第 1 张对应第 1 个 scene，第 N 张对应第 N 个 scene，不做候选图筛选。
+- 正常 scene 数最多 14 段，`picture_book_pages` 必须覆盖完整句子范围；超长章节在 v4 文本规划阶段合并相邻场景，不拆成多组图片请求。
+- 章节组图 prompt 必须基于书籍名、书籍简介、章节标题、当前章节故事内容和用户确认的 v4 `scenes[]`，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。
+- Web UI 中“书籍”就是 `story_series`；书籍模型只保留 `title` / `description` / `cover_image_path`。新增章节保存后必须打开 `pictureBook.promptReview` 审核弹窗，用户确认 `pictureBook.confirmPromptReview` 后才提交顺序组图；`pictureBook.generate` / `retryPage` 只能作为打开审核流程的兼容入口，不得绕过审核直接消耗图片 API。
 - 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
-- 绘本图片 prompt 使用 `chapter_storyboard_group_v2` / `picture_book_chapter_plan_v2`：强调 full-frame 16:9 连续绘本、当前分镜动作/角色/道具/地点/情绪匹配和自然场景构图。不要再把 `open clean space for subtitles`、`app-rendered subtitles`、`captions` 等 UI/字幕留白要求写进图片 prompt；字幕由 App 单独叠加或导出。
+- 绘本图片 prompt 使用 `picture_book_prompt_v4` / `picture_book_chapter_plan_v4`：只使用书名、书籍简介、章节标题、`storyBrief`、`chapterBrief`、`scenes[]` 和用户确认的 `groupPrompt`。不要重新引入 series Bible、角色卡、参考图、`styleGuide`、`audience`、`safety`、`negativePrompt` 或字幕留白字段。旧 `chapter_story_outline_v1` / `picture_book_chapter_plan_v1/v2/v3` 只能作为历史数据，不作为新绘本生成计划复用。
 - `pictureBook.pageImage` 支持 `variant: "full" | "thumbnail"`；创作中心和书籍封面应优先请求 `thumbnail`，缩略图持久缓存在 `picture_book_thumbnails`，不要在列表页一次性把整章原图作为 data URI 加载。听力播放、全屏和导出需要原图时再请求 full/original。
-- 绘本 prompt 默认使用本地安全模板和系列设定，不要每章都调用方舟文本模型润色；AI prompt 润色只在显式打开 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS=true` 时启用。
-- 系列设定集默认本地合并章节摘要；AI 更新系列 bible 只在显式打开 `TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE=true` 时启用。
-- 自动生成风格/角色参考图默认关闭以节省费用；只有显式打开 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES=true` 时才创建或使用自动参考图。正式冷缓存流程应尽量保持每章一次结构化分镜调用和一次顺序组图调用。
-- Seedream 组图 `sequential_image_generation` 是正式绘本链路：`PictureBookService` 直接调用 `generatePictureBookImageGroup(..., useSequential: true)`，`max_images` 等于分镜页数。组图失败不自动回退单图；失败页保存错误原因，重试按钮重新提交整章组图。
+- `pictureBook.promptReview` 只生成或读取 v4 文本规划，不调用图片 API、不删除旧 `picture_book_pages` 或图片缓存；刷新按钮可分项重建书籍简介、`storyBrief`、`chapterBrief`、`scenes[]` 和 `groupPrompt`。`pictureBook.confirmPromptReview` 才保存审核后的 v4 计划，确认后删除旧页/旧缓存引用并提交顺序组图。不要恢复 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS`、`TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE` 或 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 旧开关。
+- Seedream 组图 `sequential_image_generation` 是正式绘本链路：`PictureBookService` 直接调用 `generatePictureBookImageGroup(..., useSequential: true)`，`max_images` 等于已确认 scene 数。组图失败不自动回退单图；失败页保存错误原因，重试按钮重新打开审核并在确认后重建整章组图。
 - 整章组图 HTTP 返回可能按每张图耗时数分钟，不能再用固定 120 秒判定失败。`VolcImageService` 按请求图片数动态设置接收超时，默认每张 150 秒、最小 180 秒、最大 2700 秒；可通过 `TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE`、`TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS`、`TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS` 调整。
 - 绘本保存/生成/听力模式的最终联调必须跑真实 Windows App UI。外部窗口截图不可用时，开启 `TOMATO_QA_REMOTE=true`，用 `npm run qa:picture-book-live` 通过本机 QA 控制接口填表保存、打开听力、轮询异步绘本状态、检查 loading/error/ready UI、字幕和播放；不要只用 service/test harness 作为最终结论。
 - 对话练习提纲复用 `chapter_story_outline_v1` 的结构化分镜，不再单独重复生成聊天提纲。程序内部 fallback 只在无 key/远程失败时本地生成最多 14 段分镜覆盖点，后续聊天轮次只复用提纲，不重复提交完整章节。
@@ -276,11 +274,11 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 不要把整篇标准中英对照内容直接送给方舟或 Realtime 做“提取英文原文”，这会浪费费用，还可能因为 prompt 截断导致只保存前半篇。
 - 如果必须用 AI 处理长文本，必须分块且保证全量覆盖；不要只取前 `1600` 或 `2200` 字符后把结果当完整文章。
 - 跟读/听力的中文对照应优先复用导入时解析出的中文翻译；不要再逐句调用 `translate_to_chinese` 生成一份可能风格不同的新译文。
-- 绘本生成现在是一章一组结构化分镜图；解析出的英文段落只用于构造整章故事内容、分镜摘要和连续性提示，不再直接决定图片页数。
+- 绘本生成现在是一章一组 v4 审核分镜图；解析出的英文段落只用于构造整章故事内容、规划上下文和连续性提示，不再直接决定图片页数。
 
 Alice 回归测试用例：
 
-- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；除默认结构化分镜和一组绘本图外，不应因正文提取/中文对照再产生无谓 AI 调用，`listening.open` 返回 75 项且没有空中文。
+- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；除默认结构化分镜、v4 提示词审核和确认后的一组绘本图外，不应因正文提取/中文对照再产生无谓 AI 调用，`listening.open` 返回 75 项且没有空中文。
 - 数据库中旧 Alice 文章要作为回归样本保留：`Alice's Adventures in Wonderland - Episod 56`、`爱丽丝梦游仙境（原著领读版）- E61` 以及新导入的 `The Queen's Croquet-Ground`。这些文章都必须挂到同一本书籍 `Alice's Adventures in Wonderland` 下。
 - 对旧 Alice 混合正文不要重新整篇提交给 `article.create` 做 AI 提取；旧数据中已保存的英文句子/正文可以用于 `article.list`、`follow.open`、`pictureBook.state`、系列归属测试。若需要重新导入旧内容，优先使用已经提取出的纯英文内容，避免触发 mixed -> 方舟提取。
 - 整理已有文章的书籍归属时使用 `series.attachArticle`，不要用 `pictureBook.generate` 代替；`series.attachArticle` 只创建或更新 `story_chapters` 关系，不触发图片生成和其它云 API。
@@ -334,11 +332,11 @@ BigASR：
 - 推荐本机注入：`security/speech-api-key.txt`
 - 方舟密钥文件：`security/ark.txt`，保存火山方舟 Bearer API Key，可写成裸 key、`Bearer ...` 或 `ARK_API_KEY=...`；这是方舟文本处理和方舟图片生成的唯一本地 key 文件。
 - 绘本图片只使用方舟 `/api/v3/images/generations`；不要恢复旧 Visual / AK-SK 图片备用链路。
-- 方舟组图、参考图、Seedream 图片能力只在成功读取到 `ark.txt` / `TOMATO_VOLC_ARK_API_KEY` 时启用；没有方舟 Bearer key 时应跳过图片生成，不调用其它图片模型。
+- 方舟文本规划和 Seedream 组图能力只在成功读取到 `ark.txt` / `TOMATO_VOLC_ARK_API_KEY` 时启用；没有方舟 Bearer key 时应跳过远程规划和图片生成，不调用其它图片模型。
 - 绘本图片默认使用方舟 `doubao-seedream-5-0-260128`。用户侧展示按产品需求使用 16:9 `1280x720` 体验，但真实方舟网络探针已确认远程 `1280x720` 会返回 `InvalidParameter: image size must be at least 3686400 pixels`；因此远程请求使用最小满足限制的 16:9 `2560x1440`。下载后保存远程原图，UI 负责缩小显示；不要为了缩放再调用一次图片生成 API。
 - 注意 `flutter_test` 默认会拦截 `HttpClient` 并让 HTTP 请求本地返回 400；任何 live API 测试都必须先清除测试框架的 HTTP override，否则 400 不能当作火山接口真实错误。
 - 如果 live probe 在普通测试环境里返回空 body 的 HTTP 400，先按“测试环境拦截”处理：检查 `HttpOverrides.global = null`、网络权限/沙箱授权、API Key 是否真实读取，再讨论内容安全。不要先猜敏感词。
-- Seedream 图片 API 笔记放在 `docs/volc_ark_seedream_image_api_notes.md`；涉及模型、endpoint、鉴权、组图、参考图、尺寸、缓存 key 的改动时先看这份文档。
+- Seedream 图片 API 笔记放在 `docs/volc_ark_seedream_image_api_notes.md`；涉及模型、endpoint、鉴权、组图、尺寸、缓存 key 的改动时先看这份文档。
 - 调试兼容注入：`--dart-define TOMATO_VOLC_SPEECH_API_KEY=...`
 - 旧的统一语音 key 和分服务语音 key 字段不再作为兜底
 - 设置页只展示运行时读取状态，不提供手动录入 API Key 的表单
