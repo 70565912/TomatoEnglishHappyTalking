@@ -38,7 +38,7 @@
 | 绘本提示词审核 | 保存后生成/读取 v4 章节计划，用户确认前不提交图片 | OpenAI-compatible 文本 | `picture_book_chapter_plan_v4` / `openai_text` | `storyBrief`、`chapterBrief`、`scenes[]`、group prompt |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 方舟图片 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 | 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
-| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 百炼 fun-music 或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频与版本 metadata |
+| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 百炼 fun-music 或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
 
 ## 新增文章保存流程
 
@@ -343,7 +343,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 ## 绘本生成流程
 
-入口：保存文章后先打开 `pictureBook.promptReview`；用户确认审核弹窗后，`pictureBook.confirmPromptReview` 才提交图片生成。`pictureBook.generate` / `pictureBook.retryPage` 兼容入口也只打开审核流程，不直接调用图片 API。
+入口：保存文章后先打开 `pictureBook.promptReview`；用户确认审核弹窗后，`pictureBook.confirmPromptReview` 才提交图片生成。`pictureBook.generate` / `pictureBook.retryPage` 兼容入口也只打开审核流程，不直接调用图片 API。`pictureBook.savePromptReview` 只保存审核草稿，不生成图片。
 
 当前策略：
 
@@ -353,6 +353,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - AI 自行决定分镜数量，最多 14 段；每个 scene 对应一张图片，scene 必须按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 审核弹窗有 3 个提示词魔法棒：分别刷新 `storyBrief`、`chapterBrief` 和 `scenes[]`。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
+- savePromptReview 使用用户编辑后的书籍简介、brief、scenes 和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
 - confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、brief、scenes 和 groupPrompt，先保存审核后的 v4 计划，确认后才删除旧页/旧图片引用并提交顺序组图。
 
 ### 章节计划 JSON
@@ -468,6 +469,25 @@ Visual direction: ...
 - 未完成页会标记为 `error` 并保存失败原因。
 - Web UI 的重试按钮重新打开 promptReview 审核弹窗；用户确认后重建整章组图。
 - 听力、跟读和聊天根据当前句子或对话进度选择对应绘本页；生成中显示等待占位，失败显示原因和重试按钮。
+
+## 歌曲生成流程
+
+入口：`listening.songGenerate` 根据 `source` 选择百炼 fun-music 或 Suno 网页自动化。Web UI 不直接访问任一歌曲 provider。
+
+百炼 fun-music：
+
+- `BailianMusicService.prepareLyricsForGeneration` 会先规范化歌词；如果歌词为空、超过 1200 字符、超过 16 行、单行超过 110 字符，或看起来更像散文而非歌曲，则按章节标题压缩成 12 行歌曲格式再提交。
+- 提交给百炼的真实文本记为 `submittedLyrics`，并参与 `lyricsHash`、缓存 key、metadata 和字幕时间轴。压缩过的版本设置 `lyricsCompressed=true`。
+- 缓存 key 包含模型、`submittedLyrics`、标题、prompt、gender、format 和 watermark 开关；成功音频写入 `ApiCacheService` 的 `music/` 子目录。
+- 同一路径音频版本会按 `audioPath` 去重；新百炼结果设为默认版本，旧版本取消默认标记。
+- 百炼错误直接显示，不自动回退 Suno；`Lyrics content is illegal` 会映射为提示用户更换更温和英文内容的错误文案。
+
+字幕时间轴：
+
+- 歌曲字幕正文优先使用 `ArticleSongVersion.submittedLyrics`；没有该字段时才回退文章当前歌词。
+- 只有 `submittedLyrics` 与文章歌词一致时，才复用 `article_sentence_translations` 的中文翻译。
+- BigASR 结果只提供词级时间锚点，不写回文章正文、歌词或字幕正文。
+
 ## TTS 调用逻辑
 
 入口：`TtsService.synthesizeToCachedFile`。

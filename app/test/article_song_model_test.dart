@@ -11,6 +11,7 @@ void main() {
       stylePrompt: 'storybook pop',
       styleKey: 'suno:storybook pop',
       lyricsHash: 'lyrics-hash',
+      submittedLyrics: 'hello\nsong',
       timelinePath: r'F:\songs\suno-v1.timeline.json',
       timelineStatus: 'ready',
       timelineConfidence: 0.92,
@@ -28,6 +29,7 @@ void main() {
     expect(decoded?.stylePrompt, 'storybook pop');
     expect(decoded?.styleKey, 'suno:storybook pop');
     expect(decoded?.lyricsHash, 'lyrics-hash');
+    expect(decoded?.submittedLyrics, 'hello\nsong');
     expect(decoded?.timelinePath, r'F:\songs\suno-v1.timeline.json');
     expect(decoded?.timelineStatus, 'ready');
     expect(decoded?.timelineConfidence, 0.92);
@@ -40,6 +42,7 @@ void main() {
       status: 'ready',
       stylePrompt: 'storybook pop',
       source: 'suno',
+      lyricsCompressed: true,
       audioPath: r'F:\songs\suno-v1.mp3',
       detectedSongUrls: ['https://suno.com/song/one'],
       versions: [
@@ -54,6 +57,7 @@ void main() {
     final json = state.toJson();
     expect(json['articleId'], 12);
     expect(json['source'], 'suno');
+    expect(json['lyricsCompressed'], isTrue);
     expect(json['versions'], hasLength(1));
   });
 

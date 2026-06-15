@@ -217,6 +217,7 @@ export interface ListeningSongStatePayload {
     stylePrompt?: string | null;
     styleKey?: string | null;
     lyricsHash?: string | null;
+    submittedLyrics?: string | null;
     source?: SongSource | string;
     timelinePath?: string | null;
     timelineStatus?: 'missing' | 'generating' | 'ready' | 'error' | string | null;

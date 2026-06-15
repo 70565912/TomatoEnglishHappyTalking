@@ -96,4 +96,50 @@ void main() {
     expect(rows.single['purpose'], BailianMusicService.cachePurpose);
     expect(rows.single['file_path'], result.filePath);
   });
+
+  test('compresses long story prose into song-like lyrics before posting',
+      () async {
+    AppConfig.setRuntimeConfigForTest(
+      aliyunBailianApiKey: 'bailian-music-key-123456',
+      aliyunBailianMusicModel: 'fun-music-test',
+    );
+
+    Map<String, dynamic>? seenBody;
+    BailianMusicService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        seenBody = body;
+        return {
+          'request_id': 'req-compressed',
+          'output': {
+            'audio': {'url': 'https://example.com/compressed-song.mp3'},
+          },
+          'usage': {'duration': 18},
+        };
+      },
+    );
+    BailianMusicService.setDownloadOverrideForTest((url) async {
+      return List<int>.filled(2048, 9);
+    });
+    final longStory = List<String>.generate(
+      24,
+      (index) =>
+          'Alice follows a curious path through the garden and talks with friend number $index.',
+    ).join('\n');
+
+    final result = await BailianMusicService.generateFromLyrics(
+      lyrics: longStory,
+      title: 'E01 - All In The Golden Afternoon',
+      articleId: 89,
+    );
+
+    final input = seenBody?['input'] as Map<String, dynamic>?;
+    final postedLyrics = input?['lyrics']?.toString() ?? '';
+    expect(result.source, BailianMusicResultSource.remote);
+    expect(result.lyricsCompressed, isTrue);
+    expect(result.submittedLyrics, postedLyrics);
+    expect(postedLyrics, contains('All In The Golden'));
+    expect(postedLyrics, isNot(contains('friend number 23')));
+    expect(postedLyrics.split('\n').where((line) => line.trim().isNotEmpty),
+        hasLength(12));
+  });
 }

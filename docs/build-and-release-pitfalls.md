@@ -183,6 +183,19 @@ Get-Process -Name tomato_english_happy_talking -ErrorAction SilentlyContinue |
 npm --prefix web_ui run build
 ```
 
+## Windows 构建时 node_modules 被占用
+
+症状：
+
+- `tools/build_windows.ps1` 进入 Web UI 构建阶段，`npm run build` 或依赖读取因 `node_modules` 被占用失败。
+- 单独 `npm --prefix web_ui run build` 可能成功，但发布脚本中同一个目录被安全软件、编辑器或测试进程短暂锁住。
+
+处理：
+
+- Windows 发布脚本会先用 `node_modules\.tomato-package-lock.sha256` 判断依赖是否与 `package-lock.json` 匹配；匹配时跳过重复 `npm ci`。
+- 如果本地 `node_modules` 存在但构建失败，脚本会复制 `web_ui/` 到 `%TEMP%\tomato-web-ui-build-*`，在临时目录执行 `npm ci` / `npm run build`，再把临时 `app/assets/web/` 同步回仓库。
+- 不要提交 `node_modules` 或 `.tomato-package-lock.sha256`；只提交刷新后的 `app/assets/web/` 静态产物。
+
 ## LEGO 道具图出现黑色切片线
 
 症状：
@@ -471,6 +484,19 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 
 - 输出进入脚本自己的阶段，例如 `=== 检查 Flutter 环境 ===`。
 - 不再出现 `C:\Program` 未识别错误。
+
+## 百炼 fun-music 拒绝歌词内容
+
+症状：
+
+- 选择百炼 fun-music 后返回 `Lyrics content is illegal` 或类似供应商拒绝。
+- 长章节原文直接作为歌词时更容易触发长度、格式或内容限制。
+
+处理：
+
+- App 会先把过长或散文化章节压缩成 12 行歌曲格式，再提交给百炼；实际提交文本记录在歌曲版本的 `submittedLyrics` 中。
+- 如果压缩后仍被拒绝，UI 会显示“百炼 fun-music 拒绝了当前歌词内容...”，不会自动回退到 Suno，避免用户误以为是另一家 provider 生成的版本。
+- 歌曲字幕时间轴使用 `submittedLyrics`，不要用 BigASR 识别文本覆盖歌词正文。
 
 ## Suno Styles 为空且页面反复跳动
 

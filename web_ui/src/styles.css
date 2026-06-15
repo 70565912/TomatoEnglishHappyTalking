@@ -4557,6 +4557,29 @@ select:disabled {
   gap: 10px;
 }
 
+.settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-tabs button {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--soft-ink);
+  background: var(--panel);
+  font-weight: 1000;
+}
+
+.settings-tabs button.active {
+  border-color: rgba(240, 75, 53, 0.42);
+  color: var(--tomato);
+  background: #fff8ec;
+  box-shadow: 0 0 0 3px rgba(240, 75, 53, 0.1);
+}
+
 .cloud-settings-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -4572,6 +4595,88 @@ select:disabled {
 .settings-label input,
 .settings-label select {
   width: 100%;
+}
+
+.secret-input-control {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.settings-label .secret-input-control input {
+  padding-right: 46px;
+}
+
+.secret-input-control input::-ms-clear,
+.secret-input-control input::-ms-reveal {
+  display: none;
+}
+
+.secret-input-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 8px;
+  color: var(--soft-ink);
+  background: transparent;
+}
+
+.secret-input-toggle:hover:not(:disabled),
+.secret-input-toggle:focus-visible:not(:disabled) {
+  color: var(--ink);
+  background: #f3f6fa;
+}
+
+.secret-input-toggle:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.secret-input-toggle .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.key-clear-slot {
+  align-content: end;
+}
+
+.key-clear-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 1px solid rgba(201, 213, 228, 0.9);
+  border-radius: 8px;
+  color: var(--soft-ink);
+  background: #f8fafc;
+  font-weight: 1000;
+}
+
+.key-clear-button:hover:not(:disabled) {
+  border-color: rgba(240, 75, 53, 0.34);
+  color: var(--tomato);
+  background: #fff8ec;
+}
+
+.key-clear-button.active {
+  border-color: rgba(240, 75, 53, 0.46);
+  color: var(--tomato);
+  background: #fff1e9;
+  box-shadow: 0 0 0 3px rgba(240, 75, 53, 0.1);
+}
+
+.key-clear-button .icon {
+  width: 17px;
+  height: 17px;
 }
 
 .settings-label.checkbox-label {

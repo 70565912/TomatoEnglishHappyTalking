@@ -496,6 +496,80 @@ class PictureBookService {
     };
   }
 
+  static Future<Map<String, dynamic>> savePromptReview({
+    required String reviewId,
+    required String groupPrompt,
+    required String bookDescription,
+    required String storyBrief,
+    required String chapterBrief,
+    required List<Map<String, dynamic>> scenes,
+  }) async {
+    final draft = _promptReviewDrafts[reviewId];
+    if (draft == null) {
+      throw const FormatException('绘本提示词审核已过期，请重新打开审核弹窗。');
+    }
+
+    final confirmedBookDescription = bookDescription.trim();
+    final confirmedStoryBrief = storyBrief.trim().isEmpty
+        ? draft.storyBrief
+        : _sanitizeForImagePrompt(storyBrief);
+    final confirmedChapterBrief = chapterBrief.trim().isEmpty
+        ? draft.chapterBrief
+        : _sanitizeForImagePrompt(chapterBrief);
+    final updatedSeries = draft.series.copyWith(
+      description: confirmedBookDescription,
+      updatedAt: DateTime.now(),
+    );
+    await DatabaseService.updateStorySeries(updatedSeries);
+
+    final confirmedSegments = _submittedSegmentsForDraft(draft, scenes);
+    final fallbackGroupPrompt = _composeGroupPrompt(
+      series: updatedSeries,
+      plan: ChapterPicturePlan(
+        storyBrief: confirmedStoryBrief,
+        chapterBrief: confirmedChapterBrief,
+        scenes: [
+          for (final segment in confirmedSegments)
+            PictureBookScene(
+              pageIndex: segment.pageIndex,
+              sentenceStartIndex: segment.sentenceStartIndex,
+              sentenceEndIndex: segment.sentenceEndIndex,
+              title: segment.title,
+              story: segment.summary,
+              visual: segment.visualPrompt,
+            ),
+        ],
+        source: TextGenerationReplySource.cached,
+      ),
+      segments: confirmedSegments,
+    );
+    final confirmedGroupPrompt = groupPrompt.trim().isEmpty
+        ? fallbackGroupPrompt
+        : _sanitizeForImagePrompt(groupPrompt);
+
+    await _saveConfirmedChapterPlan(
+      article: draft.article,
+      chapter: draft.chapter,
+      storyBrief: confirmedStoryBrief,
+      chapterBrief: confirmedChapterBrief,
+      segments: confirmedSegments,
+    );
+
+    final updatedDraft = draft.copyWith(
+      series: updatedSeries,
+      pages: [
+        for (final segment in confirmedSegments)
+          _PromptReviewPageDraft(segment: segment),
+      ],
+      bookDescription: confirmedBookDescription,
+      storyBrief: confirmedStoryBrief,
+      chapterBrief: confirmedChapterBrief,
+      groupPrompt: confirmedGroupPrompt,
+    );
+    _promptReviewDrafts[reviewId] = updatedDraft;
+    return updatedDraft.toPayload();
+  }
+
   static Future<Map<String, dynamic>> confirmPromptReview({
     required String reviewId,
     required String groupPrompt,
@@ -1296,14 +1370,15 @@ class PictureBookService {
           '',
           'Rules:',
           '- Output must be parseable by JSON.parse exactly as returned. Use ["note"] not [("note")].',
-          '- storyBrief should briefly describe the book world for this chapter and any main character appearance details needed for visual consistency.',
+          '- storyBrief should briefly describe the book world for this chapter and the main recurring characters needed for visual consistency.',
+          '- Include every visually important recurring or supporting character mentioned or strongly implied by the current chapter, not only the protagonist.',
           '- chapterBrief should briefly describe this chapter as one coherent picture-book image sequence.',
           '- Split scenes by natural story beats: scene, event, conflict, decision, setting change, and ending.',
           '- Use the smallest useful number of scenes, up to ${ChapterStoryOutlineService.maxSegments}.',
           '- scenes must cover every sentence from 0 to ${cleanSentences.isEmpty ? 0 : cleanSentences.length - 1}, in order, without overlap.',
           '- scenes[i].pageIndex must equal i.',
           '- Each scene visual must describe exactly one illustration: characters, action, setting, mood, key props, and composition.',
-          '- Use the book title and book description to infer era, style, story world, and recurring character appearance, but prioritize the current chapter text.',
+          '- Use the book title and book description to infer era, style, story world, and recurring main/supporting character appearances, but prioritize the current chapter text.',
           '- Return only the top-level fields and scene fields shown in the JSON shape.',
           '',
           'Numbered chapter sentences:',
@@ -1344,7 +1419,8 @@ class PictureBookService {
           '',
           'Rules:',
           '- Keep it concise and useful as the book-level visual anchor.',
-          '- Describe the era, story world, overall illustration style, color mood, and main recurring character appearance.',
+          '- Describe the era, story world, overall illustration style, color mood, and main recurring characters.',
+          '- Include compact visual descriptions for important supporting characters likely to appear in this book or chapter; do not limit the description to one protagonist when multiple characters matter.',
           '- Use the book title and current chapter text to infer missing visual context, but avoid chapter-only plot details.',
           '- Do not add app subtitle, caption, safety, audience, or negative-prompt boilerplate.',
           '- Return only JSON with bookDescription.',
@@ -1384,8 +1460,8 @@ class PictureBookService {
           '{"storyBrief":"..."}',
           '',
           'Rules:',
-          '- Keep it concise, visual, and useful for keeping book world and main character appearance consistent.',
-          '- Use the book title and user book description to infer era, story world, color mood, illustration style, and primary character appearance.',
+          '- Keep it concise, visual, and useful for keeping book world and main recurring character appearances consistent.',
+          '- Use the book title and user book description to infer era, story world, color mood, illustration style, and the appearances of all visually important main or supporting characters.',
           '- Prioritize this chapter text over unrelated prior assumptions.',
           '- Return only JSON with storyBrief.',
           '',
@@ -1484,7 +1560,7 @@ class PictureBookService {
           '- scenes must cover every sentence from 0 to ${article.sentences.isEmpty ? 0 : article.sentences.length - 1}, in order, without overlap.',
           '- scenes[i].pageIndex must equal i.',
           '- Each scene visual must describe exactly one illustration: characters, action, setting, mood, key props, and composition.',
-          '- Keep recurring character appearance and illustration style consistent with the book description and story brief.',
+          '- Keep recurring main and supporting character appearances and illustration style consistent with the book description and story brief.',
           '- Return only JSON with scenes.',
           '',
           'Numbered chapter sentences:',

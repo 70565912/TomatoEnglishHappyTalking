@@ -1436,6 +1436,82 @@ but the three were all crowded together at one corner of it.
     expect(pages.single.paragraphText, 'Old page');
   });
 
+  test('picture-book prompt save does not submit image generation', () async {
+    _writeImageArkKey(tempDir, 'ark-save-prompt-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Save Prompt Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    final now = DateTime(2026, 1, 1);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Old page',
+        promptJson: '{}',
+        imagePath: 'old.png',
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    var imageCalls = 0;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageCalls += 1;
+        return {'data': const []};
+      },
+    );
+
+    final saved = await PictureBookService.savePromptReview(
+      reviewId: review['reviewId'].toString(),
+      groupPrompt: 'Saved only group prompt.',
+      bookDescription:
+          'Saved Victorian fantasy picture book; Alice wears a blue dress.',
+      storyBrief: review['storyBrief'].toString(),
+      chapterBrief: review['chapterBrief'].toString(),
+      scenes: [
+        for (final scene in review['scenes'] as List)
+          Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    expect(saved['groupPrompt'], 'Saved only group prompt.');
+    expect(saved['bookDescription'], contains('Saved Victorian'));
+    expect(imageCalls, 0);
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(1));
+    expect(pages.single.paragraphText, 'Old page');
+    final updatedSeries = await DatabaseService.getStorySeriesById(series.id!);
+    expect(updatedSeries?.description, contains('blue dress'));
+  });
+
   test('picture-book prompt confirmation submits images only after review',
       () async {
     _writeImageArkKey(tempDir, 'ark-confirm-key-12345678901234567890');

@@ -628,6 +628,17 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'pictureBook.confirmPromptReview') {
     return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
   }
+  if (type === 'pictureBook.savePromptReview') {
+    return {
+      ...mockPictureBookPromptReview(Number(payload.articleId ?? 1), false),
+      reviewId: String(payload.reviewId ?? 'mock-review-1'),
+      bookDescription: String(payload.bookDescription ?? ''),
+      storyBrief: String(payload.storyBrief ?? ''),
+      chapterBrief: String(payload.chapterBrief ?? ''),
+      groupPrompt: String(payload.groupPrompt ?? ''),
+      scenes: Array.isArray(payload.scenes) ? payload.scenes : [],
+    };
+  }
   if (type === 'pictureBook.cancelPromptReview') {
     return {
       reviewId: String(payload.reviewId ?? ''),

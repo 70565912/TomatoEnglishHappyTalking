@@ -1,5 +1,11 @@
-# Tomato English Happy Talking - Windows 编译脚本
+﻿# Tomato English Happy Talking - Windows 编译脚本
 # 用法: .\tools\build_windows.ps1 [-Release] [-Run] [-DartDefine KEY=VALUE[,KEY=VALUE...]]
+#
+# Encoding guard:
+# Keep this file saved as UTF-8 with BOM. Windows PowerShell 5.1 may parse a
+# UTF-8 file without BOM as the local ANSI code page, which can corrupt Chinese
+# quoted strings and make this script fail before execution. If an editor cannot
+# preserve the BOM, keep newly added quoted log/error strings ASCII-only.
 param(
     [switch]$Release,
     [switch]$Run,
@@ -287,7 +293,7 @@ function Invoke-WebUiBuild {
         Write-Host "`n=== 构建 Web UI ===" -ForegroundColor Cyan
         try {
             if (Test-WebUiDependenciesReady -WebUiRoot $webUiRoot -NpmExe $npmExe -PackageLockHash $packageLockHash) {
-                Write-Host "检测到 Web UI 依赖未变更，跳过 npm 安装。" -ForegroundColor DarkGray
+                Write-Host "Web UI dependencies unchanged; skipping npm install." -ForegroundColor DarkGray
             } elseif (Test-Path $packageLockPath) {
                 & $npmExe ci
                 Assert-LastExitCode -CommandName "npm ci"
@@ -411,7 +417,7 @@ function Copy-WindowsFfmpegRuntime {
 
     $sourceDir = Get-WindowsFfmpegBundleSourceDir
     if ([string]::IsNullOrWhiteSpace($sourceDir)) {
-        throw "未找到可打包的 FFmpeg。请确认 E:\SDK\vcpkg\installed\x64-windows\tools\ffmpeg\ffmpeg.exe 存在，或设置 VCPKG_ROOT。"
+        throw "FFmpeg bundle not found. Check E:\SDK\vcpkg\installed\x64-windows\tools\ffmpeg\ffmpeg.exe or set VCPKG_ROOT."
     }
 
     Assert-PathInsideDirectory -Path $PackageDir -ParentPath (Split-Path -Parent $PackageDir)
@@ -426,7 +432,7 @@ function Copy-WindowsFfmpegRuntime {
         $copied += $_.Name
     }
 
-    Write-Host "已打包 FFmpeg 运行文件: $($copied.Count) 项" -ForegroundColor Green
+    Write-Host "Packaged FFmpeg runtime files: $($copied.Count)" -ForegroundColor Green
 }
 
 function Ensure-WindowsRuntimeDirectories {
@@ -728,7 +734,7 @@ function Publish-WindowsPackageArtifacts {
     New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
     $removedItems = @(Clear-WindowsReleaseProgramFiles -PackageDir $packageDir)
     if ($removedItems.Count -gt 0) {
-        Write-Host "已清理旧程序产物: $($removedItems.Count) 项" -ForegroundColor Yellow
+        Write-Host "Cleaned old program artifacts: $($removedItems.Count)" -ForegroundColor Yellow
     }
     Copy-Item -Path (Join-Path $BuildOutputDir "*") -Destination $packageDir -Recurse -Force
     Copy-WindowsFfmpegRuntime -PackageDir $packageDir
@@ -809,15 +815,15 @@ try {
     } else {
         $debugDartDefine = Add-DebugDesktopDataRootDefine -Values $DartDefine
         $dartDefineArgs = Get-FlutterDartDefineArgs -Values $debugDartDefine
-        Write-Host "`n=== 构建或运行 Windows Debug ===" -ForegroundColor Cyan
+        Write-Host "`n=== Build or run Windows Debug ===" -ForegroundColor Cyan
         $buildArgs = @("build", "windows", "--debug") + $dartDefineArgs
         & $flutterExe @buildArgs
         Assert-LastExitCode -CommandName "flutter build windows --debug"
         $debugPackageDir = Publish-WindowsDebugArtifacts -BuildOutputDir (Join-Path (Get-Location) "build\windows\x64\runner\Debug")
         $debugExePath = Join-Path $debugPackageDir "tomato_english_happy_talking.exe"
-        Write-Host "`n构建完成: $debugExePath" -ForegroundColor Green
+        Write-Host "`nBuild complete: $debugExePath" -ForegroundColor Green
         if ($Run) {
-            Write-Host "`n=== 启动应用 ===" -ForegroundColor Cyan
+            Write-Host "`n=== Start app ===" -ForegroundColor Cyan
             Start-Process -FilePath $debugExePath -WorkingDirectory $debugPackageDir
         }
     }

@@ -151,6 +151,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'pictureBook.promptReview': _handlePictureBookPromptReview,
         'pictureBook.refreshPromptReview':
             _handlePictureBookRefreshPromptReview,
+        'pictureBook.savePromptReview': _handlePictureBookSavePromptReview,
         'pictureBook.confirmPromptReview':
             _handlePictureBookConfirmPromptReview,
         'pictureBook.cancelPromptReview': _handlePictureBookCancelPromptReview,
@@ -1026,6 +1027,29 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return state;
   }
 
+  Future<Map<String, dynamic>> _handlePictureBookSavePromptReview(
+    BridgeMessage message,
+  ) async {
+    final reviewId = _payloadString(message.payload, 'reviewId').trim();
+    if (reviewId.isEmpty) {
+      throw const FormatException('缺少绘本提示词审核 ID');
+    }
+    final groupPrompt = _payloadString(message.payload, 'groupPrompt').trim();
+    final bookDescription =
+        _payloadString(message.payload, 'bookDescription').trim();
+    final storyBrief = _payloadString(message.payload, 'storyBrief').trim();
+    final chapterBrief = _payloadString(message.payload, 'chapterBrief').trim();
+    final scenes = _payloadMapList(message.payload, 'scenes');
+    return PictureBookService.savePromptReview(
+      reviewId: reviewId,
+      groupPrompt: groupPrompt,
+      bookDescription: bookDescription,
+      storyBrief: storyBrief,
+      chapterBrief: chapterBrief,
+      scenes: scenes,
+    );
+  }
+
   Future<Map<String, dynamic>> _handlePictureBookCancelPromptReview(
     BridgeMessage message,
   ) async {
@@ -1544,6 +1568,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final contentHash = await _articleSongContentHash(article);
     final lyricsHash = await _articleSongLyricsHash(article);
     final versions = <ArticleSongVersion>[];
+    var lyricsCompressed = false;
     String? metadataPath;
     String? songUrl;
     for (final entry in entries) {
@@ -1558,6 +1583,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         continue;
       }
       final metadata = _decodeJsonObject(entry.jsonValue);
+      lyricsCompressed =
+          lyricsCompressed || metadata['lyricsCompressed'] == true;
       metadataPath ??= _nonEmptyString(metadata['metadataPath']);
       songUrl ??= _nonEmptyString(metadata['songUrl']);
       final rawVersions = metadata['versions'];
@@ -1625,7 +1652,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (versions.isEmpty) {
       return null;
     }
-    final payloadVersions = _songVersionsForPayload(articleId, versions);
+    final payloadVersions =
+        _songVersionsForPayload(articleId, _dedupeSongVersions(versions));
     final selected =
         _defaultSongVersion(payloadVersions) ?? payloadVersions.first;
     return ArticleSongState(
@@ -1635,6 +1663,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       audioPath: selected.audioPath,
       durationMs: selected.durationMs,
       source: AppConfig.songProviderBailianFunMusic,
+      lyricsCompressed: lyricsCompressed,
       songUrl: selected.songUrl ?? songUrl,
       metadataPath: metadataPath,
       versions: payloadVersions,
@@ -2548,20 +2577,29 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (articleId == null) {
       throw const FormatException('文章尚未保存，不能生成歌曲字幕');
     }
-    final lyricLines = _articleSongLyrics(article)
+    final articleLyrics = _articleSongLyrics(article);
+    final submittedLyrics = (version.submittedLyrics ?? '').trim();
+    final timelineLyrics =
+        submittedLyrics.isNotEmpty ? submittedLyrics : articleLyrics;
+    final usesArticleLyrics = submittedLyrics.isEmpty ||
+        submittedLyrics.replaceAll('\r\n', '\n').trim() ==
+            articleLyrics.replaceAll('\r\n', '\n').trim();
+    final lyricLines = timelineLyrics
         .split(RegExp(r'\r?\n'))
         .map((line) => line.trim())
         .where((line) => line.isNotEmpty)
         .toList(growable: false);
     final translations = <int, String>{};
-    for (var i = 0; i < lyricLines.length; i += 1) {
-      final translation = await DatabaseService.getArticleSentenceTranslation(
-        articleId,
-        i,
-        lyricLines[i],
-      );
-      if (translation != null && translation.trim().isNotEmpty) {
-        translations[i] = translation.trim();
+    if (usesArticleLyrics) {
+      for (var i = 0; i < lyricLines.length; i += 1) {
+        final translation = await DatabaseService.getArticleSentenceTranslation(
+          articleId,
+          i,
+          lyricLines[i],
+        );
+        if (translation != null && translation.trim().isNotEmpty) {
+          translations[i] = translation.trim();
+        }
       }
     }
     final result = await SongSubtitleTimelineService.generate(
@@ -2581,6 +2619,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       stylePrompt: version.stylePrompt,
       styleKey: version.styleKey,
       lyricsHash: result.lyricsHash,
+      submittedLyrics: timelineLyrics,
       source: version.source,
       timelinePath: result.timelinePath,
       timelineStatus: 'ready',
@@ -2772,7 +2811,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (result.source == BailianMusicResultSource.skippedNoKey ||
         result.source == BailianMusicResultSource.failed ||
         (result.filePath ?? '').trim().isEmpty) {
-      final message = result.errorMessage ?? '百炼 fun-music 生成失败';
+      final message = _bailianMusicErrorMessage(result.errorMessage);
       await _pushSongState(
         articleId,
         statusOverride: 'error',
@@ -2788,27 +2827,40 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final cacheId = (result.cacheKey ?? DateTime.now().millisecondsSinceEpoch)
         .toString()
         .replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_');
-    final lyricsHash = await _articleSongLyricsHash(article);
+    final submittedLyrics = (result.submittedLyrics ?? trimmedLyrics).trim();
+    final lyricsHash = await ApiCacheService.hashUtf8(submittedLyrics);
     final model = await AppConfig.aliyunBailianMusicModel;
-    final newVersion = ArticleSongVersion(
-      id: 'bailian_fun_music_$cacheId',
-      audioPath: result.filePath!.trim(),
-      title: '百炼 fun-music 版本 ${existingVersions.length + 1}',
-      songUrl: result.audioUrl,
-      durationMs: result.durationMs,
-      createdAt: DateTime.now().toIso8601String(),
+    final resultPath = result.filePath!.trim();
+    ArticleSongVersion? existingMatch;
+    for (final version in existingVersions) {
+      if (version.audioPath.trim() == resultPath) {
+        existingMatch = version;
+        break;
+      }
+    }
+    final newVersion = (existingMatch ??
+            ArticleSongVersion(
+              id: 'bailian_fun_music_$cacheId',
+              audioPath: resultPath,
+              title: '百炼 fun-music 版本 ${existingVersions.length + 1}',
+              createdAt: DateTime.now().toIso8601String(),
+            ))
+        .copyWith(
+      songUrl: result.audioUrl ?? existingMatch?.songUrl,
+      durationMs: result.durationMs ?? existingMatch?.durationMs,
       stylePrompt: model,
       styleKey: model,
       lyricsHash: lyricsHash,
+      submittedLyrics: submittedLyrics,
       source: AppConfig.songProviderBailianFunMusic,
-      isDefault: existingVersions.every((version) => !version.isDefault),
+      isDefault: true,
     );
     final versions = <ArticleSongVersion>[
       newVersion,
       for (final version in existingVersions)
         if (version.id != newVersion.id &&
             version.audioPath.trim() != newVersion.audioPath.trim())
-          version,
+          version.copyWith(isDefault: false),
     ];
     await _saveBailianMusicMetadataForVersions(
       article: article,
@@ -2817,12 +2869,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       durationMs: result.durationMs,
       requestId: result.requestId,
       model: model,
+      lyricsCompressed: result.lyricsCompressed,
     );
     return _songStatePayload(
       articleId,
       statusOverride: 'ready',
       sourceOverride: AppConfig.songProviderBailianFunMusic,
     );
+  }
+
+  String _bailianMusicErrorMessage(String? rawMessage) {
+    final raw = (rawMessage ?? '').trim();
+    if (raw.isEmpty) {
+      return '百炼 fun-music 生成失败';
+    }
+    if (raw.contains('Lyrics content is illegal')) {
+      return '百炼 fun-music 拒绝了当前歌词内容。已按歌曲格式压缩歌词后仍失败，请换一篇更温和的英文内容或稍后重试。';
+    }
+    return raw
+        .replaceFirst(RegExp(r'^FormatException:\s*'), '')
+        .replaceFirst(RegExp(r'^FormatException:\s*'), '')
+        .trim();
   }
 
   Future<void> _saveBailianMusicMetadataForVersions({
@@ -2832,6 +2899,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     int? durationMs,
     String? requestId,
     required String model,
+    bool lyricsCompressed = false,
   }) async {
     final articleId = article.id;
     if (articleId == null) {
@@ -2849,12 +2917,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
     final selected = _defaultSongVersion(currentVersions) ??
         (currentVersions.isNotEmpty ? currentVersions.first : null);
-    final lyricsHash = await _articleSongLyricsHash(article);
+    final lyricsHash =
+        selected?.lyricsHash ?? await _articleSongLyricsHash(article);
+    final submittedLyrics = (selected?.submittedLyrics ?? '').trim();
     final metadata = {
       'provider': AppConfig.songProviderBailianFunMusic,
       'articleId': articleId,
       'articleTitle': article.title,
       'lyricsHash': lyricsHash,
+      if (submittedLyrics.isNotEmpty) 'submittedLyrics': submittedLyrics,
+      if (lyricsCompressed) 'lyricsCompressed': true,
       'model': model,
       'songUrl': songUrl ?? selected?.songUrl,
       'durationMs': durationMs ?? selected?.durationMs,
@@ -2876,6 +2948,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'articleTitle': article.title,
       'contentHash': await _articleSongContentHash(article),
       'lyricsHash': lyricsHash,
+      if (submittedLyrics.isNotEmpty)
+        'submittedLyricsHash': await ApiCacheService.hashUtf8(submittedLyrics),
       'model': model,
     };
     final cacheKey = await ApiCacheService.keyForJson(
@@ -9444,6 +9518,43 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     return versions.first;
   }
+
+  List<ArticleSongVersion> _dedupeSongVersions(
+    List<ArticleSongVersion> versions,
+  ) {
+    final byAudioPath = <String, ArticleSongVersion>{};
+    for (final version in versions) {
+      final key = version.audioPath.trim();
+      if (key.isEmpty) {
+        continue;
+      }
+      final existing = byAudioPath[key];
+      byAudioPath[key] =
+          existing == null ? version : _mergeSongVersion(existing, version);
+    }
+    return byAudioPath.values.toList(growable: false);
+  }
+
+  ArticleSongVersion _mergeSongVersion(
+    ArticleSongVersion primary,
+    ArticleSongVersion fallback,
+  ) =>
+      primary.copyWith(
+        title: primary.title ?? fallback.title,
+        songUrl: primary.songUrl ?? fallback.songUrl,
+        durationMs: primary.durationMs ?? fallback.durationMs,
+        createdAt: primary.createdAt ?? fallback.createdAt,
+        stylePrompt: primary.stylePrompt ?? fallback.stylePrompt,
+        styleKey: primary.styleKey ?? fallback.styleKey,
+        lyricsHash: primary.lyricsHash ?? fallback.lyricsHash,
+        submittedLyrics: primary.submittedLyrics ?? fallback.submittedLyrics,
+        timelinePath: primary.timelinePath ?? fallback.timelinePath,
+        timelineStatus: primary.timelineStatus ?? fallback.timelineStatus,
+        timelineConfidence:
+            primary.timelineConfidence ?? fallback.timelineConfidence,
+        timelineError: primary.timelineError ?? fallback.timelineError,
+        isDefault: primary.isDefault || fallback.isDefault,
+      );
 
   String _versionTimelineStatus(ArticleSongVersion version) {
     final explicit = (version.timelineStatus ?? '').trim();

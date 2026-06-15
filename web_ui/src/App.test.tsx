@@ -527,7 +527,7 @@ describe('App', () => {
     expect(imageSources).toEqual([generatedCover, generatedCover]);
   });
 
-  it('renders settings without manual API key input', async () => {
+  it('renders settings with masked cloud key controls', async () => {
     window.location.hash = '/settings';
 
     render(<App />);
@@ -552,6 +552,57 @@ describe('App', () => {
     expect(screen.queryByText('TTS 资源 ID')).not.toBeInTheDocument();
     expect(screen.queryByText('火山引擎 API Key')).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText(/api key/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: /清除百炼 Key/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /清除百炼 Key/ })).toBeInTheDocument();
+  }, 10000);
+
+  it('keeps the API key reveal control available after toggling visibility', async () => {
+    window.location.hash = '/settings';
+
+    render(<App />);
+
+    const bailianKeyInput = (await screen.findByLabelText(/^百炼 Key/)) as HTMLInputElement;
+    const field = bailianKeyInput.closest('.settings-label') as HTMLElement;
+    const revealButton = within(field).getByRole('button', { name: '显示 Key' });
+
+    expect(bailianKeyInput).toHaveAttribute('type', 'password');
+    expect(revealButton).toBeDisabled();
+
+    fireEvent.change(bailianKeyInput, { target: { value: 'dashscope-test-key' } });
+    expect(revealButton).not.toBeDisabled();
+
+    fireEvent.click(revealButton);
+    expect(bailianKeyInput).toHaveAttribute('type', 'text');
+    expect(bailianKeyInput).toHaveValue('dashscope-test-key');
+    expect(within(field).getByRole('button', { name: '隐藏 Key' })).toBeInTheDocument();
+
+    fireEvent.click(within(field).getByRole('button', { name: '隐藏 Key' }));
+    expect(bailianKeyInput).toHaveAttribute('type', 'password');
+    expect(within(field).getByRole('button', { name: '显示 Key' })).toBeInTheDocument();
+  });
+
+  it('switches cloud and song settings with tabs instead of select lists', async () => {
+    window.location.hash = '/settings';
+
+    render(<App />);
+
+    expect(await screen.findByRole('tab', { name: '阿里云百炼' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByLabelText(/^百炼 Key/)).toBeInTheDocument();
+    expect(screen.getByText('百炼 Base URL')).toBeInTheDocument();
+    expect(screen.queryByText('方舟 Base URL')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: '火山引擎' }));
+    expect(screen.getByRole('tab', { name: '火山引擎' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByLabelText(/^方舟 Key/)).toBeInTheDocument();
+    expect(screen.getByText('方舟 Base URL')).toBeInTheDocument();
+    expect(screen.queryByText('百炼 Base URL')).not.toBeInTheDocument();
+
+    expect(screen.getByRole('tab', { name: 'Suno 网页自动化' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Suno 输出目录')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '百炼 fun-music' }));
+    expect(screen.getByRole('tab', { name: '百炼 fun-music' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByText('Suno 输出目录')).not.toBeInTheDocument();
+    expect(screen.getByText(/Key 和音乐模型在上方/)).toBeInTheDocument();
   });
 
   it('starts the new article editor empty and enables save after real content', async () => {
@@ -1060,6 +1111,17 @@ describe('App', () => {
             refreshedTarget: payload.target,
           });
         }
+        if (type === 'pictureBook.savePromptReview') {
+          return ok(message.id, type, {
+            ...promptReviewPayloadForTest(42, false),
+            reviewId: String(payload.reviewId ?? 'review-42'),
+            bookDescription: String(payload.bookDescription ?? ''),
+            storyBrief: String(payload.storyBrief ?? ''),
+            chapterBrief: String(payload.chapterBrief ?? ''),
+            groupPrompt: String(payload.groupPrompt ?? ''),
+            scenes: Array.isArray(payload.scenes) ? payload.scenes : [],
+          });
+        }
         if (type === 'pictureBook.confirmPromptReview') {
           return ok(message.id, type, {
             articleId: 42,
@@ -1099,12 +1161,19 @@ describe('App', () => {
     expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' })).toHaveTextContent(
       '自动生成书籍简介',
     );
-    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成章节简述' })).toHaveTextContent(
-      '自动生成章节简述',
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成故事简述' })).toHaveTextContent(
+      '自动生成故事简述',
     );
-    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成分镜组图简述' })).toHaveTextContent(
-      '自动生成分镜组图简述',
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成章节组图简述' })).toHaveTextContent(
+      '自动生成章节组图简述',
     );
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成分镜描述' })).toHaveTextContent(
+      '自动生成分镜描述',
+    );
+    expect(
+      (within(reviewDialog).getByLabelText('组图总提示词') as HTMLTextAreaElement)
+        .value,
+    ).toContain('Scene story: Tom discovers the snack box.');
     fireEvent.click(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' }));
     await waitFor(() => {
       expect(calls.some((call) => call.type === 'pictureBook.refreshPromptReview')).toBe(true);
@@ -1118,7 +1187,17 @@ describe('App', () => {
     fireEvent.change(within(reviewDialog).getByLabelText('第 1 个分镜画面描述'), {
       target: { value: 'Alice sees a bright table in a Victorian fantasy room.' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /保存提示词并生成组图/ }));
+    fireEvent.click(within(reviewDialog).getByRole('button', { name: '保存提示词' }));
+
+    await waitFor(() => {
+      const saveCall = calls.find((call) => call.type === 'pictureBook.savePromptReview');
+      expect(saveCall?.payload).toMatchObject({
+        reviewId: 'review-42',
+        bookDescription: 'Alice keeps a blue dress and white apron.',
+      });
+    });
+
+    fireEvent.click(within(reviewDialog).getByRole('button', { name: '生成组图' }));
 
     await waitFor(() => {
       const confirmCall = calls.find((call) => call.type === 'pictureBook.confirmPromptReview');

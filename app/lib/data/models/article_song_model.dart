@@ -7,6 +7,7 @@ class ArticleSongState {
     this.errorMessage,
     this.durationMs,
     this.source = '',
+    this.lyricsCompressed = false,
     this.songUrl,
     this.metadataPath,
     this.manualActionMessage,
@@ -24,6 +25,7 @@ class ArticleSongState {
   final String? errorMessage;
   final int? durationMs;
   final String source;
+  final bool lyricsCompressed;
   final String? songUrl;
   final String? metadataPath;
   final String? manualActionMessage;
@@ -41,6 +43,7 @@ class ArticleSongState {
         'errorMessage': errorMessage,
         'durationMs': durationMs,
         'source': source,
+        if (lyricsCompressed) 'lyricsCompressed': true,
         if (songUrl != null) 'songUrl': songUrl,
         if (metadataPath != null) 'metadataPath': metadataPath,
         if (manualActionMessage != null)
@@ -60,6 +63,7 @@ class ArticleSongState {
     String? errorMessage,
     int? durationMs,
     String? source,
+    bool? lyricsCompressed,
     String? songUrl,
     String? metadataPath,
     String? manualActionMessage,
@@ -77,6 +81,7 @@ class ArticleSongState {
         errorMessage: errorMessage,
         durationMs: durationMs ?? this.durationMs,
         source: source ?? this.source,
+        lyricsCompressed: lyricsCompressed ?? this.lyricsCompressed,
         songUrl: songUrl ?? this.songUrl,
         metadataPath: metadataPath ?? this.metadataPath,
         manualActionMessage: manualActionMessage ?? this.manualActionMessage,
@@ -99,6 +104,7 @@ class ArticleSongVersion {
     this.stylePrompt,
     this.styleKey,
     this.lyricsHash,
+    this.submittedLyrics,
     this.source = 'suno',
     this.timelinePath,
     this.timelineStatus,
@@ -116,6 +122,7 @@ class ArticleSongVersion {
   final String? stylePrompt;
   final String? styleKey;
   final String? lyricsHash;
+  final String? submittedLyrics;
   final String source;
   final String? timelinePath;
   final String? timelineStatus;
@@ -133,6 +140,7 @@ class ArticleSongVersion {
         if (stylePrompt != null) 'stylePrompt': stylePrompt,
         if (styleKey != null) 'styleKey': styleKey,
         if (lyricsHash != null) 'lyricsHash': lyricsHash,
+        if (submittedLyrics != null) 'submittedLyrics': submittedLyrics,
         'source': source,
         if (timelinePath != null) 'timelinePath': timelinePath,
         if (timelineStatus != null) 'timelineStatus': timelineStatus,
@@ -152,6 +160,7 @@ class ArticleSongVersion {
     String? stylePrompt,
     String? styleKey,
     String? lyricsHash,
+    String? submittedLyrics,
     String? source,
     String? timelinePath,
     String? timelineStatus,
@@ -169,6 +178,7 @@ class ArticleSongVersion {
         stylePrompt: stylePrompt ?? this.stylePrompt,
         styleKey: styleKey ?? this.styleKey,
         lyricsHash: lyricsHash ?? this.lyricsHash,
+        submittedLyrics: submittedLyrics ?? this.submittedLyrics,
         source: source ?? this.source,
         timelinePath: timelinePath ?? this.timelinePath,
         timelineStatus: timelineStatus ?? this.timelineStatus,
@@ -196,6 +206,7 @@ class ArticleSongVersion {
       stylePrompt: _nonEmpty(value['stylePrompt']),
       styleKey: _nonEmpty(value['styleKey']),
       lyricsHash: _nonEmpty(value['lyricsHash']),
+      submittedLyrics: _nonEmpty(value['submittedLyrics']),
       source: _nonEmpty(value['source']) ?? 'suno',
       timelinePath: _nonEmpty(value['timelinePath']),
       timelineStatus: _nonEmpty(value['timelineStatus']),

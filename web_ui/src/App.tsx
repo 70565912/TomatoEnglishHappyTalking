@@ -1950,13 +1950,14 @@ function PictureBookPromptReviewDialog({
   const [chapterBrief, setChapterBrief] = useState(review.chapterBrief ?? '');
   const [scenes, setScenes] = useState<PictureBookPromptReviewScene[]>(review.scenes ?? []);
   const [groupPrompt, setGroupPrompt] = useState(
-    review.groupPrompt || composePictureBookGroupPrompt(review, review.scenes ?? []),
+    resolvePictureBookGroupPrompt(review, review.scenes ?? []),
   );
   const [groupPromptTouched, setGroupPromptTouched] = useState(false);
+  const [savingPrompt, setSavingPrompt] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [refreshingPrompt, setRefreshingPrompt] = useState<PictureBookPromptRefreshTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const busy = submitting || refreshingPrompt !== null;
+  const busy = savingPrompt || submitting || refreshingPrompt !== null;
 
   useEffect(() => {
     const nextScenes = review.scenes ?? [];
@@ -1964,9 +1965,10 @@ function PictureBookPromptReviewDialog({
     setStoryBrief(review.storyBrief ?? '');
     setChapterBrief(review.chapterBrief ?? '');
     setScenes(nextScenes);
-    setGroupPrompt(review.groupPrompt || composePictureBookGroupPrompt(review, nextScenes));
+    setGroupPrompt(resolvePictureBookGroupPrompt(review, nextScenes));
     setGroupPromptTouched(false);
     setError(null);
+    setSavingPrompt(false);
     setSubmitting(false);
     setRefreshingPrompt(null);
   }, [review]);
@@ -2000,7 +2002,7 @@ function PictureBookPromptReviewDialog({
     setChapterBrief(nextReview.chapterBrief ?? '');
     setScenes(nextScenes);
     if (!groupPromptTouched) {
-      setGroupPrompt(nextReview.groupPrompt || composePictureBookGroupPrompt(nextReview, nextScenes));
+      setGroupPrompt(resolvePictureBookGroupPrompt(nextReview, nextScenes));
     }
   };
 
@@ -2029,6 +2031,38 @@ function PictureBookPromptReviewDialog({
     }
   };
 
+  const reviewSubmissionPayload = () => ({
+    reviewId: review.reviewId,
+    groupPrompt,
+    bookDescription,
+    storyBrief,
+    chapterBrief,
+    scenes,
+  });
+
+  const savePrompt = async () => {
+    if (!groupPrompt.trim()) {
+      setError('组图总提示词不能为空');
+      return;
+    }
+    setSavingPrompt(true);
+    setError(null);
+    try {
+      const payload = await sendNative<PictureBookPromptReview>(
+        'pictureBook.savePromptReview',
+        reviewSubmissionPayload(),
+      );
+      applyReviewUpdate(payload);
+      onNotice('提示词已保存，尚未生成组图。');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      onNotice(message);
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
   const confirm = async () => {
     if (!groupPrompt.trim()) {
       setError('组图总提示词不能为空');
@@ -2038,12 +2072,7 @@ function PictureBookPromptReviewDialog({
     setError(null);
     try {
       const payload = await sendNative<PictureBookState>('pictureBook.confirmPromptReview', {
-        reviewId: review.reviewId,
-        groupPrompt,
-        bookDescription,
-        storyBrief,
-        chapterBrief,
-        scenes,
+        ...reviewSubmissionPayload(),
       });
       onConfirmed(payload);
     } catch (err) {
@@ -2055,7 +2084,8 @@ function PictureBookPromptReviewDialog({
     }
   };
 
-  const confirmLabel = submitting ? '提交中' : '保存提示词并生成组图';
+  const savePromptLabel = savingPrompt ? '保存中' : '保存提示词';
+  const confirmLabel = submitting ? '生成中' : '生成组图';
   const renderRefreshButton = (
     target: PictureBookPromptRefreshTarget,
     label: string,
@@ -2105,7 +2135,7 @@ function PictureBookPromptReviewDialog({
           <section className="picture-prompt-section">
             <div className="picture-prompt-section-heading">
               <h3>绘本故事简述</h3>
-              {renderRefreshButton('chapterBrief', '自动生成章节简述', 'AI 自动生成章节简述')}
+              {renderRefreshButton('storyBrief', '自动生成故事简述', 'AI 自动生成故事简述')}
             </div>
             <textarea
               aria-label="绘本故事简述"
@@ -2118,7 +2148,7 @@ function PictureBookPromptReviewDialog({
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
               <h3>章节组图简述</h3>
-              {renderRefreshButton('scenes', '自动生成分镜组图简述', 'AI 自动生成分镜组图简述')}
+              {renderRefreshButton('chapterBrief', '自动生成章节组图简述', 'AI 自动生成章节组图简述')}
             </div>
             <textarea
               aria-label="章节组图简述"
@@ -2148,7 +2178,10 @@ function PictureBookPromptReviewDialog({
           </section>
 
           <section className="picture-prompt-section full">
-            <h3>分镜描述</h3>
+            <div className="picture-prompt-section-heading">
+              <h3>分镜描述</h3>
+              {renderRefreshButton('scenes', '自动生成分镜描述', 'AI 自动生成分镜描述')}
+            </div>
             <div className="picture-page-prompt-list">
               {scenes.map((scene, index) => (
                 <label key={scene.pageIndex}>
@@ -2185,6 +2218,9 @@ function PictureBookPromptReviewDialog({
           <button className="ghost-action" type="button" onClick={onClose} disabled={busy}>
             取消
           </button>
+          <button className="ghost-action" type="button" onClick={() => void savePrompt()} disabled={busy}>
+            <Icon name={savingPrompt ? 'refresh' : 'save'} /> {savePromptLabel}
+          </button>
           <button className="primary-action" type="button" onClick={() => void confirm()} disabled={busy}>
             <Icon name={submitting ? 'refresh' : 'wand'} /> {confirmLabel}
           </button>
@@ -2192,6 +2228,35 @@ function PictureBookPromptReviewDialog({
       </section>
     </div>,
     document.body,
+  );
+}
+
+function resolvePictureBookGroupPrompt(
+  review: Pick<PictureBookPromptReview, 'bookDescription' | 'storyBrief' | 'chapterBrief' | 'groupPrompt'>,
+  scenes: PictureBookPromptReviewScene[],
+): string {
+  const nativePrompt = review.groupPrompt?.trim() ?? '';
+  if (pictureBookGroupPromptHasSceneDetails(nativePrompt, scenes)) {
+    return nativePrompt;
+  }
+  return composePictureBookGroupPrompt(review, scenes);
+}
+
+function pictureBookGroupPromptHasSceneDetails(
+  prompt: string,
+  scenes: PictureBookPromptReviewScene[],
+): boolean {
+  if (!prompt.trim()) {
+    return false;
+  }
+  if (scenes.length === 0) {
+    return true;
+  }
+  const imageBlocks = prompt.match(/\bImage\s+\d+\s*:/gi) ?? [];
+  return (
+    imageBlocks.length >= scenes.length &&
+    /Scene story:/i.test(prompt) &&
+    /Visual direction:/i.test(prompt)
   );
 }
 
@@ -6605,6 +6670,88 @@ function ChatPage({
   );
 }
 
+function SecretInput({
+  id,
+  value,
+  onValueChange,
+  placeholder,
+}: {
+  id: string;
+  value: string;
+  onValueChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    if (!value) setVisible(false);
+  }, [value]);
+
+  return (
+    <span className="secret-input-control">
+      <input
+        id={id}
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+        placeholder={placeholder}
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <button
+        type="button"
+        className="secret-input-toggle"
+        aria-label={visible ? '隐藏 Key' : '显示 Key'}
+        aria-pressed={visible}
+        title={visible ? '隐藏 Key' : '显示 Key'}
+        disabled={!value}
+        onClick={(event) => {
+          event.preventDefault();
+          setVisible((current) => !current);
+        }}
+      >
+        <Icon name={visible ? 'eyeOff' : 'eye'} />
+      </button>
+    </span>
+  );
+}
+
+function SecretClearButton({
+  label,
+  configured,
+  pending,
+  hasDraft,
+  disabled,
+  onClear,
+  onCancel,
+}: {
+  label: string;
+  configured: boolean;
+  pending: boolean;
+  hasDraft: boolean;
+  disabled?: boolean;
+  onClear: () => void;
+  onCancel: () => void;
+}) {
+  const text = pending
+    ? `取消清除${label}`
+    : !configured && hasDraft
+      ? '清空输入'
+      : `清除${label}`;
+
+  return (
+    <button
+      className={`key-clear-button ${pending ? 'active' : ''}`}
+      type="button"
+      disabled={disabled || (!configured && !pending && !hasDraft)}
+      onClick={pending ? onCancel : onClear}
+    >
+      <Icon name={pending ? 'close' : 'trash'} />
+      {text}
+    </button>
+  );
+}
+
 function SettingsPage({
   settings,
   onLoaded,
@@ -6929,142 +7076,177 @@ function SettingsPage({
           </div>
 
           <FieldGroup title="云服务">
+            <div className="settings-tabs" role="tablist" aria-label="AI 文本供应商">
+              <button
+                className={aiProvider === 'aliyun_bailian' ? 'active' : ''}
+                type="button"
+                role="tab"
+                aria-selected={aiProvider === 'aliyun_bailian'}
+                onClick={() => setAiProvider('aliyun_bailian')}
+              >
+                阿里云百炼
+              </button>
+              <button
+                className={aiProvider === 'volcengine' ? 'active' : ''}
+                type="button"
+                role="tab"
+                aria-selected={aiProvider === 'volcengine'}
+                onClick={() => setAiProvider('volcengine')}
+              >
+                火山引擎
+              </button>
+            </div>
             <div className="settings-grid cloud-settings-grid">
-              <label className="settings-label">
-                <span>AI 文本供应商</span>
-                <select
-                  value={aiProvider}
-                  onChange={(event) => setAiProvider(normalizeAiProvider(event.target.value))}
-                >
-                  <option value="aliyun_bailian">阿里云百炼</option>
-                  <option value="volcengine">火山引擎</option>
-                </select>
-              </label>
-              <label className="settings-label">
-                <span>百炼 Key {current.cloud?.aliyunBailian.apiKeyConfigured ? `（${current.cloud.aliyunBailian.apiKeyMask || '已配置'}）` : '（未配置）'}</span>
-                <input
-                  type="password"
-                  value={aliyunBailianApiKey}
-                  onChange={(event) => {
-                    setAliyunBailianApiKey(event.target.value);
-                    if (event.target.value.trim()) setClearAliyunBailianApiKey(false);
-                  }}
-                  placeholder="留空保持不变"
-                />
-              </label>
-              <label className="settings-label checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={clearAliyunBailianApiKey}
-                  onChange={(event) => {
-                    setClearAliyunBailianApiKey(event.target.checked);
-                    if (event.target.checked) setAliyunBailianApiKey('');
-                  }}
-                />
-                <span>清除百炼 Key</span>
-              </label>
-              <label className="settings-label">
-                <span>百炼 Base URL</span>
-                <input
-                  value={aliyunBailianBaseUrl}
-                  onChange={(event) => setAliyunBailianBaseUrl(event.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                <span>百炼文本模型</span>
-                <input
-                  value={aliyunBailianTextModel}
-                  onChange={(event) => setAliyunBailianTextModel(event.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                <span>百炼音乐模型</span>
-                <input
-                  value={aliyunBailianMusicModel}
-                  onChange={(event) => setAliyunBailianMusicModel(event.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                <span>方舟 Key {current.cloud?.volcengine.arkApiKeyConfigured ? `（${current.cloud.volcengine.arkApiKeyMask || '已配置'}）` : '（未配置）'}</span>
-                <input
-                  type="password"
-                  value={volcArkApiKey}
-                  onChange={(event) => {
-                    setVolcArkApiKey(event.target.value);
-                    if (event.target.value.trim()) setClearVolcArkApiKey(false);
-                  }}
-                  placeholder="留空保持不变"
-                />
-              </label>
-              <label className="settings-label checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={clearVolcArkApiKey}
-                  onChange={(event) => {
-                    setClearVolcArkApiKey(event.target.checked);
-                    if (event.target.checked) setVolcArkApiKey('');
-                  }}
-                />
-                <span>清除方舟 Key</span>
-              </label>
-              <label className="settings-label">
-                <span>方舟 Base URL</span>
-                <input
-                  value={volcArkBaseUrl}
-                  onChange={(event) => setVolcArkBaseUrl(event.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                <span>方舟文本模型</span>
-                <input
-                  value={volcArkTextModel}
-                  onChange={(event) => setVolcArkTextModel(event.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                <span>方舟图片模型</span>
-                <input
-                  value={volcArkImageModel}
-                  onChange={(event) => setVolcArkImageModel(event.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                <span>火山语音 Key {current.cloud?.volcengine.speechApiKeyConfigured ? `（${current.cloud.volcengine.speechApiKeyMask || '已配置'}）` : '（未配置）'}</span>
-                <input
-                  type="password"
-                  value={volcSpeechApiKey}
-                  onChange={(event) => {
-                    setVolcSpeechApiKey(event.target.value);
-                    if (event.target.value.trim()) setClearVolcSpeechApiKey(false);
-                  }}
-                  placeholder="留空保持不变"
-                />
-              </label>
-              <label className="settings-label checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={clearVolcSpeechApiKey}
-                  onChange={(event) => {
-                    setClearVolcSpeechApiKey(event.target.checked);
-                    if (event.target.checked) setVolcSpeechApiKey('');
-                  }}
-                />
-                <span>清除火山语音 Key</span>
-              </label>
-              <label className="settings-label">
-                <span>TTS Resource</span>
-                <input
-                  value={volcTtsResourceId}
-                  onChange={(event) => setVolcTtsResourceId(event.target.value)}
-                />
-              </label>
-              <label className="settings-label">
-                <span>TTS Speaker</span>
-                <input
-                  value={volcTtsSpeakerId}
-                  onChange={(event) => setVolcTtsSpeakerId(event.target.value)}
-                />
-              </label>
+              {aiProvider === 'aliyun_bailian' ? (
+                <>
+                  <div className="settings-label">
+                    <label htmlFor="aliyun-bailian-api-key">
+                      百炼 Key {current.cloud?.aliyunBailian.apiKeyConfigured ? `（${current.cloud.aliyunBailian.apiKeyMask || '已配置'}）` : '（未配置）'}
+                    </label>
+                    <SecretInput
+                      id="aliyun-bailian-api-key"
+                      value={aliyunBailianApiKey}
+                      onValueChange={(value) => {
+                        setAliyunBailianApiKey(value);
+                        if (value.trim()) setClearAliyunBailianApiKey(false);
+                      }}
+                      placeholder="留空保持不变"
+                    />
+                  </div>
+                  <div className="settings-label key-clear-slot">
+                    <span>Key 操作</span>
+                    <SecretClearButton
+                      label="百炼 Key"
+                      configured={Boolean(current.cloud?.aliyunBailian.apiKeyConfigured)}
+                      pending={clearAliyunBailianApiKey}
+                      hasDraft={Boolean(aliyunBailianApiKey.trim())}
+                      disabled={savingCloudSettings}
+                      onClear={() => {
+                        setAliyunBailianApiKey('');
+                        setClearAliyunBailianApiKey(Boolean(current.cloud?.aliyunBailian.apiKeyConfigured));
+                      }}
+                      onCancel={() => setClearAliyunBailianApiKey(false)}
+                    />
+                  </div>
+                  <label className="settings-label">
+                    <span>百炼 Base URL</span>
+                    <input
+                      value={aliyunBailianBaseUrl}
+                      onChange={(event) => setAliyunBailianBaseUrl(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>百炼文本模型</span>
+                    <input
+                      value={aliyunBailianTextModel}
+                      onChange={(event) => setAliyunBailianTextModel(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>百炼音乐模型</span>
+                    <input
+                      value={aliyunBailianMusicModel}
+                      onChange={(event) => setAliyunBailianMusicModel(event.target.value)}
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <div className="settings-label">
+                    <label htmlFor="volc-ark-api-key">
+                      方舟 Key {current.cloud?.volcengine.arkApiKeyConfigured ? `（${current.cloud.volcengine.arkApiKeyMask || '已配置'}）` : '（未配置）'}
+                    </label>
+                    <SecretInput
+                      id="volc-ark-api-key"
+                      value={volcArkApiKey}
+                      onValueChange={(value) => {
+                        setVolcArkApiKey(value);
+                        if (value.trim()) setClearVolcArkApiKey(false);
+                      }}
+                      placeholder="留空保持不变"
+                    />
+                  </div>
+                  <div className="settings-label key-clear-slot">
+                    <span>Key 操作</span>
+                    <SecretClearButton
+                      label="方舟 Key"
+                      configured={Boolean(current.cloud?.volcengine.arkApiKeyConfigured)}
+                      pending={clearVolcArkApiKey}
+                      hasDraft={Boolean(volcArkApiKey.trim())}
+                      disabled={savingCloudSettings}
+                      onClear={() => {
+                        setVolcArkApiKey('');
+                        setClearVolcArkApiKey(Boolean(current.cloud?.volcengine.arkApiKeyConfigured));
+                      }}
+                      onCancel={() => setClearVolcArkApiKey(false)}
+                    />
+                  </div>
+                  <label className="settings-label">
+                    <span>方舟 Base URL</span>
+                    <input
+                      value={volcArkBaseUrl}
+                      onChange={(event) => setVolcArkBaseUrl(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>方舟文本模型</span>
+                    <input
+                      value={volcArkTextModel}
+                      onChange={(event) => setVolcArkTextModel(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>方舟图片模型</span>
+                    <input
+                      value={volcArkImageModel}
+                      onChange={(event) => setVolcArkImageModel(event.target.value)}
+                    />
+                  </label>
+                  <div className="settings-label">
+                    <label htmlFor="volc-speech-api-key">
+                      火山语音 Key {current.cloud?.volcengine.speechApiKeyConfigured ? `（${current.cloud.volcengine.speechApiKeyMask || '已配置'}）` : '（未配置）'}
+                    </label>
+                    <SecretInput
+                      id="volc-speech-api-key"
+                      value={volcSpeechApiKey}
+                      onValueChange={(value) => {
+                        setVolcSpeechApiKey(value);
+                        if (value.trim()) setClearVolcSpeechApiKey(false);
+                      }}
+                      placeholder="留空保持不变"
+                    />
+                  </div>
+                  <div className="settings-label key-clear-slot">
+                    <span>Key 操作</span>
+                    <SecretClearButton
+                      label="火山语音 Key"
+                      configured={Boolean(current.cloud?.volcengine.speechApiKeyConfigured)}
+                      pending={clearVolcSpeechApiKey}
+                      hasDraft={Boolean(volcSpeechApiKey.trim())}
+                      disabled={savingCloudSettings}
+                      onClear={() => {
+                        setVolcSpeechApiKey('');
+                        setClearVolcSpeechApiKey(Boolean(current.cloud?.volcengine.speechApiKeyConfigured));
+                      }}
+                      onCancel={() => setClearVolcSpeechApiKey(false)}
+                    />
+                  </div>
+                  <label className="settings-label">
+                    <span>TTS Resource</span>
+                    <input
+                      value={volcTtsResourceId}
+                      onChange={(event) => setVolcTtsResourceId(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>TTS Speaker</span>
+                    <input
+                      value={volcTtsSpeakerId}
+                      onChange={(event) => setVolcTtsSpeakerId(event.target.value)}
+                    />
+                  </label>
+                </>
+              )}
             </div>
             <button
               className="ghost-action"
@@ -7077,39 +7259,59 @@ function SettingsPage({
           </FieldGroup>
 
           <FieldGroup title="歌曲生成">
-            <div className="song-settings-grid">
-              <label className="settings-label">
-                <span>默认歌曲来源</span>
-                <select
-                  value={songProvider}
-                  onChange={(event) => setSongProvider(normalizeSongSource(event.target.value))}
-                >
-                  <option value="suno">Suno 网页自动化</option>
-                  <option value="bailian_fun_music">百炼 fun-music</option>
-                </select>
-              </label>
-              <label className="settings-label">
-                <span>Suno 输出目录</span>
-                <input
-                  value={sunoOutputDirectory}
-                  onChange={(event) => setSunoOutputDirectory(event.target.value)}
-                  placeholder="留空使用程序目录下的 suno-music；不要填写 .tmp 或系统临时目录"
-                />
-              </label>
-              <label className="settings-label">
-                <span>Suno 生成超时（分钟）</span>
-                <input
-                  type="number"
-                  min={5}
-                  max={120}
-                  value={sunoTimeoutMinutes}
-                  onChange={(event) => setSunoTimeoutMinutes(Number(event.target.value) || 20)}
-                />
-              </label>
+            <div className="settings-tabs" role="tablist" aria-label="默认歌曲来源">
+              <button
+                className={songProvider === 'suno' ? 'active' : ''}
+                type="button"
+                role="tab"
+                aria-selected={songProvider === 'suno'}
+                onClick={() => setSongProvider('suno')}
+              >
+                Suno 网页自动化
+              </button>
+              <button
+                className={songProvider === 'bailian_fun_music' ? 'active' : ''}
+                type="button"
+                role="tab"
+                aria-selected={songProvider === 'bailian_fun_music'}
+                onClick={() => setSongProvider('bailian_fun_music')}
+              >
+                百炼 fun-music
+              </button>
             </div>
-            <p className="settings-help">
-              Suno 会打开页面让用户自行登录，登录态来自内置浏览器会话；Tomato 不保存 Suno 用户名、密码、验证码或 cookie 明文。
-            </p>
+            <div className="song-settings-grid">
+              {songProvider === 'suno' ? (
+                <>
+                  <label className="settings-label">
+                    <span>Suno 输出目录</span>
+                    <input
+                      value={sunoOutputDirectory}
+                      onChange={(event) => setSunoOutputDirectory(event.target.value)}
+                      placeholder="留空使用程序目录下的 suno-music；不要填写 .tmp 或系统临时目录"
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>Suno 生成超时（分钟）</span>
+                    <input
+                      type="number"
+                      min={5}
+                      max={120}
+                      value={sunoTimeoutMinutes}
+                      onChange={(event) => setSunoTimeoutMinutes(Number(event.target.value) || 20)}
+                    />
+                  </label>
+                </>
+              ) : (
+                <p className="settings-help">
+                  百炼 fun-music 会直接使用当前英文歌词生成音频；Key 和音乐模型在上方“云服务”的百炼选项卡中配置。
+                </p>
+              )}
+            </div>
+            {songProvider === 'suno' && (
+              <p className="settings-help">
+                Suno 会打开页面让用户自行登录，登录态来自内置浏览器会话；Tomato 不保存 Suno 用户名、密码、验证码或 cookie 明文。
+              </p>
+            )}
             <button
               className="ghost-action"
               type="button"
@@ -7670,6 +7872,19 @@ const iconPaths: Record<string, ReactNode> = {
       <path d="M18.5 6.5a7.5 7.5 0 0 1 0 11" />
     </>
   ),
+  eye: (
+    <>
+      <path d="M2.8 12s3.4-6 9.2-6 9.2 6 9.2 6-3.4 6-9.2 6-9.2-6-9.2-6Z" />
+      <circle cx="12" cy="12" r="2.8" />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M2.8 12s3.4-6 9.2-6 9.2 6 9.2 6-3.4 6-9.2 6-9.2-6-9.2-6Z" />
+      <circle cx="12" cy="12" r="2.8" />
+      <path d="M4 4l16 16" />
+    </>
+  ),
   exit: (
     <>
       <path d="M10 5H6v14h4" />
@@ -7729,6 +7944,15 @@ const iconPaths: Record<string, ReactNode> = {
       <path d="M5 4h11l3 3v13H5z" />
       <path d="M8 4v6h7V4" />
       <path d="M8 20v-6h8v6" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M5 7h14" />
+      <path d="M9 7V5h6v2" />
+      <path d="M7 7l1 13h8l1-13" />
+      <path d="M10 11v5" />
+      <path d="M14 11v5" />
     </>
   ),
   upload: (

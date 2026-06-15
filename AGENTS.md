@@ -109,12 +109,12 @@ web_ui/
 - `app/lib/features/home|article|follow_read|chat|profile` 下的原生 Screen 仍可作为参考/兼容层，但默认路由进入 `WebShellScreen`。
 - Web UI 与 Flutter 交互时必须通过 `web_bridge_protocol.dart` / `bridge.ts` 的 typed command/event 协议，不要从 Web UI 直接访问云 API 或本地文件系统。
 - 歌曲生成来源支持阿里云百炼 fun-music 与 Suno 网页自动化；默认 provider 仍是 Suno，但设置页可选择 `bailian_fun_music`。不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供本地歌曲缓存、播放、字幕时间轴和视频导出复用。
-- 百炼 fun-music 入口为 `app/lib/services/bailian_music_service.dart`，通过阿里云 DashScope `https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation` 直接按当前英文歌词生成音频；使用 `AppConfig.aliyunBailianApiKey` 与 `AppConfig.aliyunBailianMusicModel`，提交前走 `ContentSafetyService`，成功音频写入 `ApiCacheService` 的 `music/` 子目录。供应商错误直接显示，不自动回退到 Suno。
+- 百炼 fun-music 入口为 `app/lib/services/bailian_music_service.dart`，通过阿里云 DashScope `https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation` 生成音频；使用 `AppConfig.aliyunBailianApiKey` 与 `AppConfig.aliyunBailianMusicModel`，提交前先把过长或散文化章节压缩成适合歌曲接口的 `submittedLyrics`，再走 `ContentSafetyService`。成功音频写入 `ApiCacheService` 的 `music/` 子目录，metadata 必须记录 `submittedLyrics`、`lyricsHash` 和 `lyricsCompressed`；供应商错误直接显示，不自动回退到 Suno。
 - Suno 网页自动化在 `WebShellScreen` 内执行：每次生成都只用当前歌词填表；如果 `Styles` 折叠，必须先点击 `Styles` 折叠头展开到能看到 `Styles` 工具栏魔法棒，再清空旧 `Styles` value 并点击蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把 `More Options` 当成 `Styles` 展开入口。保存下来的风格只作为本次歌曲 metadata，不再回填或作为下载筛选条件；不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
 - Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
 - Suno 歌曲缓存和下载唯一性按当前歌词与 `songUrl` 判断：缓存组使用 `lyricsHash` / `contentHash`，`versions` 可保留旧 `stylePrompt` / `styleKey` metadata 但不再按风格分组，`detectedSongUrls` 记录当前歌词已检测到的完整歌曲链接，`downloadComplete=true` 只表示这些链接都有本地音频版本。重新检测下载时只下载缺失链接，不要重复下载已存在的同一 `songUrl`；用户再次选择生成新歌时仍应重新生成 Suno 风格并进入 Create 确认流程。
-- 歌曲字幕时间轴使用 App 提交给歌曲 provider 的原歌词作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
+- 歌曲字幕时间轴使用歌曲版本记录的 `submittedLyrics` 作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；如果 `submittedLyrics` 与文章原歌词不同，不要复用文章逐句中文翻译。不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
 - Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
 - 听力播放、全屏播放和普通录制只播放英文 TTS；中文翻译只作为字幕/对照文本显示，不再触发听力中文 TTS 预加载或播放。`listening.fullscreenReady` 只检查当前和下一句英文音频，绘本图片只预取当前和下一张；文章保存时应优先保存导入译文，缺失时可用 `PracticeTextService.translateToChinese` 生成逐句字幕，后续听力/跟读只读库中译文，不在打开页面时批量翻译。
 - 跟读录音可根据 BigASR 实时识别文本自动停止：只有识别结果达到参考句覆盖率并匹配句尾时才触发，避免只说末尾短语就结束。相关启发式在 `follow_read_provider.dart`，更新阈值时同步 `follow_recording_auto_stop_test.dart`。
@@ -245,7 +245,7 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
 - 绘本图片 prompt 使用 `picture_book_prompt_v4` / `picture_book_chapter_plan_v4`：只使用书名、书籍简介、章节标题、`storyBrief`、`chapterBrief`、`scenes[]` 和用户确认的 `groupPrompt`。不要重新引入 series Bible、角色卡、参考图、`styleGuide`、`audience`、`safety`、`negativePrompt` 或字幕留白字段。旧 `chapter_story_outline_v1` / `picture_book_chapter_plan_v1/v2/v3` 只能作为历史数据，不作为新绘本生成计划复用。
 - `pictureBook.pageImage` 支持 `variant: "full" | "thumbnail"`；创作中心和书籍封面应优先请求 `thumbnail`，缩略图持久缓存在 `picture_book_thumbnails`，不要在列表页一次性把整章原图作为 data URI 加载。听力播放、全屏和导出需要原图时再请求 full/original。
-- `pictureBook.promptReview` 只生成或读取 v4 文本规划，不调用图片 API、不删除旧 `picture_book_pages` 或图片缓存；刷新按钮可分项重建书籍简介、`storyBrief`、`chapterBrief`、`scenes[]` 和 `groupPrompt`。`pictureBook.confirmPromptReview` 才保存审核后的 v4 计划，确认后删除旧页/旧缓存引用并提交顺序组图。不要恢复 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS`、`TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE` 或 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 旧开关。
+- `pictureBook.promptReview` 只生成或读取 v4 文本规划，不调用图片 API、不删除旧 `picture_book_pages` 或图片缓存；刷新按钮可分项重建书籍简介、`storyBrief`、`chapterBrief`、`scenes[]` 和 `groupPrompt`。`pictureBook.savePromptReview` 只保存审核草稿和书籍简介，仍不调用图片 API、不删除旧图。`pictureBook.confirmPromptReview` 才保存审核后的 v4 计划，确认后删除旧页/旧缓存引用并提交顺序组图。不要恢复 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS`、`TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE` 或 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 旧开关。
 - Seedream 组图 `sequential_image_generation` 是正式绘本链路：`PictureBookService` 直接调用 `generatePictureBookImageGroup(..., useSequential: true)`，`max_images` 等于已确认 scene 数。组图失败不自动回退单图；失败页保存错误原因，重试按钮重新打开审核并在确认后重建整章组图。
 - 整章组图 HTTP 返回可能按每张图耗时数分钟，不能再用固定 120 秒判定失败。`VolcImageService` 按请求图片数动态设置接收超时，默认每张 150 秒、最小 180 秒、最大 2700 秒；可通过 `TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE`、`TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS`、`TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS` 调整。
 - 绘本保存/生成/听力模式的最终联调必须跑真实 Windows App UI。外部窗口截图不可用时，开启 `TOMATO_QA_REMOTE=true`，用 `npm run qa:picture-book-live` 通过本机 QA 控制接口填表保存、打开听力、轮询异步绘本状态、检查 loading/error/ready UI、字幕和播放；不要只用 service/test harness 作为最终结论。
@@ -425,7 +425,7 @@ Manifest 与入口约束：
   - `ANDROID_AVD_HOME`
 - 涉及 Windows 构建名变更时，注意清理旧的 `app\build\windows` CMake 缓存，避免继续引用旧 target 名。
 - 涉及 Android 调试脚本时，优先复用 `build_android.ps1 -Run`，不要复制一套新的 Flutter 启动逻辑。
-- 修改 Web UI 后，保持 `tools/build_windows.ps1`、`tools/build_android.ps1` 自动执行 `npm ci` / `npm install` 与 `npm run build`，确保 `app\assets\web\` 随 EXE/APK 更新。
+- 修改 Web UI 后，保持 `tools/build_windows.ps1`、`tools/build_android.ps1` 自动执行 `npm ci` / `npm install` 与 `npm run build`，确保 `app\assets\web\` 随 EXE/APK 更新。Windows 脚本会用 `node_modules\.tomato-package-lock.sha256` 跳过未变化依赖安装；如果本地 `node_modules` 被占用导致构建失败，脚本会复制 `web_ui/` 到临时目录构建后同步 `app\assets\web\`。
 - 新增 Web UI 依赖时同步更新 `web_ui\package.json` 与 `web_ui\package-lock.json`，不要提交 `node_modules`。
 - Windows Debug 和 Release 可以是两套可执行程序，但桌面运行目录和数据必须共用 `release\windows\tomato_english_happy_talking`；Debug 构建/运行也要先把程序文件发布到该目录，确保 `ffmpeg.exe`、依赖 DLL、数据库和 API 缓存都从同一处读取，不要直接运行 `app\build\windows\...\Debug` 旁边的 EXE。
 
@@ -552,7 +552,7 @@ Provider 基本要求：
 - 文件放在 `app/lib/services/<service_name>_service.dart`。
 - 配置存取入口在 `app/lib/core/config/app_config.dart`。
 - 如新增非密钥运行参数，通常同步更新 `app/lib/features/profile/profile_screen.dart` 和 Web UI `settings.load` 展示。
-- 不要新增手动输入 API Key 的设置页表单；密钥通过本机加密文件或 `--dart-define` 注入。
+- 设置页可以通过云服务选项卡保存/清除百炼、方舟和火山语音 key；输入框只能处理用户草稿值，bridge payload 只能返回配置状态和脱敏 mask，不得回传明文 key。不要在代码、日志、文档或测试 fixture 中硬编码真实 API Key。
 - 不要为了验证服务逻辑去改构建链。
 
 Service 必须满足：

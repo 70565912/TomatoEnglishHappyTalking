@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/config/app_config.dart';
+import '../core/logging/tomato_logger.dart';
 import 'api_cache_service.dart';
 import 'content_safety_service.dart';
 
@@ -22,6 +23,8 @@ class BailianMusicResult {
     this.audioUrl,
     this.durationMs,
     this.lyrics,
+    this.submittedLyrics,
+    this.lyricsCompressed = false,
     this.requestId,
     this.errorMessage,
   });
@@ -32,8 +35,20 @@ class BailianMusicResult {
   final String? audioUrl;
   final int? durationMs;
   final String? lyrics;
+  final String? submittedLyrics;
+  final bool lyricsCompressed;
   final String? requestId;
   final String? errorMessage;
+}
+
+class BailianPreparedLyrics {
+  const BailianPreparedLyrics({
+    required this.text,
+    required this.compressed,
+  });
+
+  final String text;
+  final bool compressed;
 }
 
 typedef BailianMusicPostOverride = Future<Object?> Function({
@@ -97,8 +112,12 @@ class BailianMusicService {
     }
 
     final model = await AppConfig.aliyunBailianMusicModel;
+    final preparedDraft = prepareLyricsForGeneration(
+      lyrics: trimmedLyrics,
+      title: title,
+    );
     final preparedLyrics = await ContentSafetyService.prepareTextForApi(
-      trimmedLyrics,
+      preparedDraft.text,
       serviceKind: ContentSafetyService.serviceBailianFunMusic,
       purpose: cachePurpose,
     );
@@ -126,6 +145,8 @@ class BailianMusicService {
         source: BailianMusicResultSource.cached,
         filePath: cachedPath,
         cacheKey: cacheKey,
+        submittedLyrics: preparedLyrics,
+        lyricsCompressed: preparedDraft.compressed,
       );
     }
 
@@ -171,27 +192,129 @@ class BailianMusicService {
         audioUrl: audioUrl,
         durationMs: _extractDurationMs(responseData),
         lyrics: _extractGeneratedLyrics(responseData),
+        submittedLyrics: preparedLyrics,
+        lyricsCompressed: preparedDraft.compressed,
         requestId: _extractRequestId(responseData),
       );
-    } catch (error) {
+    } catch (error, stackTrace) {
       final safety = ContentSafetyService.classifyFailure(error);
       if (safety.suspectedSafetyBlock) {
         await ContentSafetyService.recordFailure(
           serviceKind: ContentSafetyService.serviceBailianFunMusic,
           purpose: cachePurpose,
           articleId: articleId,
-          failedText: trimmedLyrics,
+          failedText: preparedLyrics,
           errorCode: safety.errorCode,
           errorMessage: safety.message,
         );
       }
+      TomatoLogger.error(
+        category: 'bailian',
+        event: 'music.generate.failed',
+        articleId: articleId,
+        data: {
+          'model': model,
+          'lyricsLength': preparedLyrics.length,
+          'lyricsCompressed': preparedDraft.compressed,
+          'promptProvided': prompt?.trim().isNotEmpty == true,
+          'format': normalizedFormat,
+        },
+        error: _errorSummary(error),
+        stackTrace: stackTrace,
+      );
       debugPrint('[BailianMusicService] generation failed: $error');
       return BailianMusicResult(
         source: BailianMusicResultSource.failed,
         cacheKey: cacheKey,
+        submittedLyrics: preparedLyrics,
+        lyricsCompressed: preparedDraft.compressed,
         errorMessage: _errorSummary(error),
       );
     }
+  }
+
+  static BailianPreparedLyrics prepareLyricsForGeneration({
+    required String lyrics,
+    required String title,
+  }) {
+    final normalized = _normalizeLyricsText(lyrics);
+    if (_looksLikeAcceptableLyrics(normalized)) {
+      return BailianPreparedLyrics(text: normalized, compressed: false);
+    }
+    final theme = _songTheme(title, normalized);
+    final lines = <String>[
+      '$theme, shining bright',
+      'We sing the story into light',
+      'Step by step, we learn the way',
+      'Happy voices guide the day',
+      '',
+      '$theme, sing it again',
+      'Every word becomes a friend',
+      '$theme, clear and true',
+      'English dreams are waiting too',
+      '',
+      'Turn the page and hear the sound',
+      'Little wonders all around',
+      'Read the line and let it flow',
+      'In our song the story grows',
+    ];
+    return BailianPreparedLyrics(
+      text: lines.join('\n').trim(),
+      compressed: true,
+    );
+  }
+
+  static bool _looksLikeAcceptableLyrics(String value) {
+    if (value.isEmpty || value.length > 1200) {
+      return false;
+    }
+    final lines = value
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    if (lines.length > 16) {
+      return false;
+    }
+    if (lines.any((line) => line.length > 110)) {
+      return false;
+    }
+    if (lines.length <= 2 && value.length <= 260) {
+      return true;
+    }
+    return lines.length >= 4;
+  }
+
+  static String _normalizeLyricsText(String value) {
+    return value
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n')
+        .replaceAll(RegExp(r'[ \t]+'), ' ')
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .join('\n')
+        .trim();
+  }
+
+  static String _songTheme(String title, String lyrics) {
+    final candidates = <String>[title, lyrics]
+        .map((value) => value
+            .replaceAll(RegExp(r'\bE\d+\b', caseSensitive: false), ' ')
+            .replaceAll(RegExp(r'\bpart\s+\d+\b', caseSensitive: false), ' ')
+            .replaceAll(RegExp(r'chapter\s+\w+', caseSensitive: false), ' ')
+            .replaceAll(RegExp(r'[^A-Za-z0-9 ]+'), ' ')
+            .replaceAll(RegExp(r'\s+'), ' ')
+            .trim())
+        .where((value) => value.isNotEmpty)
+        .toList(growable: false);
+    final raw = candidates.isNotEmpty ? candidates.first : 'Story time';
+    final words = raw
+        .split(' ')
+        .where((word) => word.length > 1)
+        .take(4)
+        .toList(growable: false);
+    return words.isEmpty ? 'Story time' : words.join(' ');
   }
 
   static Map<String, dynamic> _cacheRequest({
@@ -341,6 +464,9 @@ class BailianMusicService {
   }
 
   static String _errorSummary(Object error) {
+    if (error is FormatException) {
+      return error.message;
+    }
     if (error is DioException) {
       final status = error.response?.statusCode;
       final data = error.response?.data;

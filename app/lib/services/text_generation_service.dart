@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/config/app_config.dart';
+import '../core/logging/tomato_logger.dart';
 import 'api_cache_service.dart';
 import 'content_safety_service.dart';
 
@@ -78,6 +79,7 @@ class TextGenerationService {
     int? articleId,
     int maxTokens = 1024,
   }) async {
+    final stopwatch = Stopwatch()..start();
     final preparedTurns = await _prepareTurnsForApi(
       turns,
       purpose: cachePurpose,
@@ -99,6 +101,15 @@ class TextGenerationService {
       purpose: cachePurpose,
     );
     if (cachedText != null && cachedText.trim().isNotEmpty) {
+      _logCompletion(
+        event: 'chat.generate',
+        config: config,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+        maxTokens: maxTokens,
+        durationMs: stopwatch.elapsedMilliseconds,
+        source: TextGenerationReplySource.cached,
+      );
       return TextGenerationReply(
         text: cachedText,
         source: TextGenerationReplySource.cached,
@@ -107,6 +118,15 @@ class TextGenerationService {
 
     final apiKey = config.apiKey;
     if (apiKey.trim().isEmpty) {
+      _logCompletion(
+        event: 'chat.generate',
+        config: config,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+        maxTokens: maxTokens,
+        durationMs: stopwatch.elapsedMilliseconds,
+        source: TextGenerationReplySource.mockNoKey,
+      );
       return TextGenerationReply(
         text: fallbackText,
         source: TextGenerationReplySource.mockNoKey,
@@ -145,6 +165,15 @@ class TextGenerationService {
         articleId: articleId,
         successfulText: _requestTranscript(preparedTurns),
       );
+      _logCompletion(
+        event: 'chat.generate',
+        config: config,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+        maxTokens: maxTokens,
+        durationMs: stopwatch.elapsedMilliseconds,
+        source: TextGenerationReplySource.remote,
+      );
       return TextGenerationReply(
         text: text,
         source: TextGenerationReplySource.remote,
@@ -163,6 +192,15 @@ class TextGenerationService {
         );
       }
       debugPrint('[TextGenerationService] fallback error=$errorSummary');
+      _logFailure(
+        event: 'chat.generate',
+        config: config,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+        maxTokens: maxTokens,
+        durationMs: stopwatch.elapsedMilliseconds,
+        error: e,
+      );
       return TextGenerationReply(
         text: fallbackText,
         source: TextGenerationReplySource.mockOnError,
@@ -180,6 +218,7 @@ class TextGenerationService {
     bool jsonResponse = false,
     bool skipCacheRead = false,
   }) async {
+    final stopwatch = Stopwatch()..start();
     final preparedTurns = await _prepareTurnsForApi(
       turns,
       purpose: cachePurpose,
@@ -203,6 +242,17 @@ class TextGenerationService {
         purpose: cachePurpose,
       );
       if (cachedText != null && cachedText.trim().isNotEmpty) {
+        _logCompletion(
+          event: 'chat.generateStrict',
+          config: config,
+          cachePurpose: cachePurpose,
+          articleId: articleId,
+          maxTokens: maxTokens,
+          durationMs: stopwatch.elapsedMilliseconds,
+          source: TextGenerationReplySource.cached,
+          jsonResponse: jsonResponse,
+          skipCacheRead: skipCacheRead,
+        );
         return TextGenerationReply(
           text: cachedText,
           source: TextGenerationReplySource.cached,
@@ -212,6 +262,17 @@ class TextGenerationService {
 
     final apiKey = config.apiKey;
     if (apiKey.trim().isEmpty) {
+      _logCompletion(
+        event: 'chat.generateStrict',
+        config: config,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+        maxTokens: maxTokens,
+        durationMs: stopwatch.elapsedMilliseconds,
+        source: TextGenerationReplySource.mockNoKey,
+        jsonResponse: jsonResponse,
+        skipCacheRead: skipCacheRead,
+      );
       throw TextGenerationException(
         '文本提交处理失败：未配置 ${_providerLabel(config.provider)} API Key，请在设置中配置后重试。',
       );
@@ -250,6 +311,17 @@ class TextGenerationService {
         articleId: articleId,
         successfulText: _requestTranscript(preparedTurns),
       );
+      _logCompletion(
+        event: 'chat.generateStrict',
+        config: config,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+        maxTokens: maxTokens,
+        durationMs: stopwatch.elapsedMilliseconds,
+        source: TextGenerationReplySource.remote,
+        jsonResponse: jsonResponse,
+        skipCacheRead: skipCacheRead,
+      );
       return TextGenerationReply(
         text: text,
         source: TextGenerationReplySource.remote,
@@ -268,6 +340,17 @@ class TextGenerationService {
         );
       }
       debugPrint('[TextGenerationService] strict error=$errorSummary');
+      _logFailure(
+        event: 'chat.generateStrict',
+        config: config,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+        maxTokens: maxTokens,
+        durationMs: stopwatch.elapsedMilliseconds,
+        error: error,
+        jsonResponse: jsonResponse,
+        skipCacheRead: skipCacheRead,
+      );
       throw TextGenerationException(
         _strictUserMessage(error),
         cause: error,
@@ -410,6 +493,91 @@ class TextGenerationService {
         'stream': false,
         if (jsonResponse) 'responseFormat': 'json_object',
         'messages': turns.map((turn) => turn.toJson()).toList(growable: false),
+      };
+
+  static void _logCompletion({
+    required String event,
+    required OpenAiTextConfig config,
+    required String cachePurpose,
+    required int? articleId,
+    required int maxTokens,
+    required int durationMs,
+    required TextGenerationReplySource source,
+    bool jsonResponse = false,
+    bool skipCacheRead = false,
+  }) {
+    TomatoLogger.info(
+      category: 'text_generation',
+      event: event,
+      articleId: articleId,
+      status: _replySourceName(source),
+      durationMs: durationMs,
+      data: _logData(
+        config: config,
+        cachePurpose: cachePurpose,
+        maxTokens: maxTokens,
+        jsonResponse: jsonResponse,
+        skipCacheRead: skipCacheRead,
+      ),
+    );
+  }
+
+  static void _logFailure({
+    required String event,
+    required OpenAiTextConfig config,
+    required String cachePurpose,
+    required int? articleId,
+    required int maxTokens,
+    required int durationMs,
+    required Object error,
+    bool jsonResponse = false,
+    bool skipCacheRead = false,
+  }) {
+    TomatoLogger.warn(
+      category: 'text_generation',
+      event: event,
+      articleId: articleId,
+      status: 'error',
+      durationMs: durationMs,
+      error: error.runtimeType.toString(),
+      data: {
+        ..._logData(
+          config: config,
+          cachePurpose: cachePurpose,
+          maxTokens: maxTokens,
+          jsonResponse: jsonResponse,
+          skipCacheRead: skipCacheRead,
+        ),
+        if (error is DioException) ...{
+          'dioType': error.type.name,
+          'statusCode': error.response?.statusCode,
+        },
+      },
+    );
+  }
+
+  static Map<String, dynamic> _logData({
+    required OpenAiTextConfig config,
+    required String cachePurpose,
+    required int maxTokens,
+    required bool jsonResponse,
+    required bool skipCacheRead,
+  }) =>
+      {
+        'provider': config.provider,
+        'model': config.model,
+        'purpose': cachePurpose,
+        'maxTokens': maxTokens,
+        'jsonResponse': jsonResponse,
+        'skipCacheRead': skipCacheRead,
+      };
+
+  static String _replySourceName(TextGenerationReplySource source) =>
+      switch (source) {
+        TextGenerationReplySource.remote => 'remote',
+        TextGenerationReplySource.cached => 'cached',
+        TextGenerationReplySource.mockNoKey => 'mock_no_key',
+        TextGenerationReplySource.mockOnError => 'mock_on_error',
       };
 
   static String _providerLabel(String provider) =>
