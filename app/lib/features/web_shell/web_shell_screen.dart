@@ -3195,7 +3195,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _sunoAutomationBusy = true;
     try {
       final inspect = await _evaluateSunoJson(controller, _sunoInspectScript);
-      final loggedIn = inspect['loggedIn'] == true;
+      final currentUrl = (inspect['currentUrl'] ??
+              (await controller.getUrl())?.toString() ??
+              '')
+          .toString();
+      final loginFlow =
+          inspect['loginFlow'] == true || _isSunoLoginFlowUrl(currentUrl);
+      final loggedIn = inspect['loggedIn'] == true && !loginFlow;
       _sunoCreditsRemaining = (inspect['creditsRemaining'] as num?)?.toInt();
       if (!loggedIn) {
         await _setSunoStatus(
@@ -3326,6 +3332,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               _sunoAutomationStatus == 'manualAction' ||
               _sunoAutomationStatus == 'failed')) {
         final currentUrl = (await controller.getUrl())?.toString() ?? '';
+        if (_isSunoLoginFlowUrl(currentUrl)) {
+          await _setSunoStatus(
+            'waitingLogin',
+            'Suno 登录流程进行中，请先在页面中完成登录。',
+          );
+          return;
+        }
         if (_sunoPageKind(currentUrl) != 'create') {
           await controller.loadUrl(
             urlRequest: URLRequest(url: WebUri('https://suno.com/create')),
@@ -3336,10 +3349,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           );
           return;
         }
-        final now = DateTime.now();
-        final allowMagicClick = _sunoStyleMagicRequestedAt == null ||
-            now.difference(_sunoStyleMagicRequestedAt!) >
-                const Duration(seconds: 18);
+        final allowMagicClick = _sunoStyleMagicRequestedAt == null;
         final fill = await _evaluateSunoJson(
           controller,
           _sunoFillScript(
@@ -3377,6 +3387,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         }
         if (fill['magicClicked'] == true) {
           _sunoStyleMagicRequestedAt = DateTime.now();
+          await _setSunoStatus(
+            'waitingConfirm',
+            'Tomato 已点击 Suno 自动风格魔法棒一次。请等待 Styles 写入完成并确认内容后，再决定是否创建歌曲。',
+          );
+          return;
         }
         if (fill['ok'] == true) {
           await _setSunoStatus(
@@ -3845,6 +3860,35 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return;
     }
     try {
+      try {
+        final currentUrl = (await controller.getUrl())?.toString() ?? '';
+        if (_sunoPageKind(currentUrl) == 'create') {
+          final probe = await _evaluateSunoJson(
+            controller,
+            _sunoFillScript(
+              lyrics: _sunoLyrics,
+              stylePrompt: _sunoStylePrompt,
+              ignoredStylePrompt: _sunoIgnoredStylePrompt,
+              allowMagicClick: false,
+              magicAlreadyRequested: _sunoStyleMagicRequestedAt != null,
+              readOnly: true,
+            ),
+          );
+          final currentStyle = (probe['stylePrompt'] ?? '').toString().trim();
+          if (currentStyle.isNotEmpty) {
+            _sunoStylePrompt = currentStyle;
+          }
+        }
+      } catch (error, stackTrace) {
+        TomatoLogger.warn(
+          category: 'suno',
+          event: 'create.style_sync_skipped',
+          articleId: _sunoArticleId,
+          status: _sunoAutomationStatus,
+          message: _displayError(error),
+          stackTrace: stackTrace,
+        );
+      }
       final result = await _evaluateSunoJson(controller, _sunoCreateScript);
       if (result['ok'] == true) {
         _sunoCreateSubmitted = true;
@@ -4672,15 +4716,53 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   String get _sunoInspectScript => r'''
 (() => {
-  const text = document.body ? document.body.innerText || '' : '';
+  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const visibleText = document.body ? document.body.innerText || '' : '';
+  const visible = (el) => {
+    const rect = el.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle(el);
+    return style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      Number(style.opacity || '1') > 0.01;
+  };
+  const controlText = Array.from(document.querySelectorAll('button,a,[role="button"],[aria-label],[title]'))
+    .filter(visible)
+    .map((el) => [
+      el.innerText || el.textContent || '',
+      el.getAttribute?.('aria-label') || '',
+      el.getAttribute?.('title') || '',
+      el.getAttribute?.('href') || ''
+    ].join(' '))
+    .join(' ');
+  const text = normalize(`${visibleText} ${controlText}`);
   const creditsMatch = text.match(/Credits\s+remaining[:\s]+(\d+)/i) || text.match(/(\d+)\s+Credits/i);
   const hasCreateSurface = /Create song|Create|Lyrics|Instrumental|Advanced|Style of Music|Song Description/i.test(text);
-  const hasLoginPrompt = /sign in|log in|continue with google|continue with discord/i.test(text);
-  const hasAccountSignal = /Profile menu button|\b\d+\s+Credits\b|Upgrade to Pro|Library|Notifications|Activity/i.test(text);
+  const hasLoginPrompt = /sign in|sign-in|signin|log in|log-in|login|join suno for free|join for free|sign up|sign-up|signup|create account|continue with google|continue with discord|continue with apple|get started|登录|登入|注册|註冊|免费加入/i.test(text);
+  let host = '';
+  let path = '';
+  try {
+    const url = new URL(location.href);
+    host = url.hostname.toLowerCase();
+    path = url.pathname.toLowerCase();
+  } catch (_) {}
+  const isSunoHost = host === 'suno.com' || host === 'www.suno.com';
+  const isSunoAuthHost = /(^|\.)suno\.com$/.test(host) && /auth|account|login|clerk/i.test(host);
+  const isExternalAuthHost = !isSunoHost && (
+    isSunoAuthHost ||
+    /accounts\.google\.com|discord(?:app)?\.com|appleid\.apple\.com|clerk|oauth|auth|login|sso|identity/i.test(host)
+  );
+  const isSunoAuthPath = isSunoHost && /\/(?:login|log-in|signin|sign-in|signup|sign-up|auth|oauth|sso)(?:\/|$)/i.test(path);
+  const loginFlow = hasLoginPrompt || isExternalAuthHost || isSunoAuthPath;
+  const hasAccountSignal = /Profile menu button|\b\d+\s+Credits\b|Credits remaining[:\s]+\d+|Upgrade to Pro|Library|Notifications/i.test(text);
   const hasSongDetail = /\/song\//i.test(location.href) && /Lyrics|Comments|Add a Caption|Show full styles|v\d/i.test(text);
   return JSON.stringify({
-    loggedIn: hasAccountSignal || hasSongDetail || (hasCreateSurface && !hasLoginPrompt),
+    loggedIn: !loginFlow && (hasAccountSignal || hasSongDetail || hasCreateSurface),
     creditsRemaining: creditsMatch ? Number(creditsMatch[1]) : null,
+    loginFlow,
+    hasLoginPrompt,
+    hasAccountSignal,
+    currentUrl: location.href,
     textSample: text.slice(0, 800)
   });
 })()
@@ -5905,8 +5987,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         });
       }
       missing.push('styleMagic');
-    } else if (styleValue.length >= 6 &&
-        (!magicAlreadyRequested || styleValue === ignoredStyle)) {
+    } else if (styleValue.length >= 6 && !magicAlreadyRequested) {
       const ignoredStylePrompt = ignoredStyle || styleValue;
       styleFilled = setValue(styleField, '');
       styleValue = getValue(styleField);
@@ -5926,7 +6007,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         fields,
         textSample: normalize(document.body?.innerText || '').slice(0, 1000)
       });
-    } else if (magic && (!magicAlreadyRequested || allowMagicClick)) {
+    } else if (magic && !magicAlreadyRequested && allowMagicClick) {
       magic.clickable.scrollIntoView({ block: 'center', inline: 'center' });
       magic.clickable.focus?.();
       magic.clickable.click();
@@ -8116,12 +8197,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     json['seriesTitle'] = series?.title ?? '';
     json['seriesDescription'] = series?.description ?? '';
     json['chapterOrder'] = chapter.chapterOrder;
+    json['chapterBrief'] = _storyChapterBrief(chapter.summaryJson);
     final coverPayload =
         await PictureBookService.coverImagePayloadForArticle(articleId);
     if (coverPayload != null) {
       json.addAll(coverPayload);
     }
     return json;
+  }
+
+  String _storyChapterBrief(String summaryJson) {
+    final summary = _decodeJsonObject(summaryJson);
+    final chapterBrief = summary['chapterBrief']?.toString().trim() ?? '';
+    if (chapterBrief.isNotEmpty) {
+      return chapterBrief;
+    }
+    final storyBrief = summary['storyBrief']?.toString().trim() ?? '';
+    if (storyBrief.isNotEmpty) {
+      return storyBrief;
+    }
+    final summaryText = summary['summary']?.toString().trim() ?? '';
+    return summaryText;
   }
 
   Future<StorySeries> _resolveStorySeries({
@@ -9758,6 +9854,30 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         uri.pathSegments.first.startsWith('@');
   }
 
+  bool _isSunoLoginFlowUrl(String value) {
+    final uri = Uri.tryParse(value.trim());
+    if (uri == null) {
+      return false;
+    }
+    final host = uri.host.toLowerCase();
+    final path = uri.path.toLowerCase();
+    final isSunoHost = host == 'suno.com' || host == 'www.suno.com';
+    final sunoAuthPath = RegExp(
+      r'/(login|log-in|signin|sign-in|signup|sign-up|auth|oauth|sso)(/|$)',
+      caseSensitive: false,
+    ).hasMatch(path);
+    if (isSunoHost && sunoAuthPath) {
+      return true;
+    }
+    final sunoRelatedAuthHost = host.endsWith('.suno.com') &&
+        RegExp(r'auth|account|login|clerk').hasMatch(host);
+    final externalAuthHost = RegExp(
+      r'accounts\.google\.com|discord(?:app)?\.com|appleid\.apple\.com|clerk|oauth|auth|login|sso|identity',
+      caseSensitive: false,
+    ).hasMatch(host);
+    return !isSunoHost && (sunoRelatedAuthHost || externalAuthHost);
+  }
+
   bool _isSyntheticSunoSongKey(String value) {
     return value.trim().toLowerCase().startsWith('suno-row:');
   }
@@ -9766,6 +9886,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final uri = Uri.tryParse(url.trim());
     if (uri == null) {
       return 'unknown';
+    }
+    if (_isSunoLoginFlowUrl(url)) {
+      return 'login';
     }
     final host = uri.host.toLowerCase();
     if (host != 'suno.com' && host != 'www.suno.com') {

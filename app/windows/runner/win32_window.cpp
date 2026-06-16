@@ -1,7 +1,10 @@
 #include "win32_window.h"
 
+#include <algorithm>
+#include <cwchar>
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <tlhelp32.h>
 
 #include "resource.h"
 
@@ -31,6 +34,13 @@ static int g_active_window_count = 0;
 
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
+struct ChildProcessWindowContext {
+  DWORD owner_process_id;
+  std::vector<HWND>* windows;
+  bool has_host_rect;
+  RECT host_rect;
+};
+
 // Scale helper to convert logical scaler values to physical using passed in
 // scale factor
 int Scale(int source, double scale_factor) {
@@ -51,6 +61,113 @@ void EnableFullDpiSupportIfAvailable(HWND hwnd) {
     enable_non_client_dpi_scaling(hwnd);
   }
   FreeLibrary(user32_module);
+}
+
+DWORD GetParentProcessId(DWORD process_id) {
+  DWORD parent_process_id = 0;
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) {
+    return parent_process_id;
+  }
+
+  PROCESSENTRY32 entry;
+  entry.dwSize = sizeof(PROCESSENTRY32);
+  if (Process32First(snapshot, &entry)) {
+    do {
+      if (entry.th32ProcessID == process_id) {
+        parent_process_id = entry.th32ParentProcessID;
+        break;
+      }
+    } while (Process32Next(snapshot, &entry));
+  }
+
+  CloseHandle(snapshot);
+  return parent_process_id;
+}
+
+bool IsDescendantProcess(DWORD process_id, DWORD ancestor_process_id) {
+  DWORD current_process_id = process_id;
+  for (int depth = 0; depth < 32 && current_process_id != 0; ++depth) {
+    DWORD parent_process_id = GetParentProcessId(current_process_id);
+    if (parent_process_id == ancestor_process_id) {
+      return true;
+    }
+    if (parent_process_id == 0 || parent_process_id == current_process_id) {
+      return false;
+    }
+    current_process_id = parent_process_id;
+  }
+  return false;
+}
+
+bool IsProcessNamed(DWORD process_id, const wchar_t* expected_name) {
+  bool matches = false;
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) {
+    return matches;
+  }
+
+  PROCESSENTRY32 entry;
+  entry.dwSize = sizeof(PROCESSENTRY32);
+  if (Process32First(snapshot, &entry)) {
+    do {
+      if (entry.th32ProcessID == process_id) {
+        matches = _wcsicmp(entry.szExeFile, expected_name) == 0;
+        break;
+      }
+    } while (Process32Next(snapshot, &entry));
+  }
+
+  CloseHandle(snapshot);
+  return matches;
+}
+
+bool RectsOverlap(const RECT& a, const RECT& b) {
+  return std::max(a.left, b.left) < std::min(a.right, b.right) &&
+         std::max(a.top, b.top) < std::min(a.bottom, b.bottom);
+}
+
+bool IsChromeWindowClass(HWND window) {
+  wchar_t class_name[256] = {};
+  if (GetClassName(window, class_name,
+                   static_cast<int>(sizeof(class_name) / sizeof(class_name[0]))) ==
+      0) {
+    return false;
+  }
+  return std::wcsncmp(class_name, L"Chrome_", 7) == 0;
+}
+
+BOOL CALLBACK CollectVisibleChildProcessWebViewWindows(HWND window,
+                                                       LPARAM lparam) {
+  auto* context = reinterpret_cast<ChildProcessWindowContext*>(lparam);
+  DWORD process_id = 0;
+  GetWindowThreadProcessId(window, &process_id);
+  if (process_id == 0 || process_id == context->owner_process_id ||
+      !IsChromeWindowClass(window) || !IsWindowVisible(window)) {
+    return TRUE;
+  }
+
+  RECT rect = {};
+  GetWindowRect(window, &rect);
+  if ((rect.right - rect.left) <= 0 || (rect.bottom - rect.top) <= 0) {
+    return TRUE;
+  }
+
+  const bool belongs_to_owner_process =
+      IsDescendantProcess(process_id, context->owner_process_id);
+  const bool is_overlapping_webview2 =
+      context->has_host_rect &&
+      IsProcessNamed(process_id, L"msedgewebview2.exe") &&
+      RectsOverlap(rect, context->host_rect);
+  if (!belongs_to_owner_process && !is_overlapping_webview2) {
+    return TRUE;
+  }
+
+  if (std::find(context->windows->begin(), context->windows->end(), window) ==
+      context->windows->end()) {
+    context->windows->push_back(window);
+  }
+  return TRUE;
 }
 
 }  // namespace
@@ -97,7 +214,7 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     window_class.hInstance = GetModuleHandle(nullptr);
     window_class.hIcon =
         LoadIcon(window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    window_class.hbrBackground = 0;
+    window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     window_class.lpszMenuName = nullptr;
     window_class.lpfnWndProc = Win32Window::WndProc;
     RegisterClass(&window_class);
@@ -150,6 +267,7 @@ bool Win32Window::Create(const std::wstring& title,
 }
 
 bool Win32Window::Show() {
+  has_been_shown_ = true;
   return ShowWindow(window_handle_, SW_SHOWNORMAL);
 }
 
@@ -198,6 +316,7 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
     }
     case WM_SIZE: {
+      SyncChildProcessWindows(wparam != SIZE_MINIMIZED);
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
         // Size and position the child window.
@@ -206,6 +325,14 @@ Win32Window::MessageHandler(HWND hwnd,
       }
       return 0;
     }
+
+    case WM_SHOWWINDOW:
+      SyncChildProcessWindows(wparam != FALSE);
+      break;
+
+    case WM_WINDOWPOSCHANGED:
+      SyncChildProcessWindows(IsWindowVisible(hwnd) && !IsIconic(hwnd));
+      break;
 
     case WM_ACTIVATE:
       if (child_content_ != nullptr) {
@@ -228,6 +355,7 @@ void Win32Window::Destroy() {
     DestroyWindow(window_handle_);
     window_handle_ = nullptr;
   }
+  has_been_shown_ = false;
   if (g_active_window_count == 0) {
     WindowClassRegistrar::GetInstance()->UnregisterWindowClass();
   }
@@ -261,6 +389,46 @@ HWND Win32Window::GetHandle() {
 
 void Win32Window::SetQuitOnClose(bool quit_on_close) {
   quit_on_close_ = quit_on_close;
+}
+
+void Win32Window::SyncChildProcessWindows(bool host_visible) {
+  if (host_visible) {
+    if (window_handle_ != nullptr && IsWindow(window_handle_)) {
+      RECT rect = {};
+      GetWindowRect(window_handle_, &rect);
+      if ((rect.right - rect.left) > 0 && (rect.bottom - rect.top) > 0 &&
+          !IsIconic(window_handle_)) {
+        last_visible_window_rect_ = rect;
+        has_last_visible_window_rect_ = true;
+      }
+    }
+    RestoreChildProcessWebViewWindows();
+  } else if (has_been_shown_) {
+    HideChildProcessWebViewWindows();
+  }
+}
+
+void Win32Window::HideChildProcessWebViewWindows() {
+  ChildProcessWindowContext context = {GetCurrentProcessId(),
+                                       &hidden_child_process_windows_,
+                                       has_last_visible_window_rect_,
+                                       last_visible_window_rect_};
+  EnumWindows(CollectVisibleChildProcessWebViewWindows,
+              reinterpret_cast<LPARAM>(&context));
+  for (HWND window : hidden_child_process_windows_) {
+    if (IsWindow(window)) {
+      ShowWindow(window, SW_HIDE);
+    }
+  }
+}
+
+void Win32Window::RestoreChildProcessWebViewWindows() {
+  for (HWND window : hidden_child_process_windows_) {
+    if (IsWindow(window)) {
+      ShowWindow(window, SW_SHOWNA);
+    }
+  }
+  hidden_child_process_windows_.clear();
 }
 
 bool Win32Window::OnCreate() {

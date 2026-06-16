@@ -10,6 +10,7 @@ import 'package:tomato_english_happy_talking/data/models/article_model.dart';
 import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/aliyun_wanx_image_service.dart';
+import 'package:tomato_english_happy_talking/services/content_safety_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_image_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_service.dart';
@@ -780,6 +781,73 @@ void main() {
     expect(seenBody?['parameters'], containsPair('enable_sequential', true));
     expect(seenBody?['parameters'], containsPair('n', 2));
     expect(seenBody?['parameters'], containsPair('size', '2K'));
+  });
+
+  test('Aliyun Wanx green net task failure records content safety failure',
+      () async {
+    AppConfig.setRuntimeConfigForTest(
+      aiProvider: AppConfig.aiProviderAliyunBailian,
+      aliyunBailianApiKey: 'dashscope-green-net-key-1234567890',
+      aliyunBailianApiBaseUrl: 'https://dashscope.example.com/api/v1/',
+      aliyunBailianImageModel: 'wan2.7-test',
+      aliyunBailianImageSize: '2K',
+    );
+    AliyunWanxImageService.setOverridesForTest(
+      post: ({required endpoint, required headers, required body}) async {
+        return {
+          'output': {'task_id': 'task-picture-green-net'},
+        };
+      },
+      get: ({required endpoint, required headers}) async {
+        return {
+          'output': {
+            'task_status': 'FAILED',
+            'message': 'Green net check failed for output image',
+          },
+        };
+      },
+    );
+
+    final results = await PictureBookImageService.generatePictureBookImageGroup(
+      requests: const [
+        VolcImageBatchRequest(
+          pageIndex: 0,
+          prompt: 'Image one: Alice follows the White Rabbit.',
+          promptMetadata: {'page': 0},
+        ),
+      ],
+      articleId: 33,
+      seriesId: 21,
+      groupPromptOverride: 'One continuous Alice picture-book scene.',
+      reusePartialCache: false,
+    );
+
+    expect(results, hasLength(1));
+    expect(results.single.source, VolcImageResultSource.failed);
+    expect(
+      results.single.errorMessage,
+      contains('Green net check failed for output image'),
+    );
+    final db = await DatabaseService.database;
+    final failures = await db.query('content_safety_failures');
+    final rules = await db.query('content_safety_rules');
+    expect(failures, hasLength(1));
+    expect(
+      failures.single['service_kind'],
+      ContentSafetyService.servicePictureBookImage,
+    );
+    expect(failures.single['purpose'], 'picture_book_image');
+    expect(failures.single['article_id'], 33);
+    expect(failures.single['error_code'], 'green_net');
+    expect(
+      failures.single['error_message'],
+      contains('Green net check failed for output image'),
+    );
+    expect(
+      failures.single['failed_text'],
+      'One continuous Alice picture-book scene.',
+    );
+    expect(rules, isEmpty);
   });
 
   test('Ark group generation does not rerun cached pages on retry', () async {

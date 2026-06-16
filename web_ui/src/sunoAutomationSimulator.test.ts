@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectSunoPageKind,
+  isSunoLoginFlowUrl,
   selectSunoCreateFields,
   selectSunoDownloadCandidate,
   shouldOpenLibraryForExistingDownload,
@@ -15,7 +16,15 @@ describe('suno automation simulator', () => {
     expect(detectSunoPageKind('https://suno.com/create')).toBe('create');
     expect(detectSunoPageKind(targetSongUrl)).toBe('song');
     expect(detectSunoPageKind('https://suno.com/@70565912')).toBe('profile');
+    expect(detectSunoPageKind('https://suno.com/login')).toBe('login');
+    expect(detectSunoPageKind('https://accounts.google.com/o/oauth2/v2/auth')).toBe('login');
     expect(detectSunoPageKind('https://example.com/song/one')).toBe('external');
+  });
+
+  it('recognizes Suno sign-in navigation without treating normal pages as login', () => {
+    expect(isSunoLoginFlowUrl('https://auth.suno.com/oauth/authorize')).toBe(true);
+    expect(isSunoLoginFlowUrl('https://discord.com/oauth2/authorize')).toBe(true);
+    expect(isSunoLoginFlowUrl('https://suno.com/create')).toBe(false);
   });
 
   it('does not reload forever after Suno redirects an existing song to profile', () => {
@@ -881,6 +890,38 @@ describe('suno automation simulator', () => {
     });
     expect(decision.action).toBe('waitStyleMagic');
     expect(decision.stylePrompt).toBeUndefined();
+  });
+
+  it('does not click the Suno style magic button more than once for a create attempt', () => {
+    const decision = simulateSunoCreateFill({
+      currentUrl: 'https://suno.com/create',
+      lyrics: 'Tom finds a bright snack box. He sings a happy song with Alice.',
+      magicAlreadyRequested: true,
+      allowMagicClick: true,
+      controls: [
+        { label: 'Advanced', selected: true },
+        {
+          label: 'Personalize style prompt to match your taste',
+          className: 'hxc-btn-variant-standard bg-accent-blue text-white',
+          context: 'Styles 0/1000',
+        },
+      ],
+      fields: [
+        {
+          label: 'Lyrics',
+          context: 'Lyrics 1998/5000',
+          rect: { height: 248 },
+        },
+        {
+          label: 'Styles',
+          value: '',
+          context: 'Styles 0/1000',
+          rect: { height: 88 },
+        },
+      ],
+    });
+    expect(decision.action).toBe('waitStyleMagic');
+    expect(decision.magicControl?.label).toBe('Personalize style prompt to match your taste');
   });
 
   it('switches Simple Create mode to Advanced before filling lyrics and styles', () => {

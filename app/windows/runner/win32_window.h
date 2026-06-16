@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 // A class abstraction for a high DPI-aware Win32 Window. Intended to be
 // inherited from by classes that wish to specialize with custom
@@ -71,6 +72,9 @@ class Win32Window {
   // Called when Destroy is called.
   virtual void OnDestroy();
 
+  // Mirrors the host window visibility to WebView2 child-process windows.
+  void SyncChildProcessWindows(bool host_visible);
+
  private:
   friend class WindowClassRegistrar;
 
@@ -90,13 +94,22 @@ class Win32Window {
   // Update the window frame's theme to match the system theme.
   static void UpdateTheme(HWND const window);
 
+  void HideChildProcessWebViewWindows();
+  void RestoreChildProcessWebViewWindows();
+
   bool quit_on_close_ = false;
+  bool has_been_shown_ = false;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;
 
   // window handle for hosted content.
   HWND child_content_ = nullptr;
+
+  // Top-level WebView2 child-process windows hidden while the host is hidden.
+  std::vector<HWND> hidden_child_process_windows_;
+  bool has_last_visible_window_rect_ = false;
+  RECT last_visible_window_rect_ = {};
 };
 
 #endif  // RUNNER_WIN32_WINDOW_H_

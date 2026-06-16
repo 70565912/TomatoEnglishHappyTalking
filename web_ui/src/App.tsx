@@ -1,4 +1,5 @@
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import type { TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { onNativeEvent, sendNative } from './bridge';
 import { splitSentences } from './sentenceSplitter';
@@ -136,6 +137,85 @@ function loadingPictureBookState(articleId: number): PictureBookState {
     status: 'loading',
     pages: [],
   };
+}
+
+function formatCountdown(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function AiBlockingOverlay({
+  title,
+  detail,
+  timeoutSeconds,
+}: {
+  title: string;
+  detail: string;
+  timeoutSeconds: number;
+}) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    setElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [detail, timeoutSeconds, title]);
+
+  const remainingSeconds = Math.max(0, timeoutSeconds - elapsedSeconds);
+  const timedOut = remainingSeconds === 0;
+
+  return createPortal(
+    <div className="ai-blocking-backdrop" role="presentation">
+      <section className="ai-blocking-panel" role="status" aria-live="polite">
+        <div className="ai-blocking-spinner" aria-hidden="true">
+          <Icon name="refresh" />
+        </div>
+        <div>
+          <b>{title}</b>
+          <p>{detail}</p>
+          <span>{timedOut ? '已超过预计等待时间，仍在等待服务返回' : `预计超时倒计时 ${formatCountdown(remainingSeconds)}`}</span>
+        </div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+function AutoResizeTextarea({
+  className,
+  onInput,
+  rows = 3,
+  value,
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const resize = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+  };
+
+  useEffect(resize, [value]);
+
+  return (
+    <textarea
+      {...props}
+      ref={textareaRef}
+      className={['auto-resize-textarea', className].filter(Boolean).join(' ')}
+      rows={rows}
+      value={value}
+      onInput={(event) => {
+        resize();
+        onInput?.(event);
+      }}
+    />
+  );
 }
 
 function mergePictureBookState(
@@ -657,6 +737,7 @@ function App() {
                 setNotice(err instanceof Error ? err.message : String(err));
               }
             }}
+            onUpdateSeries={updateSeries}
           />
         )}
 
@@ -718,6 +799,13 @@ function App() {
             setNotice('已提交绘本组图生成');
           }}
           onNotice={setNotice}
+        />
+      )}
+      {picturePromptReviewLoadingArticleId !== null && (
+        <AiBlockingOverlay
+          title="正在准备绘本提示词"
+          detail="正在生成或读取章节分镜计划，请等待审核弹窗打开。"
+          timeoutSeconds={180}
         />
       )}
     </div>
@@ -1443,6 +1531,7 @@ function BookLibrarySelectorPanel({
                   <img src={bookCoverSource(book, index)} alt="" />
                   <span>
                     <b>{book.title}</b>
+                    {book.description && <small className="book-description-line">{book.description}</small>}
                     <small>{book.articles.length} 篇章节 · {book.sentenceCount} 句子</small>
                   </span>
                   <Icon name="next" />
@@ -1675,6 +1764,7 @@ function CreationCenterPage({
   onArticlesUpdated,
   onDelete,
   onDeleteSeries,
+  onUpdateSeries,
 }: {
   articles: Article[];
   series: StorySeries[];
@@ -1688,6 +1778,7 @@ function CreationCenterPage({
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onDelete: (articleId: number) => Promise<void>;
   onDeleteSeries: (seriesId: number) => Promise<void>;
+  onUpdateSeries: (seriesId: number, title: string, description: string) => Promise<void>;
 }) {
   const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
   const routeBook = books.find((book) => book.seriesId === initialSeriesId) ??
@@ -1700,6 +1791,11 @@ function CreationCenterPage({
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(() => initialArticleId ?? null);
   const [activeTab, setActiveTab] = useState<'picture' | 'song' | 'video'>('picture');
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
+  const [bookEditDraft, setBookEditDraft] = useState<BookGroup | null>(null);
+  const [bookEditTitle, setBookEditTitle] = useState('');
+  const [bookEditDescription, setBookEditDescription] = useState('');
+  const [bookEditSaving, setBookEditSaving] = useState(false);
+  const [bookEditError, setBookEditError] = useState<string | null>(null);
   const resolvedSelectedBookKey =
     selectedBookKey && books.some((book) => book.key === selectedBookKey)
       ? selectedBookKey
@@ -1815,6 +1911,12 @@ function CreationCenterPage({
           setChapterListCollapsed(false);
         }}
         onDeleteSeries={onDeleteSeries}
+        onEditSeries={(book) => {
+          setBookEditDraft(book);
+          setBookEditTitle(book.title);
+          setBookEditDescription(book.description ?? '');
+          setBookEditError(null);
+        }}
         renderChapterRow={({ article, imageSrc }) => (
           <MissionRow
             key={article.id}
@@ -1879,6 +1981,44 @@ function CreationCenterPage({
           <VideoCreationPanel article={selectedArticle} onNotice={onNotice} onArticlesUpdated={onArticlesUpdated} />
         )}
       </section>
+      {bookEditDraft && (
+        <BookEditDialog
+          title={bookEditTitle}
+          description={bookEditDescription}
+          error={bookEditError}
+          saving={bookEditSaving}
+          onTitleChange={(title) => {
+            setBookEditTitle(title);
+            setBookEditError(null);
+          }}
+          onDescriptionChange={(description) => {
+            setBookEditDescription(description);
+            setBookEditError(null);
+          }}
+          onCancel={() => {
+            if (bookEditSaving) return;
+            setBookEditDraft(null);
+            setBookEditError(null);
+          }}
+          onSave={async () => {
+            if (!bookEditDraft?.seriesId || bookEditSaving) return;
+            setBookEditSaving(true);
+            setBookEditError(null);
+            try {
+              await onUpdateSeries(
+                bookEditDraft.seriesId,
+                bookEditTitle.trim(),
+                bookEditDescription.trim(),
+              );
+              setBookEditDraft(null);
+            } catch (error) {
+              setBookEditError(error instanceof Error ? error.message : '书籍信息保存失败');
+            } finally {
+              setBookEditSaving(false);
+            }
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -1967,18 +2107,21 @@ function PictureBookCreationPanel({
             state.pages.map((page, index) => {
               const safePageIndex = Number.isFinite(page.pageIndex) ? page.pageIndex : index;
               const imageSource = directImageSource(page.imageUri);
+              const scenePreview = pictureBookPageScenePreview(page);
               return (
                 <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
-                  <div className="picture-creation-media">
+                  <div className={`picture-creation-media ${imageSource ? '' : 'is-empty'}`}>
                     {imageSource ? (
                       <img src={imageSource} alt="" />
                     ) : (
-                      <span>{page.status === 'error' ? '生成失败' : '加载缩略图'}</span>
+                      <span>{page.status === 'error' ? '生成失败' : pictureBookStatusLabel(page.status)}</span>
                     )}
                   </div>
-                  <div>
-                    <b>第 {safePageIndex + 1} 页</b>
+                  <div className="picture-creation-copy">
+                    <b>{scenePreview.title || `第 ${safePageIndex + 1} 页`}</b>
                     <small>句子 {page.sentenceStartIndex + 1} - {page.sentenceEndIndex + 1}</small>
+                    {scenePreview.story && <p className="picture-scene-story">{scenePreview.story}</p>}
+                    {scenePreview.visual && <p className="picture-scene-visual">{scenePreview.visual}</p>}
                     <p>{page.paragraphText}</p>
                     {page.errorMessage && <em>{page.errorMessage}</em>}
                     {page.status === 'error' && (
@@ -2154,6 +2297,27 @@ function PictureBookPromptReviewDialog({
 
   const savePromptLabel = savingPrompt ? '保存中' : '保存提示词';
   const confirmLabel = submitting ? '生成中' : '生成组图';
+  const aiBlockingState =
+    submitting
+      ? {
+          title: '正在提交绘本组图',
+          detail: `正在按 ${Math.max(1, scenes.length)} 个分镜生成连续组图，请等待服务返回。`,
+          timeoutSeconds: Math.min(2700, Math.max(180, Math.max(1, scenes.length) * 150)),
+        }
+      : refreshingPrompt
+        ? {
+            title: '正在刷新绘本提示词',
+            detail:
+              refreshingPrompt === 'scenes'
+                ? 'AI 正在重新生成章节分镜描述。'
+                : refreshingPrompt === 'chapterBrief'
+                  ? 'AI 正在根据当前分镜生成章节分镜描述。'
+                  : refreshingPrompt === 'storyBrief'
+                    ? 'AI 正在生成当前章节故事简述。'
+                    : 'AI 正在生成书籍简介。',
+            timeoutSeconds: refreshingPrompt === 'scenes' ? 180 : 90,
+          }
+        : null;
   const renderRefreshButton = (
     target: PictureBookPromptRefreshTarget,
     label: string,
@@ -2202,27 +2366,14 @@ function PictureBookPromptReviewDialog({
 
           <section className="picture-prompt-section">
             <div className="picture-prompt-section-heading">
-              <h3>绘本故事简述</h3>
-              {renderRefreshButton('storyBrief', '自动生成故事简述', 'AI 自动生成故事简述')}
+              <h3>当前章节故事简述</h3>
+              {renderRefreshButton('storyBrief', '自动生成章节故事简述', 'AI 自动生成当前章节故事简述')}
             </div>
             <textarea
-              aria-label="绘本故事简述"
+              aria-label="当前章节故事简述"
               value={storyBrief}
               rows={5}
               onChange={(event) => setStoryBrief(event.target.value)}
-            />
-          </section>
-
-          <section className="picture-prompt-section full">
-            <div className="picture-prompt-section-heading">
-              <h3>章节组图简述</h3>
-              {renderRefreshButton('chapterBrief', '自动生成章节组图简述', 'AI 自动生成章节组图简述')}
-            </div>
-            <textarea
-              aria-label="章节组图简述"
-              value={chapterBrief}
-              rows={5}
-              onChange={(event) => setChapterBrief(event.target.value)}
             />
           </section>
 
@@ -2247,8 +2398,8 @@ function PictureBookPromptReviewDialog({
 
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
-              <h3>分镜描述</h3>
-              {renderRefreshButton('scenes', '自动生成分镜描述', 'AI 自动生成分镜描述')}
+              <h3>章节分镜描述</h3>
+              {renderRefreshButton('scenes', '自动生成章节分镜描述', 'AI 自动生成章节分镜描述')}
             </div>
             <div className="picture-page-prompt-list">
               {scenes.map((scene, index) => (
@@ -2261,17 +2412,17 @@ function PictureBookPromptReviewDialog({
                     placeholder="分镜标题"
                     onChange={(event) => updateScene(scene.pageIndex, 'title', event.target.value)}
                   />
-                  <textarea
+                  <AutoResizeTextarea
                     aria-label={`第 ${index + 1} 个分镜剧情`}
                     value={scene.story}
-                    rows={3}
+                    rows={2}
                     placeholder="这一张图对应的剧情"
                     onChange={(event) => updateScene(scene.pageIndex, 'story', event.target.value)}
                   />
-                  <textarea
+                  <AutoResizeTextarea
                     aria-label={`第 ${index + 1} 个分镜画面描述`}
                     value={scene.visual}
-                    rows={5}
+                    rows={3}
                     placeholder="画面中应出现的角色、动作、地点、情绪和构图重点"
                     onChange={(event) => updateScene(scene.pageIndex, 'visual', event.target.value)}
                   />
@@ -2293,6 +2444,13 @@ function PictureBookPromptReviewDialog({
             <Icon name={submitting ? 'refresh' : 'wand'} /> {confirmLabel}
           </button>
         </div>
+        {aiBlockingState && (
+          <AiBlockingOverlay
+            title={aiBlockingState.title}
+            detail={aiBlockingState.detail}
+            timeoutSeconds={aiBlockingState.timeoutSeconds}
+          />
+        )}
       </section>
     </div>,
     document.body,
@@ -2621,6 +2779,26 @@ function ResourceRow({ label, value }: { label: string; value: string }) {
 
 type ChapterOrder = 'asc' | 'desc';
 
+function promptRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function promptText(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+function pictureBookPageScenePreview(page: PictureBookPage): { title: string; story: string; visual: string } {
+  const prompt = promptRecord(page.prompt);
+  const scene = promptRecord(prompt?.scene);
+  return {
+    title: promptText(scene?.title),
+    story: promptText(scene?.story) || promptText(scene?.summary),
+    visual: promptText(scene?.visual) || promptText(scene?.visualPrompt),
+  };
+}
+
 function pictureBookStatusLabel(status?: string | null): string {
   switch (status) {
     case 'loading':
@@ -2749,6 +2927,10 @@ function latestArticleTime(articles: Article[]): number {
   );
 }
 
+function chapterBriefForArticle(article: Article): string {
+  return article.chapterBrief?.replace(/\s+/g, ' ').trim() ?? '';
+}
+
 function bookCoverSource(book: BookGroup, index: number): string {
   const firstGenerated = book.articles.find(
     (article) => directImageSource(article.coverImageUri) || directImageSource(article.coverImagePath),
@@ -2784,8 +2966,9 @@ function ArticlePage({
   const contentTooLong = content.length > ARTICLE_CONTENT_MAX_CHARS;
   const canSave = Boolean(content.trim()) && !contentTooLong && !saving && !generatingSeriesDescription;
   const creatingNewSeries = selectedSeriesId === 'new' || series.length === 0;
+  const seriesDescriptionSeed = newSeriesTitle.trim() || title.trim() || content.trim();
   const canGenerateSeriesDescription =
-    creatingNewSeries && Boolean(content.trim()) && !contentTooLong && !saving && !generatingSeriesDescription;
+    creatingNewSeries && Boolean(seriesDescriptionSeed) && !contentTooLong && !saving && !generatingSeriesDescription;
   const selectedSeries = useMemo(
     () => series.find((item) => String(item.id) === selectedSeriesId) ?? null,
     [selectedSeriesId, series],
@@ -2836,7 +3019,7 @@ function ArticlePage({
   };
 
   const generateSeriesDescription = async () => {
-    if (!content.trim()) {
+    if (!newSeriesTitle.trim() && !title.trim() && !content.trim()) {
       setError('请先填写文章内容');
       return;
     }
@@ -2847,10 +3030,14 @@ function ArticlePage({
     setGeneratingSeriesDescription(true);
     setError(null);
     try {
+      const descriptionSeedTitle = newSeriesTitle.trim() || title.trim() || 'New Story Series';
+      const descriptionContent = content.trim()
+        ? content
+        : `Book title: ${descriptionSeedTitle}. Generate a concise book-level visual description for this picture-book series.`;
       const payload = await sendNative<{ description: string }>('series.suggestDescription', {
         seriesTitle: newSeriesTitle.trim(),
         articleTitle: title.trim(),
-        content,
+        content: descriptionContent,
         description: seriesDescription.trim(),
       });
       setSeriesDescription(payload.description ?? '');
@@ -3048,6 +3235,20 @@ function ArticlePage({
           </button>
         </footer>
       </form>
+      {generatingSeriesDescription && (
+        <AiBlockingOverlay
+          title="正在生成书籍简介"
+          detail="AI 正在根据书名、章节标题或正文生成书籍级视觉简介。"
+          timeoutSeconds={90}
+        />
+      )}
+      {saving && (
+        <AiBlockingOverlay
+          title="正在保存并处理章节"
+          detail="正在解析正文、生成必要的标题或英文内容，并写入书库。"
+          timeoutSeconds={180}
+        />
+      )}
     </section>
   );
 }
@@ -7846,6 +8047,7 @@ function MissionRow({
 }) {
   const score = article.averageScore > 0 ? Math.round(article.averageScore) : 40;
   const openArticle = onOpen ?? onListen ?? onFollow ?? onChat;
+  const chapterBrief = chapterBriefForArticle(article);
   return (
     <article className={`mission-row ${selected ? 'active' : ''}`}>
       <button
@@ -7873,7 +8075,8 @@ function MissionRow({
             </button>
           )}
         </h3>
-        <p>{article.sentenceCount} 句子 · 最近学习 今天</p>
+        {chapterBrief && <p className="mission-chapter-brief">{chapterBrief}</p>}
+        <p className={chapterBrief ? 'mission-meta' : undefined}>{article.sentenceCount} 句子 · 最近学习 今天</p>
       </div>
       <span className="ring-score">{score}%</span>
       <div className="mission-actions">

@@ -84,6 +84,9 @@ class ContentSafetyService {
       'audit_content_risky',
       'content_risk',
       'content risk',
+      'green net',
+      'greennet',
+      'green net check',
       'risk detection',
       'riskdetection',
       'sensitive',
@@ -95,6 +98,7 @@ class ContentSafetyService {
       '敏感',
       '安全',
       '风险',
+      '绿网',
     ];
     final hasSafetyKeyword =
         safetyKeywords.any((keyword) => lower.contains(keyword));
@@ -512,6 +516,10 @@ class ContentSafetyService {
       if (code != null) {
         return code.toString();
       }
+    }
+    final lower = summary.toLowerCase();
+    if (lower.contains('green net') || summary.contains('绿网')) {
+      return 'green_net';
     }
     final match = RegExp(
       r'\b(SensitiveContentDetected|InputTextRiskDetection|audit_content_risky|content_risk)\b',

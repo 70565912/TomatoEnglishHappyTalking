@@ -36,6 +36,7 @@ export interface Article {
   seriesId?: number | null;
   seriesTitle?: string;
   seriesDescription?: string;
+  chapterBrief?: string;
   chapterOrder?: number | null;
 }
 

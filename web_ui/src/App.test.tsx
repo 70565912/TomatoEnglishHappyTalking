@@ -738,6 +738,54 @@ describe('App', () => {
     });
   });
 
+  it('enables new book description generation with only a book title', async () => {
+    window.location.hash = '/article/new';
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+          return ok(message.id, type, { articles: [], series: [] });
+        }
+        if (type === 'series.suggestDescription') {
+          return ok(message.id, type, {
+            description: 'A whimsical Wonderland picture book with a compact recurring character roster.',
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    await screen.findByPlaceholderText('例如 The Secret Garden');
+    const bookTitleInput = document.querySelector('input[placeholder*="The Secret Garden"]') as HTMLInputElement;
+    const generateButton = document.querySelector('.prompt-magic-button') as HTMLButtonElement;
+    expect(generateButton).toBeDisabled();
+    fireEvent.change(bookTitleInput, { target: { value: "Alice's Adventures in Wonderland" } });
+
+    expect(generateButton).not.toBeDisabled();
+    fireEvent.click(generateButton);
+
+    await waitFor(() => {
+      const request = calls.find((call) => call.type === 'series.suggestDescription');
+      expect(request?.payload).toMatchObject({
+        seriesTitle: "Alice's Adventures in Wonderland",
+        articleTitle: '',
+      });
+      expect(String(request?.payload.content ?? '')).toContain("Alice's Adventures in Wonderland");
+    });
+  });
+
   it('moves empty-book deletion to the creation center', async () => {
     window.location.hash = '/';
     const article = {
@@ -894,6 +942,96 @@ describe('App', () => {
       expect(calls.find((call) => call.type === 'article.delete')?.payload).toMatchObject({ articleId: 42 });
     });
     expect(await screen.findByText('章节已删除')).toBeInTheDocument();
+  });
+
+  it('shows descriptions and edits book info from the creation center', async () => {
+    window.location.hash = '/creation?articleId=42';
+    const now = new Date().toISOString();
+    const article = {
+      id: 42,
+      title: 'Storyboard Chapter',
+      content: 'Alice meets the White Rabbit.',
+      sentences: ['Alice meets the White Rabbit.'],
+      sentenceCount: 1,
+      createdAt: now,
+      averageScore: 0,
+      pictureBookEnabled: true,
+      seriesId: 9,
+      seriesTitle: 'Wonderland Book',
+      seriesDescription: 'Victorian fantasy book world with recurring Wonderland characters.',
+      chapterBrief: 'A one-scene storyboard where Alice notices the hurried White Rabbit.',
+      chapterOrder: 1,
+    };
+    const series = [{
+      id: 9,
+      title: 'Wonderland Book',
+      description: 'Victorian fantasy book world with recurring Wonderland characters.',
+      coverImagePath: null,
+      createdAt: now,
+      updatedAt: now,
+    }];
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'series.update') {
+          return ok(message.id, type, {
+            articles: [{
+              ...article,
+              seriesTitle: String(payload.title ?? article.seriesTitle),
+              seriesDescription: String(payload.description ?? article.seriesDescription),
+            }],
+            series: [{
+              ...series[0],
+              title: String(payload.title ?? series[0].title),
+              description: String(payload.description ?? series[0].description),
+            }],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'empty',
+            pages: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: '创作中心' })).toBeInTheDocument();
+    expect((await screen.findAllByText('Victorian fantasy book world with recurring Wonderland characters.')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('A one-scene storyboard where Alice notices the hurried White Rabbit.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /编辑书籍/ }));
+    const dialog = await screen.findByRole('dialog', { name: '编辑书籍信息' });
+    fireEvent.change(within(dialog).getByLabelText('书籍名称'), { target: { value: 'Updated Wonderland Book' } });
+    fireEvent.change(within(dialog).getByLabelText('书籍简介'), { target: { value: 'Updated character roster and visual style.' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /保存/ }));
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'series.update')?.payload).toMatchObject({
+        seriesId: 9,
+        title: 'Updated Wonderland Book',
+        description: 'Updated character roster and visual style.',
+      });
+    });
+    expect(await screen.findByText('书籍信息已更新')).toBeInTheDocument();
   });
 
   it('updates creation-center picture-book status from native events', async () => {
@@ -1178,14 +1316,13 @@ describe('App', () => {
     expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' })).toHaveTextContent(
       '自动生成书籍简介',
     );
-    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成故事简述' })).toHaveTextContent(
-      '自动生成故事简述',
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成当前章节故事简述' })).toHaveTextContent(
+      '自动生成章节故事简述',
     );
-    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成章节组图简述' })).toHaveTextContent(
-      '自动生成章节组图简述',
-    );
-    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成分镜描述' })).toHaveTextContent(
-      '自动生成分镜描述',
+    expect(within(reviewDialog).queryByLabelText('章节分镜简述')).not.toBeInTheDocument();
+    expect(within(reviewDialog).getByRole('heading', { name: '章节分镜描述' })).toBeInTheDocument();
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成章节分镜描述' })).toHaveTextContent(
+      '自动生成章节分镜描述',
     );
     expect(
       (within(reviewDialog).getByLabelText('组图总提示词') as HTMLTextAreaElement)
@@ -2415,6 +2552,77 @@ describe('App', () => {
       ]);
     });
     expect(screen.queryByText('加载缩略图')).not.toBeInTheDocument();
+  });
+
+  it('shows queued storyboard descriptions before picture images are ready', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const now = new Date().toISOString();
+    const article = {
+      id: 1,
+      title: 'Queued Picture Chapter',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: now,
+      averageScore: 86,
+      seriesId: 1,
+      seriesTitle: 'Queued Book',
+      chapterOrder: 1,
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'generating',
+            pages: [
+              {
+                articleId: article.id,
+                seriesId: 1,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.sentences[0],
+                prompt: {
+                  scene: {
+                    title: 'Bright Snack Discovery',
+                    story: 'Tom discovers the snack box before the image is ready.',
+                    visual: 'A cozy spaceship kitchen with Tom reaching toward a glowing snack box.',
+                  },
+                },
+                imagePath: null,
+                imageUri: null,
+                status: 'queued',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('Bright Snack Discovery')).toBeInTheDocument();
+    expect(await screen.findByText('Tom discovers the snack box before the image is ready.')).toBeInTheDocument();
+    expect(await screen.findByText('A cozy spaceship kitchen with Tom reaching toward a glowing snack box.')).toBeInTheDocument();
+    expect(calls.some((call) => call.type === 'pictureBook.pageImage')).toBe(false);
   });
 
   it('shows preload progress and hides the completed listening preload notice after 3 seconds', async () => {

@@ -1,4 +1,4 @@
-export type SunoPageKind = 'create' | 'song' | 'profile' | 'library' | 'home' | 'external' | 'unknown';
+export type SunoPageKind = 'create' | 'song' | 'profile' | 'library' | 'home' | 'login' | 'external' | 'unknown';
 
 export interface SunoControlFixture {
   label?: string;
@@ -71,6 +71,25 @@ export interface SunoCreateFillDecision {
 
 const normalize = (value: unknown): string => String(value ?? '').replace(/\s+/g, ' ').trim();
 
+export function isSunoLoginFlowUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  const path = parsed.pathname.toLowerCase();
+  const isSunoHost = host === 'suno.com' || host === 'www.suno.com';
+  if (isSunoHost && /\/(?:login|log-in|signin|sign-in|signup|sign-up|auth|oauth|sso)(?:\/|$)/i.test(path)) {
+    return true;
+  }
+  const sunoRelatedAuthHost = host.endsWith('.suno.com') && /auth|account|login|clerk/i.test(host);
+  const externalAuthHost =
+    /accounts\.google\.com|discord(?:app)?\.com|appleid\.apple\.com|clerk|oauth|auth|login|sso|identity/i.test(host);
+  return !isSunoHost && (sunoRelatedAuthHost || externalAuthHost);
+}
+
 export function detectSunoPageKind(url: string): SunoPageKind {
   let parsed: URL;
   try {
@@ -78,6 +97,7 @@ export function detectSunoPageKind(url: string): SunoPageKind {
   } catch {
     return 'unknown';
   }
+  if (isSunoLoginFlowUrl(url)) return 'login';
   const host = parsed.hostname.toLowerCase();
   if (host !== 'suno.com' && host !== 'www.suno.com') return 'external';
   const path = parsed.pathname;
@@ -350,7 +370,7 @@ export function simulateSunoCreateFill(params: {
     };
   }
 
-  if (magicControl && params.allowMagicClick) {
+  if (magicControl && params.allowMagicClick && !params.magicAlreadyRequested) {
     return {
       action: 'clickStyleMagic',
       missing: [],
