@@ -1427,6 +1427,171 @@ but the three were all crowded together at one corner of it.
     expect(pages.single.paragraphText, 'Old page');
   });
 
+  test('picture-book prompt review merges chapter characters into book draft',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-chapter-roster-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'The Queen Points',
+        content:
+            'Alice walks into the garden. The Queen of Hearts points at the White Rabbit.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen of Hearts points at the White Rabbit.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Character roster: Alice - blonde Victorian girl in a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_plan_v4',
+                  'storyBrief':
+                      'Character roster: Alice - blonde Victorian girl in a blue dress. Chapter character additions: Queen of Hearts - small imperious queen in a red heart gown and crown; White Rabbit - anxious white rabbit in a waistcoat carrying a pocket watch.',
+                  'chapterBrief':
+                      'Alice enters the royal garden and sees the Queen command the White Rabbit.',
+                  'scenes': [
+                    {
+                      'pageIndex': 0,
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 0,
+                      'title': 'Alice Enters',
+                      'story': 'Alice walks into the garden.',
+                      'visual':
+                          'Alice in a blue dress enters the royal garden.',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'sentenceStartIndex': 1,
+                      'sentenceEndIndex': 1,
+                      'title': 'Queen Points',
+                      'story':
+                          'The Queen of Hearts points at the White Rabbit.',
+                      'visual':
+                          'The small Queen of Hearts in a red heart gown points at the anxious White Rabbit with a waistcoat and pocket watch.',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+    );
+
+    expect(review['bookDescription'], contains('Queen of Hearts'));
+    expect(review['bookDescription'], contains('White Rabbit'));
+    expect(review['groupPrompt'], contains('Queen of Hearts'));
+    final unchangedSeries =
+        await DatabaseService.getStorySeriesById(series.id!);
+    expect(unchangedSeries?.description, isNot(contains('Queen of Hearts')));
+
+    await PictureBookService.savePromptReview(
+      reviewId: review['reviewId'].toString(),
+      groupPrompt: review['groupPrompt'].toString(),
+      bookDescription: review['bookDescription'].toString(),
+      storyBrief: review['storyBrief'].toString(),
+      chapterBrief: review['chapterBrief'].toString(),
+      scenes: [
+        for (final scene in review['scenes'] as List)
+          Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    final savedSeries = await DatabaseService.getStorySeriesById(series.id!);
+    expect(savedSeries?.description, contains('Queen of Hearts'));
+    expect(savedSeries?.description, contains('White Rabbit'));
+  });
+
+  test('picture-book group prompt keeps twelve image entries concise',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-prompt-limit-key-12345678901234567890');
+    final sentences = [
+      for (var i = 0; i < 12; i += 1)
+        'Alice meets character ${i + 1} beside a curious Wonderland landmark.',
+    ];
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Long Wonderland Chapter',
+        content: sentences.join(' '),
+        sentences: sentences,
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Character roster: Alice - blonde Victorian girl in a blue dress and white apron; White Rabbit - anxious white rabbit in a waistcoat; Queen of Hearts - small imperious queen in a red heart gown; Mad Hatter - eccentric man with a tall hat and tea things.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_plan_v4',
+                  'storyBrief':
+                      'Character roster: Alice, White Rabbit, Queen of Hearts, Mad Hatter, March Hare, Duchess, Mock Turtle, and Gryphon with concise consistent appearances. Chapter character additions: Gryphon - golden eagle-lion guardian with soft wings; Mock Turtle - melancholy turtle-calf with a shell collar.',
+                  'chapterBrief':
+                      'Alice crosses twelve quick Wonderland moments while recurring characters keep stable appearances.',
+                  'scenes': [
+                    for (var i = 0; i < 12; i += 1)
+                      {
+                        'pageIndex': i,
+                        'sentenceStartIndex': i,
+                        'sentenceEndIndex': i,
+                        'title': 'Wonderland Moment ${i + 1}',
+                        'story':
+                            'Alice meets character ${i + 1} beside a curious landmark.',
+                        'visual':
+                            'Alice in her blue dress shares the frame with a recurring Wonderland character, clear action, distinct prop, and stable storybook watercolor style for scene ${i + 1}.',
+                      },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+    );
+    final prompt = review['groupPrompt'].toString();
+
+    expect(prompt, contains('Image 1:'));
+    expect(prompt, contains('Image 12:'));
+    expect(prompt.length, lessThanOrEqualTo(5200));
+    expect(_wordCount(prompt), lessThanOrEqualTo(620));
+  });
+
   test(
       'picture-book prompt magic refresh updates draft without image generation',
       () async {
@@ -1808,6 +1973,9 @@ void _writeImageArkKey(Directory _, String key) {
     volcArkApiKey: key,
   );
 }
+
+int _wordCount(String text) =>
+    text.split(RegExp(r'\s+')).where((word) => word.trim().isNotEmpty).length;
 
 Future<void> _installTwoPageChapterPlanOverride() async {
   TextGenerationService.setPostOverrideForTest(

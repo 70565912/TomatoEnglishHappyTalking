@@ -106,7 +106,7 @@ Sequential/group request:
 ## Prompt Rules For This App
 
 - Generate one coherent picture-book image sequence per chapter/article. The
-  confirmed v4 plan has at most 14 scenes; image 1 maps to scene 1, image N
+  confirmed v4 plan has at most 12 scenes; image 1 maps to scene 1, image N
   maps to scene N, and the app does not use the group as candidate alternatives.
 - `picture_book_pages` stores one row per confirmed scene, with
   `sentenceStartIndex` and `sentenceEndIndex` covering that scene. All rows
@@ -120,7 +120,12 @@ Sequential/group request:
 - Keep the book or series name in the prompt when available, but never hard-code
   one specific book title globally.
 - For public-domain classics, include the current book title and chapter
-  context to improve character accuracy.
+  context to improve character accuracy. If the title is not confidently
+  recognizable, do not invent a book-wide cast; use current-chapter characters
+  only.
+- Keep final group prompts concise. For long 12-scene chapters, preserve every
+  `Image N` entry while shortening book/chapter context and each visual
+  direction so the request stays near the official prompt guidance.
 - Prompt review uses `picture_book_prompt_v4` /
   `picture_book_chapter_plan_v4`. It produces editable `storyBrief`,
   `chapterBrief`, `scenes[]`, and `groupPrompt`, then waits for

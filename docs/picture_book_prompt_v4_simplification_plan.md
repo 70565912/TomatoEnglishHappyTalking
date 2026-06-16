@@ -114,6 +114,8 @@ picture_book_chapter_plan_v4
 - 分镜数量上限保留为 12，避免成本和接口超限。
 - 每个分镜对应一张图片，不做候选图。
 - 主配角外貌只写入 `bookDescription`、`storyBrief`、`groupPrompt` 或当前分镜 `visual`，不持久化为角色卡；三姐妹、旁白、老师等未命名群体也要有稳定角色标签和外观锚点。
+- 对可识别经典名著，AI 可基于公开常识列出主要递归角色；对无法识别的普通书不要编造全书角色。
+- 本章新增且书籍描述缺失的视觉角色，以 `Chapter character additions:` 进入审核草稿；用户保存或确认后才合并进 `story_series.description`，供后续章节复用。
 - 不输出 `negativePrompt`、`safety`、`audience`、字幕留白或 UI 相关字段。
 
 ### 3. 提示词审核弹窗
@@ -285,5 +287,6 @@ Image 2:
 - 跨章节一致性由“书籍简介”承担，不再由 Bible 或参考图承担。
 - 角色外貌描述由 AI 在每章规划阶段生成紧凑角色清单，覆盖主角、配角、叙述者和视觉上重要的未命名群体；用户可在审核弹窗中调整书籍简介、分镜或最终 prompt。
 - 未命名群体需要稳定角色标签和外观锚点，例如 eldest sister / middle sister / youngest sister，而不是只在 prompt 中写成 generic children。
+- 最终 `groupPrompt` 控制在图片接口友好的长度内：12 张场景时压缩上下文和单图视觉描述，但仍保留所有 Image 条目。
 - 旧计划不迁移、不兼容、不复用；需要重新生成时直接生成 v4 计划。
 - 旧参考图不再参与生成；文件清理以后单独做缓存清理。

@@ -274,7 +274,7 @@ class ChapterStoryOutlineService {
         '$i. ${cleanSentences[i]}',
     ].join('\n');
     return [
-      TextGenerationTurn(
+      const TextGenerationTurn(
         role: 'system',
         content:
             'You create structured storyboards for English picture-book learning chapters. Return only valid compact JSON. Do not use markdown. Split by natural story structure: scene, event, conflict, character decision, setting change, and ending. Use no more than $maxSegments segments. Each segment becomes exactly one generated image in a sequential image-generation request, not an image candidate.',

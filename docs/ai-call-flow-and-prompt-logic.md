@@ -350,6 +350,8 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - 页面策略版本为 `picture_book_prompt_v4`，章节图片计划缓存为 `picture_book_chapter_plan_v4`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
 - 每章只调用一次文本规划 API，让 AI 基于书名、书籍简介、章节标题和完整句子列表生成 `storyBrief`、`chapterBrief` 和 `scenes[]`。`storyBrief` / 书籍简介需要包含紧凑角色清单，覆盖主角、配角、叙述者和视觉上重要的未命名群体；未命名群体使用稳定角色标签和外观锚点，供后续章节和当前组图保持一致。
+- 对可识别的经典名著，文本规划 prompt 会要求 AI 先用公开常识列出主要递归角色并生成外观锚点；如果无法根据书名确认公开资料，则不能编造全书角色，只能描述当前章节出现或强暗示的角色。
+- 如果当前书籍简介只覆盖主角，而本章出现新角色，`storyBrief` 可返回 `Chapter character additions:`；审核草稿会把这些角色合并到 `bookDescription` 展示给用户。只有 `savePromptReview` 或 `confirmPromptReview` 才会把合并后的书籍简介写回 `story_series.description`。
 - AI 自行决定分镜数量，最多 12 段；每个 scene 对应一张图片，scene 必须按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 审核弹窗有 3 个提示词魔法棒：分别刷新 `storyBrief`、`chapterBrief` 和 `scenes[]`。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
@@ -385,6 +387,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - `chapterBrief` 描述当前章节作为一组连续图片的整体剧情。
 - `scenes[]` 是唯一分镜来源，字段只包含 `pageIndex`、句子范围、`title/story/visual`。
 - 不输出 `audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
+- 最终 `groupPrompt` 会按场景数量动态压缩书籍简介、章节 brief 和每张图的视觉描述；12 张场景时仍保留所有 `Image N` 条目，并把 prompt 控制在约 600 英文词 / 5200 字符以内，贴近图片接口提示词限制。
 
 ### 审核弹窗
 
