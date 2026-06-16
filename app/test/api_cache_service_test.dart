@@ -9,7 +9,9 @@ import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
 import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
+import 'package:tomato_english_happy_talking/services/aliyun_wanx_image_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
+import 'package:tomato_english_happy_talking/services/picture_book_image_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_service.dart';
 import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
 import 'package:tomato_english_happy_talking/services/volc_image_service.dart';
@@ -32,12 +34,14 @@ void main() {
     DatabaseService.setDatabaseDirectoryOverrideForTest(tempDir.path);
     await DatabaseService.resetForTest();
     TextGenerationService.setPostOverrideForTest(null);
+    AliyunWanxImageService.setOverridesForTest();
     VolcImageService.setPostOverrideForTest(null);
     AppConfig.resetRuntimeConfigForTest();
   });
 
   tearDown(() async {
     TextGenerationService.setPostOverrideForTest(null);
+    AliyunWanxImageService.setOverridesForTest();
     VolcImageService.setPostOverrideForTest(null);
     AppConfig.resetRuntimeConfigForTest();
     await DatabaseService.resetForTest();
@@ -666,6 +670,86 @@ void main() {
     );
   });
 
+  test('Aliyun Wanx group generation uses async sequential API', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aiProvider: AppConfig.aiProviderAliyunBailian,
+      aliyunBailianApiKey: 'dashscope-group-key-1234567890',
+      aliyunBailianApiBaseUrl: 'https://dashscope.example.com/api/v1/',
+      aliyunBailianImageModel: 'wan2.7-test',
+      aliyunBailianImageSize: '2K',
+    );
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        fail('Aliyun picture-book group generation must not call Volc Ark');
+      },
+    );
+    Map<String, dynamic>? seenBody;
+    AliyunWanxImageService.setOverridesForTest(
+      post: ({required endpoint, required headers, required body}) async {
+        seenBody = body;
+        expect(
+          endpoint,
+          'https://dashscope.example.com/api/v1/services/aigc/image-generation/generation',
+        );
+        expect(headers['Authorization'], startsWith('Bearer dashscope-group'));
+        expect(headers['X-DashScope-Async'], 'enable');
+        return {
+          'output': {'task_id': 'task-picture-group-1'},
+        };
+      },
+      get: ({required endpoint, required headers}) async {
+        expect(
+          endpoint,
+          'https://dashscope.example.com/api/v1/tasks/task-picture-group-1',
+        );
+        return {
+          'output': {
+            'task_status': 'SUCCEEDED',
+            'results': [
+              {
+                'image': 'data:image/png;base64,${base64Encode([
+                      137,
+                      80,
+                      78,
+                      71,
+                      31
+                    ])}',
+              },
+            ],
+          },
+        };
+      },
+    );
+
+    final results = await PictureBookImageService.generatePictureBookImageGroup(
+      requests: const [
+        VolcImageBatchRequest(
+          pageIndex: 0,
+          prompt: 'Image one: Alice sees a garden gate.',
+          promptMetadata: {'page': 0},
+        ),
+        VolcImageBatchRequest(
+          pageIndex: 1,
+          prompt: 'Image two: Alice enters the same garden.',
+          promptMetadata: {'page': 1},
+        ),
+      ],
+      seriesId: 21,
+      groupPromptOverride: 'Two continuous Alice garden scenes.',
+      reusePartialCache: false,
+    );
+
+    expect(results, hasLength(2));
+    expect(results[0].source, VolcImageResultSource.remote);
+    expect(await File(results[0].filePath!).exists(), isTrue);
+    expect(results[1].source, VolcImageResultSource.failed);
+    expect(results[1].errorMessage, contains('未返回第 2 张图片'));
+    expect(seenBody?['model'], 'wan2.7-test');
+    expect(seenBody?['parameters'], containsPair('enable_sequential', true));
+    expect(seenBody?['parameters'], containsPair('n', 2));
+    expect(seenBody?['parameters'], containsPair('size', '2K'));
+  });
+
   test('Ark group generation does not rerun cached pages on retry', () async {
     _writeImageArkKey(tempDir, 'ark-partial-key-12345678901234567890');
     final postedBodies = <Map<String, dynamic>>[];
@@ -1232,7 +1316,7 @@ but the three were all crowded together at one corner of it.
     );
 
     final segments = PictureBookService.pictureSegmentsForTest(article);
-    expect(segments, hasLength(14));
+    expect(segments, hasLength(12));
 
     final firstText = segments.first['text'] as String;
     final lastText = segments.last['text'] as String;

@@ -1635,7 +1635,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             ArticleSongVersion(
               id: 'bailian_fun_music_${articleId}_${legacyAudioPath.hashCode}',
               audioPath: legacyAudioPath,
-              title: '百炼 fun-music 版本 1',
+              title: '阿里云百聆版本 1',
               songUrl: _nonEmptyString(metadata['songUrl']),
               durationMs: (metadata['durationMs'] as num?)?.toInt(),
               createdAt: _nonEmptyString(metadata['createdAt']),
@@ -2791,7 +2791,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     final trimmedLyrics = lyrics.trim();
     if (trimmedLyrics.isEmpty) {
-      throw const FormatException('文章没有可用于百炼 fun-music 的英文歌词');
+      throw const FormatException('文章没有可用于阿里云百聆的英文歌词');
     }
     _stopSunoAutomation(clearVisible: false);
     await _pushEvent(
@@ -2800,7 +2800,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         articleId: articleId,
         status: 'generating',
         source: AppConfig.songProviderBailianFunMusic,
-        manualActionMessage: '百炼 fun-music 正在根据当前歌词生成歌曲。',
+        manualActionMessage: '阿里云百聆正在根据当前歌词生成歌曲。',
       ).toJson(),
     );
     final result = await BailianMusicService.generateFromLyrics(
@@ -2842,7 +2842,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             ArticleSongVersion(
               id: 'bailian_fun_music_$cacheId',
               audioPath: resultPath,
-              title: '百炼 fun-music 版本 ${existingVersions.length + 1}',
+              title: '阿里云百聆版本 ${existingVersions.length + 1}',
               createdAt: DateTime.now().toIso8601String(),
             ))
         .copyWith(
@@ -2881,10 +2881,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   String _bailianMusicErrorMessage(String? rawMessage) {
     final raw = (rawMessage ?? '').trim();
     if (raw.isEmpty) {
-      return '百炼 fun-music 生成失败';
+      return '阿里云百聆生成失败';
     }
     if (raw.contains('Lyrics content is illegal')) {
-      return '百炼 fun-music 拒绝了当前歌词内容。已按歌曲格式压缩歌词后仍失败，请换一篇更温和的英文内容或稍后重试。';
+      return '阿里云百聆拒绝了当前歌词内容。已按歌曲格式压缩歌词后仍失败，请换一篇更温和的英文内容或稍后重试。';
     }
     return raw
         .replaceFirst(RegExp(r'^FormatException:\s*'), '')
@@ -6967,11 +6967,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     BridgeMessage message,
   ) async {
     final speakerId = _payloadString(message.payload, 'speakerId').trim();
-    if (!TtsService.isPresetVoice(speakerId)) {
+    final provider = _payloadString(
+      message.payload,
+      'aiProvider',
+      fallback: await AppConfig.aiProvider,
+    ).trim();
+    if (provider == AppConfig.aiProviderAliyunBailian) {
+      if (!TtsService.isAliyunPresetVoice(speakerId)) {
+        throw const FormatException('请选择支持的阿里云声音');
+      }
+      await AppConfig.saveCloudSettings(aliyunBailianTtsVoice: speakerId);
+    } else if (TtsService.isPresetVoice(speakerId)) {
+      await AppConfig.saveVolcTtsSpeakerId(speakerId);
+    } else {
       throw const FormatException('请选择支持的声音');
     }
-
-    await AppConfig.saveVolcTtsSpeakerId(speakerId);
     final payload = await _settingsPayload();
     unawaited(_pushEvent('settings.state', payload));
     return payload;
@@ -7020,8 +7030,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'clearAliyunBailianApiKey',
       ),
       aliyunBailianBaseUrl: optionalString('aliyunBailianBaseUrl'),
+      aliyunBailianApiBaseUrl: optionalString('aliyunBailianApiBaseUrl'),
       aliyunBailianTextModel: optionalString('aliyunBailianTextModel'),
       aliyunBailianMusicModel: optionalString('aliyunBailianMusicModel'),
+      aliyunBailianImageModel: optionalString('aliyunBailianImageModel'),
+      aliyunBailianImageSize: optionalString('aliyunBailianImageSize'),
+      aliyunBailianTtsModel: optionalString('aliyunBailianTtsModel'),
+      aliyunBailianTtsVoice: optionalString('aliyunBailianTtsVoice'),
+      aliyunBailianTtsSampleRate: optionalString('aliyunBailianTtsSampleRate'),
+      aliyunBailianAsrModel: optionalString('aliyunBailianAsrModel'),
+      aliyunBailianRealtimeAsrModel:
+          optionalString('aliyunBailianRealtimeAsrModel'),
+      aliyunBailianRealtimeAsrUrl:
+          optionalString('aliyunBailianRealtimeAsrUrl'),
       volcArkApiKey: optionalString('volcArkApiKey'),
       clearVolcArkApiKey: _payloadBool(
         message.payload,
@@ -7127,11 +7148,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     BridgeMessage message,
   ) async {
     final speakerId = _payloadString(message.payload, 'speakerId').trim();
-    if (!TtsService.isPresetVoice(speakerId)) {
+    final provider = _payloadString(
+      message.payload,
+      'aiProvider',
+      fallback: await AppConfig.aiProvider,
+    ).trim();
+    final validVoice = provider == AppConfig.aiProviderAliyunBailian
+        ? TtsService.isAliyunPresetVoice(speakerId)
+        : TtsService.isPresetVoice(speakerId);
+    if (!validVoice) {
       throw const FormatException('请选择支持的声音');
     }
 
-    await _playVoicePreview(speakerId);
+    await _playVoicePreview(speakerId, provider: provider);
     return {'playbackState': 'success'};
   }
 
@@ -7647,7 +7676,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return timeline.cues.last;
   }
 
-  Future<void> _playVoicePreview(String speakerId) async {
+  Future<void> _playVoicePreview(
+    String speakerId, {
+    String? provider,
+  }) async {
     final token = ++_previewPlaybackToken;
     await _stopListeningPlayback();
     await _stopSongPlayback();
@@ -7660,6 +7692,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         voiceType: speakerId,
         preferRequestedVoice: true,
         cachePurpose: 'voice_preview',
+        aiProviderOverride: provider,
       );
       if (!_isActiveVoicePreview(token)) {
         return;
@@ -8532,15 +8565,25 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   Future<Map<String, dynamic>> _settingsPayload() async {
-    final speakerId = await AppConfig.volcTtsSpeakerId;
-    final resolvedSpeakerId = TtsService.isPresetVoice(speakerId)
-        ? speakerId.trim()
+    final provider = await AppConfig.aiProvider;
+    final volcSpeakerId = await AppConfig.volcTtsSpeakerId;
+    final resolvedVolcSpeakerId = TtsService.isPresetVoice(volcSpeakerId)
+        ? volcSpeakerId.trim()
         : TtsService.defaultVoiceType;
+    final aliyunVoice = await AppConfig.aliyunBailianTtsVoice;
+    final resolvedAliyunVoice = aliyunVoice.trim().isNotEmpty
+        ? aliyunVoice.trim()
+        : TtsService.defaultAliyunVoiceType;
+    final activeSpeakerId = provider == AppConfig.aiProviderAliyunBailian
+        ? resolvedAliyunVoice
+        : resolvedVolcSpeakerId;
     final songSettings = await _songSettingsPayload();
     return {
       'tts': {
-        'resourceId': await AppConfig.volcTtsResourceId,
-        'speakerId': resolvedSpeakerId,
+        'resourceId': provider == AppConfig.aiProviderAliyunBailian
+            ? await AppConfig.aliyunBailianTtsModel
+            : await AppConfig.volcTtsResourceId,
+        'speakerId': activeSpeakerId,
       },
       'song': songSettings,
       'cloud': await AppConfig.cloudSettingsPayload(),
@@ -8555,6 +8598,30 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             },
           )
           .toList(growable: false),
+      'voiceCatalog': {
+        'aliyunBailian': TtsService.aliyunVoices
+            .map(
+              (voice) => {
+                'id': voice.id,
+                'name': voice.name,
+                'lang': voice.lang,
+                'gender': voice.gender,
+                'scene': voice.scene,
+              },
+            )
+            .toList(growable: false),
+        'volcengine': TtsService.voices
+            .map(
+              (voice) => {
+                'id': voice.id,
+                'name': voice.name,
+                'lang': voice.lang,
+                'gender': voice.gender,
+                'scene': voice.scene,
+              },
+            )
+            .toList(growable: false),
+      },
       'contentSafety': {
         'rules': await ContentSafetyService.listRules(),
       },

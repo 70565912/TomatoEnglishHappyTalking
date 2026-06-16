@@ -394,8 +394,17 @@ export interface SettingsState {
       apiKeyConfigured: boolean;
       apiKeyMask?: string;
       baseUrl: string;
+      apiBaseUrl?: string;
       textModel: string;
       musicModel: string;
+      imageModel?: string;
+      imageSize?: string;
+      ttsModel?: string;
+      ttsVoice?: string;
+      ttsSampleRate?: number | string;
+      asrModel?: string;
+      realtimeAsrModel?: string;
+      realtimeAsrUrl?: string;
     };
     volcengine: {
       arkApiKeyConfigured: boolean;
@@ -415,6 +424,10 @@ export interface SettingsState {
     songProvider?: SongSource | string;
   };
   voices: VoiceOption[];
+  voiceCatalog?: {
+    aliyunBailian?: VoiceOption[];
+    volcengine?: VoiceOption[];
+  };
   contentSafety?: {
     rules: ContentSafetyRule[];
   };

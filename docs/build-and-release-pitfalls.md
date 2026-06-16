@@ -485,17 +485,40 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 - 输出进入脚本自己的阶段，例如 `=== 检查 Flutter 环境 ===`。
 - 不再出现 `C:\Program` 未识别错误。
 
-## 百炼 fun-music 拒绝歌词内容
+## Windows PowerShell 5.1 缺少 Path.GetRelativePath
 
 症状：
 
-- 选择百炼 fun-music 后返回 `Lyrics content is illegal` 或类似供应商拒绝。
+- `.\tools\build_windows.ps1 -Release -Run ...` 已完成 Flutter Release 构建，但发布阶段报错：
+  `Method invocation failed because [System.IO.Path] does not contain a method named 'GetRelativePath'`。
+- 错误出现在复制发布目录、计算相对路径或保留运行数据时。
+
+原因：
+
+- Windows PowerShell 5.1 使用的 .NET Framework 没有 `System.IO.Path.GetRelativePath`。
+- 如果机器上没有 PowerShell 7，脚本不能依赖这个 API 才能完成真实 Windows App 发布验证。
+
+处理：
+
+- `tools/build_windows.ps1` 的 `Get-WindowsRelativePath` 使用 `System.Uri.MakeRelativeUri` 计算相对路径，兼容 Windows PowerShell 5.1 和 PowerShell 7。
+- 如果后续再改发布复制逻辑，不要重新引入对 `Path.GetRelativePath` 的硬依赖。
+
+验证：
+
+- `.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true","TOMATO_QA_PORT=39317"` 能发布并启动 release 目录下的 Windows 程序。
+- QA `/health` 返回 `ok: true`、`webReady: true`。
+
+## 阿里云百聆（Fun-Music）拒绝歌词内容
+
+症状：
+
+- 选择阿里云百聆（Fun-Music）后返回 `Lyrics content is illegal` 或类似供应商拒绝。
 - 长章节原文直接作为歌词时更容易触发长度、格式或内容限制。
 
 处理：
 
 - App 会先把过长或散文化章节压缩成 12 行歌曲格式，再提交给百炼；实际提交文本记录在歌曲版本的 `submittedLyrics` 中。
-- 如果压缩后仍被拒绝，UI 会显示“百炼 fun-music 拒绝了当前歌词内容...”，不会自动回退到 Suno，避免用户误以为是另一家 provider 生成的版本。
+- 如果压缩后仍被拒绝，UI 会显示“阿里云百聆拒绝了当前歌词内容...”，不会自动回退到 Suno，避免用户误以为是另一家 provider 生成的版本。
 - 歌曲字幕时间轴使用 `submittedLyrics`，不要用 BigASR 识别文本覆盖歌词正文。
 
 ## Suno Styles 为空且页面反复跳动

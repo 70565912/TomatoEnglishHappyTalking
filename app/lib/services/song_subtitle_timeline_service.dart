@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as path_lib;
 
+import '../core/config/app_config.dart';
 import 'api_cache_service.dart';
 import 'recording_export_service.dart';
 import 'recording_export_utils.dart';
@@ -174,8 +175,12 @@ class SongSubtitleTimelineService {
     final audioHash = await ApiCacheService.hashBytes(audioBytes);
     final lyricsText = lines.join('\n');
     final lyricsHash = await ApiCacheService.hashUtf8(lyricsText);
+    final asrProvider = await AppConfig.aiProvider;
     final request = {
-      'service': 'bigasr',
+      'service': asrProvider == AppConfig.aiProviderAliyunBailian
+          ? 'qwen_asr'
+          : 'bigasr',
+      'provider': asrProvider,
       'purpose': purpose,
       'audioHash': audioHash,
       'lyricsHash': lyricsHash,

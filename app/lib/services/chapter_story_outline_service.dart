@@ -119,7 +119,7 @@ class ChapterStorySegment {
 class ChapterStoryOutlineService {
   static const cachePurpose = 'chapter_story_outline_v1';
   static const policyVersion = 'chapter_story_outline_v1';
-  static const maxSegments = 14;
+  static const maxSegments = 12;
 
   static final Map<String, Future<ChapterStoryOutline>> _pending = {};
 

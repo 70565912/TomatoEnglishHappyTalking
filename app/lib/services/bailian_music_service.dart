@@ -99,7 +99,7 @@ class BailianMusicService {
     if (trimmedLyrics.isEmpty) {
       return const BailianMusicResult(
         source: BailianMusicResultSource.failed,
-        errorMessage: '歌词为空，无法调用百炼 fun-music。',
+        errorMessage: '歌词为空，无法调用阿里云百聆。',
       );
     }
 
@@ -162,11 +162,11 @@ class BailianMusicService {
       final responseData = await _postJson(apiKey: apiKey, body: body);
       final audioUrl = _extractAudioUrl(responseData);
       if (audioUrl.isEmpty) {
-        throw const FormatException('百炼 fun-music 未返回 audio.url');
+        throw const FormatException('阿里云百聆未返回 audio.url');
       }
       final bytes = await _downloadAudioBytes(audioUrl);
       if (bytes.length < 1024) {
-        throw FormatException('百炼 fun-music 音频下载内容过小：${bytes.length} bytes');
+        throw FormatException('阿里云百聆音频下载内容过小：${bytes.length} bytes');
       }
       final filePath = await ApiCacheService.putFileBytes(
         cacheKey: cacheKey,

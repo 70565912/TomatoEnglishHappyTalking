@@ -15,6 +15,16 @@ void main() {
         AppConfig.defaultAliyunBailianTextModel);
     expect(await AppConfig.aliyunBailianMusicModel,
         AppConfig.defaultAliyunBailianMusicModel);
+    expect(await AppConfig.aliyunBailianApiBaseUrl,
+        AppConfig.defaultAliyunBailianApiBaseUrl);
+    expect(await AppConfig.aliyunBailianImageModel,
+        AppConfig.defaultAliyunBailianImageModel);
+    expect(await AppConfig.aliyunBailianTtsModel,
+        AppConfig.defaultAliyunBailianTtsModel);
+    expect(await AppConfig.aliyunBailianTtsVoice,
+        AppConfig.defaultAliyunBailianTtsVoice);
+    expect(await AppConfig.aliyunBailianAsrModel,
+        AppConfig.defaultAliyunBailianAsrModel);
     expect(await AppConfig.songGenerationProvider, AppConfig.songProviderSuno);
   });
 
@@ -62,6 +72,11 @@ void main() {
       volcSpeechApiKey: 'speech-secret-abcdef',
       aliyunBailianTextModel: 'qwen-live',
       aliyunBailianMusicModel: 'fun-music-v1',
+      aliyunBailianImageModel: 'wan-test',
+      aliyunBailianTtsModel: 'cosy-test',
+      aliyunBailianTtsVoice: 'loongabby_v3',
+      aliyunBailianAsrModel: 'asr-test',
+      aliyunBailianRealtimeAsrModel: 'asr-realtime-test',
       volcArkTextModel: 'doubao-live',
       volcArkImageModel: 'seedream-live',
     );
@@ -74,6 +89,11 @@ void main() {
     expect(payload['aliyunBailian']['apiKeyMask'], '****7890');
     expect(payload['aliyunBailian']['textModel'], 'qwen-live');
     expect(payload['aliyunBailian']['musicModel'], 'fun-music-v1');
+    expect(payload['aliyunBailian']['imageModel'], 'wan-test');
+    expect(payload['aliyunBailian']['ttsModel'], 'cosy-test');
+    expect(payload['aliyunBailian']['ttsVoice'], 'loongabby_v3');
+    expect(payload['aliyunBailian']['asrModel'], 'asr-test');
+    expect(payload['aliyunBailian']['realtimeAsrModel'], 'asr-realtime-test');
     expect(payload['volcengine']['arkApiKeyConfigured'], isTrue);
     expect(payload['volcengine']['arkApiKeyMask'], '****efgh');
     expect(payload['volcengine']['speechApiKeyConfigured'], isTrue);

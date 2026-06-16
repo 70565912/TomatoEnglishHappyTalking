@@ -13,6 +13,7 @@ import '../data/models/picture_book_model.dart';
 import 'api_cache_service.dart';
 import 'chapter_story_outline_service.dart';
 import 'database_service.dart';
+import 'picture_book_image_service.dart';
 import 'text_generation_service.dart';
 import 'volc_image_service.dart';
 
@@ -715,7 +716,8 @@ class PictureBookService {
           promptMetadata: item.promptJson,
         ),
     ];
-    final groupResults = await VolcImageService.generatePictureBookImageGroup(
+    final groupResults =
+        await PictureBookImageService.generatePictureBookImageGroup(
       requests: requests,
       articleId: articleId,
       seriesId: seriesId,
@@ -894,7 +896,8 @@ class PictureBookService {
       );
     }
 
-    final groupResults = await VolcImageService.generatePictureBookImageGroup(
+    final groupResults =
+        await PictureBookImageService.generatePictureBookImageGroup(
       requests: [
         for (final item in promptedSegments)
           VolcImageBatchRequest(
@@ -1197,7 +1200,7 @@ class PictureBookService {
       );
     }
 
-    final results = await VolcImageService.generatePictureBookImageGroup(
+    final results = await PictureBookImageService.generatePictureBookImageGroup(
       requests: requests,
       articleId: articleId,
       seriesId: seriesId,

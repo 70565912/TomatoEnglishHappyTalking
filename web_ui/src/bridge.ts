@@ -17,6 +17,7 @@ import type {
 import { splitSentences } from './sentenceSplitter';
 
 type NativeListener<T = unknown> = (payload: T) => void;
+type AiProvider = 'aliyun_bailian' | 'volcengine';
 
 declare global {
   interface Window {
@@ -677,13 +678,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         durationMs: 42000,
         source: 'bailian_fun_music',
         automationStatus: 'complete',
-        manualActionMessage: '百炼 fun-music 已生成 mock 歌曲。',
+        manualActionMessage: '阿里云百聆已生成 mock 歌曲。',
         downloadComplete: true,
         versions: [
           {
             id: 'mock-bailian-fun-music-1',
             audioPath: 'mock-bailian-fun-music.mp3',
-            title: '百炼 fun-music 版本 1',
+            title: '阿里云百聆版本 1',
             durationMs: 42000,
             source: 'bailian_fun_music',
             timelineStatus: 'missing',
@@ -1069,8 +1070,17 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
             (mockSettings.cloud?.aliyunBailian.apiKeyConfigured ?? false),
           apiKeyMask: payload.aliyunBailianApiKey ? '****MOCK' : mockSettings.cloud?.aliyunBailian.apiKeyMask ?? '',
           baseUrl: String(payload.aliyunBailianBaseUrl ?? mockSettings.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
+          apiBaseUrl: String(payload.aliyunBailianApiBaseUrl ?? mockSettings.cloud?.aliyunBailian.apiBaseUrl ?? 'https://dashscope.aliyuncs.com/api/v1'),
           textModel: String(payload.aliyunBailianTextModel ?? mockSettings.cloud?.aliyunBailian.textModel ?? 'qwen3.7-max'),
           musicModel: String(payload.aliyunBailianMusicModel ?? mockSettings.cloud?.aliyunBailian.musicModel ?? 'fun-music-v1'),
+          imageModel: String(payload.aliyunBailianImageModel ?? mockSettings.cloud?.aliyunBailian.imageModel ?? 'wan2.7-image-pro'),
+          imageSize: String(payload.aliyunBailianImageSize ?? mockSettings.cloud?.aliyunBailian.imageSize ?? '2K'),
+          ttsModel: String(payload.aliyunBailianTtsModel ?? mockSettings.cloud?.aliyunBailian.ttsModel ?? 'cosyvoice-v3-flash'),
+          ttsVoice: String(payload.aliyunBailianTtsVoice ?? mockSettings.cloud?.aliyunBailian.ttsVoice ?? 'loongabby_v3'),
+          ttsSampleRate: Number(payload.aliyunBailianTtsSampleRate ?? mockSettings.cloud?.aliyunBailian.ttsSampleRate ?? 24000),
+          asrModel: String(payload.aliyunBailianAsrModel ?? mockSettings.cloud?.aliyunBailian.asrModel ?? 'qwen3-asr-flash'),
+          realtimeAsrModel: String(payload.aliyunBailianRealtimeAsrModel ?? mockSettings.cloud?.aliyunBailian.realtimeAsrModel ?? 'qwen3-asr-realtime'),
+          realtimeAsrUrl: String(payload.aliyunBailianRealtimeAsrUrl ?? mockSettings.cloud?.aliyunBailian.realtimeAsrUrl ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'),
         },
         volcengine: {
           arkApiKeyConfigured:
@@ -1087,6 +1097,14 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
           ttsResourceId: String(payload.volcTtsResourceId ?? mockSettings.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0'),
           ttsSpeakerId: String(payload.volcTtsSpeakerId ?? mockSettings.cloud?.volcengine.ttsSpeakerId ?? mockSettings.tts.speakerId),
         },
+      },
+      tts: {
+        resourceId: String(payload.aiProvider ?? mockSettings.cloud?.aiProvider) === 'aliyun_bailian'
+          ? String(payload.aliyunBailianTtsModel ?? mockSettings.cloud?.aliyunBailian.ttsModel ?? 'cosyvoice-v3-flash')
+          : String(payload.volcTtsResourceId ?? mockSettings.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0'),
+        speakerId: String(payload.aiProvider ?? mockSettings.cloud?.aiProvider) === 'aliyun_bailian'
+          ? String(payload.aliyunBailianTtsVoice ?? mockSettings.cloud?.aliyunBailian.ttsVoice ?? 'loongabby_v3')
+          : String(payload.volcTtsSpeakerId ?? mockSettings.cloud?.volcengine.ttsSpeakerId ?? mockSettings.tts.speakerId),
       },
     };
     return mockSettings;
@@ -1105,12 +1123,33 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'settings.saveVoice') {
     const speakerId = String(payload.speakerId ?? mockSettings.tts.speakerId);
-    const isKnownVoice = mockSettings.voices.some((voice) => voice.id === speakerId);
+    const provider = normalizeAiProvider(
+      String(payload.aiProvider ?? mockSettings.cloud?.aiProvider ?? 'aliyun_bailian'),
+    );
+    const voices = provider === 'aliyun_bailian'
+      ? (mockSettings.voiceCatalog?.aliyunBailian ?? mockAliyunVoiceOptions)
+      : (mockSettings.voiceCatalog?.volcengine ?? mockSettings.voices);
+    const isKnownVoice = voices.some((voice) => voice.id === speakerId);
     mockSettings = {
       ...mockSettings,
       tts: {
         ...mockSettings.tts,
         speakerId: isKnownVoice ? speakerId : mockSettings.tts.speakerId,
+      },
+      cloud: {
+        ...mockSettings.cloud!,
+        aliyunBailian: {
+          ...mockSettings.cloud!.aliyunBailian,
+          ttsVoice: provider === 'aliyun_bailian' && isKnownVoice
+            ? speakerId
+            : mockSettings.cloud!.aliyunBailian.ttsVoice,
+        },
+        volcengine: {
+          ...mockSettings.cloud!.volcengine,
+          ttsSpeakerId: provider === 'volcengine' && isKnownVoice
+            ? speakerId
+            : mockSettings.cloud!.volcengine.ttsSpeakerId,
+        },
       },
     };
     return mockSettings;
@@ -1587,8 +1626,22 @@ saturn_zh_male_qingxinmumu_cs_tob|清新沐沐 2.0|中文|客服场景
 function inferVoiceGender(id: string): string {
   if (id.includes('_female_') || id.includes('female')) return 'female';
   if (id.includes('_male_') || id.includes('male')) return 'male';
+  if (/abby|annie|anhuan/i.test(id)) return 'female';
+  if (/andy|anyang/i.test(id)) return 'male';
   return 'unknown';
 }
+
+function normalizeAiProvider(provider?: string | null): AiProvider {
+  return provider === 'volcengine' ? 'volcengine' : 'aliyun_bailian';
+}
+
+const mockAliyunVoiceOptions: VoiceOption[] = [
+  { id: 'loongabby_v3', name: 'Abby', lang: '中文、英文', gender: 'female', scene: '通用朗读' },
+  { id: 'loongandy_v3', name: 'Andy', lang: '中文、英文', gender: 'male', scene: '通用朗读' },
+  { id: 'loongannie_v3', name: 'Annie', lang: '中文、英文', gender: 'female', scene: '儿童/故事' },
+  { id: 'longanyang', name: 'An Yang', lang: '中文、英文', gender: 'male', scene: '通用朗读' },
+  { id: 'longanhuan', name: 'An Huan', lang: '中文、英文', gender: 'female', scene: '通用朗读' },
+];
 
 let mockSettings: SettingsState = {
   tts: {
@@ -1606,8 +1659,17 @@ let mockSettings: SettingsState = {
       apiKeyConfigured: false,
       apiKeyMask: '',
       baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      apiBaseUrl: 'https://dashscope.aliyuncs.com/api/v1',
       textModel: 'qwen3.7-max',
       musicModel: 'fun-music-v1',
+      imageModel: 'wan2.7-image-pro',
+      imageSize: '2K',
+      ttsModel: 'cosyvoice-v3-flash',
+      ttsVoice: 'loongabby_v3',
+      ttsSampleRate: 24000,
+      asrModel: 'qwen3-asr-flash',
+      realtimeAsrModel: 'qwen3-asr-realtime',
+      realtimeAsrUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
     },
     volcengine: {
       arkApiKeyConfigured: false,
@@ -1622,6 +1684,10 @@ let mockSettings: SettingsState = {
     },
   },
   voices: mockVoiceOptions,
+  voiceCatalog: {
+    aliyunBailian: mockAliyunVoiceOptions,
+    volcengine: mockVoiceOptions,
+  },
   contentSafety: {
     rules: [
       {

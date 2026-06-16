@@ -280,11 +280,17 @@ class TtsMemoryCacheService {
     required bool preferRequestedVoice,
     required String cachePurpose,
   }) async {
-    final speakerKey = preferRequestedVoice
-        ? 'preferred'
-        : (await AppConfig.volcTtsSpeakerId).trim();
+    final provider = await AppConfig.aiProvider;
+    final speakerKey = provider == AppConfig.aiProviderAliyunBailian
+        ? (preferRequestedVoice
+            ? 'preferred'
+            : (await AppConfig.aliyunBailianTtsVoice).trim())
+        : (preferRequestedVoice
+            ? 'preferred'
+            : (await AppConfig.volcTtsSpeakerId).trim());
     return [
       cachePurpose,
+      provider,
       voiceType.trim(),
       speakerKey,
       _stableTextHash(text),

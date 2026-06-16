@@ -128,10 +128,12 @@ Sequential/group request:
 - Do not restore the old series bible, character-card, or reference-image
   switches. Default cold-cache production flow should spend one v4 planning text
   call and one sequential image-group call per confirmed chapter.
-- `PictureBookService` calls `generatePictureBookImageGroup(...,
-  useSequential: true)` directly for the product flow. It sets
+- When the current cloud provider is Volcengine, `PictureBookImageService`
+  dispatches to `VolcImageService.generatePictureBookImageGroup(...,
+  useSequential: true)` for the product flow. It sets
   `sequential_image_generation_options.max_images` to the confirmed scene count
-  and does not fall back to single-image generation when the group fails.
+  and does not fall back to single-image generation or another provider when
+  the group fails.
 - The lower-level `TOMATO_VOLC_IMAGE_GROUP_PAGES` switch is still useful for
   legacy/probe paths that call batch helpers without explicitly requesting
   sequential generation.

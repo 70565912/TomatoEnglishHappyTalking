@@ -481,7 +481,17 @@ function Get-WindowsRelativePath {
         [string]$BaseDir
     )
 
-    return Normalize-WindowsRelativePath ([System.IO.Path]::GetRelativePath($BaseDir, $Path))
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    $resolvedBaseDir = [System.IO.Path]::GetFullPath($BaseDir)
+    if (-not $resolvedBaseDir.EndsWith([System.IO.Path]::DirectorySeparatorChar.ToString(), [System.StringComparison]::Ordinal)) {
+        $resolvedBaseDir = $resolvedBaseDir + [System.IO.Path]::DirectorySeparatorChar
+    }
+
+    $baseUri = [System.Uri]::new($resolvedBaseDir)
+    $pathUri = [System.Uri]::new($resolvedPath)
+    $relativeUri = $baseUri.MakeRelativeUri($pathUri)
+    $relativePath = [System.Uri]::UnescapeDataString($relativeUri.ToString()).Replace('/', '\')
+    return Normalize-WindowsRelativePath $relativePath
 }
 
 function Test-IsPreservedWindowsRuntimeDirectory {

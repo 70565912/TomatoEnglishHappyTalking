@@ -34,8 +34,19 @@ class AppConfig {
   static const defaultSongProvider = songProviderSuno;
   static const defaultAliyunBailianBaseUrl =
       'https://dashscope.aliyuncs.com/compatible-mode/v1';
+  static const defaultAliyunBailianApiBaseUrl =
+      'https://dashscope.aliyuncs.com/api/v1';
   static const defaultAliyunBailianTextModel = 'qwen3.7-max';
   static const defaultAliyunBailianMusicModel = 'fun-music-v1';
+  static const defaultAliyunBailianImageModel = 'wan2.7-image-pro';
+  static const defaultAliyunBailianImageSize = '2K';
+  static const defaultAliyunBailianTtsModel = 'cosyvoice-v3-flash';
+  static const defaultAliyunBailianTtsVoice = 'loongabby_v3';
+  static const defaultAliyunBailianTtsSampleRate = '24000';
+  static const defaultAliyunBailianAsrModel = 'qwen3-asr-flash';
+  static const defaultAliyunBailianRealtimeAsrModel = 'qwen3-asr-realtime';
+  static const defaultAliyunBailianRealtimeAsrUrl =
+      'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
   static const defaultVolcArkBaseUrl =
       'https://ark.cn-beijing.volces.com/api/v3';
   static const defaultVolcArkTextModel = 'doubao-seed-2-0-lite-260215';
@@ -55,8 +66,18 @@ class AppConfig {
   static const _aiProvider = 'ai_provider';
   static const _aliyunBailianApiKey = 'aliyun_bailian_api_key';
   static const _aliyunBailianBaseUrl = 'aliyun_bailian_base_url';
+  static const _aliyunBailianApiBaseUrl = 'aliyun_bailian_api_base_url';
   static const _aliyunBailianTextModel = 'aliyun_bailian_text_model';
   static const _aliyunBailianMusicModel = 'aliyun_bailian_music_model';
+  static const _aliyunBailianImageModel = 'aliyun_bailian_image_model';
+  static const _aliyunBailianImageSize = 'aliyun_bailian_image_size';
+  static const _aliyunBailianTtsModel = 'aliyun_bailian_tts_model';
+  static const _aliyunBailianTtsVoice = 'aliyun_bailian_tts_voice';
+  static const _aliyunBailianTtsSampleRate = 'aliyun_bailian_tts_sample_rate';
+  static const _aliyunBailianAsrModel = 'aliyun_bailian_asr_model';
+  static const _aliyunBailianRealtimeAsrModel =
+      'aliyun_bailian_realtime_asr_model';
+  static const _aliyunBailianRealtimeAsrUrl = 'aliyun_bailian_realtime_asr_url';
   static const _volcSpeechApiKey = 'volc_speech_api_key';
   static const _volcArkApiKey = 'volc_ark_api_key';
   static const _volcArkBaseUrl = 'volc_ark_base_url';
@@ -134,6 +155,14 @@ class AppConfig {
         defaultAliyunBailianBaseUrl,
       );
 
+  static Future<String> get aliyunBailianApiBaseUrl async => _normalizeBaseUrl(
+        await _readSecret(
+          key: _aliyunBailianApiBaseUrl,
+          defaultValue: defaultAliyunBailianApiBaseUrl,
+        ),
+        defaultAliyunBailianApiBaseUrl,
+      );
+
   static Future<String> get aliyunBailianTextModel async {
     final stored = await _readSecret(key: _aliyunBailianTextModel);
     return stored.isNotEmpty ? stored : defaultAliyunBailianTextModel;
@@ -142,6 +171,69 @@ class AppConfig {
   static Future<String> get aliyunBailianMusicModel async {
     final stored = await _readSecret(key: _aliyunBailianMusicModel);
     return stored.isNotEmpty ? stored : defaultAliyunBailianMusicModel;
+  }
+
+  static Future<String> get aliyunBailianImageModel async {
+    final stored = await _readSecret(key: _aliyunBailianImageModel);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianImageModel;
+  }
+
+  static Future<String> get aliyunBailianImageSize async {
+    final stored = await _readSecret(key: _aliyunBailianImageSize);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianImageSize;
+  }
+
+  static Future<String> get aliyunBailianTtsModel async {
+    final stored = await _readSecret(key: _aliyunBailianTtsModel);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianTtsModel;
+  }
+
+  static Future<String> get aliyunBailianTtsVoice async {
+    final stored = await _readSecret(key: _aliyunBailianTtsVoice);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianTtsVoice;
+  }
+
+  static Future<int> get aliyunBailianTtsSampleRate async {
+    final stored = await _readSecret(
+      key: _aliyunBailianTtsSampleRate,
+      defaultValue: defaultAliyunBailianTtsSampleRate,
+    );
+    return int.tryParse(stored.trim()) ??
+        int.parse(defaultAliyunBailianTtsSampleRate);
+  }
+
+  static Future<String> get aliyunBailianAsrModel async {
+    final stored = await _readSecret(key: _aliyunBailianAsrModel);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianAsrModel;
+  }
+
+  static Future<String> get aliyunBailianRealtimeAsrModel async {
+    final stored = await _readSecret(key: _aliyunBailianRealtimeAsrModel);
+    return stored.isNotEmpty ? stored : defaultAliyunBailianRealtimeAsrModel;
+  }
+
+  static Future<String> get aliyunBailianRealtimeAsrUrl async =>
+      _normalizeBaseUrl(
+        await _readSecret(
+          key: _aliyunBailianRealtimeAsrUrl,
+          defaultValue: defaultAliyunBailianRealtimeAsrUrl,
+        ),
+        defaultAliyunBailianRealtimeAsrUrl,
+      );
+
+  static Future<String> get aliyunWanxImageGenerationEndpoint async =>
+      '${await aliyunBailianApiBaseUrl}/services/aigc/image-generation/generation';
+
+  static Future<String> aliyunTaskEndpoint(String taskId) async =>
+      '${await aliyunBailianApiBaseUrl}/tasks/$taskId';
+
+  static Future<String> get aliyunCosyVoiceEndpoint async =>
+      '${await aliyunBailianApiBaseUrl}/services/audio/tts/SpeechSynthesizer';
+
+  static Future<String> get aliyunRealtimeAsrEndpoint async {
+    final base = await aliyunBailianRealtimeAsrUrl;
+    final model = Uri.encodeQueryComponent(await aliyunBailianRealtimeAsrModel);
+    return '$base?model=$model';
   }
 
   static Future<String> get songGenerationProvider async =>
@@ -279,8 +371,17 @@ class AppConfig {
     String? aliyunBailianApiKey,
     bool clearAliyunBailianApiKey = false,
     String? aliyunBailianBaseUrl,
+    String? aliyunBailianApiBaseUrl,
     String? aliyunBailianTextModel,
     String? aliyunBailianMusicModel,
+    String? aliyunBailianImageModel,
+    String? aliyunBailianImageSize,
+    String? aliyunBailianTtsModel,
+    String? aliyunBailianTtsVoice,
+    String? aliyunBailianTtsSampleRate,
+    String? aliyunBailianAsrModel,
+    String? aliyunBailianRealtimeAsrModel,
+    String? aliyunBailianRealtimeAsrUrl,
     String? volcArkApiKey,
     bool clearVolcArkApiKey = false,
     String? volcArkBaseUrl,
@@ -323,6 +424,11 @@ class AppConfig {
       defaultValue: defaultAliyunBailianBaseUrl,
     );
     await _writeConfigValue(
+      key: _aliyunBailianApiBaseUrl,
+      value: aliyunBailianApiBaseUrl,
+      defaultValue: defaultAliyunBailianApiBaseUrl,
+    );
+    await _writeConfigValue(
       key: _aliyunBailianTextModel,
       value: aliyunBailianTextModel,
       defaultValue: defaultAliyunBailianTextModel,
@@ -331,6 +437,46 @@ class AppConfig {
       key: _aliyunBailianMusicModel,
       value: aliyunBailianMusicModel,
       defaultValue: defaultAliyunBailianMusicModel,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianImageModel,
+      value: aliyunBailianImageModel,
+      defaultValue: defaultAliyunBailianImageModel,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianImageSize,
+      value: aliyunBailianImageSize,
+      defaultValue: defaultAliyunBailianImageSize,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianTtsModel,
+      value: aliyunBailianTtsModel,
+      defaultValue: defaultAliyunBailianTtsModel,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianTtsVoice,
+      value: aliyunBailianTtsVoice,
+      defaultValue: defaultAliyunBailianTtsVoice,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianTtsSampleRate,
+      value: aliyunBailianTtsSampleRate,
+      defaultValue: defaultAliyunBailianTtsSampleRate,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianAsrModel,
+      value: aliyunBailianAsrModel,
+      defaultValue: defaultAliyunBailianAsrModel,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianRealtimeAsrModel,
+      value: aliyunBailianRealtimeAsrModel,
+      defaultValue: defaultAliyunBailianRealtimeAsrModel,
+    );
+    await _writeConfigValue(
+      key: _aliyunBailianRealtimeAsrUrl,
+      value: aliyunBailianRealtimeAsrUrl,
+      defaultValue: defaultAliyunBailianRealtimeAsrUrl,
     );
     await _writeConfigValue(
       key: _volcArkBaseUrl,
@@ -369,8 +515,17 @@ class AppConfig {
         'apiKeyConfigured': aliyunKey.isNotEmpty,
         'apiKeyMask': maskSecret(aliyunKey),
         'baseUrl': await aliyunBailianBaseUrl,
+        'apiBaseUrl': await aliyunBailianApiBaseUrl,
         'textModel': await aliyunBailianTextModel,
         'musicModel': await aliyunBailianMusicModel,
+        'imageModel': await aliyunBailianImageModel,
+        'imageSize': await aliyunBailianImageSize,
+        'ttsModel': await aliyunBailianTtsModel,
+        'ttsVoice': await aliyunBailianTtsVoice,
+        'ttsSampleRate': await aliyunBailianTtsSampleRate,
+        'asrModel': await aliyunBailianAsrModel,
+        'realtimeAsrModel': await aliyunBailianRealtimeAsrModel,
+        'realtimeAsrUrl': await aliyunBailianRealtimeAsrUrl,
       },
       'volcengine': {
         'arkApiKeyConfigured': volcArkKey.isNotEmpty,
@@ -497,8 +652,17 @@ class AppConfig {
     String? aiProvider,
     String? aliyunBailianApiKey,
     String? aliyunBailianBaseUrl,
+    String? aliyunBailianApiBaseUrl,
     String? aliyunBailianTextModel,
     String? aliyunBailianMusicModel,
+    String? aliyunBailianImageModel,
+    String? aliyunBailianImageSize,
+    String? aliyunBailianTtsModel,
+    String? aliyunBailianTtsVoice,
+    String? aliyunBailianTtsSampleRate,
+    String? aliyunBailianAsrModel,
+    String? aliyunBailianRealtimeAsrModel,
+    String? aliyunBailianRealtimeAsrUrl,
     String? volcSpeechApiKey,
     String? volcArkApiKey,
     String? volcArkBaseUrl,
@@ -523,8 +687,17 @@ class AppConfig {
     put(_aiProvider, aiProvider);
     put(_aliyunBailianApiKey, aliyunBailianApiKey);
     put(_aliyunBailianBaseUrl, aliyunBailianBaseUrl);
+    put(_aliyunBailianApiBaseUrl, aliyunBailianApiBaseUrl);
     put(_aliyunBailianTextModel, aliyunBailianTextModel);
     put(_aliyunBailianMusicModel, aliyunBailianMusicModel);
+    put(_aliyunBailianImageModel, aliyunBailianImageModel);
+    put(_aliyunBailianImageSize, aliyunBailianImageSize);
+    put(_aliyunBailianTtsModel, aliyunBailianTtsModel);
+    put(_aliyunBailianTtsVoice, aliyunBailianTtsVoice);
+    put(_aliyunBailianTtsSampleRate, aliyunBailianTtsSampleRate);
+    put(_aliyunBailianAsrModel, aliyunBailianAsrModel);
+    put(_aliyunBailianRealtimeAsrModel, aliyunBailianRealtimeAsrModel);
+    put(_aliyunBailianRealtimeAsrUrl, aliyunBailianRealtimeAsrUrl);
     put(_volcSpeechApiKey, volcSpeechApiKey);
     put(_volcArkApiKey, volcArkApiKey);
     put(_volcArkBaseUrl, volcArkBaseUrl);
@@ -538,6 +711,9 @@ class AppConfig {
 
 /// Riverpod provider — 判断是否已配置新版语音 API Key
 final configReadyProvider = FutureProvider<bool>((ref) async {
-  final apiKey = await AppConfig.volcSpeechApiKey;
+  final provider = await AppConfig.aiProvider;
+  final apiKey = provider == AppConfig.aiProviderVolcengine
+      ? await AppConfig.volcSpeechApiKey
+      : await AppConfig.aliyunBailianApiKey;
   return apiKey.isNotEmpty;
 });

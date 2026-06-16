@@ -4557,6 +4557,34 @@ select:disabled {
   gap: 10px;
 }
 
+.song-provider-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.song-provider-summary div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.song-provider-summary span {
+  color: var(--soft-ink);
+  font-size: 12px;
+  font-weight: 1000;
+}
+
+.song-provider-summary b {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 13px;
+}
+
 .settings-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4580,8 +4608,30 @@ select:disabled {
   box-shadow: 0 0 0 3px rgba(240, 75, 53, 0.1);
 }
 
-.cloud-settings-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.cloud-settings-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.settings-subsection {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-subsection h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 1000;
+}
+
+.model-settings-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.model-settings-grid .wide-field {
+  grid-column: 1 / -1;
 }
 
 .settings-label {
@@ -4601,6 +4651,17 @@ select:disabled {
   position: relative;
   display: block;
   min-width: 0;
+}
+
+.secret-key-row {
+  min-width: 0;
+}
+
+.secret-key-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
 }
 
 .settings-label .secret-input-control input {
@@ -4659,6 +4720,7 @@ select:disabled {
   color: var(--soft-ink);
   background: #f8fafc;
   font-weight: 1000;
+  white-space: nowrap;
 }
 
 .key-clear-button:hover:not(:disabled) {
@@ -5411,6 +5473,12 @@ select:disabled {
   }
 
   .voice-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .model-settings-grid,
+  .song-provider-summary,
+  .secret-key-control-row {
     grid-template-columns: 1fr;
   }
 

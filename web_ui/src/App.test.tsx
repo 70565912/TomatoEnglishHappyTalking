@@ -403,11 +403,21 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: /Alpha Book/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Beta Book/ })).toBeInTheDocument();
     expect(await screen.findByText('Beta Practice Chapter')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '听力' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '跟读' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '对话' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '听力' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '删除' })).not.toBeInTheDocument();
     expect(screen.queryByText('Alpha Chapter')).not.toBeInTheDocument();
+
+    const collapseToggle = screen.getByRole('button', { name: '折叠章节列表' });
+    expect(collapseToggle).toHaveTextContent('∨');
+    fireEvent.click(collapseToggle);
+    expect(await screen.findByText('章节列表已折叠')).toBeInTheDocument();
+    expect(screen.queryByText('Beta Practice Chapter')).not.toBeInTheDocument();
+    const expandToggle = screen.getByRole('button', { name: '展开章节列表' });
+    expect(expandToggle).toHaveTextContent('＞');
+    fireEvent.click(expandToggle);
+    expect(await screen.findByText('Beta Practice Chapter')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Alpha Book/ }));
     expect(await screen.findByText('Alpha Chapter')).toBeInTheDocument();
@@ -540,7 +550,7 @@ describe('App', () => {
     expect(screen.queryByLabelText('分辨率')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('转场')).not.toBeInTheDocument();
     expect(screen.queryByText('ffmpeg.exe 路径')).not.toBeInTheDocument();
-    expect(screen.getByText('Vivi 2.0')).toBeInTheDocument();
+    expect(screen.getAllByText('Abby').length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /预览/ }).length).toBeGreaterThan(0);
     expect(screen.getByText(/个发音人/)).toBeInTheDocument();
     expect(screen.getByText('当前声音')).toBeInTheDocument();
@@ -588,21 +598,28 @@ describe('App', () => {
 
     expect(await screen.findByRole('tab', { name: '阿里云百炼' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByLabelText(/^百炼 Key/)).toBeInTheDocument();
-    expect(screen.getByText('百炼 Base URL')).toBeInTheDocument();
+    expect(screen.queryAllByLabelText(/^百炼 Key/)).toHaveLength(1);
+    expect(screen.getByText('百炼兼容模式 Base URL')).toBeInTheDocument();
+    expect(screen.getByText('DashScope API Base URL')).toBeInTheDocument();
+    expect(screen.getByText('模型与语音')).toBeInTheDocument();
+    expect(screen.queryByText('Key 操作')).not.toBeInTheDocument();
     expect(screen.queryByText('方舟 Base URL')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: '火山引擎' }));
     expect(screen.getByRole('tab', { name: '火山引擎' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByLabelText(/^方舟 Key/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^火山语音 Key/)).toBeInTheDocument();
     expect(screen.getByText('方舟 Base URL')).toBeInTheDocument();
-    expect(screen.queryByText('百炼 Base URL')).not.toBeInTheDocument();
+    expect(screen.queryByText('百炼兼容模式 Base URL')).not.toBeInTheDocument();
+    expect(screen.queryByText('DashScope API Base URL')).not.toBeInTheDocument();
 
     expect(screen.getByRole('tab', { name: 'Suno 网页自动化' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('Suno 输出目录')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: '百炼 fun-music' }));
-    expect(screen.getByRole('tab', { name: '百炼 fun-music' })).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('tab', { name: '阿里云百聆' }));
+    expect(screen.getByRole('tab', { name: '阿里云百聆' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText('Suno 输出目录')).not.toBeInTheDocument();
-    expect(screen.getByText(/Key 和音乐模型在上方/)).toBeInTheDocument();
+    expect(screen.getByText('百聆音乐模型')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^百炼 Key/)).not.toBeInTheDocument();
   });
 
   it('starts the new article editor empty and enables save after real content', async () => {

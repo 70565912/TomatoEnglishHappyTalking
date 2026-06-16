@@ -106,10 +106,11 @@ web_ui/
 - 诊断日志统一使用 `app/lib/core/logging/tomato_logger.dart` 的 `TomatoLogger`；新增链路不要再散落裸 `debugPrint`。日志默认写入运行数据根 `logs/`，并通过 QA `/logs/recent`、`/logs/stream`、`/logs/export` 调试。
 - 当前主 UI 是 `web_ui` 打包后的本地 WebView 页面；Flutter 的 `WebShellScreen` 负责桥接数据库、录音、播放、TTS、ASR、AI 对话和安全配置。
 - 当前产品 UI 以“书库 / 创作中心 / 练习中心 / 设置”为主导航，不再把首页、听力、跟读和对话包装成游戏大厅、任务、闯关、XP 或奖励流程。新页面和文案应延续书籍、章节、绘本、歌曲、视频导出的工作台心智。
+- 练习中心按书籍展示章节列表，章节行必须保留“听力 / 跟读 / 对话”三个入口；“听力”进入书籍播放器 `mode=listening`，章节列表标题可折叠/展开，折叠状态显示“章节列表已折叠”。
 - `app/lib/features/home|article|follow_read|chat|profile` 下的原生 Screen 仍可作为参考/兼容层，但默认路由进入 `WebShellScreen`。
 - Web UI 与 Flutter 交互时必须通过 `web_bridge_protocol.dart` / `bridge.ts` 的 typed command/event 协议，不要从 Web UI 直接访问云 API 或本地文件系统。
-- 歌曲生成来源支持阿里云百炼 fun-music 与 Suno 网页自动化；默认 provider 仍是 Suno，但设置页可选择 `bailian_fun_music`。不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供本地歌曲缓存、播放、字幕时间轴和视频导出复用。
-- 百炼 fun-music 入口为 `app/lib/services/bailian_music_service.dart`，通过阿里云 DashScope `https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation` 生成音频；使用 `AppConfig.aliyunBailianApiKey` 与 `AppConfig.aliyunBailianMusicModel`，提交前先把过长或散文化章节压缩成适合歌曲接口的 `submittedLyrics`，再走 `ContentSafetyService`。成功音频写入 `ApiCacheService` 的 `music/` 子目录，metadata 必须记录 `submittedLyrics`、`lyricsHash` 和 `lyricsCompressed`；供应商错误直接显示，不自动回退到 Suno。
+- 歌曲生成来源支持阿里云百聆（Fun-Music）与 Suno 网页自动化；默认 provider 仍是 Suno，但设置页可选择 `bailian_fun_music`。不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供本地歌曲缓存、播放、字幕时间轴和视频导出复用。
+- 阿里云百聆（Fun-Music）入口为 `app/lib/services/bailian_music_service.dart`，通过阿里云 DashScope `https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation` 生成音频；使用 `AppConfig.aliyunBailianApiKey` 与 `AppConfig.aliyunBailianMusicModel`，提交前先把过长或散文化章节压缩成适合歌曲接口的 `submittedLyrics`，再走 `ContentSafetyService`。成功音频写入 `ApiCacheService` 的 `music/` 子目录，metadata 必须记录 `submittedLyrics`、`lyricsHash` 和 `lyricsCompressed`；供应商错误直接显示，不自动回退到 Suno。
 - Suno 网页自动化在 `WebShellScreen` 内执行：每次生成都只用当前歌词填表；如果 `Styles` 折叠，必须先点击 `Styles` 折叠头展开到能看到 `Styles` 工具栏魔法棒，再清空旧 `Styles` value 并点击蓝色 `Personalize style prompt to match your taste` 魔法棒，等待 Suno 根据歌词写入真实 `Styles` value。不要把 `More Options` 当成 `Styles` 展开入口。保存下来的风格只作为本次歌曲 metadata，不再回填或作为下载筛选条件；不要把默认 placeholder、`Refresh recommended styles` 或 `Add style:` 推荐标签当成自动风格结果。
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
 - Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
@@ -239,17 +240,17 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - “省 API”约束主要针对正式运行流程和重复调用：正式功能必须最大化复用本地解析、数据库、文件缓存和成功远程结果。
 - 开发验证不能为了省一次测试调用而跳过关键链路；涉及新增文章、方舟提取/翻译、标题、绘本生成、TTS/听力、跟读录音/识别等端到端改动时，必须做足够完整的回归测试。绘本验证要跑全量文章流程，不能只测第一页或只测 prompt 预览。
 - 绘本生成策略为“每篇文章/每章一组连续分镜图”：用户确认 v4 `scenes[]` 后，按 scene 创建多条 `picture_book_pages`；第 1 张对应第 1 个 scene，第 N 张对应第 N 个 scene，不做候选图筛选。
-- 正常 scene 数最多 14 段，`picture_book_pages` 必须覆盖完整句子范围；超长章节在 v4 文本规划阶段合并相邻场景，不拆成多组图片请求。
+- 正常 scene 数最多 12 段，`picture_book_pages` 必须覆盖完整句子范围；超长章节在 v4 文本规划阶段合并相邻场景，不拆成多组图片请求。
 - 章节组图 prompt 必须基于书籍名、书籍简介、章节标题、当前章节故事内容和用户确认的 v4 `scenes[]`，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。
 - Web UI 中“书籍”就是 `story_series`；书籍模型只保留 `title` / `description` / `cover_image_path`。新增章节保存后必须打开 `pictureBook.promptReview` 审核弹窗，用户确认 `pictureBook.confirmPromptReview` 后才提交顺序组图；`pictureBook.generate` / `retryPage` 只能作为打开审核流程的兼容入口，不得绕过审核直接消耗图片 API。
 - 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
 - 绘本图片 prompt 使用 `picture_book_prompt_v4` / `picture_book_chapter_plan_v4`：只使用书名、书籍简介、章节标题、`storyBrief`、`chapterBrief`、`scenes[]` 和用户确认的 `groupPrompt`。不要重新引入 series Bible、角色卡、参考图、`styleGuide`、`audience`、`safety`、`negativePrompt` 或字幕留白字段。旧 `chapter_story_outline_v1` / `picture_book_chapter_plan_v1/v2/v3` 只能作为历史数据，不作为新绘本生成计划复用。
 - `pictureBook.pageImage` 支持 `variant: "full" | "thumbnail"`；创作中心和书籍封面应优先请求 `thumbnail`，缩略图持久缓存在 `picture_book_thumbnails`，不要在列表页一次性把整章原图作为 data URI 加载。听力播放、全屏和导出需要原图时再请求 full/original。
 - `pictureBook.promptReview` 只生成或读取 v4 文本规划，不调用图片 API、不删除旧 `picture_book_pages` 或图片缓存；刷新按钮可分项重建书籍简介、`storyBrief`、`chapterBrief`、`scenes[]` 和 `groupPrompt`。`pictureBook.savePromptReview` 只保存审核草稿和书籍简介，仍不调用图片 API、不删除旧图。`pictureBook.confirmPromptReview` 才保存审核后的 v4 计划，确认后删除旧页/旧缓存引用并提交顺序组图。不要恢复 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS`、`TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE` 或 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 旧开关。
-- Seedream 组图 `sequential_image_generation` 是正式绘本链路：`PictureBookService` 直接调用 `generatePictureBookImageGroup(..., useSequential: true)`，`max_images` 等于已确认 scene 数。组图失败不自动回退单图；失败页保存错误原因，重试按钮重新打开审核并在确认后重建整章组图。
-- 整章组图 HTTP 返回可能按每张图耗时数分钟，不能再用固定 120 秒判定失败。`VolcImageService` 按请求图片数动态设置接收超时，默认每张 150 秒、最小 180 秒、最大 2700 秒；可通过 `TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE`、`TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS`、`TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS` 调整。
+- 顺序组图是正式绘本链路：`PictureBookService` 通过 `PictureBookImageService.generatePictureBookImageGroup(...)` 按当前 `ai_provider` 分流，阿里云走万相异步连续组图（`enable_sequential: true`，`n` 等于已确认 scene 数），火山走 Seedream `sequential_image_generation`（`max_images` 等于已确认 scene 数）。组图失败不自动回退到另一平台或单图；失败页保存错误原因，重试按钮重新打开审核并在确认后重建整章组图。
+- 整章组图 HTTP 返回可能按每张图耗时数分钟，不能再用固定 120 秒判定失败。火山 `VolcImageService` 按请求图片数动态设置接收超时，默认每张 150 秒、最小 180 秒、最大 2700 秒；可通过 `TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE`、`TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS`、`TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS` 调整。阿里云 `AliyunWanxImageService` 使用 DashScope 异步任务轮询。
 - 绘本保存/生成/听力模式的最终联调必须跑真实 Windows App UI。外部窗口截图不可用时，开启 `TOMATO_QA_REMOTE=true`，用 `npm run qa:picture-book-live` 通过本机 QA 控制接口填表保存、打开听力、轮询异步绘本状态、检查 loading/error/ready UI、字幕和播放；不要只用 service/test harness 作为最终结论。
-- 对话练习提纲复用 `chapter_story_outline_v1` 的结构化分镜，不再单独重复生成聊天提纲。程序内部 fallback 只在无 key/远程失败时本地生成最多 14 段分镜覆盖点，后续聊天轮次只复用提纲，不重复提交完整章节。
+- 对话练习提纲复用 `chapter_story_outline_v1` 的结构化分镜，不再单独重复生成聊天提纲。程序内部 fallback 只在无 key/远程失败时本地生成最多 12 段分镜覆盖点，后续聊天轮次只复用提纲，不重复提交完整章节。
 
 内容安全失败与敏感词规则：
 
@@ -330,13 +331,13 @@ BigASR：
 配置与密钥：
 
 - 语音密钥字段：`volc_speech_api_key`，供 TTS、Realtime 和 BigASR 共用。
-- 文本生成 provider 由 `ai_provider` 控制，默认 `aliyun_bailian`，可切换 `volcengine`。`TextGenerationService` 使用 `AppConfig.openAiTextConfig` 统一走 OpenAI-compatible Chat Completions。
-- 阿里云百炼配置字段：`aliyun_bailian_api_key`、`aliyun_bailian_base_url`、`aliyun_bailian_text_model`、`aliyun_bailian_music_model`；默认 base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，默认文本模型 `qwen3.7-max`，默认音乐模型 `fun-music-v1`。
-- 火山方舟配置字段：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`；方舟仍用于可选文本 provider 和 Seedream 图片生成。
-- 当前代码不再从工作目录 `security/speech-api-key.txt` 或 `security/ark.txt` 自动读取 legacy 明文 key。设置页可保存/清除百炼、方舟和语音 key，返回状态只显示 mask，不返回明文。
-- 绘本图片只使用方舟 `/api/v3/images/generations`；不要恢复旧 Visual / AK-SK 图片备用链路。
-- Seedream 组图能力只在成功读取到 `volc_ark_api_key` 时启用；没有方舟 Bearer key 时应跳过图片生成，不调用其它图片模型。
-- 绘本图片默认使用方舟 `doubao-seedream-5-0-260128`。用户侧展示按产品需求使用 16:9 `1280x720` 体验，但真实方舟网络探针已确认远程 `1280x720` 会返回 `InvalidParameter: image size must be at least 3686400 pixels`；因此远程请求使用最小满足限制的 16:9 `2560x1440`。下载后保存远程原图，UI 负责缩小显示；不要为了缩放再调用一次图片生成 API。
+- 文本生成 provider 由 `ai_provider` 控制，默认 `aliyun_bailian`，可切换 `volcengine`。`TextGenerationService` 使用 `AppConfig.openAiTextConfig` 统一走 OpenAI-compatible Chat Completions。当前平台选择也是图片、TTS、ASR 的分流开关：阿里云走 DashScope/百炼，火山走方舟/火山语音，不自动回退到另一平台。
+- 阿里云百炼配置字段：`aliyun_bailian_api_key`、`aliyun_bailian_base_url`、`aliyun_bailian_api_base_url`、`aliyun_bailian_text_model`、`aliyun_bailian_image_model`、`aliyun_bailian_image_size`、`aliyun_bailian_tts_model`、`aliyun_bailian_tts_voice`、`aliyun_bailian_tts_sample_rate`、`aliyun_bailian_asr_model`、`aliyun_bailian_realtime_asr_model`、`aliyun_bailian_realtime_asr_url`、`aliyun_bailian_music_model`；默认兼容模式 base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，默认 DashScope API base URL 为 `https://dashscope.aliyuncs.com/api/v1`，默认文本模型 `qwen3.7-max`，图片模型 `wan2.7-image-pro`，CosyVoice `cosyvoice-v3-flash` + `loongabby_v3`，ASR `qwen3-asr-flash` / `qwen3-asr-realtime`，音乐模型 `fun-music-v1`。
+- 火山方舟配置字段：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`；火山语音配置字段：`volc_speech_api_key`、`volc_tts_resource_id`、`volc_tts_speaker_id`。火山平台用于可选文本 provider、Seedream 图片生成、Doubao TTS 和 BigASR。
+- 当前代码不再从工作目录 `security/speech-api-key.txt` 或 `security/ark.txt` 自动读取 legacy 明文 key。设置页可保存/清除百炼、方舟和语音 key，返回状态只显示 mask，不返回明文。设置页云服务区域必须保持“凭据 / 平台地址 / 模型与语音”分区，Key 清除按钮并入对应输入行；TTS 声音列表按当前平台切换，阿里云保存 CosyVoice voice，火山保存 Doubao speaker。
+- 绘本图片按当前云平台分流：阿里云百炼使用 DashScope 万相异步组图接口，火山引擎使用方舟 `/api/v3/images/generations` Seedream 组图；不要恢复旧 Visual / AK-SK 图片备用链路，也不要在任一平台失败后自动回退到另一平台。
+- Seedream 组图能力只在成功读取到 `volc_ark_api_key` 且当前平台为火山时启用；万相组图能力只在成功读取到 `aliyun_bailian_api_key` 且当前平台为阿里云时启用。缺少当前平台 key 时应跳过对应图片生成，不调用其它平台图片模型。
+- 火山绘本图片默认使用方舟 `doubao-seedream-5-0-260128`。用户侧展示按产品需求使用 16:9 `1280x720` 体验，但真实方舟网络探针已确认远程 `1280x720` 会返回 `InvalidParameter: image size must be at least 3686400 pixels`；因此远程请求使用最小满足限制的 16:9 `2560x1440`。阿里云万相默认使用 `wan2.7-image-pro` + `2K`。下载后保存远程原图，UI 负责缩小显示；不要为了缩放再调用一次图片生成 API。
 - 注意 `flutter_test` 默认会拦截 `HttpClient` 并让 HTTP 请求本地返回 400；任何 live API 测试都必须先清除测试框架的 HTTP override，否则 400 不能当作火山接口真实错误。
 - 如果 live probe 在普通测试环境里返回空 body 的 HTTP 400，先按“测试环境拦截”处理：检查 `HttpOverrides.global = null`、网络权限/沙箱授权、API Key 是否真实读取，再讨论内容安全。不要先猜敏感词。
 - Seedream 图片 API 笔记放在 `docs/volc_ark_seedream_image_api_notes.md`；涉及模型、endpoint、鉴权、组图、尺寸、缓存 key 的改动时先看这份文档。

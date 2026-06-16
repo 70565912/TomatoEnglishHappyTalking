@@ -72,9 +72,11 @@ describe('bridge client', () => {
   it('saves selected voice in mock settings payload', async () => {
     const response = await sendNative<SettingsState>('settings.saveVoice', {
       speakerId: 'en_male_tim_uranus_bigtts',
+      aiProvider: 'volcengine',
     });
 
     expect(response.tts.speakerId).toBe('en_male_tim_uranus_bigtts');
+    expect(response.cloud?.volcengine.ttsSpeakerId).toBe('en_male_tim_uranus_bigtts');
   });
 
   it('reports bridge success and failure summaries to native diagnostics', async () => {

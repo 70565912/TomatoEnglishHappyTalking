@@ -16,11 +16,11 @@
 | 能力 | 读取入口 | 文件/配置 |
 | --- | --- | --- |
 | OpenAI-compatible 文本生成 | `AppConfig.openAiTextConfig` | secure storage：`ai_provider`、百炼或方舟文本配置 |
-| 方舟图片生成 | `AppConfig.volcArkImageApiKey` | secure storage：`volc_ark_api_key` |
-| 百炼 fun-music | `AppConfig.aliyunBailianApiKey` / `AppConfig.aliyunBailianMusicModel` | secure storage：百炼 key 与音乐模型 |
-| TTS / Realtime / BigASR | `AppConfig.volcSpeechApiKey` | secure storage：`volc_speech_api_key` |
-| 图片模型 | `AppConfig` / env | 默认 `doubao-seedream-5-0-260128` |
-| 图片尺寸 | `VolcImageService` env | 远程默认 `2560x1440`，本地显示按 16:9 缩放 |
+| 图片生成 | `PictureBookImageService` / `AppConfig.aiProvider` | 阿里云万相或火山 Seedream，按当前平台分流 |
+| 阿里云百聆（Fun-Music） | `AppConfig.aliyunBailianApiKey` / `AppConfig.aliyunBailianMusicModel` | secure storage：百炼 key 与音乐模型 |
+| TTS / ASR | `AppConfig.aiProvider` | 阿里云 CosyVoice / Qwen-ASR 或火山 Doubao TTS / BigASR |
+| 图片模型 | `AppConfig` / env | 阿里云默认 `wan2.7-image-pro`，火山默认 `doubao-seedream-5-0-260128` |
+| 图片尺寸 | `AppConfig` / `VolcImageService` env | 阿里云默认 `2K`；火山远程默认 `2560x1440`，本地显示按 16:9 缩放 |
 
 ## 调用矩阵
 
@@ -32,13 +32,13 @@
 | 单词释义 | 规范化单词与句子，缓存命中直接返回 | OpenAI-compatible 文本 | `word_lookup` / `openai_text` | JSON: 拼写、音标、含义、句中义 |
 | 章节结构化分镜/对话提纲 | 同一章节分镜缓存或 `story_chapters.summary_json` 命中直接返回 | OpenAI-compatible 文本 | `chapter_story_outline_v1` / `openai_text` | JSON: 章节摘要、分镜、句子范围、角色/地点连续性 |
 | AI 对话 | 完整 turns 转 textQuery，但 turns 只包含提纲、进度和历史，不重复带全文 | Realtime V3 | `chat_start` / `chat_reply` / `realtime` | AI 英文回复 |
-| 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | Doubao TTS 2.0 | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
-| 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | BigASR | `asr_recognize` / `asr` | 识别文本 |
+| 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | 当前云平台 TTS：阿里云 CosyVoice 或火山 Doubao TTS 2.0 | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
+| 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | 当前云平台 ASR：阿里云 Qwen-ASR 或火山 BigASR | `asr_recognize` / `asr` | 识别文本 |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
 | 绘本提示词审核 | 保存后生成/读取 v4 章节计划，用户确认前不提交图片 | OpenAI-compatible 文本 | `picture_book_chapter_plan_v4` / `openai_text` | `storyBrief`、`chapterBrief`、`scenes[]`、group prompt |
-| 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 方舟图片 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
+| 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 当前云平台图片：阿里云万相异步连续组图或火山 Seedream 顺序组图 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 | 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
-| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 百炼 fun-music 或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
+| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 阿里云百聆（Fun-Music）或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
 
 ## 新增文章保存流程
 
@@ -246,10 +246,10 @@ sentenceMeaning is the meaning of this word in this exact sentence.
 远程语义切分：
 
 - 文本 provider 输入使用完整章节编号句子，不再使用固定 8 条本地均分提纲作为远程输入。
-- 远程模型自己根据故事内容决定 `segments` 数量：短章节可 3-5 条，普通章节常见 6-10 条，长章节最多 14 条。
+- 远程模型自己根据故事内容决定 `segments` 数量：短章节可 3-5 条，普通章节常见 6-10 条，长章节最多 12 条。
 - 每个分镜包含 `sentenceStartIndex`、`sentenceEndIndex`、`title`、`summary`、`visualPrompt`、`characters`、`locations`、`continuityNotes`。
 - 切分依据应是自然场景、事件、冲突、角色决定和结尾变化，不是固定句数或固定段数；如果文章特别长，在分镜阶段合并相邻场景，不拆成多组图片请求。
-- 程序本地 fallback 也生成最多 14 段结构化分镜，只作为无 key/远程失败兜底，不能代表远程语义切分结果。
+- 程序本地 fallback 也生成最多 12 段结构化分镜，只作为无 key/远程失败兜底，不能代表远程语义切分结果。
 - 提交文本 provider 前，由 `ContentSafetyService` 按已验证/已学习规则做词级拆分，例如 `heads -> he-ads`。
 
 文本生成 prompt：
@@ -258,7 +258,7 @@ sentenceMeaning is the meaning of this word in this exact sentence.
 [SYSTEM] You analyze complete English story chapters and create structured storyboards for picture-book generation and speaking practice.
 Return only valid compact JSON. Do not include markdown.
 Choose the segment count from the story structure itself, never from a fixed target.
-Use at most 14 segments. Merge adjacent scenes if needed.
+Use at most 12 segments. Merge adjacent scenes if needed.
 Every segment must include zero-based sentenceStartIndex and sentenceEndIndex.
 
 [USER] Book or series title: <书名>
@@ -350,7 +350,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - 页面策略版本为 `picture_book_prompt_v4`，章节图片计划缓存为 `picture_book_chapter_plan_v4`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
 - 每章只调用一次文本规划 API，让 AI 基于书名、书籍简介、章节标题和完整句子列表生成 `storyBrief`、`chapterBrief` 和 `scenes[]`。
-- AI 自行决定分镜数量，最多 14 段；每个 scene 对应一张图片，scene 必须按顺序覆盖完整句子范围。
+- AI 自行决定分镜数量，最多 12 段；每个 scene 对应一张图片，scene 必须按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 审核弹窗有 3 个提示词魔法棒：分别刷新 `storyBrief`、`chapterBrief` 和 `scenes[]`。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
 - savePromptReview 使用用户编辑后的书籍简介、brief、scenes 和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
@@ -472,9 +472,9 @@ Visual direction: ...
 
 ## 歌曲生成流程
 
-入口：`listening.songGenerate` 根据 `source` 选择百炼 fun-music 或 Suno 网页自动化。Web UI 不直接访问任一歌曲 provider。
+入口：`listening.songGenerate` 根据 `source` 选择阿里云百聆（Fun-Music）或 Suno 网页自动化。Web UI 不直接访问任一歌曲 provider。
 
-百炼 fun-music：
+阿里云百聆（Fun-Music）：
 
 - `BailianMusicService.prepareLyricsForGeneration` 会先规范化歌词；如果歌词为空、超过 1200 字符、超过 16 行、单行超过 110 字符，或看起来更像散文而非歌曲，则按章节标题压缩成 12 行歌曲格式再提交。
 - 提交给百炼的真实文本记为 `submittedLyrics`，并参与 `lyricsHash`、缓存 key、metadata 和字幕时间轴。压缩过的版本设置 `lyricsCompressed=true`。

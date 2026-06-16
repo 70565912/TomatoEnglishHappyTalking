@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:dio/dio.dart';
+
 import '../core/config/app_config.dart';
 import '../core/logging/tomato_logger.dart';
 import 'api_cache_service.dart';
@@ -106,6 +108,7 @@ class StreamingAsrService {
   static const _liveEndpoint =
       'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel';
   static const _chunkSize = 8 * 1024;
+  static const _aliyunAudioDataLimit = 10 * 1024 * 1024;
 
   static const _protocolVersionAndHeader = 0x11; // v1 + 4-byte header
   static const _reservedByte = 0x00;
@@ -127,6 +130,14 @@ class StreamingAsrService {
     'volc.bigasr.sauc.concurrent',
   ];
 
+  static final Dio _dio = Dio(
+    BaseOptions(
+      connectTimeout: const Duration(seconds: 12),
+      receiveTimeout: const Duration(seconds: 60),
+      sendTimeout: const Duration(seconds: 30),
+    ),
+  );
+
   static Future<String> recognize({
     required List<int> audioBytes,
     int? articleId,
@@ -134,6 +145,13 @@ class StreamingAsrService {
   }) async {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '录音为空，无法识别');
+    }
+    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
+      return _recognizeAliyun(
+        audioBytes: audioBytes,
+        articleId: articleId,
+        cachePurpose: cachePurpose,
+      );
     }
 
     final audioHash = await ApiCacheService.hashBytes(audioBytes);
@@ -288,11 +306,161 @@ class StreamingAsrService {
     }
   }
 
+  static Future<String> _recognizeAliyun({
+    required List<int> audioBytes,
+    int? articleId,
+    String cachePurpose = 'asr_recognize',
+  }) async {
+    final audioHash = await ApiCacheService.hashBytes(audioBytes);
+    final endpoint = '${await AppConfig.aliyunBailianBaseUrl}/chat/completions';
+    final model = await AppConfig.aliyunBailianAsrModel;
+    final cacheRequest = {
+      'service': 'aliyun_qwen_asr',
+      'endpoint': endpoint,
+      'model': model,
+      'audioFormat': 'wav',
+      'sampleRate': 16000,
+      'bits': 16,
+      'channel': 1,
+      'language': 'en-US',
+      'audioHash': audioHash,
+    };
+    final cacheKey = await ApiCacheService.keyForJson('asr', cacheRequest);
+    final cachedText = await ApiCacheService.getText(
+      cacheKey,
+      articleId: articleId,
+      purpose: cachePurpose,
+    );
+    if (cachedText != null && cachedText.trim().isNotEmpty) {
+      return cachedText.trim();
+    }
+
+    final text = await _postAliyunAsr(
+      audioBytes: audioBytes,
+      endpoint: endpoint,
+      model: model,
+    );
+    await ApiCacheService.putText(
+      cacheKey: cacheKey,
+      kind: 'asr',
+      purpose: cachePurpose,
+      request: cacheRequest,
+      textValue: text,
+      articleId: articleId,
+    );
+    return text;
+  }
+
+  static Future<AsrTimelineResult> _recognizeAliyunWithTimeline({
+    required List<int> audioBytes,
+  }) async {
+    final endpoint = '${await AppConfig.aliyunBailianBaseUrl}/chat/completions';
+    final model = await AppConfig.aliyunBailianAsrModel;
+    final text = await _postAliyunAsr(
+      audioBytes: audioBytes,
+      endpoint: endpoint,
+      model: model,
+    );
+    return AsrTimelineResult(
+      text: text,
+      utterances: const [],
+      raw: {
+        'provider': AppConfig.aiProviderAliyunBailian,
+        'model': model,
+        'endpoint': endpoint,
+      },
+      durationMs: null,
+    );
+  }
+
+  static Future<String> _postAliyunAsr({
+    required List<int> audioBytes,
+    required String endpoint,
+    required String model,
+  }) async {
+    final apiKey = await AppConfig.aliyunBailianApiKey;
+    if (apiKey.trim().isEmpty) {
+      throw const AsrException(
+        AsrFailureType.missingApiKey,
+        '未配置阿里云百炼 API Key，请在设置的云服务中配置。',
+      );
+    }
+    final dataUri = 'data:audio/wav;base64,${base64.encode(audioBytes)}';
+    if (dataUri.length > _aliyunAudioDataLimit) {
+      throw const AsrException(
+        AsrFailureType.unknown,
+        '阿里云 Qwen-ASR 音频超过 10MB 输入限制，请缩短录音后重试',
+      );
+    }
+    try {
+      final response = await _dio.post<Object?>(
+        endpoint,
+        data: {
+          'model': model,
+          'messages': [
+            {
+              'role': 'user',
+              'content': [
+                {
+                  'type': 'input_audio',
+                  'input_audio': {'data': dataUri},
+                },
+              ],
+            },
+          ],
+          'stream': false,
+          'asr_options': {
+            'enable_itn': false,
+            'language': 'en',
+          },
+        },
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
+          },
+          responseType: ResponseType.json,
+          validateStatus: (_) => true,
+        ),
+      );
+      final statusCode = response.statusCode ?? 0;
+      if (statusCode < 200 || statusCode >= 300) {
+        throw AsrException(
+          AsrFailureType.unknown,
+          '阿里云 Qwen-ASR 请求失败 HTTP $statusCode：${_remoteErrorMessage(response.data)}',
+        );
+      }
+      final text = _extractAliyunAsrText(response.data);
+      if (text.trim().isEmpty) {
+        throw const AsrException(
+          AsrFailureType.emptyResult,
+          '阿里云 Qwen-ASR 未返回识别结果',
+        );
+      }
+      return text.trim();
+    } on DioException catch (e) {
+      throw AsrException(
+        AsrFailureType.connectFailed,
+        '阿里云 Qwen-ASR 网络请求失败：${e.message}',
+      );
+    } on AsrException {
+      rethrow;
+    } catch (e) {
+      throw AsrException(
+        AsrFailureType.unknown,
+        '阿里云 Qwen-ASR 识别失败：$e',
+      );
+    }
+  }
+
   static Future<AsrTimelineResult> recognizeWithTimeline({
     required List<int> audioBytes,
   }) async {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '音频为空，无法识别');
+    }
+    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
+      return _recognizeAliyunWithTimeline(audioBytes: audioBytes);
     }
 
     final apiKey = await AppConfig.volcBigAsrApiKey;
@@ -441,6 +609,12 @@ class StreamingAsrService {
     required Stream<List<int>> audioChunks,
     void Function(String text)? onPartial,
   }) async {
+    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
+      return _recognizeLiveAliyun(
+        audioChunks: audioChunks,
+        onPartial: onPartial,
+      );
+    }
     final apiKey = await AppConfig.volcBigAsrApiKey;
     if (apiKey.trim().isEmpty) {
       throw const AsrException(
@@ -580,6 +754,135 @@ class StreamingAsrService {
     }
   }
 
+  static Future<String> _recognizeLiveAliyun({
+    required Stream<List<int>> audioChunks,
+    void Function(String text)? onPartial,
+  }) async {
+    final apiKey = await AppConfig.aliyunBailianApiKey;
+    if (apiKey.trim().isEmpty) {
+      throw const AsrException(
+        AsrFailureType.missingApiKey,
+        '未配置阿里云百炼 API Key，请在设置的云服务中配置。',
+      );
+    }
+
+    WebSocket? socket;
+    var sentAudio = false;
+    try {
+      socket = await WebSocket.connect(
+        await AppConfig.aliyunRealtimeAsrEndpoint,
+        headers: <String, String>{
+          'Authorization': 'Bearer $apiKey',
+          'user-agent': 'TomatoEnglishHappyTalking',
+        },
+      );
+      socket.add(jsonEncode({
+        'type': 'session.update',
+        'session': {
+          'input_audio_format': 'pcm16',
+          'turn_detection': null,
+          'input_audio_transcription': {
+            'language': 'en',
+          },
+        },
+      }));
+
+      final completer = Completer<String>();
+      final textBuffer = StringBuffer();
+      final subscription = socket.listen((dynamic event) {
+        final payload = _jsonEvent(event);
+        if (payload.isEmpty) {
+          return;
+        }
+        final type = payload['type']?.toString() ?? '';
+        if (type == 'error') {
+          if (!completer.isCompleted) {
+            completer.completeError(
+              AsrException(
+                AsrFailureType.unknown,
+                '阿里云实时 ASR 返回错误：${_remoteErrorMessage(payload)}',
+              ),
+            );
+          }
+          return;
+        }
+        if (type.endsWith('.text') || type.endsWith('.completed')) {
+          final text = _transcriptionTextFromEvent(payload);
+          if (text.trim().isNotEmpty) {
+            textBuffer
+              ..clear()
+              ..write(text.trim());
+            onPartial?.call(text.trim());
+          }
+        }
+        if (type == 'session.finished' && !completer.isCompleted) {
+          completer.complete(textBuffer.toString());
+        }
+      }, onDone: () {
+        if (!completer.isCompleted) {
+          completer.complete(textBuffer.toString());
+        }
+      }, onError: (Object error) {
+        if (!completer.isCompleted) {
+          completer.completeError(
+            AsrException(
+              AsrFailureType.unknown,
+              '阿里云实时 ASR 连接中断：$error',
+            ),
+          );
+        }
+      });
+
+      try {
+        await for (final chunk in audioChunks) {
+          if (chunk.isEmpty) {
+            continue;
+          }
+          socket.add(jsonEncode({
+            'type': 'input_audio_buffer.append',
+            'audio': base64.encode(chunk),
+          }));
+          sentAudio = true;
+        }
+        if (!sentAudio) {
+          throw const AsrException(AsrFailureType.emptyAudio, '录音为空，无法识别');
+        }
+        socket.add(jsonEncode({'type': 'input_audio_buffer.commit'}));
+        socket.add(jsonEncode({'type': 'session.finish'}));
+        final recognized = await completer.future.timeout(
+          const Duration(seconds: 20),
+          onTimeout: () => throw const AsrException(
+            AsrFailureType.timeout,
+            '阿里云实时 ASR 识别超时，请稍后重试',
+          ),
+        );
+        if (recognized.trim().isEmpty) {
+          throw const AsrException(
+            AsrFailureType.emptyResult,
+            '阿里云实时 ASR 未返回识别结果',
+          );
+        }
+        return recognized.trim();
+      } finally {
+        await subscription.cancel();
+      }
+    } on AsrException {
+      rethrow;
+    } on WebSocketException catch (e) {
+      throw AsrException(
+        AsrFailureType.connectFailed,
+        '阿里云实时 ASR 连接失败：$e',
+      );
+    } catch (e) {
+      throw AsrException(
+        AsrFailureType.unknown,
+        '阿里云实时 ASR 识别失败：$e',
+      );
+    } finally {
+      await socket?.close();
+    }
+  }
+
   static Future<String> recognizeSafe({
     required List<int> audioBytes,
     int? articleId,
@@ -598,6 +901,93 @@ class StreamingAsrService {
     Map<String, dynamic> payload,
   ) =>
       _extractTimelineResult(payload);
+
+  static String _extractAliyunAsrText(Object? payload) {
+    final map = _mapValue(payload);
+    final choices = map['choices'];
+    if (choices is List && choices.isNotEmpty) {
+      final first = _mapValue(choices.first);
+      final message = _mapValue(first['message']);
+      final content = message['content'];
+      if (content is String) {
+        return content.trim();
+      }
+      if (content is List) {
+        return content
+            .map((item) {
+              if (item is String) {
+                return item;
+              }
+              final itemMap = _mapValue(item);
+              return itemMap['text'] ?? itemMap['content'] ?? '';
+            })
+            .join(' ')
+            .trim();
+      }
+    }
+    return '';
+  }
+
+  static Map<String, dynamic> _jsonEvent(Object? event) {
+    try {
+      final decoded = event is String
+          ? jsonDecode(event)
+          : event is List<int>
+              ? jsonDecode(utf8.decode(event))
+              : event;
+      return _mapValue(decoded);
+    } catch (_) {
+      return const <String, dynamic>{};
+    }
+  }
+
+  static String _transcriptionTextFromEvent(Map<String, dynamic> payload) {
+    for (final key in const [
+      'text',
+      'transcript',
+      'content',
+      'delta',
+      'final_text',
+    ]) {
+      final value = payload[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    final item = _mapValue(payload['item']);
+    final itemText =
+        item['text'] ?? item['transcript'] ?? item['content'] ?? item['delta'];
+    if (itemText != null && itemText.toString().trim().isNotEmpty) {
+      return itemText.toString().trim();
+    }
+    final transcription = _mapValue(payload['transcription']);
+    final text = transcription['text'] ?? transcription['transcript'];
+    return text?.toString().trim() ?? '';
+  }
+
+  static Map<String, dynamic> _mapValue(Object? raw) {
+    if (raw is Map<String, dynamic>) {
+      return raw;
+    }
+    if (raw is Map) {
+      return raw.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return const <String, dynamic>{};
+  }
+
+  static String _remoteErrorMessage(Object? raw) {
+    final map = _mapValue(raw);
+    final error = _mapValue(map['error']);
+    final message = error['message'] ??
+        map['message'] ??
+        map['msg'] ??
+        map['code'] ??
+        map['type'];
+    if (message != null && message.toString().trim().isNotEmpty) {
+      return message.toString().trim();
+    }
+    return raw?.toString() ?? '未知错误';
+  }
 
   static Future<WebSocket> _connectSocket({
     required String endpoint,

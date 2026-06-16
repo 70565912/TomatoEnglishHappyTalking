@@ -32,6 +32,15 @@ class VoiceInfo {
     if (id.contains('_male_') || id.contains('male')) {
       return 'male';
     }
+    final lower = id.toLowerCase();
+    if (lower.contains('abby') ||
+        lower.contains('annie') ||
+        lower.contains('anhuan')) {
+      return 'female';
+    }
+    if (lower.contains('andy') || lower.contains('anyang')) {
+      return 'male';
+    }
     return 'unknown';
   }
 }
@@ -47,6 +56,7 @@ class TtsException implements Exception {
 
 class TtsService {
   static const defaultVoiceType = 'en_female_dacey_uranus_bigtts';
+  static const defaultAliyunVoiceType = AppConfig.defaultAliyunBailianTtsVoice;
 
   static const _audioTraceEnabled = bool.fromEnvironment(
     'TOMATO_AUDIO_TRACE',
@@ -578,6 +588,42 @@ class TtsService {
         orElse: () => voices.first,
       );
 
+  static const List<VoiceInfo> aliyunVoices = [
+    VoiceInfo(
+      id: 'loongabby_v3',
+      name: 'Abby',
+      lang: '中文、英文',
+      scene: '通用朗读',
+    ),
+    VoiceInfo(
+      id: 'loongandy_v3',
+      name: 'Andy',
+      lang: '中文、英文',
+      scene: '通用朗读',
+    ),
+    VoiceInfo(
+      id: 'loongannie_v3',
+      name: 'Annie',
+      lang: '中文、英文',
+      scene: '儿童/故事',
+    ),
+    VoiceInfo(
+      id: 'longanyang',
+      name: 'An Yang',
+      lang: '中文、英文',
+      scene: '通用朗读',
+    ),
+    VoiceInfo(
+      id: 'longanhuan',
+      name: 'An Huan',
+      lang: '中文、英文',
+      scene: '通用朗读',
+    ),
+  ];
+
+  static bool isAliyunPresetVoice(String voiceType) =>
+      aliyunVoices.any((voice) => voice.id == voiceType.trim());
+
   static bool isPresetVoice(String voiceType) =>
       voices.any((voice) => voice.id == voiceType.trim());
 
@@ -592,6 +638,7 @@ class TtsService {
     int? articleId,
     String cachePurpose = 'tts',
     bool forceRefresh = false,
+    String? aiProviderOverride,
   }) async {
     final path = await synthesizeToCachedFile(
       text: text,
@@ -600,6 +647,7 @@ class TtsService {
       articleId: articleId,
       cachePurpose: cachePurpose,
       forceRefresh: forceRefresh,
+      aiProviderOverride: aiProviderOverride,
     );
     return await File(path).readAsBytes();
   }
@@ -611,6 +659,7 @@ class TtsService {
     int? articleId,
     String cachePurpose = 'tts',
     bool forceRefresh = false,
+    String? aiProviderOverride,
   }) async {
     final trimmedText = text.trim();
     if (trimmedText.isEmpty) {
@@ -623,6 +672,18 @@ class TtsService {
     ))
         .trim();
     final safeText = requestText.isEmpty ? trimmedText : requestText;
+
+    final provider = await _providerForRequest(aiProviderOverride);
+    if (provider == AppConfig.aiProviderAliyunBailian) {
+      return _synthesizeAliyunToCachedFile(
+        text: safeText,
+        requestedVoiceType: voiceType,
+        preferRequestedVoice: preferRequestedVoice,
+        articleId: articleId,
+        cachePurpose: cachePurpose,
+        forceRefresh: forceRefresh,
+      );
+    }
 
     final ttsResourceId = await AppConfig.volcTtsResourceId;
     if (ttsResourceId.trim().isEmpty) {
@@ -742,6 +803,127 @@ class TtsService {
     throw firstError ?? const TtsException('TTS 2.0 合成失败');
   }
 
+  static Future<String> _providerForRequest(String? override) async {
+    final value = override?.trim();
+    if (value == AppConfig.aiProviderAliyunBailian ||
+        value == AppConfig.aiProviderVolcengine) {
+      return value!;
+    }
+    return AppConfig.aiProvider;
+  }
+
+  static Future<String> _synthesizeAliyunToCachedFile({
+    required String text,
+    required String requestedVoiceType,
+    required bool preferRequestedVoice,
+    required int? articleId,
+    required String cachePurpose,
+    required bool forceRefresh,
+  }) async {
+    final endpoint = await AppConfig.aliyunCosyVoiceEndpoint;
+    final model = await AppConfig.aliyunBailianTtsModel;
+    final configuredVoice = await AppConfig.aliyunBailianTtsVoice;
+    final resolvedVoice = _resolveAliyunVoice(
+      configuredVoice: configuredVoice,
+      requestedVoiceType: requestedVoiceType,
+      preferRequestedVoice: preferRequestedVoice,
+    );
+    if (resolvedVoice.isEmpty) {
+      throw const TtsException('本机配置未读取到阿里云 CosyVoice 音色');
+    }
+    final sampleRate = await AppConfig.aliyunBailianTtsSampleRate;
+    final candidates = await Future.wait(
+      _synthesisTextCandidates(text).map((candidate) async {
+        final request = _aliyunCacheRequest(
+          endpoint: endpoint,
+          model: model,
+          voice: resolvedVoice,
+          sampleRate: sampleRate,
+          text: candidate,
+        );
+        final cacheKey = await ApiCacheService.keyForJson('tts', request);
+        return _TtsCacheCandidate(
+          text: candidate,
+          cacheKey: cacheKey,
+          request: request,
+        );
+      }),
+    );
+
+    if (!forceRefresh) {
+      for (final candidate in candidates) {
+        final cachedPath = await ApiCacheService.getFilePath(
+          candidate.cacheKey,
+          articleId: articleId,
+          purpose: cachePurpose,
+        );
+        if (cachedPath != null) {
+          _trace('aliyun cache hit key=${candidate.cacheKey} path=$cachedPath');
+          return cachedPath;
+        }
+      }
+    }
+
+    final apiKey = await AppConfig.aliyunBailianApiKey;
+    if (apiKey.isEmpty) {
+      throw const TtsException('未配置阿里云百炼 API Key，请在设置的云服务中配置。');
+    }
+
+    TtsException? firstError;
+    for (var i = 0; i < candidates.length; i += 1) {
+      final candidate = candidates[i];
+      try {
+        final bytes = await _synthesizeAliyunCosyVoice(
+          apiKey: apiKey,
+          endpoint: endpoint,
+          model: model,
+          voice: resolvedVoice,
+          sampleRate: sampleRate,
+          text: candidate.text,
+        );
+        final filePath = await ApiCacheService.putFileBytes(
+          cacheKey: candidate.cacheKey,
+          kind: 'tts',
+          purpose: cachePurpose,
+          request: candidate.request,
+          bytes: bytes,
+          subdirectory: 'tts',
+          extension: 'mp3',
+          contentType: 'audio/mpeg',
+          articleId: articleId,
+        );
+        await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
+          serviceKind: ContentSafetyService.serviceTts,
+          purpose: cachePurpose,
+          articleId: articleId,
+          successfulText: candidate.text,
+        );
+        return filePath;
+      } on TtsException catch (error) {
+        firstError ??= error;
+        final canRetry = i == 0 &&
+            candidates.length > 1 &&
+            _shouldRetryWithReadableFallback(error);
+        if (!canRetry) {
+          final safety = ContentSafetyService.classifyFailure(error);
+          if (safety.suspectedSafetyBlock) {
+            await ContentSafetyService.recordFailure(
+              serviceKind: ContentSafetyService.serviceTts,
+              purpose: cachePurpose,
+              articleId: articleId,
+              failedText: text,
+              errorCode: safety.errorCode,
+              errorMessage: safety.message,
+            );
+          }
+          rethrow;
+        }
+      }
+    }
+
+    throw firstError ?? const TtsException('阿里云 CosyVoice 合成失败');
+  }
+
   static Future<Set<String>> cacheKeysForText({
     required String text,
     String voiceType = defaultVoiceType,
@@ -759,6 +941,34 @@ class TtsService {
     ))
         .trim();
     final safeText = requestText.isEmpty ? trimmedText : requestText;
+
+    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
+      final endpoint = await AppConfig.aliyunCosyVoiceEndpoint;
+      final model = await AppConfig.aliyunBailianTtsModel;
+      final configuredVoice = await AppConfig.aliyunBailianTtsVoice;
+      final voice = _resolveAliyunVoice(
+        configuredVoice: configuredVoice,
+        requestedVoiceType: voiceType,
+        preferRequestedVoice: preferRequestedVoice,
+      );
+      final sampleRate = await AppConfig.aliyunBailianTtsSampleRate;
+      if (voice.isEmpty) {
+        return <String>{};
+      }
+      return {
+        for (final candidate in _synthesisTextCandidates(safeText))
+          await ApiCacheService.keyForJson(
+            'tts',
+            _aliyunCacheRequest(
+              endpoint: endpoint,
+              model: model,
+              voice: voice,
+              sampleRate: sampleRate,
+              text: candidate,
+            ),
+          ),
+      };
+    }
 
     final ttsResourceId = await AppConfig.volcTtsResourceId;
     final configuredSpeakerId = await AppConfig.volcTtsSpeakerId;
@@ -797,6 +1007,26 @@ class TtsService {
         'audio': {
           'format': 'mp3',
           'sampleRate': 24000,
+        },
+      };
+
+  static Map<String, dynamic> _aliyunCacheRequest({
+    required String endpoint,
+    required String model,
+    required String voice,
+    required int sampleRate,
+    required String text,
+  }) =>
+      {
+        'service': 'aliyun_cosyvoice',
+        'endpoint': endpoint,
+        'model': model,
+        'voice': voice,
+        'text': text,
+        'audio': {
+          'format': 'mp3',
+          'sampleRate': sampleRate,
+          'languageHints': ['en'],
         },
       };
 
@@ -871,6 +1101,86 @@ class TtsService {
         RegExp(r'\bAdventures\b|\bWonderland\b|\bChapter\b',
                 caseSensitive: false)
             .hasMatch(text);
+  }
+
+  static Future<List<int>> _synthesizeAliyunCosyVoice({
+    required String apiKey,
+    required String endpoint,
+    required String model,
+    required String voice,
+    required int sampleRate,
+    required String text,
+  }) async {
+    try {
+      _trace(
+        'aliyun request start model=$model voice=$voice textLen=${text.length}',
+      );
+      final response = await _dio.post<Object?>(
+        endpoint,
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $apiKey',
+            'Content-Type': 'application/json',
+          },
+          responseType: ResponseType.json,
+          validateStatus: (_) => true,
+        ),
+        data: {
+          'model': model,
+          'input': {
+            'text': text,
+            'voice': voice,
+            'format': 'mp3',
+            'sample_rate': sampleRate,
+            'language_hints': ['en'],
+          },
+        },
+      );
+      final statusCode = response.statusCode ?? 0;
+      if (statusCode < 200 || statusCode >= 300) {
+        throw TtsException(
+          '阿里云 CosyVoice 请求失败 HTTP $statusCode：${_remoteErrorMessage(response.data)}',
+        );
+      }
+      final bytes = await _cosyVoiceAudioBytes(response.data);
+      if (bytes.isEmpty) {
+        throw const TtsException('阿里云 CosyVoice 未返回音频数据');
+      }
+      return bytes;
+    } on DioException catch (e) {
+      throw _mapDioException(
+        e,
+        fallbackMessage: '阿里云 CosyVoice 网络请求失败，请检查网络或百炼配置',
+      );
+    } on TtsException {
+      rethrow;
+    } catch (e) {
+      TomatoLogger.error(
+        category: 'tts',
+        event: 'aliyun_synthesize.failed',
+        error: e,
+      );
+      throw TtsException('阿里云 CosyVoice 合成失败：$e');
+    }
+  }
+
+  static Future<List<int>> _cosyVoiceAudioBytes(Object? payload) async {
+    final map = _mapValue(payload);
+    final output = _mapValue(map['output']);
+    final audio = _mapValue(output['audio']);
+    final data = audio['data']?.toString().trim() ?? '';
+    if (data.isNotEmpty) {
+      return base64.decode(data);
+    }
+    final url = audio['url']?.toString().trim() ?? '';
+    if (url.isEmpty) {
+      return const <int>[];
+    }
+    final response = await _dio.get<List<int>>(
+      url,
+      options: Options(responseType: ResponseType.bytes),
+    );
+    return response.data ?? const <int>[];
   }
 
   static Future<List<int>> _synthesizeV3({
@@ -1050,6 +1360,26 @@ class TtsService {
     return int.tryParse(value?.toString() ?? '');
   }
 
+  static String _resolveAliyunVoice({
+    required String configuredVoice,
+    required String requestedVoiceType,
+    bool preferRequestedVoice = false,
+  }) {
+    final trimmedRequestedVoiceType = requestedVoiceType.trim();
+    if (preferRequestedVoice &&
+        isAliyunPresetVoice(trimmedRequestedVoiceType)) {
+      return trimmedRequestedVoiceType;
+    }
+    final trimmedConfiguredVoice = configuredVoice.trim();
+    if (trimmedConfiguredVoice.isNotEmpty) {
+      return trimmedConfiguredVoice;
+    }
+    if (isAliyunPresetVoice(trimmedRequestedVoiceType)) {
+      return trimmedRequestedVoiceType;
+    }
+    return defaultAliyunVoiceType;
+  }
+
   static String _resolveSpeakerId({
     required String configuredSpeakerId,
     required String requestedVoiceType,
@@ -1075,6 +1405,25 @@ class TtsService {
     }
 
     return trimmedRequestedVoiceType;
+  }
+
+  static Map<String, dynamic> _mapValue(Object? raw) {
+    if (raw is Map<String, dynamic>) {
+      return raw;
+    }
+    if (raw is Map) {
+      return raw.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return const <String, dynamic>{};
+  }
+
+  static String _remoteErrorMessage(Object? payload) {
+    final map = _mapValue(payload);
+    final message = map['message'] ?? map['msg'] ?? map['error'] ?? map['code'];
+    if (message != null && message.toString().trim().isNotEmpty) {
+      return message.toString().trim();
+    }
+    return payload?.toString() ?? '未知错误';
   }
 
   static void _trace(String message) {
