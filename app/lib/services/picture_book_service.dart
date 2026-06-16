@@ -38,23 +38,20 @@ class PictureBookService {
   static const String _chapterPlanPolicyVersion =
       'picture_book_chapter_plan_v4';
   static const String _characterRosterRule =
-      'Include a compact Character roster inside storyBrief/bookDescription when characters matter. '
+      'Include a compact Character roster inside chapterDescription/bookDescription when characters matter. '
       'Cover every recurring, supporting, or strongly implied visible character, not only the protagonist. '
       'For unnamed groups, assign stable role labels such as eldest sister, middle sister, youngest sister, narrator, or teacher, '
       'and give each label distinct age, size, hair, clothing, accessory, and posture cues for consistent future appearances.';
   static const int _maxBookDescriptionChars = 1400;
-  static const int _maxStoryBriefWords = 110;
-  static const int _maxChapterBriefWords = 80;
+  static const int _maxChapterDescriptionWords = 150;
   static const int _maxGroupPromptWords = 620;
   static const int _maxGroupPromptChars = 5200;
   static const String _bookDescriptionRefreshPurpose =
       'picture_book_prompt_v4_book_description_refresh';
   static const String _bookDescriptionDraftPurpose =
       'picture_book_prompt_v4_book_description_draft';
-  static const String _storyBriefRefreshPurpose =
-      'picture_book_prompt_v4_story_refresh';
-  static const String _chapterBriefRefreshPurpose =
-      'picture_book_prompt_v4_chapter_refresh';
+  static const String _chapterDescriptionRefreshPurpose =
+      'picture_book_prompt_v4_chapter_description_refresh';
   static const String _scenesRefreshPurpose =
       'picture_book_prompt_v4_scenes_refresh';
   static const int _maxConcurrentGenerationJobs = int.fromEnvironment(
@@ -94,8 +91,7 @@ class PictureBookService {
             ? article.title.trim()
             : seriesTitle.trim(),
         bookDescription: currentDescription,
-        storyBrief: '',
-        chapterBrief: '',
+        chapterDescription: '',
       ),
       cachePurpose: _bookDescriptionDraftPurpose,
       fallbackText: jsonEncode({'bookDescription': fallback}),
@@ -116,7 +112,7 @@ class PictureBookService {
   }) async {
     final articleId = article.id;
     if (articleId == null) {
-      throw StateError('Article must be saved before creating a story chapter');
+      throw StateError('Article must be saved before creating a chapter');
     }
     final existing = await DatabaseService.getStoryChapterForArticle(articleId);
     if (existing != null) {
@@ -238,7 +234,6 @@ class PictureBookService {
       contentHash: contentHash,
       sentenceCount: article.sentences.length,
       source: reply.source,
-      fallbackTitle: article.title,
     );
     if (plan == null) {
       throw const TextGenerationException(
@@ -250,8 +245,7 @@ class PictureBookService {
       'planPolicyVersion': _chapterPlanPolicyVersion,
       'contentHash': contentHash,
       'title': article.title,
-      'storyBrief': plan.storyBrief,
-      'chapterBrief': plan.chapterBrief,
+      'chapterDescription': plan.chapterDescription,
       'scenes': plan.scenes.map((scene) => scene.toJson()).toList(),
     };
     await DatabaseService.updateStoryChapter(
@@ -296,7 +290,7 @@ class PictureBookService {
             series;
     final reviewBookDescription = _bookDescriptionWithChapterCharacters(
       bookDescription: refreshedSeries.description,
-      storyBrief: plan.storyBrief,
+      chapterDescription: plan.chapterDescription,
     );
     final reviewSeries = refreshedSeries.copyWith(
       description: reviewBookDescription,
@@ -318,8 +312,7 @@ class PictureBookService {
       regenerate: regenerate,
       pages: pageDrafts,
       bookDescription: reviewBookDescription,
-      storyBrief: plan.storyBrief,
-      chapterBrief: plan.chapterBrief,
+      chapterDescription: plan.chapterDescription,
       groupPrompt: groupPrompt,
       createdAt: DateTime.now(),
     );
@@ -332,8 +325,7 @@ class PictureBookService {
     required String reviewId,
     required String target,
     required String bookDescription,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
     required List<Map<String, dynamic>> scenes,
   }) async {
     final draft = _promptReviewDrafts[reviewId];
@@ -347,12 +339,9 @@ class PictureBookService {
 
     final normalizedTarget = target.trim();
     var currentBookDescription = bookDescription.trim();
-    var currentStoryBrief = storyBrief.trim().isEmpty
-        ? draft.storyBrief
-        : _sanitizeForImagePrompt(storyBrief);
-    var currentChapterBrief = chapterBrief.trim().isEmpty
-        ? draft.chapterBrief
-        : _sanitizeForImagePrompt(chapterBrief);
+    var currentChapterDescription = chapterDescription.trim().isEmpty
+        ? draft.chapterDescription
+        : _sanitizeForImagePrompt(chapterDescription);
     var currentSegments = _submittedSegmentsForDraft(draft, scenes);
 
     switch (normalizedTarget) {
@@ -363,8 +352,7 @@ class PictureBookService {
             chapter: draft.chapter,
             seriesTitle: draft.series.title,
             bookDescription: currentBookDescription,
-            storyBrief: currentStoryBrief,
-            chapterBrief: currentChapterBrief,
+            chapterDescription: currentChapterDescription,
           ),
           cachePurpose: _bookDescriptionRefreshPurpose,
           articleId: articleId,
@@ -381,55 +369,29 @@ class PictureBookService {
         }
         currentBookDescription = refreshed;
         break;
-      case 'storyBrief':
+      case 'chapterDescription':
         final reply = await TextGenerationService.generateStrict(
-          turns: _storyBriefRefreshPromptTurns(
+          turns: _chapterDescriptionRefreshPromptTurns(
             article: draft.article,
             chapter: draft.chapter,
             seriesTitle: draft.series.title,
             bookDescription: currentBookDescription,
-            storyBrief: currentStoryBrief,
-            chapterBrief: currentChapterBrief,
+            chapterDescription: currentChapterDescription,
           ),
-          cachePurpose: _storyBriefRefreshPurpose,
+          cachePurpose: _chapterDescriptionRefreshPurpose,
           articleId: articleId,
-          maxTokens: 900,
+          maxTokens: 1100,
           jsonResponse: true,
           skipCacheRead: true,
         );
         final raw = _decodeJson(reply.text, const <String, dynamic>{});
         final refreshed = _sanitizeForImagePrompt(
-          raw['storyBrief']?.toString().trim() ?? '',
+          raw['chapterDescription']?.toString().trim() ?? '',
         );
         if (refreshed.isEmpty) {
-          throw const TextGenerationException('AI 未返回有效绘本故事简述，请重试。');
+          throw const TextGenerationException('AI 未返回有效章节描述，请重试。');
         }
-        currentStoryBrief = refreshed;
-        break;
-      case 'chapterBrief':
-        final reply = await TextGenerationService.generateStrict(
-          turns: _chapterBriefRefreshPromptTurns(
-            article: draft.article,
-            chapter: draft.chapter,
-            seriesTitle: draft.series.title,
-            bookDescription: currentBookDescription,
-            storyBrief: currentStoryBrief,
-            chapterBrief: currentChapterBrief,
-          ),
-          cachePurpose: _chapterBriefRefreshPurpose,
-          articleId: articleId,
-          maxTokens: 900,
-          jsonResponse: true,
-          skipCacheRead: true,
-        );
-        final raw = _decodeJson(reply.text, const <String, dynamic>{});
-        final refreshed = _sanitizeForImagePrompt(
-          raw['chapterBrief']?.toString().trim() ?? '',
-        );
-        if (refreshed.isEmpty) {
-          throw const TextGenerationException('AI 未返回有效章节组图简述，请重试。');
-        }
-        currentChapterBrief = refreshed;
+        currentChapterDescription = refreshed;
         break;
       case 'scenes':
         final reply = await TextGenerationService.generateStrict(
@@ -438,8 +400,7 @@ class PictureBookService {
             chapter: draft.chapter,
             seriesTitle: draft.series.title,
             bookDescription: currentBookDescription,
-            storyBrief: currentStoryBrief,
-            chapterBrief: currentChapterBrief,
+            chapterDescription: currentChapterDescription,
             segments: currentSegments,
           ),
           cachePurpose: _scenesRefreshPurpose,
@@ -460,8 +421,7 @@ class PictureBookService {
         currentSegments = _segmentArticle(
           draft.article,
           ChapterPicturePlan(
-            storyBrief: currentStoryBrief,
-            chapterBrief: currentChapterBrief,
+            chapterDescription: currentChapterDescription,
             scenes: refreshedScenes,
             source: TextGenerationReplySource.remote,
           ),
@@ -473,7 +433,7 @@ class PictureBookService {
 
     currentBookDescription = _bookDescriptionWithChapterCharacters(
       bookDescription: currentBookDescription,
-      storyBrief: currentStoryBrief,
+      chapterDescription: currentChapterDescription,
     );
     final updatedSeries = draft.series.copyWith(
       description: currentBookDescription,
@@ -486,8 +446,7 @@ class PictureBookService {
     final updatedGroupPrompt = _composeGroupPrompt(
       series: updatedSeries,
       plan: ChapterPicturePlan(
-        storyBrief: currentStoryBrief,
-        chapterBrief: currentChapterBrief,
+        chapterDescription: currentChapterDescription,
         scenes: [
           for (final segment in currentSegments)
             PictureBookScene(
@@ -495,7 +454,7 @@ class PictureBookService {
               sentenceStartIndex: segment.sentenceStartIndex,
               sentenceEndIndex: segment.sentenceEndIndex,
               title: segment.title,
-              story: segment.summary,
+              sceneDescription: segment.summary,
               visual: segment.visualPrompt,
             ),
         ],
@@ -507,8 +466,7 @@ class PictureBookService {
       series: updatedSeries,
       pages: updatedPages,
       bookDescription: currentBookDescription,
-      storyBrief: currentStoryBrief,
-      chapterBrief: currentChapterBrief,
+      chapterDescription: currentChapterDescription,
       groupPrompt: updatedGroupPrompt,
     );
     _promptReviewDrafts[reviewId] = updatedDraft;
@@ -522,8 +480,7 @@ class PictureBookService {
     required String reviewId,
     required String groupPrompt,
     required String bookDescription,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
     required List<Map<String, dynamic>> scenes,
   }) async {
     final draft = _promptReviewDrafts[reviewId];
@@ -531,16 +488,13 @@ class PictureBookService {
       throw const FormatException('绘本提示词审核已过期，请重新打开审核弹窗。');
     }
 
-    final confirmedStoryBrief = storyBrief.trim().isEmpty
-        ? draft.storyBrief
-        : _sanitizeForImagePrompt(storyBrief);
+    final confirmedChapterDescription = chapterDescription.trim().isEmpty
+        ? draft.chapterDescription
+        : _sanitizeForImagePrompt(chapterDescription);
     final confirmedBookDescription = _bookDescriptionWithChapterCharacters(
       bookDescription: bookDescription.trim(),
-      storyBrief: confirmedStoryBrief,
+      chapterDescription: confirmedChapterDescription,
     );
-    final confirmedChapterBrief = chapterBrief.trim().isEmpty
-        ? draft.chapterBrief
-        : _sanitizeForImagePrompt(chapterBrief);
     final updatedSeries = draft.series.copyWith(
       description: confirmedBookDescription,
       updatedAt: DateTime.now(),
@@ -551,8 +505,7 @@ class PictureBookService {
     final fallbackGroupPrompt = _composeGroupPrompt(
       series: updatedSeries,
       plan: ChapterPicturePlan(
-        storyBrief: confirmedStoryBrief,
-        chapterBrief: confirmedChapterBrief,
+        chapterDescription: confirmedChapterDescription,
         scenes: [
           for (final segment in confirmedSegments)
             PictureBookScene(
@@ -560,7 +513,7 @@ class PictureBookService {
               sentenceStartIndex: segment.sentenceStartIndex,
               sentenceEndIndex: segment.sentenceEndIndex,
               title: segment.title,
-              story: segment.summary,
+              sceneDescription: segment.summary,
               visual: segment.visualPrompt,
             ),
         ],
@@ -575,8 +528,7 @@ class PictureBookService {
     await _saveConfirmedChapterPlan(
       article: draft.article,
       chapter: draft.chapter,
-      storyBrief: confirmedStoryBrief,
-      chapterBrief: confirmedChapterBrief,
+      chapterDescription: confirmedChapterDescription,
       segments: confirmedSegments,
     );
 
@@ -587,8 +539,7 @@ class PictureBookService {
           _PromptReviewPageDraft(segment: segment),
       ],
       bookDescription: confirmedBookDescription,
-      storyBrief: confirmedStoryBrief,
-      chapterBrief: confirmedChapterBrief,
+      chapterDescription: confirmedChapterDescription,
       groupPrompt: confirmedGroupPrompt,
     );
     _promptReviewDrafts[reviewId] = updatedDraft;
@@ -599,8 +550,7 @@ class PictureBookService {
     required String reviewId,
     required String groupPrompt,
     required String bookDescription,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
     required List<Map<String, dynamic>> scenes,
     PictureBookProgressCallback? onProgress,
   }) async {
@@ -614,16 +564,13 @@ class PictureBookService {
       throw const FormatException('绘本提示词审核缺少文章或书籍信息。');
     }
 
-    final confirmedStoryBrief = storyBrief.trim().isEmpty
-        ? draft.storyBrief
-        : _sanitizeForImagePrompt(storyBrief);
+    final confirmedChapterDescription = chapterDescription.trim().isEmpty
+        ? draft.chapterDescription
+        : _sanitizeForImagePrompt(chapterDescription);
     final confirmedBookDescription = _bookDescriptionWithChapterCharacters(
       bookDescription: bookDescription.trim(),
-      storyBrief: confirmedStoryBrief,
+      chapterDescription: confirmedChapterDescription,
     );
-    final confirmedChapterBrief = chapterBrief.trim().isEmpty
-        ? draft.chapterBrief
-        : _sanitizeForImagePrompt(chapterBrief);
     final updatedSeries = draft.series.copyWith(
       description: confirmedBookDescription,
       updatedAt: DateTime.now(),
@@ -634,8 +581,7 @@ class PictureBookService {
     final fallbackGroupPrompt = _composeGroupPrompt(
       series: updatedSeries,
       plan: ChapterPicturePlan(
-        storyBrief: confirmedStoryBrief,
-        chapterBrief: confirmedChapterBrief,
+        chapterDescription: confirmedChapterDescription,
         scenes: [
           for (final segment in confirmedSegments)
             PictureBookScene(
@@ -643,7 +589,7 @@ class PictureBookService {
               sentenceStartIndex: segment.sentenceStartIndex,
               sentenceEndIndex: segment.sentenceEndIndex,
               title: segment.title,
-              story: segment.summary,
+              sceneDescription: segment.summary,
               visual: segment.visualPrompt,
             ),
         ],
@@ -658,8 +604,7 @@ class PictureBookService {
     await _saveConfirmedChapterPlan(
       article: draft.article,
       chapter: draft.chapter,
-      storyBrief: confirmedStoryBrief,
-      chapterBrief: confirmedChapterBrief,
+      chapterDescription: confirmedChapterDescription,
       segments: confirmedSegments,
     );
 
@@ -680,8 +625,7 @@ class PictureBookService {
         series: updatedSeries,
         chapter: draft.chapter,
         segment: segment,
-        storyBrief: confirmedStoryBrief,
-        chapterBrief: confirmedChapterBrief,
+        chapterDescription: confirmedChapterDescription,
         groupPrompt: confirmedGroupPrompt,
         reviewId: reviewId,
       );
@@ -711,8 +655,7 @@ class PictureBookService {
         series: updatedSeries,
         chapter: draft.chapter,
         segment: segment,
-        storyBrief: confirmedStoryBrief,
-        chapterBrief: confirmedChapterBrief,
+        chapterDescription: confirmedChapterDescription,
         groupPrompt: confirmedGroupPrompt,
         reviewId: reviewId,
       );
@@ -883,7 +826,7 @@ class PictureBookService {
     final promptSeries = refreshedSeries.copyWith(
       description: _bookDescriptionWithChapterCharacters(
         bookDescription: refreshedSeries.description,
-        storyBrief: plan.storyBrief,
+        chapterDescription: plan.chapterDescription,
       ),
     );
     final promptedSegments = <_PromptedSegment>[];
@@ -906,8 +849,7 @@ class PictureBookService {
         series: promptSeries,
         chapter: currentChapter,
         segment: segment,
-        storyBrief: plan.storyBrief,
-        chapterBrief: plan.chapterBrief,
+        chapterDescription: plan.chapterDescription,
         groupPrompt: groupPrompt,
       );
       final generatingPage = promptPage.copyWith(
@@ -1391,7 +1333,7 @@ class PictureBookService {
       const TextGenerationTurn(
         role: 'system',
         content:
-            'You create one complete picture-book group-image plan for a chapter. Return only strict valid minified JSON and nothing else. Do not use markdown. Do not use Python tuples, comments, trailing commas, or prose outside JSON. The JSON must contain storyBrief, chapterBrief, and scenes. Each scene becomes exactly one generated image in order.',
+            'You create one complete picture-book group-image plan for a chapter. Return only strict valid minified JSON and nothing else. Do not use markdown. Do not use Python tuples, comments, trailing commas, or prose outside JSON. The JSON must contain chapterDescription and scenes. Each scene becomes exactly one generated image in order.',
       ),
       TextGenerationTurn(
         role: 'user',
@@ -1402,24 +1344,24 @@ class PictureBookService {
           'Chapter title: ${chapter.chapterTitle}',
           '',
           'Return JSON with this exact top-level shape:',
-          '{"planKind":"picture_book_chapter_plan_v4","storyBrief":"...","chapterBrief":"...","scenes":[{"pageIndex":0,"sentenceStartIndex":0,"sentenceEndIndex":2,"title":"...","story":"...","visual":"..."}]}',
+          '{"planKind":"picture_book_chapter_plan_v4","chapterDescription":"...","scenes":[{"pageIndex":0,"sentenceStartIndex":0,"sentenceEndIndex":2,"title":"...","sceneDescription":"...","visual":"..."}]}',
           '',
           'Rules:',
           '- Output must be parseable by JSON.parse exactly as returned. Use ["note"] not [("note")].',
-          '- storyBrief should briefly describe the book world for this chapter and the main recurring characters needed for visual consistency.',
+          '- chapterDescription should briefly describe this chapter as one coherent picture-book image sequence.',
+          '- Include the chapter arc, setting changes, important actions, mood changes, ending, and the main recurring characters needed for visual consistency.',
           '- Include every visually important recurring or supporting character mentioned or strongly implied by the current chapter, not only the protagonist.',
           '- $_characterRosterRule',
-          '- If the book title is a recognizable classic or public-domain story, use common public knowledge to include a compact known-character roster before planning this chapter.',
+          '- If the book title is a recognizable classic or public-domain book, use common public knowledge to include a compact known-character roster before planning this chapter.',
           '- If you cannot confidently identify public book information from the title, do not invent book-wide characters; only describe characters present or strongly implied in this chapter.',
-          '- If the current book description only covers a protagonist, add a "Chapter character additions:" sentence inside storyBrief for visually important characters in this chapter that should remain consistent in later chapters.',
+          '- If the current book description only covers a protagonist, add a "Chapter character additions:" sentence inside chapterDescription for visually important characters in this chapter that should remain consistent in later chapters.',
           '- scenes[].visual must reuse those stable character labels and appearance cues when the character appears.',
-          '- chapterBrief should briefly describe this chapter as one coherent picture-book image sequence.',
-          '- Split scenes by natural story beats: scene, event, conflict, decision, setting change, and ending.',
+          '- Split scenes by natural narrative beats: scene, event, conflict, decision, setting change, and ending.',
           '- Use the smallest useful number of scenes, up to ${ChapterStoryOutlineService.maxSegments}.',
           '- scenes must cover every sentence from 0 to ${cleanSentences.isEmpty ? 0 : cleanSentences.length - 1}, in order, without overlap.',
           '- scenes[i].pageIndex must equal i.',
           '- Each scene visual must describe exactly one illustration: characters, action, setting, mood, key props, and composition.',
-          '- Use the book title and book description to infer era, style, story world, and recurring main/supporting character appearances, but prioritize the current chapter text.',
+          '- Use the book title and book description to infer era, style, narrative world, and recurring main/supporting character appearances, but prioritize the current chapter text.',
           '- Return only the top-level fields and scene fields shown in the JSON shape.',
           '',
           'Numbered chapter sentences:',
@@ -1436,8 +1378,7 @@ class PictureBookService {
     required StoryChapter chapter,
     required String seriesTitle,
     required String bookDescription,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
   }) {
     return [
       const TextGenerationTurn(
@@ -1452,15 +1393,14 @@ class PictureBookService {
           'Current bookDescription written or approved by the user: $bookDescription',
           'Chapter order: ${chapter.chapterOrder}',
           'Chapter title: ${chapter.chapterTitle}',
-          'Current storyBrief: $storyBrief',
-          'Current chapterBrief: $chapterBrief',
+          'Current chapterDescription: $chapterDescription',
           '',
           'Return JSON shape:',
           '{"bookDescription":"..."}',
           '',
           'Rules:',
           '- Keep it concise and useful as the book-level visual anchor.',
-          '- Describe the era, story world, overall illustration style, color mood, and main recurring characters.',
+          '- Describe the era, narrative world, overall illustration style, color mood, and main recurring characters.',
           '- Include compact visual descriptions for important supporting characters likely to appear in this book or chapter; do not limit the description to one protagonist when multiple characters matter.',
           '- $_characterRosterRule',
           '- For recognizable classic or public-domain books, first list the major known recurring characters from common public knowledge, then add concise visual descriptions.',
@@ -1478,19 +1418,18 @@ class PictureBookService {
     ];
   }
 
-  static List<TextGenerationTurn> _storyBriefRefreshPromptTurns({
+  static List<TextGenerationTurn> _chapterDescriptionRefreshPromptTurns({
     required Article article,
     required StoryChapter chapter,
     required String seriesTitle,
     required String bookDescription,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
   }) {
     return [
       const TextGenerationTurn(
         role: 'system',
         content:
-            'You refresh only the storyBrief field for an English picture-book image sequence. Return strict valid minified JSON only, with exactly one top-level field: storyBrief.',
+            'You refresh only the chapterDescription field for an English picture-book image sequence. Return strict valid minified JSON only, with exactly one top-level field: chapterDescription.',
       ),
       TextGenerationTurn(
         role: 'user',
@@ -1499,60 +1438,19 @@ class PictureBookService {
           'Book description written or approved by the user: $bookDescription',
           'Chapter order: ${chapter.chapterOrder}',
           'Chapter title: ${chapter.chapterTitle}',
-          'Current storyBrief: $storyBrief',
-          'Current chapterBrief: $chapterBrief',
+          'Current chapterDescription: $chapterDescription',
           '',
           'Return JSON shape:',
-          '{"storyBrief":"..."}',
-          '',
-          'Rules:',
-          '- Keep it concise, visual, and useful for keeping book world and main recurring character appearances consistent.',
-          '- Use the book title and user book description to infer era, story world, color mood, illustration style, and the appearances of all visually important main or supporting characters.',
-          '- $_characterRosterRule',
-          '- For recognizable classic or public-domain books, use common public knowledge to name important recurring characters; for unknown books, do not invent absent book-wide characters.',
-          '- Include a "Chapter character additions:" sentence when this chapter introduces visually important characters missing from the book description.',
-          '- Prioritize this chapter text over unrelated prior assumptions.',
-          '- Return only JSON with storyBrief.',
-          '',
-          'Numbered chapter sentences:',
-          _numberedChapterSentencesForPrompt(article),
-        ].join('\n'),
-      ),
-    ];
-  }
-
-  static List<TextGenerationTurn> _chapterBriefRefreshPromptTurns({
-    required Article article,
-    required StoryChapter chapter,
-    required String seriesTitle,
-    required String bookDescription,
-    required String storyBrief,
-    required String chapterBrief,
-  }) {
-    return [
-      const TextGenerationTurn(
-        role: 'system',
-        content:
-            'You refresh only the chapterBrief field for an English picture-book image sequence. Return strict valid minified JSON only, with exactly one top-level field: chapterBrief.',
-      ),
-      TextGenerationTurn(
-        role: 'user',
-        content: [
-          'Book or series title: $seriesTitle',
-          'Book description written or approved by the user: $bookDescription',
-          'Chapter order: ${chapter.chapterOrder}',
-          'Chapter title: ${chapter.chapterTitle}',
-          'Current storyBrief: $storyBrief',
-          'Current chapterBrief: $chapterBrief',
-          '',
-          'Return JSON shape:',
-          '{"chapterBrief":"..."}',
+          '{"chapterDescription":"..."}',
           '',
           'Rules:',
           '- Describe this chapter as one coherent sequence of picture-book images.',
           '- Mention the chapter arc, setting changes, important actions, mood changes, and ending.',
+          '- Include the visually important recurring or supporting characters needed for image consistency.',
+          '- $_characterRosterRule',
+          '- Include a "Chapter character additions:" sentence when this chapter introduces visually important characters missing from the book description.',
           '- Keep it concise and grounded in the current chapter text.',
-          '- Return only JSON with chapterBrief.',
+          '- Return only JSON with chapterDescription.',
           '',
           'Numbered chapter sentences:',
           _numberedChapterSentencesForPrompt(article),
@@ -1566,8 +1464,7 @@ class PictureBookService {
     required StoryChapter chapter,
     required String seriesTitle,
     required String bookDescription,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
     required List<_PicturePageSegment> segments,
   }) {
     final currentScenes = [
@@ -1577,7 +1474,7 @@ class PictureBookService {
           'sentenceStartIndex': segment.sentenceStartIndex,
           'sentenceEndIndex': segment.sentenceEndIndex,
           'title': segment.title,
-          'story': segment.summary,
+          'sceneDescription': segment.summary,
           'visual': segment.visualPrompt,
         },
     ];
@@ -1594,22 +1491,21 @@ class PictureBookService {
           'Book description written or approved by the user: $bookDescription',
           'Chapter order: ${chapter.chapterOrder}',
           'Chapter title: ${chapter.chapterTitle}',
-          'Story brief: $storyBrief',
-          'Chapter brief: $chapterBrief',
+          'Chapter description: $chapterDescription',
           '',
           'Current scenes JSON:',
           ApiCacheService.canonicalJson(currentScenes),
           '',
           'Return JSON shape:',
-          '{"scenes":[{"pageIndex":0,"sentenceStartIndex":0,"sentenceEndIndex":2,"title":"...","story":"...","visual":"..."}]}',
+          '{"scenes":[{"pageIndex":0,"sentenceStartIndex":0,"sentenceEndIndex":2,"title":"...","sceneDescription":"...","visual":"..."}]}',
           '',
           'Rules:',
-          '- Split scenes by natural story beats: scene, event, conflict, decision, setting change, and ending.',
+          '- Split scenes by natural narrative beats: scene, event, conflict, decision, setting change, and ending.',
           '- Use the smallest useful number of scenes, up to ${ChapterStoryOutlineService.maxSegments}.',
           '- scenes must cover every sentence from 0 to ${article.sentences.isEmpty ? 0 : article.sentences.length - 1}, in order, without overlap.',
           '- scenes[i].pageIndex must equal i.',
           '- Each scene visual must describe exactly one illustration: characters, action, setting, mood, key props, and composition.',
-          '- Keep recurring main and supporting character appearances and illustration style consistent with the Character roster in the book description and story brief.',
+          '- Keep recurring main and supporting character appearances and illustration style consistent with the Character roster in the book description and chapter description.',
           '- If an unnamed group appears, keep its role labels and appearance cues stable across all scenes.',
           '- Keep each scene visual concise enough for the final group image prompt; avoid encyclopedic character biographies.',
           '- Return only JSON with scenes.',
@@ -1645,7 +1541,6 @@ class PictureBookService {
       contentHash: contentHash,
       sentenceCount: sentenceCount,
       source: TextGenerationReplySource.cached,
-      fallbackTitle: null,
     );
   }
 
@@ -1654,7 +1549,6 @@ class PictureBookService {
     required String contentHash,
     required int sentenceCount,
     required TextGenerationReplySource source,
-    String? fallbackTitle,
   }) {
     final planKind = json['planKind']?.toString();
     final policyVersion = json['planPolicyVersion']?.toString();
@@ -1672,16 +1566,14 @@ class PictureBookService {
     if (scenes.isEmpty) {
       return null;
     }
+    final chapterDescription = _sanitizeForImagePrompt(
+      json['chapterDescription']?.toString().trim() ?? '',
+    );
+    if (chapterDescription.isEmpty) {
+      return null;
+    }
     return ChapterPicturePlan(
-      storyBrief: _sanitizeForImagePrompt(
-        json['storyBrief']?.toString().trim() ?? '',
-      ),
-      chapterBrief: _sanitizeForImagePrompt(
-        json['chapterBrief']?.toString().trim() ??
-            json['summary']?.toString().trim() ??
-            fallbackTitle ??
-            '',
-      ),
+      chapterDescription: chapterDescription,
       scenes: scenes,
       source: source,
     );
@@ -1718,19 +1610,17 @@ class PictureBookService {
             ? map['title'].toString()
             : 'Scene ${index + 1}',
       );
-      final story = _sanitizeForImagePrompt(
-        map['story']?.toString().trim().isNotEmpty == true
-            ? map['story'].toString()
-            : map['summary']?.toString() ?? '',
+      final sceneDescription = _sanitizeForImagePrompt(
+        map['sceneDescription']?.toString().trim() ?? '',
       );
       final visual = _sanitizeForImagePrompt(
         map['visual']?.toString().trim().isNotEmpty == true
             ? map['visual'].toString()
             : map['visualPrompt']?.toString() ??
                 map['prompt']?.toString() ??
-                story,
+                sceneDescription,
       );
-      if (story.isEmpty && visual.isEmpty) {
+      if (sceneDescription.isEmpty && visual.isEmpty) {
         continue;
       }
       scenes.add(
@@ -1739,7 +1629,7 @@ class PictureBookService {
           sentenceStartIndex: normalizedStart,
           sentenceEndIndex: normalizedEnd,
           title: title,
-          story: story,
+          sceneDescription: sceneDescription,
           visual: visual,
         ),
       );
@@ -1811,10 +1701,9 @@ class PictureBookService {
   }) {
     final sceneCount = math.max(1, segments.length);
     final bookWords = sceneCount >= 10 ? 70 : (sceneCount >= 7 ? 90 : 120);
-    final storyBriefWords =
-        sceneCount >= 10 ? 55 : (sceneCount >= 7 ? 80 : _maxStoryBriefWords);
-    final chapterBriefWords =
-        sceneCount >= 10 ? 35 : (sceneCount >= 7 ? 55 : _maxChapterBriefWords);
+    final chapterDescriptionWords = sceneCount >= 10
+        ? 80
+        : (sceneCount >= 7 ? 110 : _maxChapterDescriptionWords);
     final storyWords = sceneCount >= 10 ? 0 : (sceneCount >= 7 ? 10 : 18);
     final visualWords = sceneCount >= 10 ? 16 : (sceneCount >= 7 ? 24 : 36);
     final buffer = StringBuffer()
@@ -1831,7 +1720,7 @@ class PictureBookService {
         'Use stable age, hair, clothing, accessories, size, and posture for protagonists, supporting roles, narrators, and unnamed groups.',
       )
       ..writeln(
-        'Natural story-world text may appear only when it belongs to the scene, such as signs, maps, labels, or playing-card marks.',
+        'Natural in-world text may appear only when it belongs to the scene, such as signs, maps, labels, or playing-card marks.',
       )
       ..writeln()
       ..writeln('Book title: ${series.title}')
@@ -1839,10 +1728,7 @@ class PictureBookService {
         'Book description: ${_promptExcerpt(series.description.trim(), maxWords: bookWords, maxChars: 760)}',
       )
       ..writeln(
-        'Story brief: ${_promptExcerpt(plan.storyBrief, maxWords: storyBriefWords, maxChars: 620)}',
-      )
-      ..writeln(
-        'Chapter brief: ${_promptExcerpt(plan.chapterBrief, maxWords: chapterBriefWords, maxChars: 420)}',
+        'Chapter description: ${_promptExcerpt(plan.chapterDescription, maxWords: chapterDescriptionWords, maxChars: 820)}',
       );
     for (final segment in segments) {
       final storyExcerpt = storyWords <= 0
@@ -1859,7 +1745,7 @@ class PictureBookService {
           'Scene title: ${_promptExcerpt(segment.title, maxWords: 10, maxChars: 80)}',
         );
       if (storyExcerpt.isNotEmpty) {
-        buffer.writeln('Scene story: $storyExcerpt');
+        buffer.writeln('Scene description: $storyExcerpt');
       }
       buffer.writeln(
         'Visual direction: ${_promptExcerpt(segment.visualPrompt, maxWords: visualWords, maxChars: 220)}',
@@ -1877,7 +1763,7 @@ class PictureBookService {
       'Image ${segment.pageIndex + 1}',
       'Sentence range: ${segment.sentenceStartIndex + 1}-${segment.sentenceEndIndex + 1}',
       'Scene title: ${segment.title}',
-      'Scene story: ${segment.summary}',
+      'Scene description: ${segment.summary}',
       'Visual direction: ${segment.visualPrompt}',
     ].join('\n'));
   }
@@ -1896,8 +1782,8 @@ class PictureBookService {
             : segment.title,
       ),
       summary: _sanitizeForImagePrompt(
-        submitted['story']?.toString().trim().isNotEmpty == true
-            ? submitted['story'].toString()
+        submitted['sceneDescription']?.toString().trim().isNotEmpty == true
+            ? submitted['sceneDescription'].toString()
             : segment.summary,
       ),
       visualPrompt: _sanitizeForImagePrompt(
@@ -1929,8 +1815,7 @@ class PictureBookService {
   static Future<void> _saveConfirmedChapterPlan({
     required Article article,
     required StoryChapter chapter,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
     required List<_PicturePageSegment> segments,
   }) async {
     final contentHash = await ChapterStoryOutlineService.contentHashFor(
@@ -1945,8 +1830,7 @@ class PictureBookService {
           'planPolicyVersion': _chapterPlanPolicyVersion,
           'contentHash': contentHash,
           'title': article.title,
-          'storyBrief': storyBrief,
-          'chapterBrief': chapterBrief,
+          'chapterDescription': chapterDescription,
           'scenes': [
             for (final segment in segments)
               {
@@ -1954,7 +1838,7 @@ class PictureBookService {
                 'sentenceStartIndex': segment.sentenceStartIndex,
                 'sentenceEndIndex': segment.sentenceEndIndex,
                 'title': segment.title,
-                'story': segment.summary,
+                'sceneDescription': segment.summary,
                 'visual': segment.visualPrompt,
               },
           ],
@@ -1968,8 +1852,7 @@ class PictureBookService {
     required StorySeries series,
     required StoryChapter chapter,
     required _PicturePageSegment segment,
-    required String storyBrief,
-    required String chapterBrief,
+    required String chapterDescription,
     required String groupPrompt,
     String? reviewId,
   }) {
@@ -1981,8 +1864,7 @@ class PictureBookService {
       'bookDescription': series.description,
       'chapterOrder': chapter.chapterOrder,
       'chapterTitle': chapter.chapterTitle,
-      'storyBrief': storyBrief,
-      'chapterBrief': chapterBrief,
+      'chapterDescription': chapterDescription,
       'scene': segment.toJson(),
       'groupPrompt': groupPrompt,
       if (reviewId != null) 'reviewId': reviewId,
@@ -2056,7 +1938,7 @@ class PictureBookService {
         sentenceEndIndex: end,
         text: _normalizeFullChapterStoryForPrompt(text),
         title: scene.title,
-        summary: scene.story,
+        summary: scene.sceneDescription,
         visualPrompt: scene.visual,
       );
     }).toList(growable: false);
@@ -2082,8 +1964,7 @@ class PictureBookService {
       sentences: article.sentences,
     );
     final plan = ChapterPicturePlan(
-      storyBrief: outline.summary,
-      chapterBrief: outline.summary,
+      chapterDescription: outline.summary,
       scenes: [
         for (final segment in outline.segments)
           PictureBookScene(
@@ -2091,7 +1972,7 @@ class PictureBookService {
             sentenceStartIndex: segment.sentenceStartIndex,
             sentenceEndIndex: segment.sentenceEndIndex,
             title: segment.title,
-            story: segment.summary,
+            sceneDescription: segment.summary,
             visual: segment.visualPrompt,
           ),
       ],
@@ -2321,8 +2202,8 @@ class PictureBookService {
     return _sanitizeForImagePrompt([
       if (scene['title']?.toString().trim().isNotEmpty == true)
         'Scene title: ${scene['title']}',
-      if (scene['story']?.toString().trim().isNotEmpty == true)
-        'Scene story: ${scene['story']}',
+      if (scene['sceneDescription']?.toString().trim().isNotEmpty == true)
+        'Scene description: ${scene['sceneDescription']}',
       if (scene['visual']?.toString().trim().isNotEmpty == true)
         'Visual direction: ${scene['visual']}',
     ].join('\n'));
@@ -2373,8 +2254,7 @@ class PictureBookService {
       RegExp(r'\bcaptions?\b', caseSensitive: false): '',
       RegExp(r'\bapp[- ]rendered\b', caseSensitive: false): '',
       RegExp(r'\bUI overlays?\b', caseSensitive: false): '',
-      RegExp(r'\btext[- ]free\b', caseSensitive: false):
-          'full-frame story-world',
+      RegExp(r'\btext[- ]free\b', caseSensitive: false): 'full-frame in-world',
       RegExp(r'\bno visible text\b', caseSensitive: false): '',
       RegExp(r'\bno letters\b', caseSensitive: false): '',
       RegExp(r'\bno words\b', caseSensitive: false): '',
@@ -2460,10 +2340,11 @@ class PictureBookService {
 
   static String _bookDescriptionWithChapterCharacters({
     required String bookDescription,
-    required String storyBrief,
+    required String chapterDescription,
   }) {
     final base = _limitBookDescription(bookDescription);
-    final additions = _chapterCharacterAdditionsFromStoryBrief(storyBrief);
+    final additions =
+        _chapterCharacterAdditionsFromDescription(chapterDescription);
     if (additions.isEmpty) {
       return base;
     }
@@ -2488,8 +2369,10 @@ class PictureBookService {
     return _limitBookDescription(merged);
   }
 
-  static String _chapterCharacterAdditionsFromStoryBrief(String storyBrief) {
-    final text = _sanitizeForImagePrompt(storyBrief);
+  static String _chapterCharacterAdditionsFromDescription(
+    String chapterDescription,
+  ) {
+    final text = _sanitizeForImagePrompt(chapterDescription);
     if (text.isEmpty) {
       return '';
     }
@@ -2673,7 +2556,7 @@ class _PicturePageSegment {
         'sentenceStartIndex': sentenceStartIndex,
         'sentenceEndIndex': sentenceEndIndex,
         'title': title,
-        'story': summary,
+        'sceneDescription': summary,
         'visual': visualPrompt,
       };
 }
@@ -2705,7 +2588,7 @@ class _PromptReviewPageDraft {
         'sentenceEndIndex': segment.sentenceEndIndex,
         'paragraphText': segment.text,
         'title': segment.title,
-        'story': segment.summary,
+        'sceneDescription': segment.summary,
         'visual': segment.visualPrompt,
       };
 }
@@ -2719,8 +2602,7 @@ class _PictureBookPromptReviewDraft {
     required this.regenerate,
     required this.pages,
     required this.bookDescription,
-    required this.storyBrief,
-    required this.chapterBrief,
+    required this.chapterDescription,
     required this.groupPrompt,
     required this.createdAt,
   });
@@ -2732,8 +2614,7 @@ class _PictureBookPromptReviewDraft {
   final bool regenerate;
   final List<_PromptReviewPageDraft> pages;
   final String bookDescription;
-  final String storyBrief;
-  final String chapterBrief;
+  final String chapterDescription;
   final String groupPrompt;
   final DateTime createdAt;
 
@@ -2741,8 +2622,7 @@ class _PictureBookPromptReviewDraft {
     StorySeries? series,
     List<_PromptReviewPageDraft>? pages,
     String? bookDescription,
-    String? storyBrief,
-    String? chapterBrief,
+    String? chapterDescription,
     String? groupPrompt,
   }) =>
       _PictureBookPromptReviewDraft(
@@ -2753,8 +2633,7 @@ class _PictureBookPromptReviewDraft {
         regenerate: regenerate,
         pages: pages ?? this.pages,
         bookDescription: bookDescription ?? this.bookDescription,
-        storyBrief: storyBrief ?? this.storyBrief,
-        chapterBrief: chapterBrief ?? this.chapterBrief,
+        chapterDescription: chapterDescription ?? this.chapterDescription,
         groupPrompt: groupPrompt ?? this.groupPrompt,
         createdAt: createdAt,
       );
@@ -2766,8 +2645,7 @@ class _PictureBookPromptReviewDraft {
         'seriesId': series.id,
         'regenerate': regenerate,
         'bookDescription': bookDescription,
-        'storyBrief': storyBrief,
-        'chapterBrief': chapterBrief,
+        'chapterDescription': chapterDescription,
         'groupPrompt': groupPrompt,
         'scenes': pages.map((page) => page.toPayload()).toList(growable: false),
         'createdAt': createdAt.toIso8601String(),
@@ -2776,14 +2654,12 @@ class _PictureBookPromptReviewDraft {
 
 class ChapterPicturePlan {
   const ChapterPicturePlan({
-    required this.storyBrief,
-    required this.chapterBrief,
+    required this.chapterDescription,
     required this.scenes,
     required this.source,
   });
 
-  final String storyBrief;
-  final String chapterBrief;
+  final String chapterDescription;
   final List<PictureBookScene> scenes;
   final TextGenerationReplySource source;
 }
@@ -2794,7 +2670,7 @@ class PictureBookScene {
     required this.sentenceStartIndex,
     required this.sentenceEndIndex,
     required this.title,
-    required this.story,
+    required this.sceneDescription,
     required this.visual,
   });
 
@@ -2802,7 +2678,7 @@ class PictureBookScene {
   final int sentenceStartIndex;
   final int sentenceEndIndex;
   final String title;
-  final String story;
+  final String sceneDescription;
   final String visual;
 
   PictureBookScene copyWith({
@@ -2810,7 +2686,7 @@ class PictureBookScene {
     int? sentenceStartIndex,
     int? sentenceEndIndex,
     String? title,
-    String? story,
+    String? sceneDescription,
     String? visual,
   }) =>
       PictureBookScene(
@@ -2818,7 +2694,7 @@ class PictureBookScene {
         sentenceStartIndex: sentenceStartIndex ?? this.sentenceStartIndex,
         sentenceEndIndex: sentenceEndIndex ?? this.sentenceEndIndex,
         title: title ?? this.title,
-        story: story ?? this.story,
+        sceneDescription: sceneDescription ?? this.sceneDescription,
         visual: visual ?? this.visual,
       );
 
@@ -2827,7 +2703,7 @@ class PictureBookScene {
         'sentenceStartIndex': sentenceStartIndex,
         'sentenceEndIndex': sentenceEndIndex,
         'title': title,
-        'story': story,
+        'sceneDescription': sceneDescription,
         'visual': visual,
       };
 }

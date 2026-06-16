@@ -105,7 +105,7 @@ const fallbackCards = [
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type PictureBookStateSetter = StateSetter<PictureBookState | null>;
-type PictureBookPromptRefreshTarget = 'bookDescription' | 'storyBrief' | 'chapterBrief' | 'scenes';
+type PictureBookPromptRefreshTarget = 'bookDescription' | 'chapterDescription' | 'scenes';
 
 type PictureBookRetryGate = {
   begin: (articleId: number, pageIndex: number) => boolean;
@@ -2120,7 +2120,7 @@ function PictureBookCreationPanel({
                   <div className="picture-creation-copy">
                     <b>{scenePreview.title || `第 ${safePageIndex + 1} 页`}</b>
                     <small>句子 {page.sentenceStartIndex + 1} - {page.sentenceEndIndex + 1}</small>
-                    {scenePreview.story && <p className="picture-scene-story">{scenePreview.story}</p>}
+                    {scenePreview.sceneDescription && <p className="picture-scene-description">{scenePreview.sceneDescription}</p>}
                     {scenePreview.visual && <p className="picture-scene-visual">{scenePreview.visual}</p>}
                     <p>{page.paragraphText}</p>
                     {page.errorMessage && <em>{page.errorMessage}</em>}
@@ -2157,8 +2157,7 @@ function PictureBookPromptReviewDialog({
   onNotice: (message: string) => void;
 }) {
   const [bookDescription, setBookDescription] = useState(review.bookDescription ?? '');
-  const [storyBrief, setStoryBrief] = useState(review.storyBrief ?? '');
-  const [chapterBrief, setChapterBrief] = useState(review.chapterBrief ?? '');
+  const [chapterDescription, setChapterDescription] = useState(review.chapterDescription ?? '');
   const [scenes, setScenes] = useState<PictureBookPromptReviewScene[]>(review.scenes ?? []);
   const [groupPrompt, setGroupPrompt] = useState(
     resolvePictureBookGroupPrompt(review, review.scenes ?? []),
@@ -2173,8 +2172,7 @@ function PictureBookPromptReviewDialog({
   useEffect(() => {
     const nextScenes = review.scenes ?? [];
     setBookDescription(review.bookDescription ?? '');
-    setStoryBrief(review.storyBrief ?? '');
-    setChapterBrief(review.chapterBrief ?? '');
+    setChapterDescription(review.chapterDescription ?? '');
     setScenes(nextScenes);
     setGroupPrompt(resolvePictureBookGroupPrompt(review, nextScenes));
     setGroupPromptTouched(false);
@@ -2189,14 +2187,13 @@ function PictureBookPromptReviewDialog({
     setGroupPrompt(composePictureBookGroupPrompt({
       ...review,
       bookDescription,
-      storyBrief,
-      chapterBrief,
+      chapterDescription,
     }, scenes));
-  }, [bookDescription, chapterBrief, groupPromptTouched, review, scenes, storyBrief]);
+  }, [bookDescription, chapterDescription, groupPromptTouched, review, scenes]);
 
   const updateScene = (
     pageIndex: number,
-    key: keyof Pick<PictureBookPromptReviewScene, 'title' | 'story' | 'visual'>,
+    key: keyof Pick<PictureBookPromptReviewScene, 'title' | 'sceneDescription' | 'visual'>,
     value: string,
   ) => {
     setScenes((current) =>
@@ -2209,8 +2206,7 @@ function PictureBookPromptReviewDialog({
   const applyReviewUpdate = (nextReview: PictureBookPromptReview) => {
     const nextScenes = nextReview.scenes ?? [];
     setBookDescription(nextReview.bookDescription ?? '');
-    setStoryBrief(nextReview.storyBrief ?? '');
-    setChapterBrief(nextReview.chapterBrief ?? '');
+    setChapterDescription(nextReview.chapterDescription ?? '');
     setScenes(nextScenes);
     if (!groupPromptTouched) {
       setGroupPrompt(resolvePictureBookGroupPrompt(nextReview, nextScenes));
@@ -2225,8 +2221,7 @@ function PictureBookPromptReviewDialog({
         reviewId: review.reviewId,
         target,
         bookDescription,
-        storyBrief,
-        chapterBrief,
+        chapterDescription,
         scenes,
       });
       applyReviewUpdate(payload);
@@ -2246,8 +2241,7 @@ function PictureBookPromptReviewDialog({
     reviewId: review.reviewId,
     groupPrompt,
     bookDescription,
-    storyBrief,
-    chapterBrief,
+    chapterDescription,
     scenes,
   });
 
@@ -2310,11 +2304,9 @@ function PictureBookPromptReviewDialog({
             detail:
               refreshingPrompt === 'scenes'
                 ? 'AI 正在重新生成章节分镜描述。'
-                : refreshingPrompt === 'chapterBrief'
-                  ? 'AI 正在根据当前分镜生成章节分镜描述。'
-                  : refreshingPrompt === 'storyBrief'
-                    ? 'AI 正在生成当前章节故事简述。'
-                    : 'AI 正在生成书籍简介。',
+                : refreshingPrompt === 'chapterDescription'
+                  ? 'AI 正在生成章节描述。'
+                  : 'AI 正在生成书籍简介。',
             timeoutSeconds: refreshingPrompt === 'scenes' ? 180 : 90,
           }
         : null;
@@ -2366,14 +2358,14 @@ function PictureBookPromptReviewDialog({
 
           <section className="picture-prompt-section">
             <div className="picture-prompt-section-heading">
-              <h3>当前章节故事简述</h3>
-              {renderRefreshButton('storyBrief', '自动生成章节故事简述', 'AI 自动生成当前章节故事简述')}
+              <h3>章节描述</h3>
+              {renderRefreshButton('chapterDescription', '自动生成章节描述', 'AI 自动生成章节描述')}
             </div>
             <textarea
-              aria-label="当前章节故事简述"
-              value={storyBrief}
+              aria-label="章节描述"
+              value={chapterDescription}
               rows={5}
-              onChange={(event) => setStoryBrief(event.target.value)}
+              onChange={(event) => setChapterDescription(event.target.value)}
             />
           </section>
 
@@ -2413,11 +2405,11 @@ function PictureBookPromptReviewDialog({
                     onChange={(event) => updateScene(scene.pageIndex, 'title', event.target.value)}
                   />
                   <AutoResizeTextarea
-                    aria-label={`第 ${index + 1} 个分镜剧情`}
-                    value={scene.story}
+                    aria-label={`第 ${index + 1} 个分镜描述`}
+                    value={scene.sceneDescription}
                     rows={2}
-                    placeholder="这一张图对应的剧情"
-                    onChange={(event) => updateScene(scene.pageIndex, 'story', event.target.value)}
+                    placeholder="这一张图对应的分镜描述"
+                    onChange={(event) => updateScene(scene.pageIndex, 'sceneDescription', event.target.value)}
                   />
                   <AutoResizeTextarea
                     aria-label={`第 ${index + 1} 个分镜画面描述`}
@@ -2458,7 +2450,7 @@ function PictureBookPromptReviewDialog({
 }
 
 function resolvePictureBookGroupPrompt(
-  review: Pick<PictureBookPromptReview, 'bookDescription' | 'storyBrief' | 'chapterBrief' | 'groupPrompt'>,
+  review: Pick<PictureBookPromptReview, 'bookDescription' | 'chapterDescription' | 'groupPrompt'>,
   scenes: PictureBookPromptReviewScene[],
 ): string {
   const nativePrompt = review.groupPrompt?.trim() ?? '';
@@ -2481,13 +2473,13 @@ function pictureBookGroupPromptHasSceneDetails(
   const imageBlocks = prompt.match(/\bImage\s+\d+\s*:/gi) ?? [];
   return (
     imageBlocks.length >= scenes.length &&
-    /Scene story:/i.test(prompt) &&
+    /Scene description:/i.test(prompt) &&
     /Visual direction:/i.test(prompt)
   );
 }
 
 function composePictureBookGroupPrompt(
-  review: Pick<PictureBookPromptReview, 'bookDescription' | 'storyBrief' | 'chapterBrief'>,
+  review: Pick<PictureBookPromptReview, 'bookDescription' | 'chapterDescription'>,
   scenes: PictureBookPromptReviewScene[],
 ): string {
   const lines = [
@@ -2496,11 +2488,10 @@ function composePictureBookGroupPrompt(
     'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
     'For every image, match the assigned scene action, characters, setting, props, mood, and composition.',
     'Do not treat the images as alternate candidates.',
-    'Natural story-world text may appear only when it belongs to the scene, such as signs, book covers, maps, labels, or playing-card marks.',
+    'Natural in-world text may appear only when it belongs to the scene, such as signs, book covers, maps, labels, or playing-card marks.',
     '',
     `Book description: ${review.bookDescription ?? ''}`,
-    `Story brief: ${review.storyBrief ?? ''}`,
-    `Chapter brief: ${review.chapterBrief ?? ''}`,
+    `Chapter description: ${review.chapterDescription ?? ''}`,
   ];
   scenes.forEach((scene, index) => {
     lines.push(
@@ -2508,7 +2499,7 @@ function composePictureBookGroupPrompt(
       `Image ${index + 1}:`,
       `Sentence range: ${scene.sentenceStartIndex + 1}-${scene.sentenceEndIndex + 1}`,
       `Scene title: ${scene.title}`,
-      `Scene story: ${scene.story}`,
+      `Scene description: ${scene.sceneDescription}`,
       `Visual direction: ${scene.visual}`,
     );
   });
@@ -2789,12 +2780,12 @@ function promptText(value: unknown): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
 }
 
-function pictureBookPageScenePreview(page: PictureBookPage): { title: string; story: string; visual: string } {
+function pictureBookPageScenePreview(page: PictureBookPage): { title: string; sceneDescription: string; visual: string } {
   const prompt = promptRecord(page.prompt);
   const scene = promptRecord(prompt?.scene);
   return {
     title: promptText(scene?.title),
-    story: promptText(scene?.story) || promptText(scene?.summary),
+    sceneDescription: promptText(scene?.sceneDescription),
     visual: promptText(scene?.visual) || promptText(scene?.visualPrompt),
   };
 }
@@ -2927,8 +2918,8 @@ function latestArticleTime(articles: Article[]): number {
   );
 }
 
-function chapterBriefForArticle(article: Article): string {
-  return article.chapterBrief?.replace(/\s+/g, ' ').trim() ?? '';
+function chapterDescriptionForArticle(article: Article): string {
+  return article.chapterDescription?.replace(/\s+/g, ' ').trim() ?? '';
 }
 
 function bookCoverSource(book: BookGroup, index: number): string {
@@ -8047,7 +8038,7 @@ function MissionRow({
 }) {
   const score = article.averageScore > 0 ? Math.round(article.averageScore) : 40;
   const openArticle = onOpen ?? onListen ?? onFollow ?? onChat;
-  const chapterBrief = chapterBriefForArticle(article);
+  const chapterDescription = chapterDescriptionForArticle(article);
   return (
     <article className={`mission-row ${selected ? 'active' : ''}`}>
       <button
@@ -8075,8 +8066,8 @@ function MissionRow({
             </button>
           )}
         </h3>
-        {chapterBrief && <p className="mission-chapter-brief">{chapterBrief}</p>}
-        <p className={chapterBrief ? 'mission-meta' : undefined}>{article.sentenceCount} 句子 · 最近学习 今天</p>
+        {chapterDescription && <p className="mission-chapter-brief">{chapterDescription}</p>}
+        <p className={chapterDescription ? 'mission-meta' : undefined}>{article.sentenceCount} 句子 · 最近学习 今天</p>
       </div>
       <span className="ring-score">{score}%</span>
       <div className="mission-actions">

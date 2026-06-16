@@ -36,7 +36,7 @@ export interface Article {
   seriesId?: number | null;
   seriesTitle?: string;
   seriesDescription?: string;
-  chapterBrief?: string;
+  chapterDescription?: string;
   chapterOrder?: number | null;
 }
 
@@ -99,7 +99,7 @@ export interface PictureBookPromptReviewScene {
   sentenceEndIndex: number;
   paragraphText: string;
   title: string;
-  story: string;
+  sceneDescription: string;
   visual: string;
 }
 
@@ -110,11 +110,10 @@ export interface PictureBookPromptReview {
   seriesId?: number | null;
   regenerate: boolean;
   bookDescription: string;
-  storyBrief: string;
-  chapterBrief: string;
+  chapterDescription: string;
   groupPrompt: string;
   scenes: PictureBookPromptReviewScene[];
-  refreshedTarget?: 'bookDescription' | 'storyBrief' | 'chapterBrief' | 'scenes' | string;
+  refreshedTarget?: 'bookDescription' | 'chapterDescription' | 'scenes' | string;
   createdAt?: string;
 }
 

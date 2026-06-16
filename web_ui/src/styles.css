@@ -1409,7 +1409,7 @@ img {
   min-width: 0;
 }
 
-.picture-creation-card .picture-scene-story {
+.picture-creation-card .picture-scene-description {
   color: var(--ink);
   font-weight: 950;
 }

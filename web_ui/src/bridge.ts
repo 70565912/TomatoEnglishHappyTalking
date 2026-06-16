@@ -599,21 +599,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         refreshedTarget: target,
       };
     }
-    if (target === 'storyBrief') {
+    if (target === 'chapterDescription') {
       return {
         ...review,
-        storyBrief: 'Refreshed story brief with consistent book world and main character appearance.',
+        chapterDescription:
+          'Refreshed chapter description with consistent book world, character appearances, and one coherent visual sequence.',
         groupPrompt:
-          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nStory brief: Refreshed story brief with consistent book world and main character appearance.',
-        refreshedTarget: target,
-      };
-    }
-    if (target === 'chapterBrief') {
-      return {
-        ...review,
-        chapterBrief: 'Refreshed chapter brief describing one coherent visual sequence.',
-        groupPrompt:
-          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nChapter brief: Refreshed chapter brief describing one coherent visual sequence.',
+          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nChapter description: Refreshed chapter description with consistent book world, character appearances, and one coherent visual sequence.',
         refreshedTarget: target,
       };
     }
@@ -634,8 +626,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       ...mockPictureBookPromptReview(Number(payload.articleId ?? 1), false),
       reviewId: String(payload.reviewId ?? 'mock-review-1'),
       bookDescription: String(payload.bookDescription ?? ''),
-      storyBrief: String(payload.storyBrief ?? ''),
-      chapterBrief: String(payload.chapterBrief ?? ''),
+      chapterDescription: String(payload.chapterDescription ?? ''),
       groupPrompt: String(payload.groupPrompt ?? ''),
       scenes: Array.isArray(payload.scenes) ? payload.scenes : [],
     };
@@ -1326,6 +1317,7 @@ const mockArticles: Article[] = [
     seriesId: 1,
     seriesTitle: 'Space Story Series',
     seriesDescription: 'A gentle space-adventure picture book about curious children exploring small wonders together.',
+    chapterDescription: 'Tom finds a bright snack box and turns the discovery into a warm sharing moment.',
     chapterOrder: 1,
   },
 ];
@@ -1384,7 +1376,7 @@ function mockPictureBookPromptReview(
       sentenceEndIndex: 0,
       paragraphText: 'Tom finds a bright snack box.',
       title: 'The Snack Box',
-      story: 'Tom discovers a bright snack box.',
+      sceneDescription: 'Tom discovers a bright snack box.',
       visual: 'Tom, a curious child in a red hoodie, finds a bright snack box inside a cozy spaceship kitchen with warm light and clear expression.',
     },
     {
@@ -1393,7 +1385,7 @@ function mockPictureBookPromptReview(
       sentenceEndIndex: 1,
       paragraphText: 'He shares it with his team.',
       title: 'Sharing',
-      story: 'Tom shares the box with his team.',
+      sceneDescription: 'Tom shares the box with his team.',
       visual: 'Tom, the same curious child in a red hoodie, shares the bright snack box with teammates around a small spaceship table.',
     },
   ];
@@ -1404,15 +1396,15 @@ function mockPictureBookPromptReview(
     seriesId: mockSeries[0].id,
     regenerate,
     bookDescription: mockSeries[0].description ?? '',
-    storyBrief: 'A gentle space-adventure picture book with Tom, a curious child in a red hoodie, and his small team.',
-    chapterBrief: 'Tom finds a bright snack box and turns the discovery into a warm sharing moment.',
+    chapterDescription:
+      'A gentle space-adventure chapter where Tom, a curious child in a red hoodie, finds a bright snack box and turns the discovery into a warm sharing moment with his team.',
     groupPrompt: mockGroupPrompt(scenes),
     scenes,
     createdAt: new Date().toISOString(),
   };
 }
 
-function mockGroupPrompt(scenes: Array<{ title: string; story: string; visual: string }>): string {
+function mockGroupPrompt(scenes: Array<{ title: string; sceneDescription: string; visual: string }>): string {
   return [
     'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.',
     'Each image corresponds to exactly one storyboard scene below, in order.',
@@ -1422,7 +1414,7 @@ function mockGroupPrompt(scenes: Array<{ title: string; story: string; visual: s
       '',
       `Image ${index + 1}:`,
       `Scene title: ${scene.title}`,
-      `Scene story: ${scene.story}`,
+      `Scene description: ${scene.sceneDescription}`,
       `Visual direction: ${scene.visual}`,
     ]),
   ].join('\n').trim();

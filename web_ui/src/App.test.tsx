@@ -22,7 +22,7 @@ function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
       sentenceEndIndex: 0,
       paragraphText: 'Tom finds a bright snack box.',
       title: 'The Box',
-      story: 'Tom discovers the snack box.',
+      sceneDescription: 'Tom discovers the snack box.',
       visual: 'Tom finds a bright snack box in a cozy spaceship kitchen.',
     },
   ];
@@ -33,8 +33,8 @@ function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
     seriesId: 1,
     regenerate,
     bookDescription: 'A warm space picture book; Tom is a curious child in a red hoodie.',
-    storyBrief: 'Tom explores small discoveries with a friendly team.',
-    chapterBrief: 'Tom finds a bright snack box.',
+    chapterDescription:
+      'Tom explores small discoveries with a friendly team and finds a bright snack box.',
     groupPrompt: `Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\n\nImage 1:\nVisual direction: ${scenes[0].visual}`,
     scenes,
     createdAt: new Date().toISOString(),
@@ -959,7 +959,7 @@ describe('App', () => {
       seriesId: 9,
       seriesTitle: 'Wonderland Book',
       seriesDescription: 'Victorian fantasy book world with recurring Wonderland characters.',
-      chapterBrief: 'A one-scene storyboard where Alice notices the hurried White Rabbit.',
+      chapterDescription: 'A one-scene storyboard where Alice notices the hurried White Rabbit.',
       chapterOrder: 1,
     };
     const series = [{
@@ -1271,8 +1271,7 @@ describe('App', () => {
             ...promptReviewPayloadForTest(42, false),
             reviewId: String(payload.reviewId ?? 'review-42'),
             bookDescription: String(payload.bookDescription ?? ''),
-            storyBrief: String(payload.storyBrief ?? ''),
-            chapterBrief: String(payload.chapterBrief ?? ''),
+            chapterDescription: String(payload.chapterDescription ?? ''),
             groupPrompt: String(payload.groupPrompt ?? ''),
             scenes: Array.isArray(payload.scenes) ? payload.scenes : [],
           });
@@ -1316,8 +1315,8 @@ describe('App', () => {
     expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' })).toHaveTextContent(
       '自动生成书籍简介',
     );
-    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成当前章节故事简述' })).toHaveTextContent(
-      '自动生成章节故事简述',
+    expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成章节描述' })).toHaveTextContent(
+      '自动生成章节描述',
     );
     expect(within(reviewDialog).queryByLabelText('章节分镜简述')).not.toBeInTheDocument();
     expect(within(reviewDialog).getByRole('heading', { name: '章节分镜描述' })).toBeInTheDocument();
@@ -1327,7 +1326,7 @@ describe('App', () => {
     expect(
       (within(reviewDialog).getByLabelText('组图总提示词') as HTMLTextAreaElement)
         .value,
-    ).toContain('Scene story: Tom discovers the snack box.');
+    ).toContain('Scene description: Tom discovers the snack box.');
     fireEvent.click(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' }));
     await waitFor(() => {
       expect(calls.some((call) => call.type === 'pictureBook.refreshPromptReview')).toBe(true);
@@ -2601,7 +2600,7 @@ describe('App', () => {
                 prompt: {
                   scene: {
                     title: 'Bright Snack Discovery',
-                    story: 'Tom discovers the snack box before the image is ready.',
+                    sceneDescription: 'Tom discovers the snack box before the image is ready.',
                     visual: 'A cozy spaceship kitchen with Tom reaching toward a glowing snack box.',
                   },
                 },

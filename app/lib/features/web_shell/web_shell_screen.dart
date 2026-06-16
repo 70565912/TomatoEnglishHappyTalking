@@ -995,8 +995,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       target: _payloadString(message.payload, 'target').trim(),
       bookDescription:
           _payloadString(message.payload, 'bookDescription').trim(),
-      storyBrief: _payloadString(message.payload, 'storyBrief').trim(),
-      chapterBrief: _payloadString(message.payload, 'chapterBrief').trim(),
+      chapterDescription:
+          _payloadString(message.payload, 'chapterDescription').trim(),
       scenes: _payloadMapList(message.payload, 'scenes'),
     );
   }
@@ -1011,15 +1011,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final groupPrompt = _payloadString(message.payload, 'groupPrompt').trim();
     final bookDescription =
         _payloadString(message.payload, 'bookDescription').trim();
-    final storyBrief = _payloadString(message.payload, 'storyBrief').trim();
-    final chapterBrief = _payloadString(message.payload, 'chapterBrief').trim();
+    final chapterDescription =
+        _payloadString(message.payload, 'chapterDescription').trim();
     final scenes = _payloadMapList(message.payload, 'scenes');
     final state = await PictureBookService.confirmPromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
       bookDescription: bookDescription,
-      storyBrief: storyBrief,
-      chapterBrief: chapterBrief,
+      chapterDescription: chapterDescription,
       scenes: scenes,
       onProgress: (payload) => _pushEvent('pictureBook.state', payload),
     );
@@ -1037,15 +1036,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final groupPrompt = _payloadString(message.payload, 'groupPrompt').trim();
     final bookDescription =
         _payloadString(message.payload, 'bookDescription').trim();
-    final storyBrief = _payloadString(message.payload, 'storyBrief').trim();
-    final chapterBrief = _payloadString(message.payload, 'chapterBrief').trim();
+    final chapterDescription =
+        _payloadString(message.payload, 'chapterDescription').trim();
     final scenes = _payloadMapList(message.payload, 'scenes');
     return PictureBookService.savePromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
       bookDescription: bookDescription,
-      storyBrief: storyBrief,
-      chapterBrief: chapterBrief,
+      chapterDescription: chapterDescription,
       scenes: scenes,
     );
   }
@@ -8197,7 +8195,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     json['seriesTitle'] = series?.title ?? '';
     json['seriesDescription'] = series?.description ?? '';
     json['chapterOrder'] = chapter.chapterOrder;
-    json['chapterBrief'] = _storyChapterBrief(chapter.summaryJson);
+    json['chapterDescription'] = _storyChapterDescription(chapter.summaryJson);
     final coverPayload =
         await PictureBookService.coverImagePayloadForArticle(articleId);
     if (coverPayload != null) {
@@ -8206,18 +8204,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return json;
   }
 
-  String _storyChapterBrief(String summaryJson) {
+  String _storyChapterDescription(String summaryJson) {
     final summary = _decodeJsonObject(summaryJson);
-    final chapterBrief = summary['chapterBrief']?.toString().trim() ?? '';
-    if (chapterBrief.isNotEmpty) {
-      return chapterBrief;
-    }
-    final storyBrief = summary['storyBrief']?.toString().trim() ?? '';
-    if (storyBrief.isNotEmpty) {
-      return storyBrief;
-    }
-    final summaryText = summary['summary']?.toString().trim() ?? '';
-    return summaryText;
+    return summary['chapterDescription']?.toString().trim() ?? '';
   }
 
   Future<StorySeries> _resolveStorySeries({
