@@ -281,8 +281,8 @@ cd f:\TomatoEnglishHappyTalking
 - Realtime 语音对话：仅使用新版 `X-Api-Key`。
 - BigASR 识别：`X-Api-Key` 使用语音 API Key。
 - 文本生成 provider：`ai_provider`，默认 `aliyun_bailian`，可切换 `volcengine`。
-- 阿里云百炼：`aliyun_bailian_api_key`、`aliyun_bailian_base_url`、`aliyun_bailian_api_base_url`、`aliyun_bailian_text_model`、`aliyun_bailian_image_model`、`aliyun_bailian_tts_model`、`aliyun_bailian_tts_voice`、`aliyun_bailian_asr_model`、`aliyun_bailian_realtime_asr_model`、`aliyun_bailian_music_model`；默认文本模型 `qwen3.7-max`、图片模型 `wan2.7-image-pro`、CosyVoice `cosyvoice-v3-flash` + `loongabby_v3`、ASR `qwen3-asr-flash` / `qwen3-asr-realtime`、音乐模型 `fun-music-v1`。
-- 火山方舟/语音：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`、`volc_speech_api_key`、`volc_tts_resource_id`、`volc_tts_speaker_id`；图片模型默认 `doubao-seedream-5-0-260128`，语音默认 `seed-tts-2.0`。
+- 阿里云百炼：`aliyun_bailian_api_key`、`aliyun_bailian_base_url`、`aliyun_bailian_api_base_url`、`aliyun_bailian_text_model`、`aliyun_bailian_image_model`、`aliyun_bailian_tts_model`、`aliyun_bailian_tts_voice`、`aliyun_bailian_asr_model`、`aliyun_bailian_realtime_asr_model`、`aliyun_bailian_music_model`；默认文本模型 `qwen3.7-max`、图片模型 `wan2.7-image-pro`、CosyVoice `cosyvoice-v3-flash` + `loongabby_v3`、ASR `qwen3-asr-flash` / `qwen3-asr-realtime`、音乐模型 `fun-music-v1`。设置页以模型下拉选择为主，文本模型提供 Max/Plus/Flash 等不同效果档位；图片模型只列入当前支持连续组图的万相模型，不把不能完成绘本组图的图片模型放入候选。
+- 火山方舟/语音：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`、`volc_speech_api_key`、`volc_tts_resource_id`、`volc_tts_speaker_id`；图片模型默认 `doubao-seedream-5-0-260128`，语音默认 `seed-tts-2.0`。设置页可在方舟文本模型的高效果/低成本档位之间切换；Seedream 图片候选只保留当前顺序组图链路可用模型。
 
 当前程序内已内置阿里云 CosyVoice 常用音色和 `docs/豆包语音合成模型2.0 音色列表.md` 中 “豆包语音合成模型2.0” 表的官方音色预置。设置页通过“云服务”选项卡保存或清除百炼、方舟和火山语音 key，输入框支持显示/隐藏草稿值；bridge payload 只返回配置状态和脱敏 mask，不返回明文。英文学习场景在阿里云默认使用 `loongabby_v3`，在火山默认使用 `en_female_dacey_uranus_bigtts`。
 

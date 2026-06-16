@@ -274,10 +274,10 @@ class ChapterStoryOutlineService {
         '$i. ${cleanSentences[i]}',
     ].join('\n');
     return [
-      const TextGenerationTurn(
+      TextGenerationTurn(
         role: 'system',
         content:
-            'You create structured storyboards for English picture-book learning chapters. Return only valid compact JSON. Do not use markdown. Split by natural story structure: scene, event, conflict, character decision, setting change, and ending. Use no more than 14 segments. Each segment becomes exactly one generated image in a sequential image-generation request, not an image candidate.',
+            'You create structured storyboards for English picture-book learning chapters. Return only valid compact JSON. Do not use markdown. Split by natural story structure: scene, event, conflict, character decision, setting change, and ending. Use no more than $maxSegments segments. Each segment becomes exactly one generated image in a sequential image-generation request, not an image candidate.',
       ),
       TextGenerationTurn(
         role: 'user',
@@ -293,7 +293,7 @@ class ChapterStoryOutlineService {
           'Rules:',
           '- sentenceStartIndex and sentenceEndIndex are zero-based indexes into the numbered sentence list below.',
           '- Segments must be in order, cover every sentence from 0 to ${max(0, cleanSentences.length - 1)}, and must not overlap.',
-          '- Use the smallest number of segments that preserves the story beats; short chapters may need 3-5, ordinary chapters 6-10, long chapters up to 14.',
+          '- Use the smallest number of segments that preserves the story beats; short chapters may need 3-5, ordinary chapters 6-10, long chapters up to $maxSegments.',
           '- visualPrompt must describe the exact illustration for that segment and mention continuity details needed for the sequential group.',
           '- Keep the storyboard faithful to the current chapter.',
           '',

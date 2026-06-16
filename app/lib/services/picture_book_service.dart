@@ -37,6 +37,11 @@ class PictureBookService {
   static const String _chapterPlanCachePurpose = 'picture_book_chapter_plan_v4';
   static const String _chapterPlanPolicyVersion =
       'picture_book_chapter_plan_v4';
+  static const String _characterRosterRule =
+      'Include a compact Character roster inside storyBrief/bookDescription when characters matter. '
+      'Cover every recurring, supporting, or strongly implied visible character, not only the protagonist. '
+      'For unnamed groups, assign stable role labels such as eldest sister, middle sister, youngest sister, narrator, or teacher, '
+      'and give each label distinct age, size, hair, clothing, accessory, and posture cues for consistent future appearances.';
   static const String _bookDescriptionRefreshPurpose =
       'picture_book_prompt_v4_book_description_refresh';
   static const String _bookDescriptionDraftPurpose =
@@ -1375,6 +1380,8 @@ class PictureBookService {
           '- Output must be parseable by JSON.parse exactly as returned. Use ["note"] not [("note")].',
           '- storyBrief should briefly describe the book world for this chapter and the main recurring characters needed for visual consistency.',
           '- Include every visually important recurring or supporting character mentioned or strongly implied by the current chapter, not only the protagonist.',
+          '- $_characterRosterRule',
+          '- scenes[].visual must reuse those stable character labels and appearance cues when the character appears.',
           '- chapterBrief should briefly describe this chapter as one coherent picture-book image sequence.',
           '- Split scenes by natural story beats: scene, event, conflict, decision, setting change, and ending.',
           '- Use the smallest useful number of scenes, up to ${ChapterStoryOutlineService.maxSegments}.',
@@ -1424,6 +1431,7 @@ class PictureBookService {
           '- Keep it concise and useful as the book-level visual anchor.',
           '- Describe the era, story world, overall illustration style, color mood, and main recurring characters.',
           '- Include compact visual descriptions for important supporting characters likely to appear in this book or chapter; do not limit the description to one protagonist when multiple characters matter.',
+          '- $_characterRosterRule',
           '- Use the book title and current chapter text to infer missing visual context, but avoid chapter-only plot details.',
           '- Do not add app subtitle, caption, safety, audience, or negative-prompt boilerplate.',
           '- Return only JSON with bookDescription.',
@@ -1465,6 +1473,7 @@ class PictureBookService {
           'Rules:',
           '- Keep it concise, visual, and useful for keeping book world and main recurring character appearances consistent.',
           '- Use the book title and user book description to infer era, story world, color mood, illustration style, and the appearances of all visually important main or supporting characters.',
+          '- $_characterRosterRule',
           '- Prioritize this chapter text over unrelated prior assumptions.',
           '- Return only JSON with storyBrief.',
           '',
@@ -1563,7 +1572,8 @@ class PictureBookService {
           '- scenes must cover every sentence from 0 to ${article.sentences.isEmpty ? 0 : article.sentences.length - 1}, in order, without overlap.',
           '- scenes[i].pageIndex must equal i.',
           '- Each scene visual must describe exactly one illustration: characters, action, setting, mood, key props, and composition.',
-          '- Keep recurring main and supporting character appearances and illustration style consistent with the book description and story brief.',
+          '- Keep recurring main and supporting character appearances and illustration style consistent with the Character roster in the book description and story brief.',
+          '- If an unnamed group appears, keep its role labels and appearance cues stable across all scenes.',
           '- Return only JSON with scenes.',
           '',
           'Numbered chapter sentences:',
@@ -1770,6 +1780,12 @@ class PictureBookService {
       )
       ..writeln(
         'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
+      )
+      ..writeln(
+        'Use the Character roster in the book description and story brief as the source of truth for every protagonist, supporting character, narrator, sibling, teacher, group member, or later recurring role.',
+      )
+      ..writeln(
+        'When a scene includes an unnamed group, keep each role label and its age, hair, clothing, accessory, size, and posture cues consistent instead of merging them into a generic crowd.',
       )
       ..writeln(
         'For every image, match the assigned scene action, characters, setting, props, mood, and composition.',
@@ -2393,7 +2409,7 @@ class PictureBookService {
     final excerpt = _fallbackChapterSummary(article.content);
     return _sanitizeForImagePrompt(
       [
-        '$subject as a warm child-friendly picture-book world, with consistent recurring characters, bright natural colors, expressive storybook illustration, and clear scene details.',
+        '$subject as a warm child-friendly picture-book world, with a compact Character roster for protagonists and supporting characters, stable role-based appearances for unnamed groups, bright natural colors, expressive storybook illustration, and clear scene details.',
         if (excerpt.isNotEmpty) 'Chapter mood and anchors: $excerpt',
       ].join(' '),
     );

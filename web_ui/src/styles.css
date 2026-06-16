@@ -1724,19 +1724,29 @@ img {
 
 .book-player-page .top-actions {
   grid-column: 2;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
   justify-content: flex-end;
 }
 
+.player-chapter-actions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .book-player-page .listening-progress-summary {
-  flex: 1 1 230px;
-  width: min(280px, 100%);
+  flex: 0 1 196px;
+  width: min(196px, 100%);
   min-width: 180px;
   height: 34px;
   display: grid;
   align-items: center;
-  padding: 4px 0;
+  padding: 4px 0 4px 14px;
+  margin-left: 4px;
+  border-left: 1px solid rgba(201, 213, 228, 0.92);
 }
 
 .book-player-page .listening-progress-summary .progress-line.compact {
@@ -1749,8 +1759,16 @@ img {
   line-height: 1.1;
 }
 
+.book-player-page .listening-progress-summary .progress-line > div {
+  background: rgba(61, 141, 227, 0.16);
+}
+
+.book-player-page .listening-progress-summary .progress-line i {
+  background: var(--sky);
+}
+
 .book-player-page .top-actions > .ghost-action:last-child {
-  margin-left: auto;
+  margin-left: 4px;
   min-height: 38px;
 }
 
@@ -4645,6 +4663,13 @@ select:disabled {
 .settings-label input,
 .settings-label select {
   width: 100%;
+}
+
+.settings-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.35;
 }
 
 .secret-input-control {

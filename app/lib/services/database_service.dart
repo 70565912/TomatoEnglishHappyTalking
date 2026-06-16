@@ -895,16 +895,24 @@ class DatabaseService {
 
   static Future<bool> deleteStorySeriesIfEmpty(int seriesId) async {
     final db = await _database;
-    final remainingChapterCount = Sqflite.firstIntValue(
+    final liveChapterCount = Sqflite.firstIntValue(
           await db.rawQuery(
-            'SELECT COUNT(*) FROM story_chapters WHERE series_id = ?',
+            'SELECT COUNT(*) FROM story_chapters sc '
+            'INNER JOIN articles a ON a.id = sc.article_id '
+            'WHERE sc.series_id = ?',
             [seriesId],
           ),
         ) ??
         0;
-    if (remainingChapterCount > 0) {
+    if (liveChapterCount > 0) {
       return false;
     }
+
+    await db.delete(
+      'story_chapters',
+      where: 'series_id = ?',
+      whereArgs: [seriesId],
+    );
 
     final deleted = await db.delete(
       'story_series',

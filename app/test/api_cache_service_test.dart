@@ -117,6 +117,38 @@ void main() {
     expect(await DatabaseService.getStorySeriesById(emptySeries.id!), isNull);
   });
 
+  test('deletes empty story series with orphan chapter rows', () async {
+    final now = DateTime(2026, 1, 1);
+    final orphanSeries = await PictureBookService.createSeries(
+      title: 'Orphan Book',
+    );
+    final db = await DatabaseService.database;
+    await db.insert(
+      'story_chapters',
+      StoryChapter(
+        seriesId: orphanSeries.id!,
+        articleId: 999999,
+        chapterOrder: 1,
+        chapterTitle: 'Missing Chapter',
+        summaryJson: '{}',
+        createdAt: now,
+        updatedAt: now,
+      ).toMap(),
+    );
+
+    expect(
+      await DatabaseService.deleteStorySeriesIfEmpty(orphanSeries.id!),
+      isTrue,
+    );
+    expect(await DatabaseService.getStorySeriesById(orphanSeries.id!), isNull);
+    final orphanRows = await db.query(
+      'story_chapters',
+      where: 'series_id = ?',
+      whereArgs: [orphanSeries.id!],
+    );
+    expect(orphanRows, isEmpty);
+  });
+
   test(
       'suggests draft book description with local fallback when Ark key is missing',
       () async {

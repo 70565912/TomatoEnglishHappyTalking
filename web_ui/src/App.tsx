@@ -43,6 +43,57 @@ const PRELOAD_COMPLETE_VISIBLE_MS = 3000;
 const PRELOAD_IMAGE_DECODE_TIMEOUT_MS = 8000;
 const RECENT_SERIES_STORAGE_KEY = 'tomato.recentSeriesKey.v1';
 
+type SelectOption = {
+  value: string;
+  label: string;
+};
+
+const ALIYUN_TEXT_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'qwen3.7-max', label: 'qwen3.7-max · 最高效果' },
+  { value: 'qwen3.7-plus', label: 'qwen3.7-plus · 均衡效果' },
+  { value: 'qwen3.6-plus', label: 'qwen3.6-plus · 兼容示例' },
+  { value: 'qwen3.6-flash', label: 'qwen3.6-flash · 快速低成本' },
+];
+
+const ALIYUN_IMAGE_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'wan2.7-image-pro', label: 'wan2.7-image-pro · 万相组图' },
+];
+
+const ALIYUN_IMAGE_SIZE_OPTIONS: SelectOption[] = [
+  { value: '2K', label: '2K · 绘本默认' },
+  { value: '1K', label: '1K · 更快更省' },
+];
+
+const ALIYUN_TTS_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'cosyvoice-v3-flash', label: 'cosyvoice-v3-flash · 默认低延迟' },
+  { value: 'cosyvoice-v3.5-plus', label: 'cosyvoice-v3.5-plus · 更高效果' },
+];
+
+const ALIYUN_ASR_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'qwen3-asr-flash', label: 'qwen3-asr-flash · 当前默认' },
+  { value: 'fun-asr', label: 'fun-asr · 专业文件识别' },
+  { value: 'qwen3.5-omni-plus', label: 'qwen3.5-omni-plus · 大模型识别' },
+];
+
+const ALIYUN_REALTIME_ASR_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'qwen3-asr-realtime', label: 'qwen3-asr-realtime · 当前默认' },
+  { value: 'fun-asr-realtime', label: 'fun-asr-realtime · 实时专业识别' },
+  { value: 'qwen3.5-omni-plus-realtime', label: 'qwen3.5-omni-plus-realtime · 实时大模型识别' },
+];
+
+const VOLC_TEXT_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'doubao-seed-2-0-pro-250528', label: 'doubao-seed-2-0-pro-250528 · 更高效果' },
+  { value: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215 · 默认低成本' },
+];
+
+const VOLC_IMAGE_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'doubao-seedream-5-0-260128', label: 'doubao-seedream-5-0-260128 · Seedream 组图' },
+];
+
+const VOLC_TTS_RESOURCE_OPTIONS: SelectOption[] = [
+  { value: 'seed-tts-2.0', label: 'seed-tts-2.0 · Doubao TTS 2.0' },
+];
+
 const asset = (name: string) => `assets/ui/${name}`;
 
 const fallbackCards = [
@@ -4228,24 +4279,26 @@ function ListeningPage({
         title={<StoryTitle parts={titleParts} />}
         onBack={() => onNavigate(article?.seriesId != null ? `/books/${article.seriesId}` : '/')}
       >
-        <span className="player-chapter-count">{chapterLabel}</span>
-        <button className="ghost-action small" type="button" disabled={!onPrevChapter} onClick={onPrevChapter}>
+        <div className="player-chapter-actions" aria-label="章节导航">
+          <span className="player-chapter-count">{chapterLabel}</span>
+          <button className="ghost-action small" type="button" disabled={!onPrevChapter} onClick={onPrevChapter}>
             <Icon name="prev" /> 上一章
-        </button>
-        <button className="ghost-action small" type="button" disabled={!onNextChapter} onClick={onNextChapter}>
+          </button>
+          <button className="ghost-action small" type="button" disabled={!onNextChapter} onClick={onNextChapter}>
             下一章 <Icon name="next" />
-        </button>
-        {onOpenChapterDrawer && (
-          <button
-          className="ghost-action small chapter-drawer-trigger"
-          type="button"
-          aria-controls="book-chapter-drawer"
-          aria-expanded={chapterDrawerOpen}
-          onClick={onOpenChapterDrawer}
-        >
-          <Icon name="list" /> 章节
-        </button>
-        )}
+          </button>
+          {onOpenChapterDrawer && (
+            <button
+              className="ghost-action small chapter-drawer-trigger"
+              type="button"
+              aria-controls="book-chapter-drawer"
+              aria-expanded={chapterDrawerOpen}
+              onClick={onOpenChapterDrawer}
+            >
+              <Icon name="list" /> 章节
+            </button>
+          )}
+        </div>
         <div className="listening-progress-summary">
           <ProgressLine
             value={progress}
@@ -6818,6 +6871,43 @@ function SecretKeyRow({
   );
 }
 
+function ModelSelectField({
+  label,
+  value,
+  options,
+  onChange,
+  hint,
+  className,
+}: {
+  label: string;
+  value: string;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+  hint?: string;
+  className?: string;
+}) {
+  const normalizedValue = value.trim();
+  const hasCurrentOption = options.some((option) => option.value === normalizedValue);
+  const selectValue = !normalizedValue ? '' : hasCurrentOption ? normalizedValue : value;
+  return (
+    <label className={`settings-label model-select-label ${className ?? ''}`.trim()}>
+      <span>{label}</span>
+      <select value={selectValue} onChange={(event) => onChange(event.target.value)}>
+        {!normalizedValue && <option value="">请选择模型</option>}
+        {normalizedValue && !hasCurrentOption && (
+          <option value={value}>{`当前自定义 · ${normalizedValue}`}</option>
+        )}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      {hint && <small className="settings-hint">{hint}</small>}
+    </label>
+  );
+}
+
 function SettingsPage({
   settings,
   onLoaded,
@@ -7264,34 +7354,31 @@ function SettingsPage({
                   <div className="settings-subsection">
                     <h3>模型与语音</h3>
                     <div className="settings-grid model-settings-grid">
-                      <label className="settings-label">
-                        <span>百炼文本模型</span>
-                        <input
-                          value={aliyunBailianTextModel}
-                          onChange={(event) => setAliyunBailianTextModel(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-label">
-                        <span>万相图片模型</span>
-                        <input
-                          value={aliyunBailianImageModel}
-                          onChange={(event) => setAliyunBailianImageModel(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-label">
-                        <span>万相图片规格</span>
-                        <input
-                          value={aliyunBailianImageSize}
-                          onChange={(event) => setAliyunBailianImageSize(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-label">
-                        <span>CosyVoice 模型</span>
-                        <input
-                          value={aliyunBailianTtsModel}
-                          onChange={(event) => setAliyunBailianTtsModel(event.target.value)}
-                        />
-                      </label>
+                      <ModelSelectField
+                        label="百炼文本模型"
+                        value={aliyunBailianTextModel}
+                        options={ALIYUN_TEXT_MODEL_OPTIONS}
+                        onChange={setAliyunBailianTextModel}
+                      />
+                      <ModelSelectField
+                        label="万相图片模型"
+                        value={aliyunBailianImageModel}
+                        options={ALIYUN_IMAGE_MODEL_OPTIONS}
+                        onChange={setAliyunBailianImageModel}
+                        hint="仅列出当前组图链路可用的万相模型。"
+                      />
+                      <ModelSelectField
+                        label="万相图片规格"
+                        value={aliyunBailianImageSize}
+                        options={ALIYUN_IMAGE_SIZE_OPTIONS}
+                        onChange={setAliyunBailianImageSize}
+                      />
+                      <ModelSelectField
+                        label="CosyVoice 模型"
+                        value={aliyunBailianTtsModel}
+                        options={ALIYUN_TTS_MODEL_OPTIONS}
+                        onChange={setAliyunBailianTtsModel}
+                      />
                       <label className="settings-label">
                         <span>CosyVoice 音色</span>
                         <select
@@ -7310,20 +7397,18 @@ function SettingsPage({
                           onChange={(event) => setAliyunBailianTtsSampleRate(event.target.value)}
                         />
                       </label>
-                      <label className="settings-label">
-                        <span>Qwen-ASR 文件模型</span>
-                        <input
-                          value={aliyunBailianAsrModel}
-                          onChange={(event) => setAliyunBailianAsrModel(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-label">
-                        <span>Qwen-ASR 实时模型</span>
-                        <input
-                          value={aliyunBailianRealtimeAsrModel}
-                          onChange={(event) => setAliyunBailianRealtimeAsrModel(event.target.value)}
-                        />
-                      </label>
+                      <ModelSelectField
+                        label="Qwen-ASR 文件模型"
+                        value={aliyunBailianAsrModel}
+                        options={ALIYUN_ASR_MODEL_OPTIONS}
+                        onChange={setAliyunBailianAsrModel}
+                      />
+                      <ModelSelectField
+                        label="Qwen-ASR 实时模型"
+                        value={aliyunBailianRealtimeAsrModel}
+                        options={ALIYUN_REALTIME_ASR_MODEL_OPTIONS}
+                        onChange={setAliyunBailianRealtimeAsrModel}
+                      />
                       <label className="settings-label wide-field">
                         <span>Qwen-ASR 实时 WebSocket</span>
                         <input
@@ -7388,27 +7473,25 @@ function SettingsPage({
                   <div className="settings-subsection">
                     <h3>模型与语音</h3>
                     <div className="settings-grid model-settings-grid">
-                      <label className="settings-label">
-                        <span>方舟文本模型</span>
-                        <input
-                          value={volcArkTextModel}
-                          onChange={(event) => setVolcArkTextModel(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-label">
-                        <span>Seedream 图片模型</span>
-                        <input
-                          value={volcArkImageModel}
-                          onChange={(event) => setVolcArkImageModel(event.target.value)}
-                        />
-                      </label>
-                      <label className="settings-label">
-                        <span>Doubao TTS Resource</span>
-                        <input
-                          value={volcTtsResourceId}
-                          onChange={(event) => setVolcTtsResourceId(event.target.value)}
-                        />
-                      </label>
+                      <ModelSelectField
+                        label="方舟文本模型"
+                        value={volcArkTextModel}
+                        options={VOLC_TEXT_MODEL_OPTIONS}
+                        onChange={setVolcArkTextModel}
+                      />
+                      <ModelSelectField
+                        label="Seedream 图片模型"
+                        value={volcArkImageModel}
+                        options={VOLC_IMAGE_MODEL_OPTIONS}
+                        onChange={setVolcArkImageModel}
+                        hint="仅列出当前顺序组图链路可用的 Seedream 模型。"
+                      />
+                      <ModelSelectField
+                        label="Doubao TTS Resource"
+                        value={volcTtsResourceId}
+                        options={VOLC_TTS_RESOURCE_OPTIONS}
+                        onChange={setVolcTtsResourceId}
+                      />
                       <label className="settings-label">
                         <span>Doubao TTS Speaker</span>
                         <select

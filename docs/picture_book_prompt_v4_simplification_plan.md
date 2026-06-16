@@ -111,9 +111,9 @@ picture_book_chapter_plan_v4
 - AI 自行决定分镜数量。
 - 分镜必须覆盖完整章节句子范围。
 - 分镜按句子顺序排列，不重叠、不跳句。
-- 分镜数量上限保留为 14，避免成本和接口超限。
+- 分镜数量上限保留为 12，避免成本和接口超限。
 - 每个分镜对应一张图片，不做候选图。
-- 主要角色外貌只写入 `storyBrief` 或当前分镜 `visual`，不持久化为角色卡。
+- 主配角外貌只写入 `bookDescription`、`storyBrief`、`groupPrompt` 或当前分镜 `visual`，不持久化为角色卡；三姐妹、旁白、老师等未命名群体也要有稳定角色标签和外观锚点。
 - 不输出 `negativePrompt`、`safety`、`audience`、字幕留白或 UI 相关字段。
 
 ### 3. 提示词审核弹窗
@@ -251,7 +251,7 @@ Image 2:
 - 迁移后 `story_reference_assets` 不存在。
 - v4 promptReview 不读取旧 v1/v2/v3 章节计划。
 - v4 promptReview 返回 `storyBrief`、`chapterBrief`、`scenes[]` 和 `groupPrompt`。
-- scenes 覆盖完整句子范围，且 `scenes.length <= 14`。
+- scenes 覆盖完整句子范围，且 `scenes.length <= 12`。
 - promptReview 不调用图片 API，不删除旧图片。
 - refreshPromptReview 三个 target 都不调用图片 API，不删除旧图片。
 - cancelPromptReview 不删除旧图片，不调用图片 API。
@@ -283,6 +283,7 @@ Image 2:
 ## 默认取舍
 
 - 跨章节一致性由“书籍简介”承担，不再由 Bible 或参考图承担。
-- 角色外貌描述由 AI 在每章规划阶段临时生成，用户可在审核弹窗中调整分镜或最终 prompt。
+- 角色外貌描述由 AI 在每章规划阶段生成紧凑角色清单，覆盖主角、配角、叙述者和视觉上重要的未命名群体；用户可在审核弹窗中调整书籍简介、分镜或最终 prompt。
+- 未命名群体需要稳定角色标签和外观锚点，例如 eldest sister / middle sister / youngest sister，而不是只在 prompt 中写成 generic children。
 - 旧计划不迁移、不兼容、不复用；需要重新生成时直接生成 v4 计划。
 - 旧参考图不再参与生成；文件清理以后单独做缓存清理。

@@ -349,7 +349,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - 页面策略版本为 `picture_book_prompt_v4`，章节图片计划缓存为 `picture_book_chapter_plan_v4`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
-- 每章只调用一次文本规划 API，让 AI 基于书名、书籍简介、章节标题和完整句子列表生成 `storyBrief`、`chapterBrief` 和 `scenes[]`。
+- 每章只调用一次文本规划 API，让 AI 基于书名、书籍简介、章节标题和完整句子列表生成 `storyBrief`、`chapterBrief` 和 `scenes[]`。`storyBrief` / 书籍简介需要包含紧凑角色清单，覆盖主角、配角、叙述者和视觉上重要的未命名群体；未命名群体使用稳定角色标签和外观锚点，供后续章节和当前组图保持一致。
 - AI 自行决定分镜数量，最多 12 段；每个 scene 对应一张图片，scene 必须按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 审核弹窗有 3 个提示词魔法棒：分别刷新 `storyBrief`、`chapterBrief` 和 `scenes[]`。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
@@ -363,7 +363,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 ```json
 {
   "planKind": "picture_book_chapter_plan_v4",
-  "storyBrief": "Brief visual context for this book and chapter, including concise main character appearance details.",
+  "storyBrief": "Brief visual context for this book and chapter, including a concise character roster for main and supporting character appearance details.",
   "chapterBrief": "Brief description of the chapter as one coherent picture-book image sequence.",
   "scenes": [
     {
@@ -381,7 +381,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 规则：
 
 - 只认 `planKind == picture_book_chapter_plan_v4`；旧 `chapter_story_outline_v1` / `picture_book_chapter_plan_v1/v2/v3` 不再作为绘本生成计划读取。
-- `storyBrief` 可包含本章需要的书籍世界和主要角色外貌简述，但不持久化为角色卡。
+- `storyBrief` 可包含本章需要的书籍世界和主配角外貌简述，但不持久化为角色卡；如果出现三姐妹、旁白、老师等群体或角色，也要以稳定角色标签描述。
 - `chapterBrief` 描述当前章节作为一组连续图片的整体剧情。
 - `scenes[]` 是唯一分镜来源，字段只包含 `pageIndex`、句子范围、`title/story/visual`。
 - 不输出 `audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
