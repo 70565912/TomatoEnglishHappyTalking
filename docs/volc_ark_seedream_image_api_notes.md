@@ -111,8 +111,8 @@ Sequential/group request:
 - `picture_book_pages` stores one row per confirmed scene, with
   `sentenceStartIndex` and `sentenceEndIndex` covering that scene. All rows
   together must cover the full chapter sentence range.
-- Base each prompt on the book/series title, book description, chapter title,
-  current v4 scene, story brief, and chapter brief. Prioritize the current
+- Base each prompt on the book description, chapter description, and current v4
+  scene description. Prioritize the current
   chapter over unrelated earlier-chapter characters or settings.
 - Visible text is allowed when it naturally belongs in the story world. The app
   overlays subtitles separately, so generated text should be optional decoration
@@ -123,12 +123,12 @@ Sequential/group request:
   context to improve character accuracy. If the title is not confidently
   recognizable, do not invent a book-wide cast; use current-chapter characters
   only.
-- Keep final group prompts concise. For long 12-scene chapters, preserve every
-  `Image N` entry while shortening book/chapter context and each visual
-  direction so the request stays near the official prompt guidance.
-- Prompt review uses `picture_book_prompt_v4` /
-  `picture_book_chapter_plan_v4`. It produces editable `storyBrief`,
-  `chapterBrief`, `scenes[]`, and `groupPrompt`, then waits for
+- Submit the confirmed final group prompt in full: book description, chapter
+  description, and every `Image N` scene description are not shortened by the
+  app before the image request.
+- Prompt review uses `picture_book_group_prompt_scene_description_v2` /
+  `picture_book_chapter_scene_plan_v2`. It produces editable `chapterDescription`,
+  `scenes[].sceneDescription`, and `groupPrompt`, then waits for
   `pictureBook.confirmPromptReview` before submitting any image request.
 - Do not restore the old series bible, character-card, or reference-image
   switches. Default cold-cache production flow should spend one v4 planning text

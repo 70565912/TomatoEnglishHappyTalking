@@ -40,26 +40,13 @@ void main() {
     }
   });
 
-  test('generates fallback English practice article from Chinese story',
-      () async {
-    final reply = await PracticeTextService.translateToEnglishForPractice(
-      content: '妈妈为孩子做了一个选择。她想着爱、家庭和未来。',
+  test('English practice translation fails without a text key', () async {
+    expect(
+      () => PracticeTextService.translateToEnglishForPractice(
+        content: '妈妈为孩子做了一个选择。她想着爱、家庭和未来。',
+      ),
+      throwsA(isA<TextGenerationException>()),
     );
-
-    expect(reply.source, TextGenerationReplySource.mockNoKey);
-    expect(reply.text, contains('A mother makes a choice'));
-    expect(reply.text, isNot(contains(RegExp(r'[\u3400-\u9FFF]'))));
-  });
-
-  test('extracts English body from mixed Chinese and English material',
-      () async {
-    final reply = await PracticeTextService.translateToEnglishForPractice(
-      content:
-          '中文：汤姆发现了一个明亮的零食盒。\nTom finds a bright snack box.\n译文：汤姆发现了一个明亮的零食盒。',
-    );
-
-    expect(reply.source, TextGenerationReplySource.mockNoKey);
-    expect(reply.text, 'Tom finds a bright snack box.');
   });
 
   test('mixed-material AI prompt keeps story only and can translate Chinese',
@@ -117,7 +104,7 @@ I can't stand it when people don't attend to the rules.
     );
   });
 
-  test('strict English practice translation uses text cache before remote',
+  test('strict English practice translation ignores stale text cache',
       () async {
     _writeArkConfig();
     final prompt = PracticeTextService.englishPracticePromptForTest(
@@ -136,9 +123,19 @@ I can't stand it when people don't attend to the rules.
       request: request,
       textValue: 'A mother makes a choice for her child.',
     );
+    var remoteCalls = 0;
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
-        fail('strict cached translation should not call remote Ark');
+        remoteCalls += 1;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': 'A mother makes a fresh choice for her child.',
+              },
+            }
+          ],
+        };
       },
     );
 
@@ -146,8 +143,9 @@ I can't stand it when people don't attend to the rules.
       content: '妈妈为孩子做了一个选择。',
     );
 
-    expect(reply.source, TextGenerationReplySource.cached);
-    expect(reply.text, 'A mother makes a choice for her child.');
+    expect(remoteCalls, 1);
+    expect(reply.source, TextGenerationReplySource.remote);
+    expect(reply.text, 'A mother makes a fresh choice for her child.');
   });
 
   test('strict sentence translation batches subtitles in one Ark request',
@@ -264,7 +262,7 @@ I can't stand it when people don't attend to the rules.
     expect(reply.text, isNot(contains('Do not use this line')));
   });
 
-  test('uses word lookup fallback when Ark returns invalid JSON', () async {
+  test('word lookup fails when Ark returns invalid JSON', () async {
     _writeArkConfig();
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
@@ -278,16 +276,13 @@ I can't stand it when people don't attend to the rules.
       },
     );
 
-    final lookup = await PracticeTextService.lookupWordForLearning(
-      word: 'bright',
-      sentence: 'Tom finds a bright snack box.',
+    expect(
+      () => PracticeTextService.lookupWordForLearning(
+        word: 'bright',
+        sentence: 'Tom finds a bright snack box.',
+      ),
+      throwsA(isA<TextGenerationException>()),
     );
-
-    expect(lookup.source, TextGenerationReplySource.remote);
-    expect(lookup.word, 'bright');
-    expect(lookup.phonetic, '/brait/');
-    expect(lookup.meaning, contains('明亮'));
-    expect(lookup.sentenceMeaning, contains('明亮'));
   });
 }
 

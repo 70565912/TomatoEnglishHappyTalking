@@ -70,15 +70,20 @@ class PracticeTextService {
       ),
     ];
 
-    final reply = await TextGenerationService.generate(
+    final reply = await TextGenerationService.generateStrict(
       turns: turns,
-      fallbackText: _mockTranslation(trimmed),
       cachePurpose: cachePurpose,
       articleId: articleId,
       maxTokens: 512,
+      skipCacheRead: true,
+      skipCacheWrite: true,
     );
+    final translated = _cleanTranslation(reply.text);
+    if (translated.isEmpty) {
+      throw const TextGenerationException('文本提交处理失败：AI 未返回有效中文翻译，请重试。');
+    }
     return TextGenerationReply(
-      text: _cleanTranslation(reply.text),
+      text: translated,
       source: reply.source,
       errorMessage: reply.errorMessage,
     );
@@ -111,6 +116,8 @@ class PracticeTextService {
       maxTokens: _sentenceTranslationMaxTokens(entries.length),
       receiveTimeout: _sentenceTranslationReceiveTimeout(entries.length),
       jsonResponse: true,
+      skipCacheRead: true,
+      skipCacheWrite: true,
     );
     final translations = _parseSentenceTranslationBatch(reply.text, entries);
     return PracticeSentenceTranslationBatch(
@@ -122,66 +129,11 @@ class PracticeTextService {
   static Future<TextGenerationReply> translateToEnglishForPractice({
     required String content,
     int? articleId,
-  }) async {
-    final trimmed = _normalizeEnglishWordJoiners(content.trim());
-    if (trimmed.isEmpty) {
-      return const TextGenerationReply(
-        text: '',
-        source: TextGenerationReplySource.remote,
-      );
-    }
-    if (!_containsChineseText(trimmed)) {
-      return TextGenerationReply(
-        text: _normalizeInWordHyphens(
-          trimmed.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim(),
-        ),
-        source: TextGenerationReplySource.remote,
-      );
-    }
-
-    final chunks = _splitPracticePromptChunks(trimmed);
-    if (chunks.length <= 1) {
-      final prompt = _englishPracticePrompt(trimmed);
-      final reply = await TextGenerationService.generate(
-        turns: prompt.turns,
-        fallbackText: prompt.fallback,
-        cachePurpose: 'translate_to_english_practice',
+  }) =>
+      translateToEnglishForPracticeStrict(
+        content: content,
         articleId: articleId,
-        maxTokens: 1600,
       );
-      return TextGenerationReply(
-        text: _cleanEnglishPracticeArticle(reply.text, prompt.fallback),
-        source: reply.source,
-        errorMessage: reply.errorMessage,
-      );
-    }
-
-    final outputs = <String>[];
-    final sources = <TextGenerationReplySource>[];
-    String? firstError;
-    for (final chunk in chunks) {
-      final prompt = _englishPracticePrompt(chunk);
-      final reply = await TextGenerationService.generate(
-        turns: prompt.turns,
-        fallbackText: prompt.fallback,
-        cachePurpose: 'translate_to_english_practice',
-        articleId: articleId,
-        maxTokens: 1600,
-      );
-      final cleaned = _cleanEnglishPracticeArticle(reply.text, prompt.fallback);
-      if (cleaned.trim().isNotEmpty) {
-        outputs.add(cleaned.trim());
-      }
-      sources.add(reply.source);
-      firstError ??= reply.errorMessage;
-    }
-
-    return TextGenerationReply(
-      text: outputs.join('\n\n'),
-      source: _combineTextGenerationSources(sources),
-      errorMessage: firstError,
-    );
-  }
 
   static Future<TextGenerationReply> translateToEnglishForPracticeStrict({
     required String content,
@@ -213,6 +165,8 @@ class PracticeTextService {
         articleId: articleId,
         maxTokens: 1600,
         receiveTimeout: const Duration(seconds: 90),
+        skipCacheRead: true,
+        skipCacheWrite: true,
       );
       final cleaned = _cleanRequiredEnglishPracticeArticle(reply.text);
       outputs.add(cleaned);
@@ -238,18 +192,11 @@ class PracticeTextService {
   }) async {
     final normalizedWord = _normalizeLookupWord(word);
     if (normalizedWord.isEmpty) {
-      return PracticeWordLookup(
-        word: word.trim(),
-        phonetic: '/.../',
-        meaning: '这个单词的中文含义暂不可用。',
-        sentenceMeaning: '请结合原句理解这个单词。',
-        source: TextGenerationReplySource.mockNoKey,
-      );
+      throw const FormatException('请选择要查询的英文单词。');
     }
 
     final normalizedSentence =
         sentence.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim();
-    final fallback = _mockWordLookupJson(normalizedWord, normalizedSentence);
     final turns = <TextGenerationTurn>[
       const TextGenerationTurn(
         role: 'system',
@@ -263,19 +210,21 @@ class PracticeTextService {
       ),
     ];
 
-    final reply = await TextGenerationService.generate(
+    final reply = await TextGenerationService.generateStrict(
       turns: turns,
-      fallbackText: jsonEncode(fallback),
       cachePurpose: 'word_lookup',
       articleId: articleId,
       maxTokens: 256,
+      jsonResponse: true,
+      skipCacheRead: true,
+      skipCacheWrite: true,
     );
-    final parsed = _parseWordLookupJson(reply.text, fallback);
+    final parsed = _parseRequiredWordLookupJson(reply.text);
     return PracticeWordLookup(
       word: parsed['word'] ?? normalizedWord,
-      phonetic: parsed['phonetic'] ?? '/.../',
-      meaning: parsed['meaning'] ?? '这个单词的中文含义暂不可用。',
-      sentenceMeaning: parsed['sentenceMeaning'] ?? '请结合原句理解这个单词。',
+      phonetic: parsed['phonetic']!,
+      meaning: parsed['meaning']!,
+      sentenceMeaning: parsed['sentenceMeaning']!,
       source: reply.source,
     );
   }
@@ -285,62 +234,23 @@ class PracticeTextService {
     int? articleId,
   }) async {
     final trimmed = content.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim();
-    final fallback = _mockArticleTitle(trimmed);
     if (trimmed.isEmpty) {
-      return TextGenerationReply(
-        text: fallback,
-        source: TextGenerationReplySource.mockNoKey,
-        errorMessage: 'content is empty',
-      );
+      throw const FormatException('文章内容为空，无法生成标题。');
     }
 
     final turns = _articleTitlePrompt(trimmed);
-    final reply = await TextGenerationService.generate(
+    final reply = await TextGenerationService.generateStrict(
       turns: turns,
-      fallbackText: fallback,
       cachePurpose: 'suggest_article_title',
       articleId: articleId,
       maxTokens: 64,
+      skipCacheRead: true,
+      skipCacheWrite: true,
     );
     return TextGenerationReply(
-      text: _cleanArticleTitle(reply.text, fallback),
+      text: _cleanRequiredArticleTitle(reply.text),
       source: reply.source,
       errorMessage: reply.errorMessage,
-    );
-  }
-
-  static Future<void> attachTranslateToEnglishForPracticeCache({
-    required String content,
-    required int articleId,
-  }) async {
-    final trimmed = _normalizeEnglishWordJoiners(content.trim());
-    if (trimmed.isEmpty || !_containsChineseText(trimmed)) {
-      return;
-    }
-    for (final chunk in _splitPracticePromptChunks(trimmed)) {
-      final prompt = _englishPracticePrompt(chunk);
-      await TextGenerationService.attachExistingCache(
-        turns: prompt.turns,
-        cachePurpose: 'translate_to_english_practice',
-        articleId: articleId,
-        maxTokens: 1600,
-      );
-    }
-  }
-
-  static Future<void> attachSuggestArticleTitleCache({
-    required String content,
-    required int articleId,
-  }) async {
-    final trimmed = content.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim();
-    if (trimmed.isEmpty) {
-      return;
-    }
-    await TextGenerationService.attachExistingCache(
-      turns: _articleTitlePrompt(trimmed),
-      cachePurpose: 'suggest_article_title',
-      articleId: articleId,
-      maxTokens: 64,
     );
   }
 
@@ -510,37 +420,13 @@ class PracticeTextService {
     return null;
   }
 
-  static String _mockTranslation(String text) {
-    final normalized = text.trim();
-    if (normalized.isEmpty) {
-      return '';
-    }
-
-    final lower = normalized.toLowerCase();
-    if (lower.contains('tom finds a bright snack box')) {
-      return '汤姆发现了一个明亮的零食盒。';
-    }
-    if (lower.contains('he shares it with his team')) {
-      return '他把它分享给自己的队友。';
-    }
-    if (lower.contains('alice')) {
-      return '这是一句关于爱丽丝故事的英文，请结合上方英文理解。';
-    }
-    return '中文翻译暂不可用，请先参考英文原句。';
-  }
-
-  static ({List<TextGenerationTurn> turns, String fallback})
-      _englishPracticePrompt(String text) {
+  static ({List<TextGenerationTurn> turns}) _englishPracticePrompt(
+    String text,
+  ) {
     final trimmed = _normalizeEnglishWordJoiners(text.trim());
 
     if (_containsEnglishText(trimmed)) {
-      final fallback = _extractEnglishStoryText(trimmed);
       return (
-        fallback: fallback.isEmpty
-            ? _normalizeInWordHyphens(
-                trimmed.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim(),
-              )
-            : fallback,
         turns: <TextGenerationTurn>[
           const TextGenerationTurn(
             role: 'system',
@@ -556,9 +442,7 @@ class PracticeTextService {
       );
     }
 
-    final fallback = _mockEnglishPracticeArticle(trimmed);
     return (
-      fallback: fallback,
       turns: <TextGenerationTurn>[
         const TextGenerationTurn(
           role: 'system',
@@ -575,8 +459,10 @@ class PracticeTextService {
   }
 
   @visibleForTesting
-  static ({List<TextGenerationTurn> turns, String fallback})
-      englishPracticePromptForTest(String text) => _englishPracticePrompt(text);
+  static ({List<TextGenerationTurn> turns}) englishPracticePromptForTest(
+    String text,
+  ) =>
+      _englishPracticePrompt(text);
 
   static List<String> _splitPracticePromptChunks(String text) {
     final trimmed = text.trim();
@@ -647,7 +533,9 @@ class PracticeTextService {
     List<TextGenerationReplySource> sources,
   ) {
     if (sources.isEmpty) {
-      return TextGenerationReplySource.mockOnError;
+      throw const TextGenerationException(
+        '文本提交处理失败：AI 未返回可保存的英文正文，请重试。',
+      );
     }
     if (sources.contains(TextGenerationReplySource.remote)) {
       return TextGenerationReplySource.remote;
@@ -655,54 +543,10 @@ class PracticeTextService {
     if (sources.contains(TextGenerationReplySource.cached)) {
       return TextGenerationReplySource.cached;
     }
-    if (sources.contains(TextGenerationReplySource.mockOnError)) {
-      return TextGenerationReplySource.mockOnError;
+    if (sources.contains(TextGenerationReplySource.stored)) {
+      return TextGenerationReplySource.stored;
     }
-    return TextGenerationReplySource.mockNoKey;
-  }
-
-  static String _mockArticleTitle(String text) {
-    if (RegExp(r'[\u3400-\u9FFF]').hasMatch(text)) {
-      if (text.contains('母') || text.contains('妈')) {
-        return "A Mother's Choice";
-      }
-      return 'English Practice';
-    }
-
-    final lowerText = text.toLowerCase();
-    if (lowerText.contains('mother') && lowerText.contains('choice')) {
-      return "A Mother's Choice";
-    }
-
-    final words = <String>[];
-    final seen = <String>{};
-    for (final match in RegExp(r'[A-Za-z]+').allMatches(text)) {
-      final value = match.group(0);
-      if (value == null) {
-        continue;
-      }
-      final word = value.toLowerCase();
-      if (word.length < 4 || _titleStopWords.contains(word)) {
-        continue;
-      }
-      if (seen.add(word)) {
-        words.add(word);
-      }
-      if (words.length >= 3) {
-        break;
-      }
-    }
-    if (words.isEmpty) {
-      return 'English Practice';
-    }
-    return words.map(_titleCaseWord).join(' ');
-  }
-
-  static String _mockEnglishPracticeArticle(String text) {
-    if (text.contains('母') || text.contains('妈') || text.contains('选择')) {
-      return 'A mother makes a choice for her child. She thinks about love, family, and the future.';
-    }
-    return 'This is a short English practice story. The people make a choice and learn something important.';
+    throw StateError('Unexpected non-strict text generation source.');
   }
 
   static String _extractEnglishStoryText(String text) {
@@ -749,109 +593,42 @@ class PracticeTextService {
     return _normalizeInWordHyphens(stripped);
   }
 
-  static Map<String, String> _mockWordLookupJson(
-    String word,
-    String sentence,
-  ) {
-    final normalized = _normalizeLookupWord(word);
-    final lower = normalized.toLowerCase();
-    final known = <String, Map<String, String>>{
-      'bright': {
-        'phonetic': '/brait/',
-        'meaning': '明亮的；聪明的；鲜艳的',
-        'sentenceMeaning': '在本句中表示“明亮的”。',
-      },
-      'snack': {
-        'phonetic': '/snak/',
-        'meaning': '零食；小吃',
-        'sentenceMeaning': '在本句中表示“零食”。',
-      },
-      'find': {
-        'phonetic': '/faind/',
-        'meaning': '找到；发现',
-        'sentenceMeaning': '在本句中表示“发现”。',
-      },
-      'finds': {
-        'phonetic': '/faindz/',
-        'meaning': '找到；发现',
-        'sentenceMeaning': '在本句中表示“发现”。',
-      },
-      'share': {
-        'phonetic': '/sher/',
-        'meaning': '分享；分给',
-        'sentenceMeaning': '在本句中表示“分享”。',
-      },
-      'shares': {
-        'phonetic': '/sherz/',
-        'meaning': '分享；分给',
-        'sentenceMeaning': '在本句中表示“分享”。',
-      },
-      'choice': {
-        'phonetic': '/tshois/',
-        'meaning': '选择；选择权',
-        'sentenceMeaning': '在本句中表示“选择”。',
-      },
-      'mother': {
-        'phonetic': '/muh-ther/',
-        'meaning': '母亲；妈妈',
-        'sentenceMeaning': '在本句中表示“母亲”。',
-      },
-    };
-
-    final fallback = known[lower] ??
-        {
-          'phonetic': '/.../',
-          'meaning': '这个单词的中文含义暂不可用。',
-          'sentenceMeaning': sentence.isEmpty ? '请结合原句理解这个单词。' : '请结合本句理解这个单词。',
-        };
-
-    return {
-      'word': normalized.isEmpty ? word.trim() : normalized,
-      'phonetic': fallback['phonetic']!,
-      'meaning': fallback['meaning']!,
-      'sentenceMeaning': fallback['sentenceMeaning']!,
-    };
-  }
-
-  static Map<String, String> _parseWordLookupJson(
-    String text,
-    Map<String, String> fallback,
-  ) {
+  static Map<String, String> _parseRequiredWordLookupJson(String text) {
     final trimmed = text.trim();
     final start = trimmed.indexOf('{');
     final end = trimmed.lastIndexOf('}');
     if (start < 0 || end <= start) {
-      return fallback;
+      throw const TextGenerationException('单词查询失败：AI 未返回有效单词解释，请重试。');
     }
 
     try {
       final decoded = jsonDecode(trimmed.substring(start, end + 1));
       if (decoded is! Map) {
-        return fallback;
+        throw const FormatException('word lookup response is not an object');
       }
-      return {
-        'word': _jsonString(decoded['word'], fallback['word'] ?? ''),
-        'phonetic':
-            _jsonString(decoded['phonetic'], fallback['phonetic'] ?? '/.../'),
-        'meaning': _jsonString(
-          decoded['meaning'],
-          fallback['meaning'] ?? '这个单词的中文含义暂不可用。',
-        ),
-        'sentenceMeaning': _jsonString(
-          decoded['sentenceMeaning'],
-          fallback['sentenceMeaning'] ?? '请结合原句理解这个单词。',
-        ),
+      final parsed = {
+        'word': _jsonString(decoded['word']),
+        'phonetic': _jsonString(decoded['phonetic']),
+        'meaning': _jsonString(decoded['meaning']),
+        'sentenceMeaning': _jsonString(decoded['sentenceMeaning']),
       };
-    } catch (_) {
-      return fallback;
+      if (parsed.values.any((value) => value.trim().isEmpty)) {
+        throw const FormatException('word lookup response has empty fields');
+      }
+      return parsed;
+    } catch (error) {
+      if (error is TextGenerationException) {
+        rethrow;
+      }
+      throw const TextGenerationException('单词查询失败：AI 未返回有效单词解释，请重试。');
     }
   }
 
-  static String _jsonString(Object? value, String fallback) {
+  static String _jsonString(Object? value) {
     if (value is String && value.trim().isNotEmpty) {
       return value.trim();
     }
-    return fallback;
+    return '';
   }
 
   static String _cleanTranslation(String text) {
@@ -864,7 +641,7 @@ class PracticeTextService {
     return cleaned;
   }
 
-  static String _cleanEnglishPracticeArticle(String text, String fallback) {
+  static String _cleanEnglishPracticeArticle(String text) {
     var cleaned = text.trim();
     cleaned = cleaned.replaceAll(
       RegExp(
@@ -879,17 +656,11 @@ class PracticeTextService {
     if (_containsChineseText(cleaned) && _containsEnglishText(cleaned)) {
       cleaned = _extractEnglishStoryText(cleaned);
     }
-    if (cleaned.isEmpty) {
-      return fallback;
-    }
-    if (_containsChineseText(cleaned) && !_containsEnglishText(cleaned)) {
-      return fallback;
-    }
     return cleaned;
   }
 
   static String _cleanRequiredEnglishPracticeArticle(String text) {
-    final cleaned = _cleanEnglishPracticeArticle(text, '').trim();
+    final cleaned = _cleanEnglishPracticeArticle(text).trim();
     if (cleaned.isEmpty ||
         (_containsChineseText(cleaned) && !_containsEnglishText(cleaned))) {
       throw const TextGenerationException(
@@ -899,7 +670,7 @@ class PracticeTextService {
     return cleaned;
   }
 
-  static String _cleanArticleTitle(String text, String fallback) {
+  static String _cleanRequiredArticleTitle(String text) {
     var cleaned = text
         .split(RegExp(r'[\r\n]'))
         .first
@@ -913,19 +684,22 @@ class PracticeTextService {
         .trim();
     cleaned = _normalizeEnglishWordJoiners(cleaned);
     if (cleaned.isEmpty) {
-      return fallback;
+      throw const TextGenerationException('标题生成失败：AI 未返回有效标题，请重试。');
     }
 
     final words = cleaned.split(RegExp(r'\s+')).where((word) {
       return RegExp(r'[A-Za-z]').hasMatch(word);
     }).toList(growable: false);
     if (words.isEmpty) {
-      return fallback;
+      throw const TextGenerationException('标题生成失败：AI 未返回有效英文标题，请重试。');
     }
 
     cleaned = words.take(5).map(_titleCaseWord).join(' ');
     cleaned = _restoreCommonTitlePossessives(cleaned);
-    return cleaned.isEmpty ? fallback : cleaned;
+    if (cleaned.isEmpty) {
+      throw const TextGenerationException('标题生成失败：AI 未返回有效标题，请重试。');
+    }
+    return cleaned;
   }
 
   static String _normalizeInWordHyphens(String text) => text.replaceAllMapped(
@@ -992,26 +766,4 @@ class PracticeTextService {
     }
     return '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}';
   }
-
-  static const Set<String> _titleStopWords = {
-    'about',
-    'after',
-    'again',
-    'also',
-    'because',
-    'before',
-    'bright',
-    'from',
-    'have',
-    'into',
-    'little',
-    'looks',
-    'slowly',
-    'that',
-    'their',
-    'there',
-    'they',
-    'this',
-    'with',
-  };
 }

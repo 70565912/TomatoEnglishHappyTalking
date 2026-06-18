@@ -27,6 +27,21 @@ class TtsMemoryHandle {
       );
 }
 
+class TtsFileHandle {
+  const TtsFileHandle({
+    required this.key,
+    required this.filePath,
+  });
+
+  final String key;
+  final String filePath;
+
+  AudioSource toAudioSource({Object? tag}) => AudioSource.file(
+        filePath,
+        tag: tag,
+      );
+}
+
 class TtsPreloadProgress {
   const TtsPreloadProgress({
     required this.completed,
@@ -59,6 +74,7 @@ class TtsMemoryCacheService {
   static const defaultConcurrency = 2;
   static final Map<String, TtsMemoryHandle> _cache = {};
   static final Map<String, Future<TtsMemoryHandle>> _pending = {};
+  static final Map<String, Future<TtsFileHandle>> _filePending = {};
   static final Map<int, Set<String>> _articleKeys = {};
 
   static Future<TtsMemoryHandle> load({
@@ -128,6 +144,98 @@ class TtsMemoryCacheService {
         _pending.remove(key);
       }
     }
+  }
+
+  static Future<TtsFileHandle> loadFile({
+    required String text,
+    String voiceType = TtsService.defaultVoiceType,
+    bool preferRequestedVoice = false,
+    int? articleId,
+    String cachePurpose = 'tts',
+    bool forceRefresh = false,
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      throw const TtsException('TTS 文本不能为空');
+    }
+
+    final key = await _key(
+      text: trimmed,
+      voiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
+      cachePurpose: cachePurpose,
+    );
+    final pending = forceRefresh ? null : _filePending[key];
+    if (pending != null) {
+      final handle = await pending;
+      _rememberArticleKey(articleId, key);
+      return handle;
+    }
+    if (forceRefresh) {
+      _cache.remove(key);
+      _pending.remove(key);
+      _filePending.remove(key);
+    }
+
+    final future = () async {
+      final path = await TtsService.synthesizeToCachedFile(
+        text: trimmed,
+        voiceType: voiceType,
+        preferRequestedVoice: preferRequestedVoice,
+        articleId: articleId,
+        cachePurpose: cachePurpose,
+        forceRefresh: forceRefresh,
+      );
+      final file = File(path);
+      if (!await file.exists() || await file.length() <= 0) {
+        throw const TtsException('TTS 缓存音频为空');
+      }
+      _rememberArticleKey(articleId, key);
+      return TtsFileHandle(key: key, filePath: path);
+    }();
+
+    _filePending[key] = future;
+    try {
+      return await future;
+    } finally {
+      if (_filePending[key] == future) {
+        _filePending.remove(key);
+      }
+    }
+  }
+
+  static Future<bool> hasCachedFile({
+    required String text,
+    String voiceType = TtsService.defaultVoiceType,
+    bool preferRequestedVoice = false,
+    int? articleId,
+    String cachePurpose = 'tts',
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    final cacheKeys = await TtsService.cacheKeysForText(
+      text: trimmed,
+      voiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
+      cachePurpose: cachePurpose,
+    );
+    for (final cacheKey in cacheKeys) {
+      final path = await ApiCacheService.getFilePath(
+        cacheKey,
+        articleId: articleId,
+        purpose: cachePurpose,
+      );
+      if (path == null || path.trim().isEmpty) {
+        continue;
+      }
+      final file = File(path);
+      if (await file.exists() && await file.length() > 0) {
+        return true;
+      }
+    }
+    return false;
   }
 
   static Future<bool> hasInMemory({
@@ -204,7 +312,7 @@ class TtsMemoryCacheService {
         }
         final request = clean[index];
         try {
-          await load(
+          await loadFile(
             text: request.text,
             voiceType: request.voiceType,
             preferRequestedVoice: request.preferRequestedVoice,
@@ -259,6 +367,7 @@ class TtsMemoryCacheService {
     );
     _cache.remove(key);
     _pending.remove(key);
+    _filePending.remove(key);
     if (articleId != null) {
       _articleKeys[articleId]?.remove(key);
     }

@@ -5,8 +5,6 @@ import 'text_generation_service.dart';
 enum RealtimeReplySource {
   remote,
   cached,
-  mockNoKey,
-  mockOnError,
 }
 
 class RealtimeChatTurn {
@@ -133,19 +131,19 @@ class RealtimeVoiceService {
 
   static Future<RealtimeReply> _query(
     List<RealtimeChatTurn> turns, {
-    String? fallbackText,
     required String cachePurpose,
     int? articleId,
   }) async {
-    final reply = await TextGenerationService.generate(
+    final reply = await TextGenerationService.generateStrict(
       turns: turns
           .map((turn) =>
               TextGenerationTurn(role: turn.role, content: turn.content))
           .toList(growable: false),
       cachePurpose: cachePurpose,
-      fallbackText: fallbackText ?? _mockResponse(),
       articleId: articleId,
       maxTokens: 700,
+      skipCacheRead: true,
+      skipCacheWrite: true,
     );
     return RealtimeReply(
       text: reply.text,
@@ -155,21 +153,13 @@ class RealtimeVoiceService {
   }
 
   static RealtimeReplySource _mapSource(TextGenerationReplySource source) {
-    switch (source) {
-      case TextGenerationReplySource.remote:
-        return RealtimeReplySource.remote;
-      case TextGenerationReplySource.cached:
-        return RealtimeReplySource.cached;
-      case TextGenerationReplySource.mockNoKey:
-        return RealtimeReplySource.mockNoKey;
-      case TextGenerationReplySource.mockOnError:
-        return RealtimeReplySource.mockOnError;
-    }
+    return switch (source) {
+      TextGenerationReplySource.remote => RealtimeReplySource.remote,
+      TextGenerationReplySource.cached => RealtimeReplySource.cached,
+      TextGenerationReplySource.stored => RealtimeReplySource.cached,
+    };
   }
 
   static String _normalizeChapterGuide(String text) =>
       text.replaceAll(RegExp(r'[ \t]+'), ' ').trim();
-
-  static String _mockResponse() =>
-      "That's interesting! What do you think is the most important idea in this article?";
 }

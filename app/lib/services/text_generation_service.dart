@@ -11,8 +11,7 @@ import 'content_safety_service.dart';
 enum TextGenerationReplySource {
   remote,
   cached,
-  mockNoKey,
-  mockOnError,
+  stored,
 }
 
 class TextGenerationTurn {
@@ -72,143 +71,6 @@ class TextGenerationService {
     _postOverrideForTest = override;
   }
 
-  static Future<TextGenerationReply> generate({
-    required List<TextGenerationTurn> turns,
-    required String cachePurpose,
-    required String fallbackText,
-    int? articleId,
-    int maxTokens = 1024,
-  }) async {
-    final stopwatch = Stopwatch()..start();
-    final preparedTurns = await _prepareTurnsForApi(
-      turns,
-      purpose: cachePurpose,
-    );
-    final config = await AppConfig.openAiTextConfig;
-    final request = _cacheRequest(
-      config: config,
-      turns: preparedTurns,
-      purpose: cachePurpose,
-      maxTokens: maxTokens,
-    );
-    final cacheKey = await ApiCacheService.keyForJson(
-      _cacheNamespace,
-      request,
-    );
-    final cachedText = await ApiCacheService.getText(
-      cacheKey,
-      articleId: articleId,
-      purpose: cachePurpose,
-    );
-    if (cachedText != null && cachedText.trim().isNotEmpty) {
-      _logCompletion(
-        event: 'chat.generate',
-        config: config,
-        cachePurpose: cachePurpose,
-        articleId: articleId,
-        maxTokens: maxTokens,
-        durationMs: stopwatch.elapsedMilliseconds,
-        source: TextGenerationReplySource.cached,
-      );
-      return TextGenerationReply(
-        text: cachedText,
-        source: TextGenerationReplySource.cached,
-      );
-    }
-
-    final apiKey = config.apiKey;
-    if (apiKey.trim().isEmpty) {
-      _logCompletion(
-        event: 'chat.generate',
-        config: config,
-        cachePurpose: cachePurpose,
-        articleId: articleId,
-        maxTokens: maxTokens,
-        durationMs: stopwatch.elapsedMilliseconds,
-        source: TextGenerationReplySource.mockNoKey,
-      );
-      return TextGenerationReply(
-        text: fallbackText,
-        source: TextGenerationReplySource.mockNoKey,
-        errorMessage: '${config.provider} api key is empty',
-      );
-    }
-
-    try {
-      final body = <String, dynamic>{
-        'model': config.model,
-        'messages':
-            preparedTurns.map((turn) => turn.toJson()).toList(growable: false),
-        'max_tokens': maxTokens,
-        'stream': false,
-      };
-      final responseData = await _postJson(
-        config: config,
-        body: body,
-      );
-      final text = _extractMessageContent(responseData).trim();
-      if (text.isEmpty) {
-        throw const FormatException(
-            'OpenAI-compatible response has no message content');
-      }
-      await ApiCacheService.putText(
-        cacheKey: cacheKey,
-        kind: _cacheNamespace,
-        purpose: cachePurpose,
-        request: request,
-        textValue: text,
-        articleId: articleId,
-      );
-      await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
-        serviceKind: ContentSafetyService.serviceOpenAiText,
-        purpose: cachePurpose,
-        articleId: articleId,
-        successfulText: _requestTranscript(preparedTurns),
-      );
-      _logCompletion(
-        event: 'chat.generate',
-        config: config,
-        cachePurpose: cachePurpose,
-        articleId: articleId,
-        maxTokens: maxTokens,
-        durationMs: stopwatch.elapsedMilliseconds,
-        source: TextGenerationReplySource.remote,
-      );
-      return TextGenerationReply(
-        text: text,
-        source: TextGenerationReplySource.remote,
-      );
-    } catch (e) {
-      final errorSummary = _errorSummary(e);
-      final safety = ContentSafetyService.classifyFailure(e);
-      if (safety.suspectedSafetyBlock) {
-        await ContentSafetyService.recordFailure(
-          serviceKind: ContentSafetyService.serviceOpenAiText,
-          purpose: cachePurpose,
-          articleId: articleId,
-          failedText: _requestTranscript(turns),
-          errorCode: safety.errorCode,
-          errorMessage: safety.message,
-        );
-      }
-      debugPrint('[TextGenerationService] fallback error=$errorSummary');
-      _logFailure(
-        event: 'chat.generate',
-        config: config,
-        cachePurpose: cachePurpose,
-        articleId: articleId,
-        maxTokens: maxTokens,
-        durationMs: stopwatch.elapsedMilliseconds,
-        error: e,
-      );
-      return TextGenerationReply(
-        text: fallbackText,
-        source: TextGenerationReplySource.mockOnError,
-        errorMessage: errorSummary,
-      );
-    }
-  }
-
   static Future<TextGenerationReply> generateStrict({
     required List<TextGenerationTurn> turns,
     required String cachePurpose,
@@ -217,6 +79,7 @@ class TextGenerationService {
     Duration? receiveTimeout,
     bool jsonResponse = false,
     bool skipCacheRead = false,
+    bool skipCacheWrite = false,
   }) async {
     final stopwatch = Stopwatch()..start();
     final preparedTurns = await _prepareTurnsForApi(
@@ -252,6 +115,7 @@ class TextGenerationService {
           source: TextGenerationReplySource.cached,
           jsonResponse: jsonResponse,
           skipCacheRead: skipCacheRead,
+          skipCacheWrite: skipCacheWrite,
         );
         return TextGenerationReply(
           text: cachedText,
@@ -262,20 +126,22 @@ class TextGenerationService {
 
     final apiKey = config.apiKey;
     if (apiKey.trim().isEmpty) {
-      _logCompletion(
+      final error = TextGenerationException(
+        '文本提交处理失败：未配置 ${_providerLabel(config.provider)} API Key，请在设置中配置后重试。',
+      );
+      _logFailure(
         event: 'chat.generateStrict',
         config: config,
         cachePurpose: cachePurpose,
         articleId: articleId,
         maxTokens: maxTokens,
         durationMs: stopwatch.elapsedMilliseconds,
-        source: TextGenerationReplySource.mockNoKey,
+        error: error,
         jsonResponse: jsonResponse,
         skipCacheRead: skipCacheRead,
+        skipCacheWrite: skipCacheWrite,
       );
-      throw TextGenerationException(
-        '文本提交处理失败：未配置 ${_providerLabel(config.provider)} API Key，请在设置中配置后重试。',
-      );
+      throw error;
     }
 
     try {
@@ -297,14 +163,16 @@ class TextGenerationService {
         throw const FormatException(
             'OpenAI-compatible response has no message content');
       }
-      await ApiCacheService.putText(
-        cacheKey: cacheKey,
-        kind: _cacheNamespace,
-        purpose: cachePurpose,
-        request: request,
-        textValue: text,
-        articleId: articleId,
-      );
+      if (!skipCacheWrite) {
+        await ApiCacheService.putText(
+          cacheKey: cacheKey,
+          kind: _cacheNamespace,
+          purpose: cachePurpose,
+          request: request,
+          textValue: text,
+          articleId: articleId,
+        );
+      }
       await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
         serviceKind: ContentSafetyService.serviceOpenAiText,
         purpose: cachePurpose,
@@ -321,6 +189,7 @@ class TextGenerationService {
         source: TextGenerationReplySource.remote,
         jsonResponse: jsonResponse,
         skipCacheRead: skipCacheRead,
+        skipCacheWrite: skipCacheWrite,
       );
       return TextGenerationReply(
         text: text,
@@ -350,37 +219,13 @@ class TextGenerationService {
         error: error,
         jsonResponse: jsonResponse,
         skipCacheRead: skipCacheRead,
+        skipCacheWrite: skipCacheWrite,
       );
       throw TextGenerationException(
         _strictUserMessage(error),
         cause: error,
       );
     }
-  }
-
-  static Future<void> attachExistingCache({
-    required List<TextGenerationTurn> turns,
-    required String cachePurpose,
-    required int articleId,
-    int maxTokens = 1024,
-  }) async {
-    final preparedTurns = await _prepareTurnsForApi(
-      turns,
-      purpose: cachePurpose,
-    );
-    final config = await AppConfig.openAiTextConfig;
-    final request = _cacheRequest(
-      config: config,
-      turns: preparedTurns,
-      purpose: cachePurpose,
-      maxTokens: maxTokens,
-    );
-    await ApiCacheService.attachExistingJsonCache(
-      namespace: _cacheNamespace,
-      purpose: cachePurpose,
-      request: request,
-      articleId: articleId,
-    );
   }
 
   @visibleForTesting
@@ -505,6 +350,7 @@ class TextGenerationService {
     required TextGenerationReplySource source,
     bool jsonResponse = false,
     bool skipCacheRead = false,
+    bool skipCacheWrite = false,
   }) {
     TomatoLogger.info(
       category: 'text_generation',
@@ -518,6 +364,7 @@ class TextGenerationService {
         maxTokens: maxTokens,
         jsonResponse: jsonResponse,
         skipCacheRead: skipCacheRead,
+        skipCacheWrite: skipCacheWrite,
       ),
     );
   }
@@ -532,6 +379,7 @@ class TextGenerationService {
     required Object error,
     bool jsonResponse = false,
     bool skipCacheRead = false,
+    bool skipCacheWrite = false,
   }) {
     TomatoLogger.warn(
       category: 'text_generation',
@@ -547,6 +395,7 @@ class TextGenerationService {
           maxTokens: maxTokens,
           jsonResponse: jsonResponse,
           skipCacheRead: skipCacheRead,
+          skipCacheWrite: skipCacheWrite,
         ),
         if (error is DioException) ...{
           'dioType': error.type.name,
@@ -562,6 +411,7 @@ class TextGenerationService {
     required int maxTokens,
     required bool jsonResponse,
     required bool skipCacheRead,
+    required bool skipCacheWrite,
   }) =>
       {
         'provider': config.provider,
@@ -570,14 +420,14 @@ class TextGenerationService {
         'maxTokens': maxTokens,
         'jsonResponse': jsonResponse,
         'skipCacheRead': skipCacheRead,
+        'skipCacheWrite': skipCacheWrite,
       };
 
   static String _replySourceName(TextGenerationReplySource source) =>
       switch (source) {
         TextGenerationReplySource.remote => 'remote',
         TextGenerationReplySource.cached => 'cached',
-        TextGenerationReplySource.mockNoKey => 'mock_no_key',
-        TextGenerationReplySource.mockOnError => 'mock_on_error',
+        TextGenerationReplySource.stored => 'stored',
       };
 
   static String _providerLabel(String provider) =>

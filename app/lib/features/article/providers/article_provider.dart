@@ -54,51 +54,59 @@ class ArticleForm extends _$ArticleForm {
 
     state = state.copyWith(isSaving: true, clearError: true);
 
-    final parsedInput = PracticeInputParser.parse(state.content);
-    final englishContent = parsedInput.usesLocalEnglish
-        ? parsedInput.englishContent
-        : (await PracticeTextService.translateToEnglishForPractice(
-            content: state.content,
-          ))
-            .text
-            .trim();
-    final sentences = NlpService.splitSentences(englishContent);
-    if (sentences.isEmpty) {
+    try {
+      final parsedInput = PracticeInputParser.parse(state.content);
+      final englishContent = parsedInput.usesLocalEnglish
+          ? parsedInput.englishContent
+          : (await PracticeTextService.translateToEnglishForPractice(
+              content: state.content,
+            ))
+              .text
+              .trim();
+      final sentences = NlpService.splitSentences(englishContent);
+      if (sentences.isEmpty) {
+        state = state.copyWith(
+          isSaving: false,
+          error: '文章内容需要能转换为英文练习句子',
+        );
+        return false;
+      }
+
+      final requestedTitle = state.title.trim();
+      final title = requestedTitle.isNotEmpty
+          ? requestedTitle
+          : parsedInput.titleCandidate.trim().isNotEmpty
+              ? parsedInput.titleCandidate.trim()
+              : (await PracticeTextService.suggestArticleTitle(
+                  content: englishContent,
+                ))
+                  .text
+                  .trim();
+      final article = Article(
+        title: title,
+        content: englishContent,
+        sentences: sentences,
+        createdAt: DateTime.now(),
+      );
+
+      final articleId = await DatabaseService.saveArticle(article);
+      if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
+        await DatabaseService.saveArticleSentenceTranslations(
+          articleId,
+          parsedInput.buildSentenceTranslations(
+            articleId: articleId,
+            sentences: sentences,
+          ),
+        );
+      }
+      state = const ArticleFormState(); // reset form
+      return true;
+    } catch (error) {
       state = state.copyWith(
         isSaving: false,
-        error: '文章内容需要能转换为英文练习句子',
+        error: error.toString(),
       );
       return false;
     }
-
-    final requestedTitle = state.title.trim();
-    final title = requestedTitle.isNotEmpty
-        ? requestedTitle
-        : parsedInput.titleCandidate.trim().isNotEmpty
-            ? parsedInput.titleCandidate.trim()
-            : (await PracticeTextService.suggestArticleTitle(
-                content: englishContent,
-              ))
-                .text
-                .trim();
-    final article = Article(
-      title: title.isEmpty ? 'English Story' : title,
-      content: englishContent,
-      sentences: sentences,
-      createdAt: DateTime.now(),
-    );
-
-    final articleId = await DatabaseService.saveArticle(article);
-    if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
-      await DatabaseService.saveArticleSentenceTranslations(
-        articleId,
-        parsedInput.buildSentenceTranslations(
-          articleId: articleId,
-          sentences: sentences,
-        ),
-      );
-    }
-    state = const ArticleFormState(); // reset form
-    return true;
   }
 }

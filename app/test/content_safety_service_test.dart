@@ -79,6 +79,22 @@ void main() {
     expect(prepared, isNot(contains('*')));
   });
 
+  test('does not seed default image rules for unrelated prompts', () async {
+    final prepared = await ContentSafetyService.prepareTextForApi(
+      'Alice follows the White Rabbit through a bright garden.',
+      serviceKind: ContentSafetyService.servicePictureBookImage,
+      purpose: 'picture_book_image',
+    );
+
+    expect(
+      prepared,
+      'Alice follows the White Rabbit through a bright garden.',
+    );
+    final db = await DatabaseService.database;
+    final rules = await db.query('content_safety_rules');
+    expect(rules, isEmpty);
+  });
+
   test('removes legacy built-in rules without deleting learned rules',
       () async {
     final db = await DatabaseService.database;

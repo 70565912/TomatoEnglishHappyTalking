@@ -65,9 +65,12 @@ class DatabaseService {
         await _createApiCacheTables(db);
         await _createPictureBookTables(db);
         await _createArticleSentenceTranslationTables(db);
+        await _createArticleChatGuideTables(db);
         await _createContentSafetyTables(db);
       },
       onOpen: (db) async {
+        await _createArticleChatGuideTables(db);
+        await _ensureLatestPictureBookSchema(db);
         await _removeLegacyBuiltInContentSafetyRules(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -290,6 +293,7 @@ class DatabaseService {
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         title            TEXT    NOT NULL,
         description      TEXT    NOT NULL DEFAULT '',
+        characters_json  TEXT    NOT NULL DEFAULT '[]',
         cover_image_path TEXT,
         created_at       TEXT    NOT NULL,
         updated_at       TEXT    NOT NULL
@@ -350,6 +354,11 @@ class DatabaseService {
           "ALTER TABLE story_series ADD COLUMN description TEXT NOT NULL DEFAULT ''",
         );
       }
+      if (!columns.contains('characters_json')) {
+        await db.execute(
+          "ALTER TABLE story_series ADD COLUMN characters_json TEXT NOT NULL DEFAULT '[]'",
+        );
+      }
       if (columns.contains('style_guide_json')) {
         await db
             .execute('ALTER TABLE story_series DROP COLUMN style_guide_json');
@@ -359,6 +368,24 @@ class DatabaseService {
       }
     }
     await db.execute('DROP TABLE IF EXISTS story_reference_assets');
+  }
+
+  static Future<void> _ensureLatestPictureBookSchema(Database db) async {
+    final columns = await _tableColumns(db, 'story_series');
+    if (columns.isEmpty) {
+      await _createPictureBookTables(db);
+      return;
+    }
+    if (!columns.contains('description')) {
+      await db.execute(
+        "ALTER TABLE story_series ADD COLUMN description TEXT NOT NULL DEFAULT ''",
+      );
+    }
+    if (!columns.contains('characters_json')) {
+      await db.execute(
+        "ALTER TABLE story_series ADD COLUMN characters_json TEXT NOT NULL DEFAULT '[]'",
+      );
+    }
   }
 
   static Future<Set<String>> _tableColumns(
@@ -389,6 +416,27 @@ class DatabaseService {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_article_sentence_translations_article '
       'ON article_sentence_translations (article_id, sentence_index)',
+    );
+  }
+
+  static Future<void> _createArticleChatGuideTables(
+    Database db,
+  ) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS article_chat_guides (
+        article_id   INTEGER NOT NULL,
+        purpose      TEXT    NOT NULL,
+        content_hash TEXT    NOT NULL,
+        guide_text   TEXT    NOT NULL,
+        created_at   TEXT    NOT NULL,
+        updated_at   TEXT    NOT NULL,
+        PRIMARY KEY (article_id, purpose),
+        FOREIGN KEY (article_id) REFERENCES articles (id)
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_article_chat_guides_lookup '
+      'ON article_chat_guides (article_id, purpose, content_hash)',
     );
   }
 
@@ -573,6 +621,7 @@ class DatabaseService {
     await db
         .delete('learning_records', where: 'article_id = ?', whereArgs: [id]);
     await deleteArticleSentenceTranslations(id);
+    await deleteArticleChatGuide(id);
     await db.delete(
       'picture_book_pages',
       where: 'article_id = ?',
@@ -815,6 +864,63 @@ class DatabaseService {
     final db = await _database;
     await db.delete(
       'article_sentence_translations',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+    );
+  }
+
+  // ===== Chapter chat guides =====
+
+  static Future<String?> getArticleChatGuide({
+    required int articleId,
+    required String purpose,
+    required String contentHash,
+  }) async {
+    final db = await _database;
+    final maps = await db.query(
+      'article_chat_guides',
+      columns: ['guide_text'],
+      where: 'article_id = ? AND purpose = ? AND content_hash = ?',
+      whereArgs: [articleId, purpose, contentHash],
+      limit: 1,
+    );
+    if (maps.isEmpty) {
+      return null;
+    }
+    final guide = maps.first['guide_text']?.toString().trim() ?? '';
+    return guide.isEmpty ? null : guide;
+  }
+
+  static Future<void> saveArticleChatGuide({
+    required int articleId,
+    required String purpose,
+    required String contentHash,
+    required String guideText,
+  }) async {
+    final guide = guideText.trim();
+    if (guide.isEmpty) {
+      return;
+    }
+    final db = await _database;
+    final now = DateTime.now().toIso8601String();
+    await db.insert(
+      'article_chat_guides',
+      {
+        'article_id': articleId,
+        'purpose': purpose,
+        'content_hash': contentHash,
+        'guide_text': guide,
+        'created_at': now,
+        'updated_at': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  static Future<void> deleteArticleChatGuide(int articleId) async {
+    final db = await _database;
+    await db.delete(
+      'article_chat_guides',
       where: 'article_id = ?',
       whereArgs: [articleId],
     );

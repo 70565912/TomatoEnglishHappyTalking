@@ -5,6 +5,7 @@ import { onNativeEvent, sendNative } from './bridge';
 import { splitSentences } from './sentenceSplitter';
 import type {
   Article,
+  BookCharacter,
   ChatState,
   DiagnosticLogExportPayload,
   FollowState,
@@ -32,6 +33,8 @@ import type {
   WordPlaybackPayload,
   SettingsState,
   RecordingSettings,
+  RecordingVideoLibraryPayload,
+  RecordingVideoVersion,
   SongSource,
   AiProvider,
   StorySeries,
@@ -58,11 +61,12 @@ const ALIYUN_TEXT_MODEL_OPTIONS: SelectOption[] = [
 
 const ALIYUN_IMAGE_MODEL_OPTIONS: SelectOption[] = [
   { value: 'wan2.7-image-pro', label: 'wan2.7-image-pro · 万相组图' },
+  { value: 'wan2.7-image', label: 'wan2.7-image · 万相组图' },
 ];
 
 const ALIYUN_IMAGE_SIZE_OPTIONS: SelectOption[] = [
-  { value: '2K', label: '2K · 绘本默认' },
-  { value: '1K', label: '1K · 更快更省' },
+  { value: '2K', label: '2K · 16:9 绘本默认' },
+  { value: '1K', label: '1K · 16:9 更快更省' },
 ];
 
 const ALIYUN_TTS_MODEL_OPTIONS: SelectOption[] = [
@@ -105,7 +109,7 @@ const fallbackCards = [
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type PictureBookStateSetter = StateSetter<PictureBookState | null>;
-type PictureBookPromptRefreshTarget = 'bookDescription' | 'chapterDescription' | 'scenes';
+type PictureBookPromptRefreshTarget = 'bookDescription' | 'chapterPlan';
 
 type PictureBookRetryGate = {
   begin: (articleId: number, pageIndex: number) => boolean;
@@ -231,24 +235,41 @@ function mergePictureBookState(
 
   const currentPages = Array.isArray(current.pages) ? current.pages : [];
   const nextPages = Array.isArray(next.pages) ? next.pages : [];
-  const imageUriByPage = new Map(
+  const imageByPage = new Map(
     currentPages
-      .filter((page) => page.imageUri?.trim())
-      .map((page) => [page.pageIndex, page.imageUri?.trim() ?? '']),
+      .filter(
+        (page) =>
+          page.status === 'ready' &&
+          page.imageUri?.trim() &&
+          page.imagePath?.trim(),
+      )
+      .map((page) => [
+        page.pageIndex,
+        {
+          imagePath: page.imagePath?.trim() ?? '',
+          imageUri: page.imageUri?.trim() ?? '',
+          imageVariant: normalizedPictureBookImageVariant(page.imageVariant),
+        },
+      ]),
   );
   let changed = false;
   const pages = nextPages.map((page) => {
     if (page.imageUri?.trim()) {
       return page;
     }
-    const imageUri = imageUriByPage.get(page.pageIndex);
-    if (!imageUri) {
+    const imagePath = page.imagePath?.trim() ?? '';
+    if (page.status !== 'ready' || !imagePath) {
+      return page;
+    }
+    const image = imageByPage.get(page.pageIndex);
+    if (!image?.imageUri || image.imagePath !== imagePath) {
       return page;
     }
     changed = true;
     return {
       ...page,
-      imageUri,
+      imageUri: image.imageUri,
+      imageVariant: image.imageVariant,
     };
   });
 
@@ -260,6 +281,7 @@ function mergePictureBookPageImage(
   payload: PictureBookPageImagePayload,
 ): PictureBookState | null {
   const imageUri = payload.imageUri?.trim() ?? '';
+  const imageVariant = normalizedPictureBookImageVariant(payload.variant);
   if (!current || current.articleId !== payload.articleId) {
     return current;
   }
@@ -271,15 +293,21 @@ function mergePictureBookPageImage(
       return page;
     }
 
-    if (imageUri && page.imageUri === imageUri) {
-      return page;
-    }
-
     if (imageUri) {
+      if (imageVariant === 'thumbnail' && pageHasPictureBookImageVariant(page, 'full')) {
+        return page;
+      }
+      if (
+        page.imageUri === imageUri &&
+        normalizedPictureBookImageVariant(page.imageVariant) === imageVariant
+      ) {
+        return page;
+      }
       changed = true;
       return {
         ...page,
         imageUri,
+        imageVariant,
       };
     }
 
@@ -301,6 +329,25 @@ function mergePictureBookPageImage(
   });
 
   return normalizePictureBookState(changed ? { ...current, pages } : current);
+}
+
+function normalizedPictureBookImageVariant(
+  variant?: PictureBookPage['imageVariant'] | PictureBookPageImagePayload['variant'] | null,
+): 'full' | 'thumbnail' {
+  return variant === 'thumbnail' ? 'thumbnail' : 'full';
+}
+
+function pageHasPictureBookImageVariant(
+  page: PictureBookPage | null | undefined,
+  requiredVariant: 'full' | 'thumbnail',
+): boolean {
+  if (!page?.imageUri?.trim()) {
+    return false;
+  }
+  if (requiredVariant === 'thumbnail') {
+    return true;
+  }
+  return normalizedPictureBookImageVariant(page.imageVariant) === 'full';
 }
 
 function normalizePictureBookState(state: PictureBookState): PictureBookState {
@@ -523,10 +570,15 @@ function App() {
 
   const parsedRoute = parseRoute(route);
   const latestArticle = articles[0];
-  const updateSeries = async (seriesId: number, title: string, description: string) => {
+  const updateSeries = async (
+    seriesId: number,
+    title: string,
+    description: string,
+    characters: BookCharacter[],
+  ) => {
     const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
       'series.update',
-      { seriesId, title, description },
+      { seriesId, title, description, characters: normalizeBookCharacters(characters) },
     );
     setArticles(payload.articles);
     if (payload.series) setSeries(payload.series);
@@ -747,6 +799,7 @@ function App() {
             series={series}
             initialSeriesId={parsedRoute.seriesId}
             onNavigate={navigate}
+            onNotice={setNotice}
             onRecentBookKeyChange={rememberSeriesKey}
           />
         )}
@@ -831,7 +884,7 @@ function HomePage({
   onNavigate: (path: string) => void;
   onOpenBook: (book: BookGroup) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
-  onUpdateSeries: (seriesId: number, title: string, description: string) => Promise<void>;
+  onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
 }) {
   const [selectedBookKey, setSelectedBookKey] = useState<string | null>(null);
   const [chapterPage, setChapterPage] = useState(0);
@@ -842,6 +895,7 @@ function HomePage({
   const [bookEditDraft, setBookEditDraft] = useState<BookGroup | null>(null);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
+  const [bookEditCharacters, setBookEditCharacters] = useState<BookCharacter[]>([]);
   const [bookEditSaving, setBookEditSaving] = useState(false);
   const [bookEditError, setBookEditError] = useState<string | null>(null);
   const totalSentences = articles.reduce((sum, article) => sum + article.sentenceCount, 0);
@@ -958,6 +1012,7 @@ function HomePage({
           setBookEditDraft(book);
           setBookEditTitle(book.title);
           setBookEditDescription(book.description ?? '');
+          setBookEditCharacters(editableBookCharacters(book.characters));
           setBookEditError(null);
         }}
         renderChapterRow={({ selectedBook: book, article, imageSrc }) => (
@@ -1021,6 +1076,7 @@ function HomePage({
         <BookEditDialog
           title={bookEditTitle}
           description={bookEditDescription}
+          characters={bookEditCharacters}
           error={bookEditError}
           saving={bookEditSaving}
           onTitleChange={(title) => {
@@ -1029,6 +1085,10 @@ function HomePage({
           }}
           onDescriptionChange={(description) => {
             setBookEditDescription(description);
+            setBookEditError(null);
+          }}
+          onCharactersChange={(characters) => {
+            setBookEditCharacters(characters);
             setBookEditError(null);
           }}
           onCancel={() => {
@@ -1045,6 +1105,7 @@ function HomePage({
                 bookEditDraft.seriesId,
                 bookEditTitle.trim(),
                 bookEditDescription.trim(),
+                bookEditCharacters,
               );
               setBookEditDraft(null);
             } catch (error) {
@@ -1074,7 +1135,7 @@ function BookDetailPage({
   onNavigate: (path: string) => void;
   onRecentBookKeyChange: (key: string | null) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
-  onUpdateSeries: (seriesId: number, title: string, description: string) => Promise<void>;
+  onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
 }) {
   const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const [renameDraft, setRenameDraft] = useState<{ article: Article; title: string } | null>(null);
@@ -1083,6 +1144,7 @@ function BookDetailPage({
   const [bookEditOpen, setBookEditOpen] = useState(false);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
+  const [bookEditCharacters, setBookEditCharacters] = useState<BookCharacter[]>([]);
   const [bookEditSaving, setBookEditSaving] = useState(false);
   const [bookEditError, setBookEditError] = useState<string | null>(null);
   const book = useMemo(
@@ -1125,6 +1187,7 @@ function BookDetailPage({
           onClick={() => {
             setBookEditTitle(book.title);
             setBookEditDescription(book.description ?? '');
+            setBookEditCharacters(editableBookCharacters(book.characters));
             setBookEditError(null);
             setBookEditOpen(true);
           }}
@@ -1233,6 +1296,7 @@ function BookDetailPage({
         <BookEditDialog
           title={bookEditTitle}
           description={bookEditDescription}
+          characters={bookEditCharacters}
           error={bookEditError}
           saving={bookEditSaving}
           onTitleChange={(title) => {
@@ -1241,6 +1305,10 @@ function BookDetailPage({
           }}
           onDescriptionChange={(description) => {
             setBookEditDescription(description);
+            setBookEditError(null);
+          }}
+          onCharactersChange={(characters) => {
+            setBookEditCharacters(characters);
             setBookEditError(null);
           }}
           onCancel={() => {
@@ -1253,7 +1321,12 @@ function BookDetailPage({
             setBookEditSaving(true);
             setBookEditError(null);
             try {
-              await onUpdateSeries(seriesId, bookEditTitle.trim(), bookEditDescription.trim());
+              await onUpdateSeries(
+                seriesId,
+                bookEditTitle.trim(),
+                bookEditDescription.trim(),
+                bookEditCharacters,
+              );
               setBookEditOpen(false);
             } catch (error) {
               setBookEditError(error instanceof Error ? error.message : '书籍信息保存失败');
@@ -1459,6 +1532,7 @@ function BookLibrarySelectorPanel({
   chapterOrder,
   emptyState,
   className,
+  showHeaderEditAction = false,
   onAddChapter,
   onSelectBook,
   onChapterPageChange,
@@ -1476,6 +1550,7 @@ function BookLibrarySelectorPanel({
   chapterOrder: ChapterOrder;
   emptyState: ReactNode;
   className?: string;
+  showHeaderEditAction?: boolean;
   onAddChapter: () => void;
   onSelectBook: (book: BookGroup) => void;
   onChapterPageChange: (page: number | ((current: number) => number)) => void;
@@ -1512,9 +1587,16 @@ function BookLibrarySelectorPanel({
     <section className={panelClassName}>
       <div className="section-heading with-action">
         <span>我的书籍</span>
-        <button type="button" onClick={onAddChapter}>
-          <Icon name="plus" /> 新增章节
-        </button>
+        <div className="section-heading-actions">
+          {showHeaderEditAction && onEditSeries && selectedBook?.seriesId != null && (
+            <button type="button" onClick={() => onEditSeries(selectedBook)}>
+              <Icon name="edit" /> 编辑书籍
+            </button>
+          )}
+          <button type="button" onClick={onAddChapter}>
+            <Icon name="plus" /> 新增章节
+          </button>
+        </div>
       </div>
       {books.length === 0 ? (
         emptyState
@@ -1523,19 +1605,20 @@ function BookLibrarySelectorPanel({
           <div className="book-list" role="list" aria-label="书籍列表">
             {books.map((book, index) => (
               <div className="book-card-wrap" key={book.key}>
-                <button
-                  className={`book-card ${book.key === selectedBook?.key ? 'active' : ''}`}
-                  type="button"
-                  onClick={() => onSelectBook(book)}
-                >
-                  <img src={bookCoverSource(book, index)} alt="" />
-                  <span>
-                    <b>{book.title}</b>
-                    {book.description && <small className="book-description-line">{book.description}</small>}
-                    <small>{book.articles.length} 篇章节 · {book.sentenceCount} 句子</small>
-                  </span>
-                  <Icon name="next" />
-                </button>
+                <article className={`book-card ${book.key === selectedBook?.key ? 'active' : ''}`}>
+                  <button
+                    className="book-card-main"
+                    type="button"
+                    onClick={() => onSelectBook(book)}
+                  >
+                    <img src={bookCoverSource(book, index)} alt="" />
+                    <span>
+                      <b>{book.title}</b>
+                      <small>{book.articles.length} 篇章节 · {book.sentenceCount} 句子</small>
+                    </span>
+                    <Icon name="next" />
+                  </button>
+                </article>
                 {onDeleteSeries && book.seriesId != null && book.articles.length === 0 && (
                   <button
                     className="danger-light small book-delete-button"
@@ -1585,18 +1668,8 @@ function BookLibrarySelectorPanel({
                     <span aria-hidden="true">∨</span>
                     <span>章节列表</span>
                   </span>
-                  <b>{selectedBook.title}</b>
-                  {selectedBook.description && <small>{selectedBook.description}</small>}
                 </button>
                 <div className="chapter-tools">
-                  {onEditSeries && selectedBook.seriesId != null && (
-                    <button
-                      type="button"
-                      onClick={() => onEditSeries(selectedBook)}
-                    >
-                      <Icon name="edit" /> 编辑书籍
-                    </button>
-                  )}
                   <div className="pagination" aria-label="章节分页">
                     <button
                       type="button"
@@ -1648,12 +1721,14 @@ function PracticeCenterPage({
   series,
   initialSeriesId,
   onNavigate,
+  onNotice,
   onRecentBookKeyChange,
 }: {
   articles: Article[];
   series: StorySeries[];
   initialSeriesId?: number;
   onNavigate: (path: string) => void;
+  onNotice: (message: string) => void;
   onRecentBookKeyChange: (key: string | null) => void;
 }) {
   const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
@@ -1667,6 +1742,18 @@ function PracticeCenterPage({
     selectedBookKey && books.some((book) => book.key === selectedBookKey)
       ? selectedBookKey
       : books[0]?.key ?? null;
+  const selectedBook =
+    resolvedSelectedBookKey == null
+      ? null
+      : books.find((book) => book.key === resolvedSelectedBookKey) ?? null;
+  const selectedBookArticleIds = useMemo(
+    () => selectedBook?.articles.map((article) => article.id) ?? [],
+    [selectedBook],
+  );
+  const selectedBookArticleKey = selectedBookArticleIds.join(',');
+  const [videoLibrariesByArticleId, setVideoLibrariesByArticleId] = useState<
+    Record<number, RecordingVideoLibraryPayload | null>
+  >({});
 
   useEffect(() => {
     if (books.length === 0) {
@@ -1697,6 +1784,38 @@ function PracticeCenterPage({
     }
   }, [books, routeBook?.key, selectedBookKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (selectedBookArticleIds.length === 0) {
+      setVideoLibrariesByArticleId({});
+      return () => {
+        cancelled = true;
+      };
+    }
+    selectedBookArticleIds.forEach((articleId) => {
+      sendNative<RecordingVideoLibraryPayload>('recording.videoList', { articleId })
+        .then((library) => {
+          if (!cancelled) {
+            setVideoLibrariesByArticleId((current) => ({
+              ...current,
+              [articleId]: library,
+            }));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setVideoLibrariesByArticleId((current) => ({
+              ...current,
+              [articleId]: null,
+            }));
+          }
+        });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedBookArticleKey]);
+
   return (
     <section className="page practice-center-page">
       <TopBar title="练习中心" onBack={() => onNavigate('/')} />
@@ -1723,29 +1842,43 @@ function PracticeCenterPage({
           setChapterPage(0);
           setChapterListCollapsed(false);
         }}
-        renderChapterRow={({ selectedBook, article, imageSrc }) => (
-          <MissionRow
-            key={article.id}
-            article={article}
-            imageSrc={imageSrc}
-            onListen={() => {
-              onRecentBookKeyChange(selectedBook.key);
-              onNavigate(
-                selectedBook.seriesId != null
-                  ? `/books/${selectedBook.seriesId}/player?articleId=${article.id}&mode=listening`
-                  : `/listen/${article.id}`,
-              );
-            }}
-            onFollow={() => {
-              onRecentBookKeyChange(selectedBook.key);
-              onNavigate(`/follow/${article.id}`);
-            }}
-            onChat={() => {
-              onRecentBookKeyChange(selectedBook.key);
-              onNavigate(`/chat/${article.id}`);
-            }}
-          />
-        )}
+        renderChapterRow={({ selectedBook, article, imageSrc }) => {
+          const videoVersions = videoLibrariesByArticleId[article.id]?.versions ?? [];
+          const defaultVideo = defaultRecordingVideo(videoVersions);
+          return (
+            <MissionRow
+              key={article.id}
+              article={article}
+              imageSrc={imageSrc}
+              onListen={() => {
+                onRecentBookKeyChange(selectedBook.key);
+                onNavigate(
+                  selectedBook.seriesId != null
+                    ? `/books/${selectedBook.seriesId}/player?articleId=${article.id}&mode=listening`
+                    : `/listen/${article.id}`,
+                );
+              }}
+              onVideo={defaultVideo ? () => {
+                onRecentBookKeyChange(selectedBook.key);
+                sendNative('recording.videoPlay', {
+                  articleId: article.id,
+                  videoId: defaultVideo.id,
+                }).catch((error) => {
+                  onNotice(error instanceof Error ? error.message : '视频播放失败');
+                });
+              } : undefined}
+              videoDisabled={!defaultVideo}
+              onFollow={() => {
+                onRecentBookKeyChange(selectedBook.key);
+                onNavigate(`/follow/${article.id}`);
+              }}
+              onChat={() => {
+                onRecentBookKeyChange(selectedBook.key);
+                onNavigate(`/chat/${article.id}`);
+              }}
+            />
+          );
+        }}
       />
     </section>
   );
@@ -1778,7 +1911,7 @@ function CreationCenterPage({
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onDelete: (articleId: number) => Promise<void>;
   onDeleteSeries: (seriesId: number) => Promise<void>;
-  onUpdateSeries: (seriesId: number, title: string, description: string) => Promise<void>;
+  onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
 }) {
   const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
   const routeBook = books.find((book) => book.seriesId === initialSeriesId) ??
@@ -1794,7 +1927,9 @@ function CreationCenterPage({
   const [bookEditDraft, setBookEditDraft] = useState<BookGroup | null>(null);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
+  const [bookEditCharacters, setBookEditCharacters] = useState<BookCharacter[]>([]);
   const [bookEditSaving, setBookEditSaving] = useState(false);
+  const [bookEditGeneratingDescription, setBookEditGeneratingDescription] = useState(false);
   const [bookEditError, setBookEditError] = useState<string | null>(null);
   const resolvedSelectedBookKey =
     selectedBookKey && books.some((book) => book.key === selectedBookKey)
@@ -1870,10 +2005,13 @@ function CreationCenterPage({
   const selectCreationArticle = (
     articleId: number,
     tab: 'picture' | 'song' | 'video' = activeTab,
+    collapseChapterList = false,
   ) => {
     setSelectedArticleId(articleId);
     setActiveTab(tab);
-    setChapterListCollapsed(true);
+    if (collapseChapterList) {
+      setChapterListCollapsed(true);
+    }
   };
 
   return (
@@ -1895,6 +2033,7 @@ function CreationCenterPage({
         chapterListCollapsed={chapterListCollapsed}
         collapsedChapterTitle={selectedArticle?.title}
         emptyState={<EmptyMission onNavigate={onNavigate} />}
+        showHeaderEditAction
         onAddChapter={() => onNavigate('/article/new')}
         onSelectBook={(book) => {
           const firstArticle = sortBookChapters(book.articles, chapterOrder)[0] ?? null;
@@ -1915,6 +2054,8 @@ function CreationCenterPage({
           setBookEditDraft(book);
           setBookEditTitle(book.title);
           setBookEditDescription(book.description ?? '');
+          setBookEditCharacters(editableBookCharacters(book.characters));
+          setBookEditGeneratingDescription(false);
           setBookEditError(null);
         }}
         renderChapterRow={({ article, imageSrc }) => (
@@ -1930,21 +2071,21 @@ function CreationCenterPage({
                 <button
                   className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'picture' ? 'active' : ''}`}
                   type="button"
-                  onClick={() => selectCreationArticle(article.id, 'picture')}
+                  onClick={() => selectCreationArticle(article.id, 'picture', false)}
                 >
                   <Icon name="card" /> 绘本
                 </button>
                 <button
                   className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'song' ? 'active' : ''}`}
                   type="button"
-                  onClick={() => selectCreationArticle(article.id, 'song')}
+                  onClick={() => selectCreationArticle(article.id, 'song', false)}
                 >
                   <Icon name="music" /> 歌曲
                 </button>
                 <button
                   className={`ghost-action small ${article.id === selectedArticle?.id && activeTab === 'video' ? 'active' : ''}`}
                   type="button"
-                  onClick={() => selectCreationArticle(article.id, 'video')}
+                  onClick={() => selectCreationArticle(article.id, 'video', false)}
                 >
                   <Icon name="recordVideo" /> 视频
                 </button>
@@ -1985,8 +2126,10 @@ function CreationCenterPage({
         <BookEditDialog
           title={bookEditTitle}
           description={bookEditDescription}
+          characters={bookEditCharacters}
           error={bookEditError}
           saving={bookEditSaving}
+          generatingDescription={bookEditGeneratingDescription}
           onTitleChange={(title) => {
             setBookEditTitle(title);
             setBookEditError(null);
@@ -1995,13 +2138,48 @@ function CreationCenterPage({
             setBookEditDescription(description);
             setBookEditError(null);
           }}
+          onCharactersChange={(characters) => {
+            setBookEditCharacters(characters);
+            setBookEditError(null);
+          }}
           onCancel={() => {
-            if (bookEditSaving) return;
+            if (bookEditSaving || bookEditGeneratingDescription) return;
             setBookEditDraft(null);
             setBookEditError(null);
           }}
+          onGenerateDescription={async () => {
+            if (!bookEditDraft || bookEditGeneratingDescription) return;
+            const descriptionSeedTitle = bookEditTitle.trim();
+            if (!descriptionSeedTitle) {
+              setBookEditError('请先填写书籍名称');
+              return;
+            }
+            setBookEditGeneratingDescription(true);
+            setBookEditError(null);
+            try {
+              const article = bookEditDraft.articles[0] ?? null;
+              const descriptionContent = article?.content.trim()
+                ? article.content
+                : `Book title: ${descriptionSeedTitle}. Generate a concise book-level visual description for this picture-book series.`;
+              const payload = await sendNative<{ description: string; characters?: BookCharacter[] }>('series.suggestDescription', {
+                seriesTitle: descriptionSeedTitle,
+                articleTitle: article?.title ?? '',
+                content: descriptionContent,
+                description: bookEditDescription.trim(),
+                characters: normalizeBookCharacters(bookEditCharacters),
+              });
+              setBookEditDescription(payload.description ?? '');
+              if (payload.characters) {
+                setBookEditCharacters(editableBookCharacters(payload.characters));
+              }
+            } catch (error) {
+              setBookEditError(error instanceof Error ? error.message : '书籍简介生成失败');
+            } finally {
+              setBookEditGeneratingDescription(false);
+            }
+          }}
           onSave={async () => {
-            if (!bookEditDraft?.seriesId || bookEditSaving) return;
+            if (!bookEditDraft?.seriesId || bookEditSaving || bookEditGeneratingDescription) return;
             setBookEditSaving(true);
             setBookEditError(null);
             try {
@@ -2009,6 +2187,7 @@ function CreationCenterPage({
                 bookEditDraft.seriesId,
                 bookEditTitle.trim(),
                 bookEditDescription.trim(),
+                bookEditCharacters,
               );
               setBookEditDraft(null);
             } catch (error) {
@@ -2118,10 +2297,9 @@ function PictureBookCreationPanel({
                     )}
                   </div>
                   <div className="picture-creation-copy">
-                    <b>{scenePreview.title || `第 ${safePageIndex + 1} 页`}</b>
+                    <b>第 {safePageIndex + 1} 页</b>
                     <small>句子 {page.sentenceStartIndex + 1} - {page.sentenceEndIndex + 1}</small>
                     {scenePreview.sceneDescription && <p className="picture-scene-description">{scenePreview.sceneDescription}</p>}
-                    {scenePreview.visual && <p className="picture-scene-visual">{scenePreview.visual}</p>}
                     <p>{page.paragraphText}</p>
                     {page.errorMessage && <em>{page.errorMessage}</em>}
                     {page.status === 'error' && (
@@ -2157,8 +2335,18 @@ function PictureBookPromptReviewDialog({
   onNotice: (message: string) => void;
 }) {
   const [bookDescription, setBookDescription] = useState(review.bookDescription ?? '');
+  const [bookCharacters, setBookCharacters] = useState<BookCharacter[]>(
+    () => editableBookCharacters(review.bookCharacters),
+  );
+  const [newCharacters, setNewCharacters] = useState<BookCharacter[]>(
+    () => editableBookCharacters(review.newCharacters),
+  );
   const [chapterDescription, setChapterDescription] = useState(review.chapterDescription ?? '');
   const [scenes, setScenes] = useState<PictureBookPromptReviewScene[]>(review.scenes ?? []);
+  const relevantCharacters = useMemo(
+    () => resolveRelevantCharactersForReview(chapterDescription, scenes, bookCharacters),
+    [bookCharacters, chapterDescription, scenes],
+  );
   const [groupPrompt, setGroupPrompt] = useState(
     resolvePictureBookGroupPrompt(review, review.scenes ?? []),
   );
@@ -2172,6 +2360,8 @@ function PictureBookPromptReviewDialog({
   useEffect(() => {
     const nextScenes = review.scenes ?? [];
     setBookDescription(review.bookDescription ?? '');
+    setBookCharacters(editableBookCharacters(review.bookCharacters));
+    setNewCharacters(editableBookCharacters(review.newCharacters));
     setChapterDescription(review.chapterDescription ?? '');
     setScenes(nextScenes);
     setGroupPrompt(resolvePictureBookGroupPrompt(review, nextScenes));
@@ -2187,13 +2377,15 @@ function PictureBookPromptReviewDialog({
     setGroupPrompt(composePictureBookGroupPrompt({
       ...review,
       bookDescription,
+      relevantCharacters,
+      newCharacters,
       chapterDescription,
     }, scenes));
-  }, [bookDescription, chapterDescription, groupPromptTouched, review, scenes]);
+  }, [bookDescription, chapterDescription, groupPromptTouched, newCharacters, relevantCharacters, review, scenes]);
 
   const updateScene = (
     pageIndex: number,
-    key: keyof Pick<PictureBookPromptReviewScene, 'title' | 'sceneDescription' | 'visual'>,
+    key: keyof Pick<PictureBookPromptReviewScene, 'sceneDescription'>,
     value: string,
   ) => {
     setScenes((current) =>
@@ -2206,6 +2398,8 @@ function PictureBookPromptReviewDialog({
   const applyReviewUpdate = (nextReview: PictureBookPromptReview) => {
     const nextScenes = nextReview.scenes ?? [];
     setBookDescription(nextReview.bookDescription ?? '');
+    setBookCharacters(editableBookCharacters(nextReview.bookCharacters));
+    setNewCharacters(editableBookCharacters(nextReview.newCharacters));
     setChapterDescription(nextReview.chapterDescription ?? '');
     setScenes(nextScenes);
     if (!groupPromptTouched) {
@@ -2221,6 +2415,8 @@ function PictureBookPromptReviewDialog({
         reviewId: review.reviewId,
         target,
         bookDescription,
+        bookCharacters: normalizeBookCharacters(bookCharacters),
+        newCharacters: normalizeBookCharacters(newCharacters),
         chapterDescription,
         scenes,
       });
@@ -2241,6 +2437,8 @@ function PictureBookPromptReviewDialog({
     reviewId: review.reviewId,
     groupPrompt,
     bookDescription,
+    bookCharacters: normalizeBookCharacters(bookCharacters),
+    newCharacters: normalizeBookCharacters(newCharacters),
     chapterDescription,
     scenes,
   });
@@ -2302,12 +2500,10 @@ function PictureBookPromptReviewDialog({
         ? {
             title: '正在刷新绘本提示词',
             detail:
-              refreshingPrompt === 'scenes'
-                ? 'AI 正在重新生成章节分镜描述。'
-                : refreshingPrompt === 'chapterDescription'
-                  ? 'AI 正在生成章节描述。'
-                  : 'AI 正在生成书籍简介。',
-            timeoutSeconds: refreshingPrompt === 'scenes' ? 180 : 90,
+              refreshingPrompt === 'chapterPlan'
+                ? 'AI 正在生成章节描述和分镜描述。'
+                : 'AI 正在生成书籍简介。',
+            timeoutSeconds: refreshingPrompt === 'chapterPlan' ? 180 : 90,
           }
         : null;
   const renderRefreshButton = (
@@ -2342,7 +2538,7 @@ function PictureBookPromptReviewDialog({
         </div>
 
         <div className="picture-prompt-layout">
-          <section className="picture-prompt-section">
+          <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
               <h3>书籍简介</h3>
               {renderRefreshButton('bookDescription', '自动生成书籍简介', 'AI 自动生成书籍简介')}
@@ -2351,21 +2547,39 @@ function PictureBookPromptReviewDialog({
               aria-label="书籍简介"
               value={bookDescription}
               rows={5}
-              placeholder="时代、整体画风、主要角色基础外貌，例如 Victorian fantasy; Alice wears a blue dress and white pinafore."
+              placeholder="时代、整体画风和视觉世界；角色外貌请放在角色列表里。"
               onChange={(event) => setBookDescription(event.target.value)}
             />
           </section>
 
-          <section className="picture-prompt-section">
+          <section className="picture-prompt-section full">
+            <BookCharacterEditor
+              label="书籍角色"
+              characters={bookCharacters}
+              onChange={setBookCharacters}
+              disabled={busy}
+            />
+          </section>
+
+          <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
               <h3>章节描述</h3>
-              {renderRefreshButton('chapterDescription', '自动生成章节描述', 'AI 自动生成章节描述')}
+              {renderRefreshButton('chapterPlan', '自动生成章节规划', 'AI 自动生成章节描述和分镜描述')}
             </div>
             <textarea
               aria-label="章节描述"
               value={chapterDescription}
               rows={5}
               onChange={(event) => setChapterDescription(event.target.value)}
+            />
+          </section>
+
+          <section className="picture-prompt-section full">
+            <BookCharacterEditor
+              label="本章新增角色"
+              characters={newCharacters}
+              onChange={setNewCharacters}
+              disabled={busy}
             />
           </section>
 
@@ -2391,32 +2605,18 @@ function PictureBookPromptReviewDialog({
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
               <h3>章节分镜描述</h3>
-              {renderRefreshButton('scenes', '自动生成章节分镜描述', 'AI 自动生成章节分镜描述')}
             </div>
             <div className="picture-page-prompt-list">
               {scenes.map((scene, index) => (
                 <label key={scene.pageIndex}>
                   <span>第 {index + 1} 张 · 句子 {scene.sentenceStartIndex + 1} - {scene.sentenceEndIndex + 1}</span>
                   <small>{scene.paragraphText}</small>
-                  <input
-                    aria-label={`第 ${index + 1} 个分镜标题`}
-                    value={scene.title}
-                    placeholder="分镜标题"
-                    onChange={(event) => updateScene(scene.pageIndex, 'title', event.target.value)}
-                  />
                   <AutoResizeTextarea
                     aria-label={`第 ${index + 1} 个分镜描述`}
                     value={scene.sceneDescription}
                     rows={2}
                     placeholder="这一张图对应的分镜描述"
                     onChange={(event) => updateScene(scene.pageIndex, 'sceneDescription', event.target.value)}
-                  />
-                  <AutoResizeTextarea
-                    aria-label={`第 ${index + 1} 个分镜画面描述`}
-                    value={scene.visual}
-                    rows={3}
-                    placeholder="画面中应出现的角色、动作、地点、情绪和构图重点"
-                    onChange={(event) => updateScene(scene.pageIndex, 'visual', event.target.value)}
                   />
                 </label>
               ))}
@@ -2449,8 +2649,64 @@ function PictureBookPromptReviewDialog({
   );
 }
 
+function normalizeBookCharacters(characters?: BookCharacter[] | null): BookCharacter[] {
+  if (!Array.isArray(characters)) return [];
+  return characters
+    .map((character) => ({
+      name: normalizeInlineText(character?.name ?? ''),
+      description: normalizeInlineText(character?.description ?? ''),
+    }))
+    .filter((character) => character.name && character.description);
+}
+
+function editableBookCharacters(characters?: BookCharacter[] | null): BookCharacter[] {
+  return Array.isArray(characters)
+    ? characters.map((character) => ({
+        name: normalizeInlineText(character?.name ?? ''),
+        description: normalizeInlineText(character?.description ?? ''),
+      }))
+    : [];
+}
+
+function mergeBookCharacters(
+  base: BookCharacter[],
+  additions: BookCharacter[],
+): BookCharacter[] {
+  const merged: BookCharacter[] = [];
+  const seen = new Set<string>();
+  [...normalizeBookCharacters(base), ...normalizeBookCharacters(additions)].forEach((character) => {
+    const key = character.name.trim().toLowerCase();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    merged.push(character);
+  });
+  return merged;
+}
+
+function resolveRelevantCharactersForReview(
+  chapterDescription: string,
+  scenes: PictureBookPromptReviewScene[],
+  characters: BookCharacter[],
+): BookCharacter[] {
+  const searchText = [
+    chapterDescription,
+    ...scenes.flatMap((scene) => [scene.paragraphText, scene.sceneDescription]),
+  ].join('\n').toLowerCase();
+  return normalizeBookCharacters(characters).filter((character) => {
+    const key = character.name.trim().toLowerCase();
+    return key.length >= 2 && searchText.includes(key);
+  });
+}
+
+function normalizeInlineText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 function resolvePictureBookGroupPrompt(
-  review: Pick<PictureBookPromptReview, 'bookDescription' | 'chapterDescription' | 'groupPrompt'>,
+  review: Pick<
+    PictureBookPromptReview,
+    'bookTitle' | 'bookDescription' | 'chapterDescription' | 'groupPrompt' | 'relevantCharacters' | 'newCharacters'
+  >,
   scenes: PictureBookPromptReviewScene[],
 ): string {
   const nativePrompt = review.groupPrompt?.trim() ?? '';
@@ -2467,40 +2723,49 @@ function pictureBookGroupPromptHasSceneDetails(
   if (!prompt.trim()) {
     return false;
   }
+  if (!/^Book name:/im.test(prompt)) {
+    return false;
+  }
   if (scenes.length === 0) {
     return true;
   }
   const imageBlocks = prompt.match(/\bImage\s+\d+\s*:/gi) ?? [];
   return (
     imageBlocks.length >= scenes.length &&
-    /Scene description:/i.test(prompt) &&
-    /Visual direction:/i.test(prompt)
+    /Scene description:/i.test(prompt)
   );
 }
 
 function composePictureBookGroupPrompt(
-  review: Pick<PictureBookPromptReview, 'bookDescription' | 'chapterDescription'>,
+  review: Pick<
+    PictureBookPromptReview,
+    'bookTitle' | 'bookDescription' | 'chapterDescription' | 'relevantCharacters' | 'newCharacters'
+  >,
   scenes: PictureBookPromptReviewScene[],
 ): string {
+  const characters = mergeBookCharacters(
+    normalizeBookCharacters(review.relevantCharacters),
+    normalizeBookCharacters(review.newCharacters),
+  );
   const lines = [
-    'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.',
-    'Each image corresponds to exactly one storyboard scene below, in order.',
-    'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
-    'For every image, match the assigned scene action, characters, setting, props, mood, and composition.',
-    'Do not treat the images as alternate candidates.',
-    'Natural in-world text may appear only when it belongs to the scene, such as signs, book covers, maps, labels, or playing-card marks.',
-    '',
+    `Book name: ${review.bookTitle ?? ''}`,
     `Book description: ${review.bookDescription ?? ''}`,
-    `Chapter description: ${review.chapterDescription ?? ''}`,
   ];
+  if (characters.length > 0) {
+    lines.push('', 'Relevant characters:');
+    characters.forEach((character) => {
+      lines.push(`- ${character.name}: ${character.description}`);
+    });
+  }
+  lines.push(
+    '',
+    `Chapter description: ${review.chapterDescription ?? ''}`,
+  );
   scenes.forEach((scene, index) => {
     lines.push(
       '',
       `Image ${index + 1}:`,
-      `Sentence range: ${scene.sentenceStartIndex + 1}-${scene.sentenceEndIndex + 1}`,
-      `Scene title: ${scene.title}`,
       `Scene description: ${scene.sceneDescription}`,
-      `Visual direction: ${scene.visual}`,
     );
   });
   return lines.join('\n').trim();
@@ -2515,6 +2780,8 @@ function SongCreationPanel({
 }) {
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
   const [busy, setBusy] = useState(false);
+  const [blockingSongSource, setBlockingSongSource] = useState<SongSource | null>(null);
+  const [playingSongVersionId, setPlayingSongVersionId] = useState<string | null>(null);
 
   const loadState = () => {
     setBusy(true);
@@ -2524,11 +2791,19 @@ function SongCreationPanel({
       .finally(() => setBusy(false));
   };
 
-  useEffect(loadState, [article.id]);
+  useEffect(() => {
+    setPlayingSongVersionId(null);
+    loadState();
+  }, [article.id]);
 
   useEffect(() => onNativeEvent<ListeningSongStatePayload>('listening.song.state', (payload) => {
     if (payload.articleId === article.id) {
       setSongState(payload);
+      setPlayingSongVersionId((current) => {
+        if (payload.status !== 'playing') return null;
+        if (current && !payload.versions?.some((version) => version.id === current)) return null;
+        return current;
+      });
     }
   }), [article.id]);
 
@@ -2536,8 +2811,10 @@ function SongCreationPanel({
     command: string,
     payload: Record<string, unknown> = {},
     successMessage?: string,
+    blockingSource?: SongSource,
   ) => {
     setBusy(true);
+    if (blockingSource) setBlockingSongSource(blockingSource);
     try {
       const next = await sendNative<ListeningSongStatePayload>(command, {
         articleId: article.id,
@@ -2549,6 +2826,79 @@ function SongCreationPanel({
       onNotice(error instanceof Error ? error.message : '歌曲操作失败');
     } finally {
       setBusy(false);
+      if (blockingSource) setBlockingSongSource(null);
+    }
+  };
+
+  const recordSongVideoFromCreation = async (versionId: string) => {
+    setBusy(true);
+    try {
+      await sendNative<ListeningRecordingResultPayload>('listening.songRecordVideo', {
+        articleId: article.id,
+        versionId,
+      });
+      const next = await sendNative<ListeningSongStatePayload>('listening.songState', {
+        articleId: article.id,
+      });
+      setSongState(next);
+      onNotice('歌曲视频导出完成');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '歌曲视频导出失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const playSongVersionFromCreation = async (versionId: string) => {
+    const isPlaying = songState?.status === 'playing' && playingSongVersionId === versionId;
+    setBusy(true);
+    try {
+      if (isPlaying) {
+        await sendNative('listening.songStop', { articleId: article.id });
+        setPlayingSongVersionId(null);
+        const next = await sendNative<ListeningSongStatePayload>('listening.songState', {
+          articleId: article.id,
+        });
+        setSongState(next);
+        return;
+      }
+      await sendNative('listening.songPlay', { articleId: article.id, versionId });
+      setPlayingSongVersionId(versionId);
+      setSongState((current) => (current ? { ...current, status: 'playing' } : current));
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '歌曲播放失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteSongVersionFromCreation = async (
+    versionId: string,
+    title: string,
+    timelineStatus: string,
+  ) => {
+    const deleteTimeline = timelineStatus === 'ready';
+    const message = deleteTimeline
+      ? `确认删除歌曲「${title}」以及它的字幕时间轴？删除后不可恢复。`
+      : `确认删除歌曲「${title}」？删除后不可恢复。`;
+    if (!window.confirm(message)) {
+      return;
+    }
+    setBusy(true);
+    try {
+      if (playingSongVersionId === versionId) {
+        setPlayingSongVersionId(null);
+      }
+      const next = await sendNative<ListeningSongStatePayload>('listening.songDeleteVersion', {
+        articleId: article.id,
+        versionId,
+      });
+      setSongState(next);
+      onNotice('已删除歌曲');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '歌曲删除失败');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -2557,7 +2907,6 @@ function SongCreationPanel({
   const waitingConfirm = isSunoWaitingConfirm(songState);
   const canDownloadMissing =
     songState?.source === 'suno' &&
-    songState.status !== 'playing' &&
     songState.status !== 'generating' &&
     !waitingConfirm;
 
@@ -2568,13 +2917,6 @@ function SongCreationPanel({
         <button className="ghost-action small" type="button" onClick={loadState} disabled={busy}>
           <Icon name="refresh" /> 刷新状态
         </button>
-      </div>
-      <p className="creation-panel-note">
-        可使用阿里云百聆（Fun-Music）直接生成，也可继续使用 Suno 网页自动化；本页负责管理本地版本、字幕时间轴和歌曲视频导出。
-      </p>
-      <div className="creation-resource-grid" aria-label="歌曲资源状态">
-        <ResourceRow label="歌曲资产" value="保存在程序运行目录的歌曲资产目录" />
-        <ResourceRow label="本地歌曲版本" value={versions.length > 0 ? `${versions.length} 个可播放版本` : '暂无完整版本'} />
       </div>
       {songState?.manualActionMessage && <p className="playback-cue">{songState.manualActionMessage}</p>}
       {songState?.status === 'generating' && songState.automationStatus && !songState.manualActionMessage && (
@@ -2591,12 +2933,12 @@ function SongCreationPanel({
           onClick={() => runSongCommand('listening.songGenerate', {
             source: 'bailian_fun_music',
             lyrics: '',
-          }, '已提交阿里云百聆生成任务')}
+          }, '已提交阿里云百聆生成任务', 'bailian_fun_music')}
         >
           <Icon name="music" /> 生成百聆歌曲
         </button>
         <button
-          className="ghost-action"
+          className="suno-action"
           type="button"
           disabled={busy || songState?.status === 'generating'}
           onClick={() => runSongCommand('listening.songGenerate', {
@@ -2623,7 +2965,7 @@ function SongCreationPanel({
         )}
         {songState?.source === 'suno' && canDownloadMissing && (
           <button
-            className="ghost-action"
+            className="suno-download-action"
             type="button"
             disabled={busy}
             onClick={() => runSongCommand('listening.songDownloadSunoExisting', {}, '已开始检测并下载未保存版本')}
@@ -2645,6 +2987,7 @@ function SongCreationPanel({
               {group.versions.map((version, index) => {
                 const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
                 const title = version.title?.trim() || `版本 ${index + 1}`;
+                const isPlaying = songState?.status === 'playing' && playingSongVersionId === version.id;
                 return (
                   <div className="song-version-actions" key={version.id}>
                     <button
@@ -2657,14 +3000,29 @@ function SongCreationPanel({
                     >
                       <Icon name="star" />
                     </button>
-                    <button className="ghost-action small" type="button" disabled={busy} onClick={() => void sendNative('listening.songPlay', { articleId: article.id, versionId: version.id })}>
-                      <Icon name="sound" />
+                    <button
+                      className={`ghost-action small song-title-button ${isPlaying ? 'active' : ''}`}
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void playSongVersionFromCreation(version.id)}
+                    >
+                      {isPlaying && <Icon name="sound" />}
                       <span className="song-version-title">{title}{version.isDefault ? ' · 默认' : ''}</span>
+                    </button>
+                    <button
+                      className="danger-light small song-delete-button"
+                      type="button"
+                      disabled={busy}
+                      aria-label={`删除歌曲：${title}`}
+                      title="删除歌曲"
+                      onClick={() => void deleteSongVersionFromCreation(version.id, title, timelineStatus)}
+                    >
+                      <Icon name="trash" />
                     </button>
                     <button className="ghost-action small" type="button" disabled={busy || timelineStatus === 'generating'} onClick={() => runSongCommand('listening.songTimelineGenerate', { versionId: version.id }, '已提交歌词时间轴生成')}>
                       <Icon name={timelineStatus === 'generating' ? 'refresh' : 'sentence'} /> {songTimelineLabel(timelineStatus)}
                     </button>
-                    <button className="ghost-action small" type="button" disabled={busy || timelineStatus !== 'ready'} onClick={() => runSongCommand('listening.songRecordVideo', { versionId: version.id }, '歌曲视频导出完成')}>
+                    <button className="ghost-action small" type="button" disabled={busy || timelineStatus !== 'ready'} onClick={() => recordSongVideoFromCreation(version.id)}>
                       <Icon name="recordVideo" /> 导出歌曲视频
                     </button>
                   </div>
@@ -2674,6 +3032,13 @@ function SongCreationPanel({
           </div>
         ))}
       </div>
+      {blockingSongSource === 'bailian_fun_music' && (
+        <AiBlockingOverlay
+          title="正在提交百聆歌曲"
+          detail="正在向阿里云百聆 Fun-Music 提交歌曲生成，请等待服务返回。"
+          timeoutSeconds={480}
+        />
+      )}
     </section>
   );
 }
@@ -2688,7 +3053,10 @@ function VideoCreationPanel({
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
   const [recordingReady, setRecordingReady] = useState<ListeningRecordingReadyPayload | null>(null);
+  const [videoLibrary, setVideoLibrary] = useState<RecordingVideoLibraryPayload | null>(null);
   const [busy, setBusy] = useState(false);
+  const [videoBusy, setVideoBusy] = useState(false);
+  const [exportingListeningVideo, setExportingListeningVideo] = useState(false);
 
   const checkReady = () => {
     setBusy(true);
@@ -2703,10 +3071,28 @@ function VideoCreationPanel({
       .finally(() => setBusy(false));
   };
 
+  const loadVideoLibrary = async () => {
+    setVideoBusy(true);
+    try {
+      const library = await sendNative<RecordingVideoLibraryPayload>('recording.videoList', {
+        articleId: article.id,
+      });
+      setVideoLibrary(library);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '视频版本列表加载失败');
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
   useEffect(checkReady, [article.id]);
+  useEffect(() => {
+    void loadVideoLibrary();
+  }, [article.id]);
 
   const recordListeningVideo = async () => {
     setBusy(true);
+    setExportingListeningVideo(true);
     try {
       await sendNative<ListeningRecordingResultPayload>('listening.recordVideo', {
         articleId: article.id,
@@ -2715,38 +3101,142 @@ function VideoCreationPanel({
         pageTransition: 'crossFade',
       });
       onNotice('听力视频导出完成');
+      await loadVideoLibrary();
       onArticlesUpdated({});
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '听力视频导出失败');
     } finally {
       setBusy(false);
+      setExportingListeningVideo(false);
     }
   };
+
+  const openVideoDirectory = async () => {
+    setVideoBusy(true);
+    try {
+      await sendNative('recording.videoOpenDirectory', {
+        articleId: article.id,
+      });
+      onNotice('已打开视频保存目录');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '视频保存目录打开失败');
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
+  const playVideo = async (videoId: string) => {
+    setVideoBusy(true);
+    try {
+      await sendNative('recording.videoPlay', {
+        articleId: article.id,
+        videoId,
+      });
+      onNotice('已调用系统播放器');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '视频播放失败');
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
+  const setDefaultVideo = async (videoId: string) => {
+    setVideoBusy(true);
+    try {
+      const library = await sendNative<RecordingVideoLibraryPayload>('recording.videoSetDefault', {
+        articleId: article.id,
+        videoId,
+      });
+      setVideoLibrary(library);
+      onNotice('已设为默认播放视频');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '默认视频设置失败');
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
+  const deleteVideo = async (version: RecordingVideoVersion, title: string) => {
+    const confirmed = window.confirm(`确定删除视频“${title}”？此操作会删除本地视频文件和字幕文件，不能撤销。`);
+    if (!confirmed) return;
+    setVideoBusy(true);
+    try {
+      const library = await sendNative<RecordingVideoLibraryPayload>('recording.videoDelete', {
+        articleId: article.id,
+        videoId: version.id,
+      });
+      setVideoLibrary(library);
+      onNotice('视频已删除');
+      onArticlesUpdated({});
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '视频删除失败');
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
+  const videoVersions = videoLibrary?.versions?.filter((version) => version.id && version.videoPath) ?? [];
 
   return (
     <section className="creation-panel">
       <div className="section-heading with-action">
         <span>视频导出</span>
-        <button className="ghost-action small" type="button" onClick={checkReady} disabled={busy}>
-          <Icon name="refresh" /> 检查准备状态
-        </button>
-      </div>
-      <p className="creation-panel-note">视频导出复用已有绘本图、英文 TTS、歌曲音频和字幕时间轴，不在练习页面触发。</p>
-      <div className="creation-resource-grid" aria-label="视频资源状态">
-        <ResourceRow label="听力视频" value="保存在 recording-export/" />
-        <ResourceRow label="素材来源" value="绘本图片 / 英文 TTS / 歌曲时间轴" />
-      </div>
-      {recordingReady && (
-        <div className={`readiness-card ${recordingReady.ready ? 'ready' : 'blocked'}`}>
-          <b>{recordingReady.ready ? '听力视频已准备好' : '听力视频暂不可导出'}</b>
-          <small>{recordingReady.encoderName} · {recordingReady.resolution}</small>
-          {recordingReady.reasons.length > 0 && (
-            <ul>
-              {recordingReady.reasons.map((reason) => <li key={reason}>{reason}</li>)}
-            </ul>
-          )}
+        <div className="section-heading-actions">
+          <button className="ghost-action small" type="button" onClick={() => void openVideoDirectory()} disabled={videoBusy}>
+            <Icon name="folder" /> 打开保存目录
+          </button>
+          <button className="ghost-action small" type="button" onClick={checkReady} disabled={busy}>
+            <Icon name="refresh" /> 检查准备状态
+          </button>
         </div>
-      )}
+      </div>
+      <div className="video-version-list" aria-label="已导出视频版本">
+        <div className="song-style-group-heading">
+          <span>已导出视频</span>
+          <b>{videoBusy ? '刷新中' : `${videoVersions.length} 个版本`}</b>
+        </div>
+        {videoVersions.length === 0 ? (
+          <p className="sentence-empty">还没有本地导出视频。</p>
+        ) : (
+          videoVersions.map((version, index) => {
+            const title = recordingVideoTitle(version, index);
+            return (
+              <div className="video-version-actions" key={version.id}>
+                <button
+                  className={`icon-button small song-default-button ${version.isDefault ? 'active' : ''}`}
+                  type="button"
+                  disabled={videoBusy}
+                  aria-label={version.isDefault ? `${title} 已是默认播放视频` : `设为默认播放视频：${title}`}
+                  title={version.isDefault ? '默认播放视频' : '设为默认播放视频'}
+                  onClick={() => void setDefaultVideo(version.id)}
+                >
+                  <Icon name="star" />
+                </button>
+                <button
+                  className="ghost-action small"
+                  type="button"
+                  disabled={videoBusy}
+                  aria-label={`播放视频：${title}`}
+                  onClick={() => void playVideo(version.id)}
+                >
+                  <Icon name="play" />
+                  <span className="song-version-title">{title}{version.isDefault ? ' · 默认' : ''}</span>
+                </button>
+                <button
+                  className="danger-light small"
+                  type="button"
+                  disabled={videoBusy}
+                  aria-label={`删除视频：${title}`}
+                  onClick={() => void deleteVideo(version, title)}
+                >
+                  <Icon name="trash" /> 删除
+                </button>
+                <small>{recordingVideoMeta(version)}</small>
+              </div>
+            );
+          })
+        )}
+      </div>
       <div className="button-row">
         <button className="primary-action" type="button" disabled={busy || !recordingReady?.ready} onClick={() => void recordListeningVideo()}>
           <Icon name="recordVideo" /> 导出听力视频
@@ -2755,6 +3245,13 @@ function VideoCreationPanel({
           <Icon name="recordVideo" /> 歌曲视频请在歌曲标签选择版本
         </button>
       </div>
+      {exportingListeningVideo && (
+        <AiBlockingOverlay
+          title="正在导出听力视频"
+          detail="正在渲染听力视频文件，请等待导出完成。"
+          timeoutSeconds={900}
+        />
+      )}
     </section>
   );
 }
@@ -2780,13 +3277,11 @@ function promptText(value: unknown): string {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
 }
 
-function pictureBookPageScenePreview(page: PictureBookPage): { title: string; sceneDescription: string; visual: string } {
+function pictureBookPageScenePreview(page: PictureBookPage): { sceneDescription: string } {
   const prompt = promptRecord(page.prompt);
   const scene = promptRecord(prompt?.scene);
   return {
-    title: promptText(scene?.title),
     sceneDescription: promptText(scene?.sceneDescription),
-    visual: promptText(scene?.visual) || promptText(scene?.visualPrompt),
   };
 }
 
@@ -2818,6 +3313,7 @@ type BookGroup = {
   seriesId?: number;
   title: string;
   description?: string;
+  characters: BookCharacter[];
   articles: Article[];
   sentenceCount: number;
   averageScore: number;
@@ -2833,6 +3329,7 @@ function bookGroupsForArticles(articles: Article[], series: StorySeries[]): Book
       seriesId: item.id,
       title: item.title,
       description: item.description ?? '',
+      characters: normalizeBookCharacters(item.characters),
       articles: [],
       sentenceCount: 0,
       averageScore: 0,
@@ -2854,6 +3351,7 @@ function bookGroupsForArticles(articles: Article[], series: StorySeries[]): Book
         key,
         title: fallbackTitle,
         description: article.seriesDescription ?? '',
+        characters: [],
         articles: [],
         sentenceCount: 0,
         averageScore: 0,
@@ -2949,17 +3447,37 @@ function ArticlePage({
   const [selectedSeriesId, setSelectedSeriesId] = useState<string>(() => 'new');
   const [newSeriesTitle, setNewSeriesTitle] = useState('');
   const [seriesDescription, setSeriesDescription] = useState('');
+  const [seriesCharacters, setSeriesCharacters] = useState<BookCharacter[]>([]);
   const [generatingSeriesDescription, setGeneratingSeriesDescription] = useState(false);
+  const [savingSeries, setSavingSeries] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sentences = useMemo(() => splitSentences(content), [content]);
   const contentTooLong = content.length > ARTICLE_CONTENT_MAX_CHARS;
-  const canSave = Boolean(content.trim()) && !contentTooLong && !saving && !generatingSeriesDescription;
   const creatingNewSeries = selectedSeriesId === 'new' || series.length === 0;
-  const seriesDescriptionSeed = newSeriesTitle.trim() || title.trim() || content.trim();
+  const newSeriesTitleReady = !creatingNewSeries || Boolean(newSeriesTitle.trim());
+  const canSave =
+    Boolean(content.trim()) &&
+    newSeriesTitleReady &&
+    !contentTooLong &&
+    !saving &&
+    !savingSeries &&
+    !generatingSeriesDescription;
+  const seriesDescriptionSeed = newSeriesTitle.trim();
   const canGenerateSeriesDescription =
-    creatingNewSeries && Boolean(seriesDescriptionSeed) && !contentTooLong && !saving && !generatingSeriesDescription;
+    creatingNewSeries &&
+    Boolean(seriesDescriptionSeed) &&
+    !contentTooLong &&
+    !saving &&
+    !savingSeries &&
+    !generatingSeriesDescription;
+  const canSaveSeries =
+    creatingNewSeries &&
+    Boolean(newSeriesTitle.trim()) &&
+    !saving &&
+    !savingSeries &&
+    !generatingSeriesDescription;
   const selectedSeries = useMemo(
     () => series.find((item) => String(item.id) === selectedSeriesId) ?? null,
     [selectedSeriesId, series],
@@ -2987,6 +3505,7 @@ function ArticlePage({
       return;
     }
     setSeriesDescription(selectedSeries?.description ?? '');
+    setSeriesCharacters(editableBookCharacters(selectedSeries?.characters));
   }, [selectedSeries, selectedSeriesId]);
 
   const importFile = async (file: File | undefined) => {
@@ -3010,8 +3529,8 @@ function ArticlePage({
   };
 
   const generateSeriesDescription = async () => {
-    if (!newSeriesTitle.trim() && !title.trim() && !content.trim()) {
-      setError('请先填写文章内容');
+    if (!newSeriesTitle.trim()) {
+      setError('请先填写书籍名称');
       return;
     }
     if (contentTooLong) {
@@ -3021,21 +3540,56 @@ function ArticlePage({
     setGeneratingSeriesDescription(true);
     setError(null);
     try {
-      const descriptionSeedTitle = newSeriesTitle.trim() || title.trim() || 'New Story Series';
+      const descriptionSeedTitle = newSeriesTitle.trim();
       const descriptionContent = content.trim()
         ? content
         : `Book title: ${descriptionSeedTitle}. Generate a concise book-level visual description for this picture-book series.`;
-      const payload = await sendNative<{ description: string }>('series.suggestDescription', {
+      const payload = await sendNative<{ description: string; characters?: BookCharacter[] }>('series.suggestDescription', {
         seriesTitle: newSeriesTitle.trim(),
         articleTitle: title.trim(),
         content: descriptionContent,
         description: seriesDescription.trim(),
+        characters: normalizeBookCharacters(seriesCharacters),
       });
       setSeriesDescription(payload.description ?? '');
+      if (payload.characters) {
+        setSeriesCharacters(editableBookCharacters(payload.characters));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setGeneratingSeriesDescription(false);
+    }
+  };
+
+  const saveSeries = async () => {
+    const trimmedTitle = newSeriesTitle.trim();
+    if (!trimmedTitle) {
+      setError('请填写书籍名称');
+      return;
+    }
+    setSavingSeries(true);
+    setError(null);
+    try {
+      const payload = await sendNative<{ series?: StorySeries[] }>('series.create', {
+        title: trimmedTitle,
+        description: seriesDescription.trim(),
+        characters: normalizeBookCharacters(seriesCharacters),
+      });
+      const nextSeries = payload.series ?? [];
+      onSeriesUpdated(nextSeries);
+      const savedSeries =
+        nextSeries.find((item) => item.title.trim().toLowerCase() === trimmedTitle.toLowerCase()) ?? nextSeries[0];
+      if (savedSeries?.id != null) {
+        setSelectedSeriesId(String(savedSeries.id));
+        setNewSeriesTitle('');
+        setSeriesDescription(savedSeries.description ?? seriesDescription.trim());
+        setSeriesCharacters(editableBookCharacters(savedSeries.characters ?? seriesCharacters));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingSeries(false);
     }
   };
 
@@ -3049,6 +3603,10 @@ function ArticlePage({
       setError(`文章内容不能超过 ${ARTICLE_CONTENT_MAX_CHARS} 个字符`);
       return;
     }
+    if (creatingNewSeries && !newSeriesTitle.trim()) {
+      setError('请填写书籍名称');
+      return;
+    }
 
     setSaving(true);
     setError(null);
@@ -3059,7 +3617,7 @@ function ArticlePage({
           : undefined;
       const resolvedSeriesTitle =
         selectedSeriesId === 'new'
-          ? (newSeriesTitle.trim() || title.trim())
+          ? newSeriesTitle.trim()
           : '';
       const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
         'article.create',
@@ -3070,6 +3628,7 @@ function ArticlePage({
           seriesId: resolvedSeriesId,
           seriesTitle: resolvedSeriesTitle,
           seriesDescription: seriesDescription.trim(),
+          seriesCharacters: normalizeBookCharacters(seriesCharacters),
         },
       );
       onSaved(payload);
@@ -3111,9 +3670,11 @@ function ArticlePage({
                   setSelectedSeriesId(next);
                   if (next === 'new') {
                     setSeriesDescription('');
+                    setSeriesCharacters([]);
                   } else {
                     const nextSeries = series.find((item) => String(item.id) === next);
                     setSeriesDescription(nextSeries?.description ?? '');
+                    setSeriesCharacters(editableBookCharacters(nextSeries?.characters));
                   }
                 }}
               >
@@ -3154,9 +3715,27 @@ function ArticlePage({
                 aria-label="书籍简介"
                 value={seriesDescription}
                 rows={4}
-                placeholder="可写时代、整体画风、主要角色基础外貌；例如 Victorian fantasy, Alice wears a blue dress and white pinafore."
+                placeholder="可写时代、整体画风和视觉世界；角色外貌请放在角色列表里。"
                 onChange={(event) => setSeriesDescription(event.target.value)}
               />
+              <BookCharacterEditor
+                label="书籍角色"
+                characters={seriesCharacters}
+                onChange={setSeriesCharacters}
+                disabled={saving || savingSeries || generatingSeriesDescription}
+              />
+              {creatingNewSeries && (
+                <div className="series-save-row">
+                  <button
+                    className="ghost-action small"
+                    type="button"
+                    disabled={!canSaveSeries}
+                    onClick={() => void saveSeries()}
+                  >
+                    <Icon name="save" /> {savingSeries ? '保存中' : '保存书籍'}
+                  </button>
+                </div>
+              )}
             </div>
             <small>保存后会先审核绘本提示词，确认后再生成组图。</small>
           </section>
@@ -3231,6 +3810,13 @@ function ArticlePage({
           title="正在生成书籍简介"
           detail="AI 正在根据书名、章节标题或正文生成书籍级视觉简介。"
           timeoutSeconds={90}
+        />
+      )}
+      {savingSeries && (
+        <AiBlockingOverlay
+          title="正在保存书籍"
+          detail="正在写入书籍简介和角色列表。"
+          timeoutSeconds={45}
         />
       )}
       {saving && (
@@ -4869,10 +5455,12 @@ function SongDialog({
 }) {
   const busy = state.suggesting || state.submitting;
   const groupedVersions = useMemo(() => groupSongVersionsForDisplay(songVersions), [songVersions]);
+  const showBailianBlocking = state.submitting && state.source === 'bailian_fun_music';
 
   return createPortal(
-    <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog song-style-dialog" role="dialog" aria-modal="true" aria-label="歌曲设置">
+    <>
+      <div className="edit-dialog-backdrop" role="presentation">
+        <section className="edit-dialog song-style-dialog" role="dialog" aria-modal="true" aria-label="歌曲设置">
         <div className="edit-dialog-heading">
           <div>
             <b>歌曲设置</b>
@@ -4984,7 +5572,7 @@ function SongDialog({
                 </button>
               )}
               {state.source === 'suno' && canRetrySunoDownload && (
-                <button className="ghost-action small" type="button" onClick={onRetrySunoDownload} disabled={busy}>
+                <button className="suno-download-action small" type="button" onClick={onRetrySunoDownload} disabled={busy}>
                   <Icon name="download" /> 检测下载
                 </button>
               )}
@@ -5044,8 +5632,16 @@ function SongDialog({
             </button>
           )}
         </div>
-      </section>
-    </div>,
+        </section>
+      </div>
+      {showBailianBlocking && (
+        <AiBlockingOverlay
+          title="正在提交百聆歌曲"
+          detail="正在向阿里云百聆 Fun-Music 提交歌曲生成，请等待服务返回。"
+          timeoutSeconds={480}
+        />
+      )}
+    </>,
     document.body,
   );
 }
@@ -5075,7 +5671,9 @@ function FullscreenListeningPlayer({
   const articleId = article.id ?? 0;
   const currentItem = items.find((item) => item.index === currentIndex) ?? items[0];
   const currentPage = currentPictureBookPage(pictureBookState, currentIndex);
-  const imageSrc = directImageSource(currentPage?.imageUri) ?? '';
+  const imageSrc = pageHasPictureBookImageVariant(currentPage, 'full')
+    ? directImageSource(currentPage?.imageUri) ?? ''
+    : '';
   const progress = items.length === 0 ? 0 : Math.round(((currentIndex + 1) / items.length) * 100);
   const keepControlsVisible = status === 'paused' || status === 'completed' || status === 'error';
   const shouldShowControls = controlsVisible || keepControlsVisible;
@@ -5269,23 +5867,25 @@ function FullscreenListeningPlayer({
       onPointerMove={showCursorTemporarily}
     >
       <div className="fullscreen-listening-stage">
-        {imageSrc ? (
-          <img src={imageSrc} alt="" />
-        ) : (
-          <div className="fullscreen-listening-missing">
-            <Icon name="spark" />
-            <span>绘本图暂不可用</span>
-          </div>
-        )}
-        <div className="fullscreen-listening-subtitles">
-          <h1 className={activePart === 'english' ? 'playing-text' : undefined}>
-            {currentItem?.english ?? article.title}
-          </h1>
-          {currentItem?.chinese && (
-            <p className={activePart === 'chinese' ? 'playing-text' : undefined}>
-              {currentItem.chinese}
-            </p>
+        <div className="fullscreen-listening-frame">
+          {imageSrc ? (
+            <img src={imageSrc} alt="" />
+          ) : (
+            <div className="fullscreen-listening-missing">
+              <Icon name="spark" />
+              <span>绘本图暂不可用</span>
+            </div>
           )}
+          <div className="fullscreen-listening-subtitles">
+            <h1 className={activePart === 'english' ? 'playing-text' : undefined}>
+              {currentItem?.english ?? article.title}
+            </h1>
+            {currentItem?.chinese && (
+              <p className={activePart === 'chinese' ? 'playing-text' : undefined}>
+                {currentItem.chinese}
+              </p>
+            )}
+          </div>
         </div>
       </div>
       <div
@@ -6080,11 +6680,13 @@ function useEnsurePictureBookPageImage({
   articleId,
   state,
   page,
+  imageVariant = 'full',
   onPictureBookLoaded,
 }: {
   articleId: number;
   state: PictureBookState | null;
   page: PictureBookPage | null;
+  imageVariant?: 'full' | 'thumbnail';
   onPictureBookLoaded: PictureBookStateSetter;
 }) {
   const requestKeyRef = useRef('');
@@ -6092,18 +6694,18 @@ function useEnsurePictureBookPageImage({
   const pageIndex = page?.pageIndex ?? -1;
   const pageStatus = page?.status ?? '';
   const imagePath = page?.imagePath?.trim() ?? '';
-  const imageUri = page?.imageUri?.trim() ?? '';
+  const hasRequiredImage = pageHasPictureBookImageVariant(page, imageVariant);
 
   useEffect(() => {
     if (stateArticleId !== articleId || pageIndex < 0) {
       requestKeyRef.current = '';
       return;
     }
-    if (pageStatus !== 'ready' || imageUri || !imagePath) {
+    if (pageStatus !== 'ready' || hasRequiredImage || !imagePath) {
       return;
     }
 
-    const requestKey = `${articleId}:${pageIndex}:${imagePath}`;
+    const requestKey = `${imageVariant}:${articleId}:${pageIndex}:${imagePath}`;
     if (requestKeyRef.current === requestKey) {
       return;
     }
@@ -6113,6 +6715,7 @@ function useEnsurePictureBookPageImage({
     sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
       articleId,
       pageIndex,
+      variant: imageVariant,
     })
       .then((payload) => {
         if (!isMounted) {
@@ -6129,7 +6732,16 @@ function useEnsurePictureBookPageImage({
     return () => {
       isMounted = false;
     };
-  }, [articleId, imagePath, imageUri, onPictureBookLoaded, pageIndex, pageStatus, stateArticleId]);
+  }, [
+    articleId,
+    hasRequiredImage,
+    imagePath,
+    imageVariant,
+    onPictureBookLoaded,
+    pageIndex,
+    pageStatus,
+    stateArticleId,
+  ]);
 }
 
 function useEnsureAllPictureBookPageImages({
@@ -6162,7 +6774,7 @@ function useEnsureAllPictureBookPageImages({
   const missing = enabled && state?.articleId === articleId
     ? state.pages
         .filter((page) => page.status === 'ready')
-        .filter((page) => !page.imageUri?.trim() && page.imagePath?.trim())
+        .filter((page) => !pageHasPictureBookImageVariant(page, imageVariant) && page.imagePath?.trim())
         .map((page) => ({
           pageIndex: page.pageIndex,
           imagePath: page.imagePath?.trim() ?? '',
@@ -6251,11 +6863,11 @@ function usePredecodePictureBookImages(
   const imageItems = readyPages
     .map((page) => ({
       pageIndex: page.pageIndex,
-      src: directImageSource(page.imageUri) ?? '',
+      src: pageHasPictureBookImageVariant(page, 'full') ? directImageSource(page.imageUri) ?? '' : '',
     }))
     .filter((item) => item.src);
   const missingImagePages = readyPages
-    .filter((page) => !directImageSource(page.imageUri))
+    .filter((page) => !pageHasPictureBookImageVariant(page, 'full') || !directImageSource(page.imageUri))
     .map((page) => page.pageIndex);
   const pending = imageItems.filter((item) => {
     const key = `${item.pageIndex}:${item.src}`;
@@ -6597,7 +7209,9 @@ function PictureBookScene({
   onRetry: (page: PictureBookPage) => void;
   isRetrying?: boolean;
 }) {
-  const imageSrc = directImageSource(page?.imageUri) ?? directImageSource(page?.imagePath) ?? '';
+  const imageSrc = pageHasPictureBookImageVariant(page, 'full')
+    ? directImageSource(page?.imageUri) ?? directImageSource(page?.imagePath) ?? ''
+    : '';
   const isReady = page?.status === 'ready' && imageSrc;
   const hasPotentialPicture = Boolean(
     state?.status === 'loading' || state?.enabled || (state?.pages.length ?? 0) > 0,
@@ -7943,26 +8557,118 @@ function EditTitleDialog({
   );
 }
 
+function BookCharacterEditor({
+  label,
+  characters,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  characters: BookCharacter[];
+  onChange: (characters: BookCharacter[]) => void;
+  disabled?: boolean;
+}) {
+  const rows = characters.length > 0 ? characters : [];
+  const updateCharacter = (
+    index: number,
+    key: keyof BookCharacter,
+    value: string,
+  ) => {
+    onChange(
+      rows.map((character, rowIndex) =>
+        rowIndex === index ? { ...character, [key]: value } : character,
+      ),
+    );
+  };
+  const removeCharacter = (index: number) => {
+    onChange(rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+  const addCharacter = () => {
+    onChange([...rows, { name: '', description: '' }]);
+  };
+
+  return (
+    <div className="book-character-editor">
+      <div className="field-label-row">
+        <span>{label}</span>
+        <button
+          className="ghost-action small"
+          type="button"
+          onClick={addCharacter}
+          disabled={disabled}
+        >
+          <Icon name="plus" /> 新增角色
+        </button>
+      </div>
+      {rows.length === 0 ? (
+        <p className="book-character-empty">暂无角色。新增后填写名称和外貌描述。</p>
+      ) : (
+        <div className="book-character-list">
+          {rows.map((character, index) => (
+            <div className="book-character-row" key={`${index}-${character.name}`}>
+              <input
+                aria-label={`${label} ${index + 1} 名称`}
+                value={character.name}
+                maxLength={80}
+                placeholder="角色名称"
+                disabled={disabled}
+                onChange={(event) => updateCharacter(index, 'name', event.target.value)}
+              />
+              <button
+                className="icon-button small"
+                type="button"
+                aria-label={`删除${character.name || `第 ${index + 1} 个角色`}`}
+                disabled={disabled}
+                onClick={() => removeCharacter(index)}
+              >
+                <Icon name="trash" />
+              </button>
+              <textarea
+                aria-label={`${label} ${index + 1} 描述`}
+                value={character.description}
+                maxLength={600}
+                rows={2}
+                placeholder="稳定外貌、服饰或物种特征"
+                disabled={disabled}
+                onChange={(event) => updateCharacter(index, 'description', event.target.value)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BookEditDialog({
   title,
   description,
+  characters,
   error,
   saving,
+  generatingDescription = false,
   onTitleChange,
   onDescriptionChange,
+  onCharactersChange,
+  onGenerateDescription,
   onCancel,
   onSave,
 }: {
   title: string;
   description: string;
+  characters: BookCharacter[];
   error: string | null;
   saving: boolean;
+  generatingDescription?: boolean;
   onTitleChange: (title: string) => void;
   onDescriptionChange: (description: string) => void;
+  onCharactersChange: (characters: BookCharacter[]) => void;
+  onGenerateDescription?: () => void | Promise<void>;
   onCancel: () => void;
   onSave: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const busy = saving || generatingDescription;
 
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
@@ -7971,37 +8677,63 @@ function BookEditDialog({
 
   return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog" role="dialog" aria-modal="true" aria-label="编辑书籍信息">
+      <section className="edit-dialog book-edit-dialog" role="dialog" aria-modal="true" aria-label="编辑书籍信息">
         <div className="edit-dialog-heading">
           <b>编辑书籍信息</b>
-          <button className="icon-button small" type="button" onClick={onCancel} disabled={saving} aria-label="关闭">
+          <button className="icon-button small" type="button" onClick={onCancel} disabled={busy} aria-label="关闭">
             <Icon name="exit" />
           </button>
         </div>
-        <label>
-          <span>书籍名称</span>
-          <input
-            ref={inputRef}
-            value={title}
-            maxLength={120}
-            onChange={(event) => onTitleChange(event.target.value)}
+
+        <div className="edit-dialog-scroll-body">
+          <label>
+            <span>书籍名称</span>
+            <input
+              ref={inputRef}
+              value={title}
+              maxLength={120}
+              onChange={(event) => onTitleChange(event.target.value)}
+            />
+          </label>
+          <div className="edit-dialog-field">
+            <div className="field-label-row">
+              <span>书籍简介</span>
+              {onGenerateDescription && (
+                <button
+                  className="icon-button small prompt-magic-button"
+                  type="button"
+                  aria-label="AI 自动生成书籍简介"
+                  title="AI 自动生成书籍简介"
+                  disabled={busy || !title.trim()}
+                  onClick={() => void onGenerateDescription()}
+                >
+                  <Icon name={generatingDescription ? 'refresh' : 'wand'} />
+                  <span>{generatingDescription ? '生成中' : '自动生成'}</span>
+                </button>
+              )}
+            </div>
+            <textarea
+              aria-label="书籍简介"
+              value={description}
+              maxLength={1000}
+              rows={5}
+              onChange={(event) => onDescriptionChange(event.target.value)}
+            />
+          </div>
+          <BookCharacterEditor
+            label="书籍角色"
+            characters={characters}
+            onChange={onCharactersChange}
+            disabled={busy}
           />
-        </label>
-        <label>
-          <span>书籍简介</span>
-          <textarea
-            value={description}
-            maxLength={1000}
-            rows={5}
-            onChange={(event) => onDescriptionChange(event.target.value)}
-          />
-        </label>
-        {error && <p className="edit-dialog-error">{error}</p>}
+          {error && <p className="edit-dialog-error">{error}</p>}
+        </div>
+
         <div className="edit-dialog-actions">
-          <button className="ghost-action" type="button" onClick={onCancel} disabled={saving}>
+          <button className="ghost-action" type="button" onClick={onCancel} disabled={busy}>
             取消
           </button>
-          <button className="primary-action" type="button" onClick={onSave} disabled={saving || !title.trim()}>
+          <button className="primary-action" type="button" onClick={onSave} disabled={busy || !title.trim()}>
             <Icon name="save" /> {saving ? '保存中' : '保存'}
           </button>
         </div>
@@ -8018,6 +8750,8 @@ function MissionRow({
   openLabel,
   onOpen,
   onListen,
+  onVideo,
+  videoDisabled,
   onFollow,
   onChat,
   onDelete,
@@ -8030,6 +8764,8 @@ function MissionRow({
   openLabel?: string;
   onOpen?: () => void;
   onListen?: () => void;
+  onVideo?: () => void;
+  videoDisabled?: boolean;
   onFollow?: () => void;
   onChat?: () => void;
   onDelete?: () => void;
@@ -8074,6 +8810,11 @@ function MissionRow({
         {onListen && <button className="listen-action" onClick={onListen}><Icon name="sound" /> 听力</button>}
         {onFollow && <button className="primary-action" onClick={onFollow}><Icon name="mic" /> 跟读</button>}
         {onChat && <button className="purple-action" onClick={onChat}><Icon name="chat" /> 对话</button>}
+        {(onVideo || videoDisabled) && (
+          <button className="video-action" onClick={onVideo} disabled={videoDisabled || !onVideo}>
+            <Icon name="recordVideo" /> 视频
+          </button>
+        )}
         {extraAction}
         {onDelete && <button className="delete-action" onClick={onDelete}>删除</button>}
       </div>
@@ -8290,6 +9031,12 @@ const iconPaths: Record<string, ReactNode> = {
       <path d="M12 4v10" />
       <path d="m8 10 4 4 4-4" />
       <path d="M5 18.5h14" />
+    </>
+  ),
+  folder: (
+    <>
+      <path d="M4 6.5h6l2 2h8v9.5H4z" />
+      <path d="M4 10h16" />
     </>
   ),
   music: (
@@ -8517,6 +9264,46 @@ function formatDurationMs(durationMs: number): string {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function defaultRecordingVideo(versions: RecordingVideoVersion[]): RecordingVideoVersion | null {
+  const usableVersions = versions.filter((version) => version.id && version.videoPath);
+  return usableVersions.find((version) => version.isDefault) ?? usableVersions[0] ?? null;
+}
+
+function recordingVideoTitle(version: RecordingVideoVersion, index: number): string {
+  const createdAt = formatRecordingVideoCreatedAt(version.createdAt);
+  if (createdAt) {
+    return createdAt;
+  }
+  return version.title?.trim() || `版本 ${index + 1}`;
+}
+
+function recordingVideoSourceLabel(source?: string | null): string {
+  if (source === 'song') return '歌曲视频';
+  if (source === 'listening') return '听力视频';
+  return '视频';
+}
+
+function recordingVideoMeta(version: RecordingVideoVersion): string {
+  const parts = [
+    recordingVideoSourceLabel(version.source),
+    version.resolution?.toString().trim(),
+    version.codec?.toString().trim().toUpperCase(),
+    typeof version.durationMs === 'number' ? formatDurationMs(version.durationMs) : '',
+  ].filter((part): part is string => Boolean(part));
+  return parts.join(' · ');
+}
+
+function formatRecordingVideoCreatedAt(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  const hour = `${date.getHours()}`.padStart(2, '0');
+  const minute = `${date.getMinutes()}`.padStart(2, '0');
+  return `${month}-${day} ${hour}:${minute}`;
 }
 
 function songLyricsFromItems(items: ListeningItem[]): string {

@@ -5,6 +5,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
 import '../core/config/app_config.dart';
+import '../core/logging/tomato_logger.dart';
 import 'api_cache_service.dart';
 import 'content_safety_service.dart';
 
@@ -53,6 +54,8 @@ typedef VolcImagePostOverride = Future<Object?> Function({
 
 class VolcImageService {
   static const supportsReferenceImages = true;
+  static const _logCategory = 'picture_book_image';
+  static const _provider = 'volcengine';
   static const _missingArkImageKeyMessage =
       '缺少火山方舟 API Key，已跳过绘本图片生成。请在设置的云服务中配置火山引擎方舟 Key。';
 
@@ -173,21 +176,78 @@ class VolcImageService {
     if (cleaned.isEmpty) {
       return const [];
     }
+    final span = TomatoLogger.span(
+      category: _logCategory,
+      event: 'volc.group',
+      articleId: articleId,
+      stage: 'prepare',
+      data: {
+        'provider': _provider,
+        'articleId': articleId,
+        'seriesId': seriesId,
+        'requestCount': requests.length,
+        'cleanedCount': cleaned.length,
+        'pageIndexes': _pageIndexes(cleaned),
+        'referencePathCount': referenceImagePaths.length,
+        'groupPromptOverride': groupPromptOverride?.trim().isNotEmpty == true,
+        'cachePurpose': cachePurpose,
+        'cacheOnly': cacheOnly,
+        'reusePartialCache': reusePartialCache,
+        'useSequential': useSequential,
+        'arkSequentialEnabled': _arkSequentialEnabled,
+      },
+    );
     if (((!_arkSequentialEnabled && !useSequential) || cleaned.length == 1) &&
         !cacheOnly) {
-      return Future.wait(
-        cleaned.map(
-          (request) => generatePictureBookImage(
-            prompt: request.prompt,
-            promptMetadata: request.promptMetadata,
-            articleId: articleId,
-            seriesId: seriesId,
-            pageIndex: request.pageIndex,
-            referenceImagePaths: referenceImagePaths,
-            cachePurpose: cachePurpose,
-          ),
-        ),
+      TomatoLogger.info(
+        category: _logCategory,
+        event: 'volc.group.fan_out_single',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'fan_out',
+        status: 'start',
+        data: {
+          'provider': _provider,
+          'reason':
+              cleaned.length == 1 ? 'single_request' : 'sequential_disabled',
+          'pageIndexes': _pageIndexes(cleaned),
+        },
       );
+      try {
+        final results = await Future.wait(
+          cleaned.map(
+            (request) => generatePictureBookImage(
+              prompt: request.prompt,
+              promptMetadata: request.promptMetadata,
+              articleId: articleId,
+              seriesId: seriesId,
+              pageIndex: request.pageIndex,
+              referenceImagePaths: referenceImagePaths,
+              cachePurpose: cachePurpose,
+            ),
+          ),
+        );
+        span.end(
+          status: _statusForResults(results),
+          data: _resultLogData(
+            provider: _provider,
+            results: results,
+            extra: {'mode': 'fan_out_single'},
+          ),
+        );
+        return results;
+      } catch (error, stackTrace) {
+        span.fail(
+          error,
+          stackTrace: stackTrace,
+          message: '火山单图 fan-out 组图失败',
+          data: {
+            'provider': _provider,
+            'pageIndexes': _pageIndexes(cleaned),
+          },
+        );
+        rethrow;
+      }
     }
 
     final referenceImages = await _referenceImages(referenceImagePaths);
@@ -198,6 +258,24 @@ class VolcImageService {
       rawGroupPrompt,
       serviceKind: ContentSafetyService.servicePictureBookImage,
       purpose: cachePurpose,
+    );
+    final promptHash = await ApiCacheService.hashUtf8(groupPrompt);
+    TomatoLogger.info(
+      category: _logCategory,
+      event: 'volc.group.prompt_ready',
+      flowId: span.flowId,
+      articleId: articleId,
+      stage: 'prompt',
+      status: 'ready',
+      data: {
+        'provider': _provider,
+        'promptLength': groupPrompt.length,
+        'promptHash': promptHash,
+        'rawPromptLength': rawGroupPrompt.length,
+        'contentSafetyChanged': rawGroupPrompt != groupPrompt,
+        'pageCount': cleaned.length,
+        'pageIndexes': _pageIndexes(cleaned),
+      },
     );
     final groupMetadata = {
       'kind': 'picture_book_group',
@@ -252,13 +330,38 @@ class VolcImageService {
         cacheKey: cacheKeys[index],
       );
     }
+    TomatoLogger.info(
+      category: _logCategory,
+      event: 'volc.group.cache_checked',
+      flowId: span.flowId,
+      articleId: articleId,
+      stage: 'cache',
+      status: missingRequests.isEmpty ? 'hit' : 'miss',
+      data: {
+        'provider': _provider,
+        'cachePurpose': cachePurpose,
+        'cachedCount': cachedResults.length,
+        'missingCount': missingRequests.length,
+        'cachedPageIndexes': cachedResults.keys.toList(growable: false),
+        'missingPageIndexes': _pageIndexes(missingRequests),
+      },
+    );
     if (missingRequests.isEmpty) {
-      return [
+      final results = [
         for (final request in cleaned) cachedResults[request.pageIndex]!,
       ];
+      span.end(
+        status: 'cache_hit',
+        data: _resultLogData(
+          provider: _provider,
+          results: results,
+          extra: {'promptHash': promptHash},
+        ),
+      );
+      return results;
     }
     if (cacheOnly) {
-      return [
+      final results = [
         for (final request in cleaned)
           cachedResults[request.pageIndex] ??
               VolcImageResult(
@@ -267,8 +370,34 @@ class VolcImageService {
                 errorMessage: '组图缓存尚未生成第 ${request.pageIndex + 1} 张图片',
               ),
       ];
+      span.end(
+        status: 'cache_only',
+        data: _resultLogData(
+          provider: _provider,
+          results: results,
+          extra: {
+            'promptHash': promptHash,
+            'missingPageIndexes': _pageIndexes(missingRequests),
+          },
+        ),
+      );
+      return results;
     }
     if (cachedResults.isNotEmpty && reusePartialCache) {
+      TomatoLogger.info(
+        category: _logCategory,
+        event: 'volc.group.partial_cache_retry',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'cache',
+        status: 'retry_missing',
+        data: {
+          'provider': _provider,
+          'cachedPageIndexes': cachedResults.keys.toList(growable: false),
+          'missingPageIndexes': _pageIndexes(missingRequests),
+          'promptHash': promptHash,
+        },
+      );
       final generated = await generatePictureBookImageGroup(
         requests: missingRequests,
         articleId: articleId,
@@ -285,7 +414,7 @@ class VolcImageService {
         for (final result in generated)
           if (result.pageIndex != null) result.pageIndex!: result,
       };
-      return [
+      final results = [
         for (final request in cleaned)
           byPage[request.pageIndex] ??
               VolcImageResult(
@@ -294,11 +423,20 @@ class VolcImageService {
                 errorMessage: '组图缓存缺失且未返回该页图片',
               ),
       ];
+      span.end(
+        status: _statusForResults(results),
+        data: _resultLogData(
+          provider: _provider,
+          results: results,
+          extra: {'promptHash': promptHash, 'mode': 'partial_cache_retry'},
+        ),
+      );
+      return results;
     }
 
     final apiKey = await AppConfig.volcArkImageApiKey;
     if (apiKey.trim().isEmpty) {
-      return [
+      final results = [
         for (final request in cleaned)
           cachedResults[request.pageIndex] ??
               VolcImageResult(
@@ -307,6 +445,28 @@ class VolcImageService {
                 errorMessage: _missingArkImageKeyMessage,
               ),
       ];
+      TomatoLogger.warn(
+        category: _logCategory,
+        event: 'volc.group.skipped_no_key',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'credential',
+        status: 'skipped',
+        data: {
+          'provider': _provider,
+          'promptHash': promptHash,
+          'pageIndexes': _pageIndexes(cleaned),
+        },
+      );
+      span.end(
+        status: 'skipped_no_key',
+        data: _resultLogData(
+          provider: _provider,
+          results: results,
+          extra: {'promptHash': promptHash},
+        ),
+      );
+      return results;
     }
 
     try {
@@ -317,13 +477,68 @@ class VolcImageService {
         sequential: true,
         maxImages: cleaned.length,
       );
+      TomatoLogger.info(
+        category: _logCategory,
+        event: 'volc.group.remote_submit',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'remote_submit',
+        status: 'start',
+        data: {
+          'provider': _provider,
+          'endpoint': endpoint,
+          'model': model,
+          'size': _arkSize,
+          'responseFormat': _arkResponseFormat,
+          'outputFormat': _outputFormat,
+          'watermark': _watermark,
+          'sequential': true,
+          'maxImages': cleaned.length,
+          'receiveTimeoutSeconds':
+              _receiveTimeoutForImageCount(cleaned.length).inSeconds,
+          'promptLength': groupPrompt.length,
+          'promptHash': promptHash,
+          'referenceImageCount': referenceImages.length,
+          'referenceImageHashes': referenceImages
+              .map((image) => image.hash)
+              .toList(growable: false),
+        },
+      );
       final responseData = await _postArkImages(
         apiKey: apiKey,
         endpoint: endpoint,
         body: body,
         imageCount: cleaned.length,
       );
+      TomatoLogger.info(
+        category: _logCategory,
+        event: 'volc.group.remote_response',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'remote_response',
+        status: 'received',
+        data: {
+          'provider': _provider,
+          'responseKind': _responseKind(responseData),
+          'promptHash': promptHash,
+        },
+      );
       final images = await _extractAllImageBytes(responseData);
+      TomatoLogger.info(
+        category: _logCategory,
+        event: 'volc.group.images_extracted',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'extract',
+        status: images.isEmpty ? 'empty' : 'ready',
+        data: {
+          'provider': _provider,
+          'imageCount': images.length,
+          'imageBytes': images.map((bytes) => bytes.length).toList(),
+          'expectedCount': cleaned.length,
+          'promptHash': promptHash,
+        },
+      );
       if (images.isEmpty) {
         throw const _VolcImageRemoteException('组图接口未返回可保存的图片');
       }
@@ -352,6 +567,23 @@ class VolcImageService {
           contentType: _contentTypeFor(_outputFormat),
           articleId: articleId,
         );
+        TomatoLogger.info(
+          category: _logCategory,
+          event: 'volc.group.cache_write',
+          flowId: span.flowId,
+          articleId: articleId,
+          stage: 'cache_write',
+          status: 'ready',
+          data: {
+            'provider': _provider,
+            'pageIndex': cleaned[index].pageIndex,
+            'outputIndex': index,
+            'bytes': images[index].length,
+            'cacheKey': cacheKeys[index],
+            'filePath': filePath,
+            'promptHash': promptHash,
+          },
+        );
         output.add(
           VolcImageResult(
             source: VolcImageResultSource.remote,
@@ -367,8 +599,20 @@ class VolcImageService {
         articleId: articleId,
         successfulText: groupPrompt,
       );
+      span.end(
+        status: _statusForResults(output),
+        data: _resultLogData(
+          provider: _provider,
+          results: output,
+          extra: {
+            'promptHash': promptHash,
+            'expectedCount': cleaned.length,
+            'remoteImageCount': images.length,
+          },
+        ),
+      );
       return output;
-    } catch (error) {
+    } catch (error, stackTrace) {
       final message = _failureMessage(error);
       final safety = ContentSafetyService.classifyFailure(error);
       if (safety.suspectedSafetyBlock) {
@@ -381,9 +625,7 @@ class VolcImageService {
           errorMessage: safety.message,
         );
       }
-      debugPrint(
-          '[VolcImageService] picture group generation failed: $message');
-      return [
+      final results = [
         for (var index = 0; index < cleaned.length; index += 1)
           VolcImageResult(
             source: VolcImageResultSource.failed,
@@ -392,6 +634,22 @@ class VolcImageService {
             errorMessage: message,
           )
       ];
+      span.fail(
+        error,
+        stackTrace: stackTrace,
+        message: message,
+        data: _resultLogData(
+          provider: _provider,
+          results: results,
+          extra: {
+            'promptHash': promptHash,
+            'suspectedSafetyBlock': safety.suspectedSafetyBlock,
+            'safetyErrorCode': safety.errorCode,
+            'safetyMessage': safety.message,
+          },
+        ),
+      );
+      return results;
     }
   }
 
@@ -407,6 +665,26 @@ class VolcImageService {
     required List<_ReferenceImage> referenceImages,
     required String cachePurpose,
   }) async {
+    final promptHash = await ApiCacheService.hashUtf8(prompt);
+    final span = TomatoLogger.span(
+      category: _logCategory,
+      event: 'volc.single',
+      articleId: articleId,
+      stage: 'prepare',
+      data: {
+        'provider': _provider,
+        'articleId': articleId,
+        'seriesId': seriesId,
+        'pageIndex': pageIndex,
+        'model': model,
+        'endpoint': endpoint,
+        'size': _arkSize,
+        'promptLength': prompt.length,
+        'promptHash': promptHash,
+        'referenceImageCount': referenceImages.length,
+        'cachePurpose': cachePurpose,
+      },
+    );
     final requestForCache = _arkCacheRequest(
       endpoint: endpoint,
       model: model,
@@ -427,15 +705,45 @@ class VolcImageService {
       purpose: cachePurpose,
     );
     if (cachedPath != null && cachedPath.trim().isNotEmpty) {
-      return VolcImageResult(
+      final result = VolcImageResult(
         source: VolcImageResultSource.cached,
         pageIndex: pageIndex,
         filePath: cachedPath,
         cacheKey: cacheKey,
       );
+      span.end(
+        status: 'cache_hit',
+        data: _resultLogData(
+          provider: _provider,
+          results: [result],
+          extra: {'promptHash': promptHash},
+        ),
+      );
+      return result;
     }
 
     try {
+      TomatoLogger.info(
+        category: _logCategory,
+        event: 'volc.single.remote_submit',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'remote_submit',
+        status: 'start',
+        data: {
+          'provider': _provider,
+          'endpoint': endpoint,
+          'model': model,
+          'size': _arkSize,
+          'responseFormat': _arkResponseFormat,
+          'outputFormat': _outputFormat,
+          'watermark': _watermark,
+          'pageIndex': pageIndex,
+          'promptLength': prompt.length,
+          'promptHash': promptHash,
+          'referenceImageCount': referenceImages.length,
+        },
+      );
       final responseData = await _postArkImages(
         apiKey: apiKey,
         endpoint: endpoint,
@@ -449,12 +757,24 @@ class VolcImageService {
       );
       final imageBytes = await _extractImageBytes(responseData);
       if (imageBytes.isEmpty) {
-        return VolcImageResult(
+        final result = VolcImageResult(
           source: VolcImageResultSource.failed,
           pageIndex: pageIndex,
           cacheKey: cacheKey,
           errorMessage: '图片接口未返回可保存的图片',
         );
+        span.end(
+          status: 'failed',
+          data: _resultLogData(
+            provider: _provider,
+            results: [result],
+            extra: {
+              'promptHash': promptHash,
+              'responseKind': _responseKind(responseData),
+            },
+          ),
+        );
+        return result;
       }
       final filePath = await ApiCacheService.putFileBytes(
         cacheKey: cacheKey,
@@ -467,19 +787,44 @@ class VolcImageService {
         contentType: _contentTypeFor(_outputFormat),
         articleId: articleId,
       );
+      TomatoLogger.info(
+        category: _logCategory,
+        event: 'volc.single.cache_write',
+        flowId: span.flowId,
+        articleId: articleId,
+        stage: 'cache_write',
+        status: 'ready',
+        data: {
+          'provider': _provider,
+          'pageIndex': pageIndex,
+          'bytes': imageBytes.length,
+          'cacheKey': cacheKey,
+          'filePath': filePath,
+          'promptHash': promptHash,
+        },
+      );
       await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
         serviceKind: ContentSafetyService.servicePictureBookImage,
         purpose: cachePurpose,
         articleId: articleId,
         successfulText: prompt,
       );
-      return VolcImageResult(
+      final result = VolcImageResult(
         source: VolcImageResultSource.remote,
         pageIndex: pageIndex,
         filePath: filePath,
         cacheKey: cacheKey,
       );
-    } catch (error) {
+      span.end(
+        status: 'ready',
+        data: _resultLogData(
+          provider: _provider,
+          results: [result],
+          extra: {'promptHash': promptHash, 'bytes': imageBytes.length},
+        ),
+      );
+      return result;
+    } catch (error, stackTrace) {
       final message = _failureMessage(error);
       final safety = ContentSafetyService.classifyFailure(error);
       if (safety.suspectedSafetyBlock) {
@@ -492,14 +837,28 @@ class VolcImageService {
           errorMessage: safety.message,
         );
       }
-      debugPrint(
-          '[VolcImageService] picture image generation failed: $message');
-      return VolcImageResult(
+      final result = VolcImageResult(
         source: VolcImageResultSource.failed,
         pageIndex: pageIndex,
         cacheKey: cacheKey,
         errorMessage: message,
       );
+      span.fail(
+        error,
+        stackTrace: stackTrace,
+        message: message,
+        data: _resultLogData(
+          provider: _provider,
+          results: [result],
+          extra: {
+            'promptHash': promptHash,
+            'suspectedSafetyBlock': safety.suspectedSafetyBlock,
+            'safetyErrorCode': safety.errorCode,
+            'safetyMessage': safety.message,
+          },
+        ),
+      );
+      return result;
     }
   }
 
@@ -618,28 +977,14 @@ class VolcImageService {
   }
 
   static String _groupPrompt(List<VolcImageBatchRequest> requests) {
-    final buffer = StringBuffer()
-      ..writeln(
-        'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.',
-      )
-      ..writeln(
-        'Each image corresponds to exactly one storyboard scene below, in order.',
-      )
-      ..writeln(
-        'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
-      )
-      ..writeln(
-        'For every image, match the assigned scene action, characters, setting, props, mood, and composition.',
-      )
-      ..writeln('Do not treat the images as alternate candidates.')
-      ..writeln(
-        'Natural story-world text may appear only when it belongs to the scene, such as signs, book covers, maps, labels, or playing-card marks.',
-      );
+    final buffer = StringBuffer();
     for (var index = 0; index < requests.length; index += 1) {
       buffer
-        ..writeln()
         ..writeln('Image ${index + 1}:')
         ..writeln(_sanitizePromptArtifacts(requests[index].prompt));
+      if (index < requests.length - 1) {
+        buffer.writeln();
+      }
     }
     return buffer.toString().trim();
   }
@@ -897,6 +1242,90 @@ class VolcImageService {
       'webp' => 'image/webp',
       _ => 'image/png',
     };
+  }
+
+  static List<int> _pageIndexes(Iterable<VolcImageBatchRequest> requests) =>
+      requests.map((request) => request.pageIndex).toList(growable: false);
+
+  static String _statusForResults(List<VolcImageResult> results) {
+    if (results.isEmpty) {
+      return 'empty';
+    }
+    if (results.every((result) => result.hasImage)) {
+      return 'ready';
+    }
+    if (results.any((result) => result.hasImage)) {
+      return 'partial';
+    }
+    if (results.any(
+      (result) => result.source == VolcImageResultSource.skippedNoKey,
+    )) {
+      return 'skipped_no_key';
+    }
+    return 'failed';
+  }
+
+  static Map<String, dynamic> _resultLogData({
+    required String provider,
+    required List<VolcImageResult> results,
+    Map<String, dynamic>? extra,
+  }) {
+    final data = <String, dynamic>{
+      'provider': provider,
+      'resultCount': results.length,
+      'status': _statusForResults(results),
+      'sourceCounts': _resultSourceCounts(results),
+      'readyCount': results.where((result) => result.hasImage).length,
+      'failedCount': results.where((result) => !result.hasImage).length,
+      'pages': results
+          .map(
+            (result) => {
+              'pageIndex': result.pageIndex,
+              'source': result.source.name,
+              'hasImage': result.hasImage,
+              'cacheKey': result.cacheKey,
+              'filePath': result.filePath,
+              'errorMessage': result.errorMessage,
+            },
+          )
+          .toList(growable: false),
+      'errors': results
+          .map((result) => result.errorMessage?.trim() ?? '')
+          .where((message) => message.isNotEmpty)
+          .toSet()
+          .toList(growable: false),
+    };
+    if (extra != null) {
+      data.addAll(extra);
+    }
+    return data;
+  }
+
+  static Map<String, int> _resultSourceCounts(
+    Iterable<VolcImageResult> results,
+  ) {
+    final counts = <String, int>{};
+    for (final result in results) {
+      counts[result.source.name] = (counts[result.source.name] ?? 0) + 1;
+    }
+    return counts;
+  }
+
+  static String _responseKind(Object? responseData) {
+    if (responseData == null) {
+      return 'null';
+    }
+    if (responseData is Map) {
+      final keys = responseData.keys
+          .map((key) => key.toString())
+          .take(8)
+          .toList(growable: false);
+      return 'map:${keys.join(',')}';
+    }
+    if (responseData is List) {
+      return 'list:${responseData.length}';
+    }
+    return responseData.runtimeType.toString();
   }
 }
 

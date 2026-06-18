@@ -30,12 +30,12 @@
 | 自动标题 | 用户标题 > 本地英文标题候选 > 本地 fallback | OpenAI-compatible 文本 | `suggest_article_title` / `openai_text` | 2-5 词英文标题 |
 | 中文对照 | 导入时保存的 `article_sentence_translations` > 内存 Future cache | OpenAI-compatible 文本 | `follow_translation` / `listening_translation` / `chat_translation` | 简体中文翻译 |
 | 单词释义 | 规范化单词与句子，缓存命中直接返回 | OpenAI-compatible 文本 | `word_lookup` / `openai_text` | JSON: 拼写、音标、含义、句中义 |
-| 章节结构化分镜/对话提纲 | 同一章节分镜缓存或 `story_chapters.summary_json` 命中直接返回 | OpenAI-compatible 文本 | `chapter_story_outline_v1` / `openai_text` | JSON: 章节摘要、分镜、句子范围、角色/地点连续性 |
+| 对话提纲 | 同一章节教学提纲缓存命中直接返回 | OpenAI-compatible 文本 | `chapter_dialogue_guide_v2` / `openai_text` | 8 个以内章节覆盖点 |
 | AI 对话 | 完整 turns 转 textQuery，但 turns 只包含提纲、进度和历史，不重复带全文 | Realtime V3 | `chat_start` / `chat_reply` / `realtime` | AI 英文回复 |
 | 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | 当前云平台 TTS：阿里云 CosyVoice 或火山 Doubao TTS 2.0 | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
 | 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | 当前云平台 ASR：阿里云 Qwen-ASR 或火山 BigASR | `asr_recognize` / `asr` | 识别文本 |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
-| 绘本提示词审核 | 保存后生成/读取 v4 章节计划，用户确认前不提交图片 | OpenAI-compatible 文本 | `picture_book_chapter_plan_v4` / `openai_text` | `storyBrief`、`chapterBrief`、`scenes[]`、group prompt |
+| 绘本提示词审核 | 保存后生成/读取章节场景计划，用户确认前不提交图片 | OpenAI-compatible 文本 | `picture_book_chapter_scene_plan_v2` / `openai_text` | `chapterDescription`、`scenes[].sceneDescription`、group prompt |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 当前云平台图片：阿里云万相异步连续组图或火山 Seedream 顺序组图 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 | 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
 | 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 阿里云百聆（Fun-Music）或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
@@ -237,31 +237,26 @@ sentenceMeaning is the meaning of this word in this exact sentence.
 
 入口：
 
-- `ChapterStoryOutlineService.prepareOutline`：把完整章节英文句子提交给当前文本 provider 一次，让远程模型按场景、事件、冲突、角色决定和结尾自然切分并生成结构化分镜 JSON；结果通过 `TextGenerationService` / `ApiCacheService` 持久缓存，并同步写入 `story_chapters.summary_json`。
-- `ChatChapterGuideService.prepareGuide`：不再单独生成聊天提纲，而是复用 `chapter_story_outline_v1`，把结构化分镜转成可复用的紧凑教学提纲。
+- `ChatChapterGuideService.prepareGuide`：把完整章节英文句子提交给当前文本 provider，生成可复用的紧凑教学提纲；结果通过 `TextGenerationService` / `ApiCacheService` 持久缓存。
 - `RealtimeVoiceService`：使用火山 Realtime V3 文本 query 模式，后续只带分镜提纲、进度判断指令和对话历史，不再重复提交完整章节原文。
 
-### 章节提纲生成
+### 对话提纲生成
 
-远程语义切分：
+远程提纲：
 
-- 文本 provider 输入使用完整章节编号句子，不再使用固定 8 条本地均分提纲作为远程输入。
-- 远程模型自己根据故事内容决定 `segments` 数量：短章节可 3-5 条，普通章节常见 6-10 条，长章节最多 12 条。
-- 每个分镜包含 `sentenceStartIndex`、`sentenceEndIndex`、`title`、`summary`、`visualPrompt`、`characters`、`locations`、`continuityNotes`。
-- 切分依据应是自然场景、事件、冲突、角色决定和结尾变化，不是固定句数或固定段数；如果文章特别长，在分镜阶段合并相邻场景，不拆成多组图片请求。
-- 程序本地 fallback 也生成最多 12 段结构化分镜，只作为无 key/远程失败兜底，不能代表远程语义切分结果。
+- 文本 provider 输入使用完整章节编号句子。
+- 远程模型输出最多 8 个有序覆盖点，用于对话练习，不作为绘本分镜来源。
+- 每个覆盖点只保留一行简短教学要点，覆盖开头、关键事件、结尾和含义。
+- 程序本地 fallback 也生成最多 8 个覆盖点，只作为无 key/远程失败兜底。
 - 提交文本 provider 前，由 `ContentSafetyService` 按已验证/已学习规则做词级拆分，例如 `heads -> he-ads`。
 
 文本生成 prompt：
 
 ```text
-[SYSTEM] You analyze complete English story chapters and create structured storyboards for picture-book generation and speaking practice.
-Return only valid compact JSON. Do not include markdown.
-Choose the segment count from the story structure itself, never from a fixed target.
-Use at most 12 segments. Merge adjacent scenes if needed.
-Every segment must include zero-based sentenceStartIndex and sentenceEndIndex.
+[SYSTEM] Create a compact English conversation guide for one chapter.
+Return plain text only. No markdown table. No JSON.
 
-[USER] Book or series title: <书名>
+[USER] Book title: <书名>
 Chapter title: <文章标题>
 
 Numbered chapter sentences:
@@ -269,14 +264,11 @@ Numbered chapter sentences:
 1. <sentence>
 ...
 
-Return JSON with:
-summary, characters, locations, continuityNotes, segments.
-Each segment must map to consecutive sentence indexes and include title, summary,
-visualPrompt, characters, locations, continuityNotes.
-Segments must follow chapter order and cover the whole chapter, including the ending and meaning.
+Write at most 8 ordered coverage points for a friendly English speaking practice.
+Cover the beginning, important events, ending, and meaning.
 ```
 
-缓存请求包含 provider、base URL、endpoint、应用安全规则后的完整章节句子、模型、`maxTokens: 2400` 和 `cachePurpose: chapter_story_outline_v1`。同一章节命中缓存后，绘本生成和打开对话都复用这份分镜，不再单独调用文本 provider 生成聊天提纲，也不再重复提交完整章节。缺 key 或失败时使用本地 fallback 分镜，本地 fallback 不写入远程结果缓存；疑似安全失败另写入 `content_safety_failures`。
+缓存请求包含 provider、base URL、endpoint、应用安全规则后的完整章节句子、模型、`maxTokens: 900` 和 `cachePurpose: chapter_dialogue_guide_v2`。同一章节命中缓存后，打开对话直接复用这份提纲，不重复提交完整章节。缺 key 或失败时使用本地 fallback 提纲，本地 fallback 不写入远程结果缓存；疑似安全失败另写入 `content_safety_failures`。
 
 全局系统角色：
 
@@ -347,16 +339,73 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 当前策略：
 
-- 页面策略版本为 `picture_book_prompt_v4`，章节图片计划缓存为 `picture_book_chapter_plan_v4`。
+- 页面策略版本为 `picture_book_group_prompt_scene_description_v2`，章节图片计划缓存为 `picture_book_chapter_scene_plan_v2`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
-- 每章只调用一次文本规划 API，让 AI 基于书名、书籍简介、章节标题和完整句子列表生成 `storyBrief`、`chapterBrief` 和 `scenes[]`。`storyBrief` / 书籍简介需要包含紧凑角色清单，覆盖主角、配角、叙述者和视觉上重要的未命名群体；未命名群体使用稳定角色标签和外观锚点，供后续章节和当前组图保持一致。
-- 对可识别的经典名著，文本规划 prompt 会要求 AI 先用公开常识列出主要递归角色并生成外观锚点；如果无法根据书名确认公开资料，则不能编造全书角色，只能描述当前章节出现或强暗示的角色。
-- 如果当前书籍简介只覆盖主角，而本章出现新角色，`storyBrief` 可返回 `Chapter character additions:`；审核草稿会把这些角色合并到 `bookDescription` 展示给用户。只有 `savePromptReview` 或 `confirmPromptReview` 才会把合并后的书籍简介写回 `story_series.description`。
-- AI 自行决定分镜数量，最多 12 段；每个 scene 对应一张图片，scene 必须按顺序覆盖完整句子范围。
+- 每章只调用一次文本规划 API，让 AI 只基于 `bookDescription`、章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。
+- 场景按故事段落切分，最多 12 段；同一地点、时间、角色和故事目的的相邻句子合并为同一 scene；每个 scene 对应一张图片并按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
-- 审核弹窗有 3 个提示词魔法棒：分别刷新 `storyBrief`、`chapterBrief` 和 `scenes[]`。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
-- savePromptReview 使用用户编辑后的书籍简介、brief、scenes 和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
-- confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、brief、scenes 和 groupPrompt，先保存审核后的 v4 计划，确认后才删除旧页/旧图片引用并提交顺序组图。
+- 审核弹窗可刷新书籍简介，或同次刷新章节规划（`chapterDescription` + `scenes[]`）。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
+- savePromptReview 使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
+- confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。
+
+### 计划中的书籍角色数组流程
+
+为避免书籍简介过长，后续目标是把“书籍视觉世界”和“角色外貌锚点”拆开：
+
+- `story_series.description` 只保存短书籍简介：整体世界观、时代/地点氛围、画风、色彩和长期视觉基调。
+- 书籍增加 `characters[]`：挂在书籍上的结构化角色数组，每项最少包含 `name` 和 `description`。
+- 角色数组不是旧版 series Bible、角色卡或参考图开关；它只保存用户可编辑的角色名称和稳定外貌描述，用于跨章节保持一致。
+- 书籍编辑弹窗展示 `characters[]`，用户可以新增、删除、修改角色名称和描述；点击保存才写入书籍，取消则不保存。
+- 自动生成书籍简介时，AI 返回短 `bookDescription` 和 `characters[]`。返回内容只填入编辑表单或审核草稿，不直接永久写库。
+- `bookDescription` 不再堆叠角色外貌；角色外貌进入 `characters[]`。
+
+建议角色结构：
+
+```json
+{
+  "bookDescription": "Short visual-world description.",
+  "characters": [
+    {
+      "name": "Alice",
+      "description": "young girl with blonde bob, black ribbon, blue pinafore over white blouse, white socks, black shoes"
+    },
+    {
+      "name": "White Rabbit",
+      "description": "tall white rabbit with pink eyes, red waistcoat, pocket watch"
+    }
+  ]
+}
+```
+
+角色合并规则：
+
+- 只收录会影响画面一致性的主要人物、动物角色、拟人角色或重要 recurring group。
+- 临时物品、场景元素、一次性动作和普通背景群体不进入角色数组。
+- 新角色先进入审核草稿，用户确认后才合并进书籍 `characters[]`，避免 AI 误识别污染整本书。
+- 合并时按角色名称做基础去重；后续如果命中不稳定，再考虑增加 `aliases` 字段。
+
+### 章节规划输入与角色边界
+
+`chapterDescription` 和 `scenes[]` 在同一次章节规划调用中生成。当前实现只提供 `bookDescription`、章节正文和规则约束。角色数组方案落地后，章节规划输入改为：
+
+- `bookDescription`：短书籍视觉世界描述，不承担角色外貌列表职责。
+- `relevantCharacters[]`：程序从书籍 `characters[]` 中筛选出本章相关角色后传入。筛选方式先用章节正文、章节描述草稿和分镜描述草稿中的角色名匹配；未命中的角色不传，避免 prompt 随全书变长。
+- 章节正文：当前章节完整故事内容。
+- 规则约束：字段结构、段落切分、角色描述边界、新角色识别和安全表达要求。
+
+生成输出为章节计划 JSON：
+
+- `chapterDescription`：只描述本章整体剧情、地点、氛围和连续动作。它可以使用 `relevantCharacters[]` 里的角色名作为上下文，但不要重复角色外貌、服装、发色等描述。
+- `scenes[]`：只做分镜场景描述，写场景、动作、物件、位置、构图、情绪和画面变化。可以使用角色名，但不要反复写 `Alice (blonde bob, blue pinafore)` 或 `White Rabbit (red waistcoat, pocket watch)` 这类已在 `relevantCharacters[]` 中出现的外貌锚点。
+- `newCharacters[]`：本章正文中出现、但书籍角色数组没有覆盖的新视觉角色。每项包含 `name` 和 `description`。
+
+角色信息边界：
+
+- 已在 `relevantCharacters[]` 出现的角色外貌，只保留在角色数组。
+- 本章首次出现、且书籍 `characters[]` 没有覆盖的新角色，写入 `newCharacters[]`，不塞进 `chapterDescription` 或每个 `sceneDescription`。
+- `sceneDescription` 不承担角色外貌补全职责，避免每张图重复角色描述。
+
+最终 `groupPrompt` 增加本章相关角色区块：短书籍简介、本章相关角色、章节描述和每个 `Image N` 的 `sceneDescription` 完整提交。
 
 ### 章节计划 JSON
 
@@ -364,17 +413,20 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 ```json
 {
-  "planKind": "picture_book_chapter_plan_v4",
-  "storyBrief": "Brief visual context for this book and chapter, including a concise character roster for main and supporting character appearance details.",
-  "chapterBrief": "Brief description of the chapter as one coherent picture-book image sequence.",
+  "planKind": "picture_book_chapter_scene_plan_v2",
+  "chapterDescription": "Concise chapter description for image context.",
   "scenes": [
     {
       "pageIndex": 0,
       "sentenceStartIndex": 0,
       "sentenceEndIndex": 2,
-      "title": "Scene title",
-      "story": "What happens in this scene.",
-      "visual": "What the image should show: characters, action, setting, mood, key props, and composition."
+      "sceneDescription": "Concise paragraph-level story beat."
+    }
+  ],
+  "newCharacters": [
+    {
+      "name": "Caterpillar",
+      "description": "large blue-green caterpillar with expressive eyes, calm posture, and a rounded storybook silhouette"
     }
   ]
 }
@@ -382,48 +434,52 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 规则：
 
-- 只认 `planKind == picture_book_chapter_plan_v4`；旧 `chapter_story_outline_v1` / `picture_book_chapter_plan_v1/v2/v3` 不再作为绘本生成计划读取。
-- `storyBrief` 可包含本章需要的书籍世界和主配角外貌简述，但不持久化为角色卡；如果出现三姐妹、旁白、老师等群体或角色，也要以稳定角色标签描述。
-- `chapterBrief` 描述当前章节作为一组连续图片的整体剧情。
-- `scenes[]` 是唯一分镜来源，字段只包含 `pageIndex`、句子范围、`title/story/visual`。
-- 不输出 `audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
-- 最终 `groupPrompt` 会按场景数量动态压缩书籍简介、章节 brief 和每张图的视觉描述；12 张场景时仍保留所有 `Image N` 条目，并把 prompt 控制在约 600 英文词 / 5200 字符以内，贴近图片接口提示词限制。
+- 只认 `planKind == picture_book_chapter_scene_plan_v2` 且字段为 `chapterDescription` / `scenes[].sceneDescription` / `newCharacters[]`。
+- `chapterDescription` 描述当前章节作为一组连续图片的整体剧情。
+- `scenes[]` 是唯一分镜来源，字段只包含 `pageIndex`、句子范围和 `sceneDescription`。
+- `sceneDescription` 只描述场景、动作、物件、位置、构图、情绪和画面变化；可以使用角色名，但不得重复 `relevantCharacters[]` 已有的角色外貌、服装、发色、年龄或括号式角色描述。
+- `newCharacters[]` 只包含本章新增且会影响画面一致性的角色，不包含临时物品、地点、动作或普通背景元素。
+- 不输出 `title`、`story`、`visual`、`audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
+- 角色数组方案落地后，最终 `groupPrompt` 按审核后的短书籍简介、本章相关角色、章节描述和每张图的分镜描述完整拼装；不按场景数量压缩，也不设置词数或字符数截断。
 
 ### 审核弹窗
 
 Web UI 展示并允许编辑：
 
-- 书籍简介：写入 `story_series.description`，可承载时代、整体画风、主要角色基础外貌。
-- `storyBrief`
-- `chapterBrief`
-- 每个 scene 的 `title/story/visual`
+- 书籍简介：写入 `story_series.description`，只承载时代、整体画风、世界观和视觉基调。
+- 书籍角色列表：展示并编辑书籍 `characters[]`，每个角色有名称和外貌/视觉描述。
+- `chapterDescription`
+- 每个 scene 的 `sceneDescription`
+- 本章新增角色 `newCharacters[]`：展示章节规划识别到的新角色，用户可修改、删除或补充；确认生成组图时才合并进书籍角色列表。
 - 最终组图 `groupPrompt`
 
-不再展示系列 Bible、角色卡、参考图开关、参考图列表、`styleGuide` JSON 或 `negativePrompt`。
+不再展示系列 Bible、旧角色卡、参考图开关、参考图列表、`styleGuide` JSON 或 `negativePrompt`。
 
 ### 最终组图 prompt
 
-`PictureBookService` 固定拼装三部分：
+`PictureBookService` 按计划拼装五部分：
 
 ```text
-Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.
-Each image corresponds to exactly one storyboard scene below, in order.
-Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.
-For every image, match the assigned scene action, characters, setting, props, mood, and composition.
-Do not treat the images as alternate candidates.
-Natural story-world text may appear only when it belongs to the scene, such as signs, book covers, maps, labels, or playing-card marks.
+Book name: <bookTitle>
 
-Book title: <title>
 Book description: <description>
-Story brief: <storyBrief>
-Chapter brief: <chapterBrief>
+
+Relevant characters:
+- <name>: <description>
+
+Chapter description: <chapterDescription>
 
 Image 1:
-Sentence range: 1-3
-Scene title: ...
-Scene story: ...
-Visual direction: ...
+Scene description: <sceneDescription>
 ```
+
+最终提交规则：
+
+- `Book name` 使用书籍名称，放在最前面。
+- `Book description` 使用短书籍简介。
+- `Relevant characters` 只包含本章出现的已确认书籍角色，以及本次审核确认后合并的新角色。
+- `Chapter description` 和 `Scene description` 不重复角色外貌。
+- 用户取消审核或只关闭弹窗时，不把 `newCharacters[]` 合并到书籍角色数组。
 
 提示词卫生规则：如果旧缓存或用户手动输入里混入了“字幕留白 / app-rendered subtitles / blank lower band”等不需要的正向提示，代码只在源头清掉这些正向提示，不再自动补对应的“不要字幕/不要留白”负面提示。
 

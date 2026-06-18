@@ -1,10 +1,73 @@
 import 'dart:convert';
 
+class BookCharacter {
+  const BookCharacter({
+    required this.name,
+    required this.description,
+  });
+
+  final String name;
+  final String description;
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'description': description,
+      };
+
+  BookCharacter copyWith({
+    String? name,
+    String? description,
+  }) =>
+      BookCharacter(
+        name: name ?? this.name,
+        description: description ?? this.description,
+      );
+
+  factory BookCharacter.fromJson(Object? raw) {
+    if (raw is! Map) {
+      return const BookCharacter(name: '', description: '');
+    }
+    return BookCharacter(
+      name: raw['name']?.toString() ?? '',
+      description: raw['description']?.toString() ?? '',
+    );
+  }
+
+  static List<BookCharacter> listFromJsonText(String? text) {
+    if (text == null || text.trim().isEmpty) {
+      return const [];
+    }
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is List) {
+        return decoded
+            .map(BookCharacter.fromJson)
+            .where((item) =>
+                item.name.trim().isNotEmpty &&
+                item.description.trim().isNotEmpty)
+            .toList(growable: false);
+      }
+    } catch (_) {
+      return const [];
+    }
+    return const [];
+  }
+
+  static String listToJsonText(List<BookCharacter> characters) => jsonEncode([
+        for (final character in characters)
+          {
+            'name': character.name,
+            'description': character.description,
+          },
+      ]);
+}
+
 class StorySeries {
   const StorySeries({
     this.id,
     required this.title,
     this.description = '',
+    this.characters = const [],
     this.coverImagePath,
     required this.createdAt,
     required this.updatedAt,
@@ -13,6 +76,7 @@ class StorySeries {
   final int? id;
   final String title;
   final String description;
+  final List<BookCharacter> characters;
   final String? coverImagePath;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -21,6 +85,7 @@ class StorySeries {
         if (id != null) 'id': id,
         'title': title,
         'description': description,
+        'characters_json': BookCharacter.listToJsonText(characters),
         'cover_image_path': coverImagePath,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
@@ -30,6 +95,7 @@ class StorySeries {
         'id': id,
         'title': title,
         'description': description,
+        'characters': characters.map((item) => item.toJson()).toList(),
         'coverImagePath': coverImagePath,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
@@ -39,6 +105,7 @@ class StorySeries {
     int? id,
     String? title,
     String? description,
+    List<BookCharacter>? characters,
     String? coverImagePath,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -47,6 +114,7 @@ class StorySeries {
         id: id ?? this.id,
         title: title ?? this.title,
         description: description ?? this.description,
+        characters: characters ?? this.characters,
         coverImagePath: coverImagePath ?? this.coverImagePath,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
@@ -56,6 +124,8 @@ class StorySeries {
         id: (map['id'] as num?)?.toInt(),
         title: map['title'] as String,
         description: map['description'] as String? ?? '',
+        characters:
+            BookCharacter.listFromJsonText(map['characters_json'] as String?),
         coverImagePath: map['cover_image_path'] as String?,
         createdAt: DateTime.parse(map['created_at'] as String),
         updatedAt: DateTime.parse(map['updated_at'] as String),

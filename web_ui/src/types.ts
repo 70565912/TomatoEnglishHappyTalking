@@ -40,10 +40,16 @@ export interface Article {
   chapterOrder?: number | null;
 }
 
+export interface BookCharacter {
+  name: string;
+  description: string;
+}
+
 export interface StorySeries {
   id: number;
   title: string;
   description?: string;
+  characters?: BookCharacter[];
   coverImagePath?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -71,6 +77,7 @@ export interface PictureBookPage {
   prompt?: Record<string, unknown> | null;
   imagePath?: string | null;
   imageUri?: string | null;
+  imageVariant?: 'full' | 'thumbnail' | string;
   status: 'queued' | 'prompting' | 'generating' | 'ready' | 'skipped' | 'error' | string;
   errorMessage?: string | null;
 }
@@ -98,9 +105,7 @@ export interface PictureBookPromptReviewScene {
   sentenceStartIndex: number;
   sentenceEndIndex: number;
   paragraphText: string;
-  title: string;
   sceneDescription: string;
-  visual: string;
 }
 
 export interface PictureBookPromptReview {
@@ -108,12 +113,16 @@ export interface PictureBookPromptReview {
   articleId: number;
   chapterId?: number | null;
   seriesId?: number | null;
+  bookTitle?: string;
   regenerate: boolean;
   bookDescription: string;
+  bookCharacters?: BookCharacter[];
+  relevantCharacters?: BookCharacter[];
+  newCharacters?: BookCharacter[];
   chapterDescription: string;
   groupPrompt: string;
   scenes: PictureBookPromptReviewScene[];
-  refreshedTarget?: 'bookDescription' | 'chapterDescription' | 'scenes' | string;
+  refreshedTarget?: 'bookDescription' | 'chapterPlan' | string;
   createdAt?: string;
 }
 
@@ -317,6 +326,31 @@ export interface ListeningRecordingResultPayload {
   resolution: RecordingResolution | string;
   pageTransition: RecordingPageTransition | string;
   warnings: string[];
+}
+
+export interface RecordingVideoVersion {
+  id: string;
+  articleId: number;
+  videoPath: string;
+  subtitlePath?: string | null;
+  createdAt?: string | null;
+  source?: 'listening' | 'song' | 'scanned' | string;
+  title?: string | null;
+  isDefault?: boolean;
+  durationMs?: number | null;
+  frameCount?: number | null;
+  droppedFrameCount?: number | null;
+  encoderName?: string | null;
+  codec?: RecordingCodec | string | null;
+  resolution?: RecordingResolution | string | null;
+  pageTransition?: RecordingPageTransition | string | null;
+  sizeBytes?: number | null;
+}
+
+export interface RecordingVideoLibraryPayload {
+  articleId: number;
+  outputDirectory: string;
+  versions: RecordingVideoVersion[];
 }
 
 export interface ListeningPausePayload {

@@ -69,10 +69,9 @@ void main() {
       const TextGenerationTurn(role: 'system', content: 'Be brief.'),
       const TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
     ];
-    final reply = await TextGenerationService.generate(
+    final reply = await TextGenerationService.generateStrict(
       turns: turns,
       cachePurpose: 'unit_ark_request',
-      fallbackText: 'fallback',
       maxTokens: 42,
     );
 
@@ -108,15 +107,47 @@ void main() {
         fail('cached OpenAI-compatible text should not call HTTP again');
       },
     );
-    final cached = await TextGenerationService.generate(
+    final cached = await TextGenerationService.generateStrict(
       turns: turns,
       cachePurpose: 'unit_ark_request',
-      fallbackText: 'fallback',
       maxTokens: 42,
     );
 
     expect(cached.text, 'OK from Bailian');
     expect(cached.source, TextGenerationReplySource.cached);
+  });
+
+  test('can skip writing successful text to api cache', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aliyunBailianApiKey: 'bailian-no-cache-key-12345678901234567890',
+      aliyunBailianTextModel: 'qwen-unit-model',
+    );
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        return {
+          'choices': [
+            {
+              'message': {'content': 'Remote only'},
+            }
+          ],
+        };
+      },
+    );
+
+    final reply = await TextGenerationService.generateStrict(
+      turns: const [
+        TextGenerationTurn(role: 'user', content: 'Reply remote only.'),
+      ],
+      cachePurpose: 'unit_skip_cache_write',
+      skipCacheRead: true,
+      skipCacheWrite: true,
+    );
+
+    expect(reply.text, 'Remote only');
+    expect(reply.source, TextGenerationReplySource.remote);
+    final db = await DatabaseService.database;
+    final rows = await db.query('api_cache_entries');
+    expect(rows, isEmpty);
   });
 
   test('switches cache request by provider, baseUrl, and model', () async {
@@ -142,8 +173,7 @@ void main() {
     expect(request['service'], 'openai_chat_completions');
   });
 
-  test(
-      'returns fallback without calling HTTP when selected provider key is empty',
+  test('throws without calling HTTP when selected provider key is empty',
       () async {
     var called = false;
     TextGenerationService.setPostOverrideForTest(
@@ -153,20 +183,19 @@ void main() {
       },
     );
 
-    final reply = await TextGenerationService.generate(
-      turns: const [
-        TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
-      ],
-      cachePurpose: 'unit_no_key',
-      fallbackText: 'fallback text',
+    await expectLater(
+      TextGenerationService.generateStrict(
+        turns: const [
+          TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
+        ],
+        cachePurpose: 'unit_no_key',
+      ),
+      throwsA(isA<TextGenerationException>()),
     );
-
     expect(called, isFalse);
-    expect(reply.text, 'fallback text');
-    expect(reply.source, TextGenerationReplySource.mockNoKey);
   });
 
-  test('returns fallback on OpenAI-compatible HTTP error', () async {
+  test('throws on OpenAI-compatible HTTP error', () async {
     AppConfig.setRuntimeConfigForTest(
       aliyunBailianApiKey: 'bailian-error-key-12345678901234567890',
     );
@@ -176,20 +205,19 @@ void main() {
       },
     );
 
-    final reply = await TextGenerationService.generate(
-      turns: const [
-        TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
-      ],
-      cachePurpose: 'unit_http_error',
-      fallbackText: 'fallback on error',
+    await expectLater(
+      TextGenerationService.generateStrict(
+        turns: const [
+          TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
+        ],
+        cachePurpose: 'unit_http_error',
+      ),
+      throwsA(isA<TextGenerationException>()),
     );
-
-    expect(reply.text, 'fallback on error');
-    expect(reply.source, TextGenerationReplySource.mockOnError);
-    expect(reply.errorMessage, contains('network failed'));
   });
 
-  test('records suspected safety failures without caching fallback', () async {
+  test('records suspected safety failures without caching failed content',
+      () async {
     AppConfig.setRuntimeConfigForTest(
       aliyunBailianApiKey: 'bailian-safety-key-12345678901234567890',
     );
@@ -207,20 +235,20 @@ void main() {
       },
     );
 
-    final reply = await TextGenerationService.generate(
-      turns: const [
-        TextGenerationTurn(
-          role: 'user',
-          content: 'The Queen shouted, "Off with their heads!"',
-        ),
-      ],
-      cachePurpose: 'unit_safety_failure',
-      fallbackText: 'fallback on safety',
-      articleId: 12,
+    await expectLater(
+      TextGenerationService.generateStrict(
+        turns: const [
+          TextGenerationTurn(
+            role: 'user',
+            content: 'The Queen shouted, "Off with their heads!"',
+          ),
+        ],
+        cachePurpose: 'unit_safety_failure',
+        articleId: 12,
+      ),
+      throwsA(isA<TextGenerationException>()),
     );
 
-    expect(reply.text, 'fallback on safety');
-    expect(reply.source, TextGenerationReplySource.mockOnError);
     final db = await DatabaseService.database;
     final failures = await db.query('content_safety_failures');
     final cacheRows = await db.query('api_cache_entries');
@@ -230,7 +258,7 @@ void main() {
     expect(cacheRows, isEmpty);
   });
 
-  test('returns fallback on empty OpenAI-compatible message content', () async {
+  test('throws on empty OpenAI-compatible message content', () async {
     AppConfig.setRuntimeConfigForTest(
       aliyunBailianApiKey: 'bailian-empty-key-12345678901234567890',
     );
@@ -246,15 +274,14 @@ void main() {
       },
     );
 
-    final reply = await TextGenerationService.generate(
-      turns: const [
-        TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
-      ],
-      cachePurpose: 'unit_empty_content',
-      fallbackText: 'fallback empty',
+    await expectLater(
+      TextGenerationService.generateStrict(
+        turns: const [
+          TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
+        ],
+        cachePurpose: 'unit_empty_content',
+      ),
+      throwsA(isA<TextGenerationException>()),
     );
-
-    expect(reply.text, 'fallback empty');
-    expect(reply.source, TextGenerationReplySource.mockOnError);
   });
 }

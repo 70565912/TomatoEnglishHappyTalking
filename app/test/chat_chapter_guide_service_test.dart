@@ -39,7 +39,7 @@ void main() {
     }
   });
 
-  test('prepares and caches a semantic guide from the complete chapter',
+  test('prepares and stores a semantic guide from the complete chapter',
       () async {
     _writeArkConfig();
     final fullChapter = List.generate(
@@ -56,44 +56,13 @@ void main() {
             {
               'message': {
                 'content': '''
-{
-  "summary": "A compact guide.",
-  "characters": ["Alice"],
-  "locations": ["garden"],
-  "continuityNotes": ["Keep the same story world."],
-  "segments": [
-    {
-      "title": "Beginning",
-      "sentenceStartIndex": 0,
-      "sentenceEndIndex": 20,
-      "summary": "Beginning scene.",
-      "visualPrompt": "Alice enters the scene.",
-      "characters": ["Alice"],
-      "locations": ["garden"],
-      "continuityNotes": []
-    },
-    {
-      "title": "Middle",
-      "sentenceStartIndex": 21,
-      "sentenceEndIndex": 50,
-      "summary": "Middle scene.",
-      "visualPrompt": "Alice studies the problem.",
-      "characters": ["Alice"],
-      "locations": ["garden"],
-      "continuityNotes": []
-    },
-    {
-      "title": "Ending",
-      "sentenceStartIndex": 51,
-      "sentenceEndIndex": 79,
-      "summary": "Ending scene.",
-      "visualPrompt": "Alice reaches the ending.",
-      "characters": ["Alice"],
-      "locations": ["garden"],
-      "continuityNotes": []
-    }
-  ]
-}
+Chapter summary: A compact guide.
+Ordered coverage points:
+1. Beginning scene.
+2. Middle scene.
+3. Ending scene.
+Completion rubric: Finish after the learner covers every point.
+Ability assessment cues: Listen for ordered retelling.
 ''',
               },
             }
@@ -115,15 +84,25 @@ void main() {
       articleId: 7,
     );
 
+    expect(first.source, TextGenerationReplySource.remote);
+    expect(second.source, TextGenerationReplySource.stored);
     expect(first.text, contains('Chapter summary'));
     expect(second.text, first.text);
     expect(postedBodies, hasLength(1));
+    final db = await DatabaseService.database;
+    final guideRows = await db.query('article_chat_guides');
+    final cacheRows = await db.query('api_cache_entries');
+    expect(guideRows, hasLength(1));
+    expect(guideRows.single['article_id'], 7);
+    expect(guideRows.single['purpose'], ChatChapterGuideService.cachePurpose);
+    expect(guideRows.single['guide_text'], contains('Chapter summary'));
+    expect(cacheRows, isEmpty);
     final messages = postedBodies.single['messages'] as List;
     final systemMessage = messages.first as Map;
     final userMessage = messages.last as Map;
     expect(
       systemMessage['content'] as String,
-      contains('structured storyboards'),
+      contains('conversation guide'),
     );
     expect(
       userMessage['content'] as String,
@@ -137,22 +116,15 @@ void main() {
     );
   });
 
-  test('local fallback guide is compact and covers the ending', () {
-    final sentences = List.generate(
-      30,
-      (index) => 'Sentence $index describes story marker_$index.',
+  test('guide generation fails without a text key', () async {
+    expect(
+      () => ChatChapterGuideService.prepareGuide(
+        articleTitle: 'No Key Chapter',
+        articleContent: 'Sentence one. Sentence two.',
+        sentences: const ['Sentence one.', 'Sentence two.'],
+      ),
+      throwsA(isA<TextGenerationException>()),
     );
-
-    final guide = ChatChapterGuideService.buildLocalGuide(
-      articleTitle: 'Fallback Chapter',
-      articleContent: sentences.join(' '),
-      sentences: sentences,
-    );
-
-    expect(guide, contains('Ordered coverage points'));
-    expect(guide, contains('marker_0'));
-    expect(guide, contains('marker_29'));
-    expect(guide.length, lessThan(2400));
   });
 
   test('submits chapter guide with content-safety rules applied', () async {
@@ -167,23 +139,11 @@ void main() {
           'choices': [
             {
               'message': {
-                'content': '''
-{
-  "summary": "safe guide",
-  "segments": [
-    {
-      "title": "Queen scene",
-      "sentenceStartIndex": 0,
-      "sentenceEndIndex": 0,
-      "summary": "The Queen shouts.",
-      "visualPrompt": "The Queen shouts in a safe storybook way.",
-      "characters": ["Queen"],
-      "locations": [],
-      "continuityNotes": []
-    }
-  ]
-}
-''',
+                'content': 'Chapter summary: safe guide\n'
+                    'Ordered coverage points:\n'
+                    '1. The Queen shouts.\n'
+                    'Completion rubric: Finish after the point is discussed.\n'
+                    'Ability assessment cues: Listen for clear retelling.',
               },
             }
           ],

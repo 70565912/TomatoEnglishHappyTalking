@@ -80,7 +80,7 @@ void main() {
       'releaseDatabaseDirectory': releaseDbDir,
       'contentSafetyReportPath': safetyReportPath,
       'note':
-          'This file is exported by live_chat_guide_probe_test.dart. The same guide is also stored in the release SQLite api_cache tables when source is remote.',
+          'This file is exported by live_chat_guide_probe_test.dart. Remote guides are stored in the release SQLite article_chat_guides table.',
     };
 
     final outputDir = Directory(

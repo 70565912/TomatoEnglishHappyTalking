@@ -207,8 +207,7 @@ class Chat extends _$Chat {
         isChapterComplete: parsedReply.chapterDone,
         abilityLevel: parsedReply.abilityLevel,
         practiceSummary: parsedReply.practiceSummary,
-        error: _mapAiFallbackMessage(aiReply),
-        clearError: _mapAiFallbackMessage(aiReply) == null,
+        clearError: true,
       );
       unawaited(_translateMessage(aiMessageId, aiText));
 
@@ -354,8 +353,7 @@ class Chat extends _$Chat {
         abilityLevel: parsedReply.abilityLevel,
         practiceSummary: parsedReply.practiceSummary ??
             (chapterComplete ? _summaryFromFinalMessage(aiText) : null),
-        error: _mapAiFallbackMessage(aiReply),
-        clearError: _mapAiFallbackMessage(aiReply) == null,
+        clearError: true,
       );
       unawaited(_translateMessage(aiMessageId, aiText));
 
@@ -629,30 +627,6 @@ class Chat extends _$Chat {
       await positionSub?.cancel();
       await player?.dispose();
     }
-  }
-
-  String? _mapAiFallbackMessage(RealtimeReply reply) {
-    if (reply.source == RealtimeReplySource.remote ||
-        reply.source == RealtimeReplySource.cached) {
-      return null;
-    }
-
-    if (reply.source == RealtimeReplySource.mockNoKey) {
-      return 'AI 对话配置未读取，当前为本地示例回复';
-    }
-
-    TomatoLogger.warn(
-      category: 'chat',
-      event: 'realtime.fallback',
-      articleId: articleId,
-      message: reply.errorMessage,
-      data: {'source': reply.source.name},
-    );
-    final detail = reply.errorMessage?.trim();
-    if (detail == null || detail.isEmpty) {
-      return 'Realtime AI 服务暂不可用，当前为本地示例回复';
-    }
-    return 'Realtime AI 服务暂不可用：$detail';
   }
 
   String _mapTtsException(TtsException error) {

@@ -1,5 +1,6 @@
 import type {
   Article,
+  BookCharacter,
   BridgeResponse,
   ChatState,
   DiagnosticLogEntry,
@@ -9,6 +10,7 @@ import type {
   PictureBookPromptReview,
   PictureBookState,
   RecordingSettings,
+  RecordingVideoVersion,
   SettingsState,
   SongSource,
   StorySeries,
@@ -453,9 +455,21 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const pictureBookEnabled = payload.pictureBookEnabled !== false;
     const requestedTitle = String(payload.title ?? '').trim();
     const resolvedTitle = requestedTitle || mockSuggestTitle(content);
-    const seriesTitle = String(payload.seriesTitle ?? '').trim() || resolvedTitle || 'Space Story Series';
-    const seriesDescription = String(payload.seriesDescription ?? '').trim() || mockSeries[0].description || '';
-    const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
+    const requestedSeriesTitle = String(payload.seriesTitle ?? '').trim();
+    const requestedSeriesId = payload.seriesId === undefined || payload.seriesId === null
+      ? null
+      : Number(payload.seriesId);
+    const existingSeries = requestedSeriesId === null
+      ? null
+      : mockSeries.find((item) => item.id === requestedSeriesId) ?? null;
+    const seriesTitle = requestedSeriesTitle || existingSeries?.title || '';
+    const seriesDescription = String(payload.seriesDescription ?? '').trim() || existingSeries?.description || '';
+    const seriesCharactersProvided = Object.prototype.hasOwnProperty.call(payload, 'seriesCharacters');
+    const requestedSeriesCharacters = normalizeMockBookCharacters(payload.seriesCharacters);
+    const seriesCharacters = seriesCharactersProvided
+      ? requestedSeriesCharacters
+      : existingSeries?.characters ?? [];
+    const seriesId = requestedSeriesId ?? 12;
     const article: Article = {
       id: 99,
       title: resolvedTitle || 'New Chapter',
@@ -470,9 +484,22 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       seriesDescription: pictureBookEnabled ? seriesDescription : '',
       chapterOrder: pictureBookEnabled ? 2 : null,
     };
-    const nextSeries = mockSeries.map((item) =>
-      item.id === seriesId ? { ...item, title: seriesTitle, description: seriesDescription } : item,
-    );
+    const nextSeries = existingSeries
+      ? mockSeries.map((item) =>
+          item.id === seriesId ? { ...item, title: seriesTitle, description: seriesDescription, characters: seriesCharacters } : item,
+        )
+      : [
+          {
+            id: seriesId,
+            title: seriesTitle,
+            description: seriesDescription,
+            characters: seriesCharacters,
+            coverImagePath: null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+          ...mockSeries,
+        ];
     return { article, articles: [article, ...mockArticles], series: nextSeries };
   }
   if (type === 'article.rename') {
@@ -504,16 +531,15 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return { series: mockSeries };
   }
   if (type === 'series.suggestDescription') {
-    const seriesTitle = String(payload.seriesTitle ?? '').trim() || 'New Story Series';
-    return {
-      description: `${seriesTitle} as a warm child-friendly picture-book world, with consistent recurring characters, bright natural colors, and expressive storybook illustration.`,
-    };
+    throw new Error('Mock bridge does not generate book descriptions. Configure the native AI provider and retry.');
   }
   if (type === 'series.create') {
+    const title = String(payload.title ?? '').trim();
     const series: StorySeries = {
       id: 12,
-      title: String(payload.title ?? 'New Story Series'),
+      title,
       description: String(payload.description ?? '').trim(),
+      characters: normalizeMockBookCharacters(payload.characters),
       coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -524,9 +550,10 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
     const title = String(payload.title ?? '').trim() || mockSeries[0].title;
     const description = String(payload.description ?? '').trim();
+    const characters = normalizeMockBookCharacters(payload.characters);
     const series = mockSeries.map((item) =>
       item.id === seriesId
-        ? { ...item, title, description, updatedAt: new Date().toISOString() }
+        ? { ...item, title, description, characters, updatedAt: new Date().toISOString() }
         : item,
     );
     const articles = mockArticles.map((article) =>
@@ -548,6 +575,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
     const seriesTitle = String(payload.seriesTitle ?? mockSeries[0].title);
     const seriesDescription = String(payload.seriesDescription ?? '').trim() || mockSeries[0].description || '';
+    const seriesCharactersProvided = Object.prototype.hasOwnProperty.call(payload, 'seriesCharacters');
+    const seriesCharacters = normalizeMockBookCharacters(payload.seriesCharacters);
     const article = {
       ...(mockArticles.find((item) => item.id === articleId) ??
         mockArticles[0]),
@@ -568,7 +597,11 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       articles: mockArticles.map((item) =>
         item.id === articleId ? article : item,
       ),
-      series: mockSeries,
+      series: mockSeries.map((item) =>
+        item.id === seriesId && seriesCharactersProvided
+          ? { ...item, characters: seriesCharacters }
+          : item,
+      ),
     };
   }
   if (type === 'pictureBook.state') {
@@ -593,30 +626,32 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     if (target === 'bookDescription') {
       return {
         ...review,
-        bookDescription: 'Refreshed book description with era, illustration style, and main character appearance.',
+        bookDescription: 'Refreshed short picture-book world with a bright cozy spaceship interior.',
+        bookCharacters: review.bookCharacters,
         groupPrompt:
-          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nBook description: Refreshed book description with era, illustration style, and main character appearance.',
+          'Book name: Space Story Series\nBook description: Refreshed short picture-book world with a bright cozy spaceship interior.',
         refreshedTarget: target,
       };
     }
-    if (target === 'chapterDescription') {
+    if (target === 'chapterPlan') {
       return {
         ...review,
         chapterDescription:
-          'Refreshed chapter description with consistent book world, character appearances, and one coherent visual sequence.',
+          'Refreshed chapter description with one coherent visual sequence.',
+        bookCharacters: normalizeMockBookCharacters(payload.bookCharacters).length > 0
+          ? normalizeMockBookCharacters(payload.bookCharacters)
+          : review.bookCharacters,
+        newCharacters: normalizeMockBookCharacters(payload.newCharacters),
+        scenes: review.scenes.map((scene, index) => ({
+          ...scene,
+          sceneDescription: `Refreshed scene action ${index + 1}`,
+        })),
         groupPrompt:
-          'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.\nChapter description: Refreshed chapter description with consistent book world, character appearances, and one coherent visual sequence.',
+          'Book name: Space Story Series\nBook description: A gentle space-adventure picture book about curious children exploring small wonders together.\n\nChapter description: Refreshed chapter description with one coherent visual sequence.',
         refreshedTarget: target,
       };
     }
-    return {
-      ...review,
-      scenes: review.scenes.map((scene, index) => ({
-        ...scene,
-        visual: `Refreshed visual direction ${index + 1}`,
-      })),
-      refreshedTarget: target,
-    };
+    return review;
   }
   if (type === 'pictureBook.confirmPromptReview') {
     return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
@@ -626,6 +661,9 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       ...mockPictureBookPromptReview(Number(payload.articleId ?? 1), false),
       reviewId: String(payload.reviewId ?? 'mock-review-1'),
       bookDescription: String(payload.bookDescription ?? ''),
+      bookCharacters: normalizeMockBookCharacters(payload.bookCharacters),
+      relevantCharacters: normalizeMockBookCharacters(payload.bookCharacters),
+      newCharacters: normalizeMockBookCharacters(payload.newCharacters),
       chapterDescription: String(payload.chapterDescription ?? ''),
       groupPrompt: String(payload.groupPrompt ?? ''),
       scenes: Array.isArray(payload.scenes) ? payload.scenes : [],
@@ -879,6 +917,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'listening.recordVideo') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const videoPath = `${mockRecordingSettings.outputDirectory}\\Space Snacks ${mockRecordingVideos.length + 1}.mp4`;
+    const subtitlePath = videoPath.replace(/\.mp4$/i, '.srt');
     window.setTimeout(() => {
       emitNativeEvent({
         type: 'listening.recording.progress',
@@ -894,8 +934,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     }, 20);
     const result = {
       articleId,
-      videoPath: `${mockRecordingSettings.outputDirectory}\\Space Snacks.mp4`,
-      subtitlePath: `${mockRecordingSettings.outputDirectory}\\Space Snacks.srt`,
+      videoPath,
+      subtitlePath,
       durationMs: 4200,
       frameCount: 105,
       droppedFrameCount: 0,
@@ -905,10 +945,75 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition),
       warnings: [],
     };
+    const hasDefault = mockRecordingVideos.some((version) => version.articleId === articleId && version.isDefault);
+    mockRecordingVideos = [
+      {
+        id: `mock-video-${Date.now()}-${mockRecordingVideos.length + 1}`,
+        articleId,
+        videoPath,
+        subtitlePath,
+        createdAt: new Date().toISOString(),
+        source: 'listening',
+        title: `Space Snacks ${mockRecordingVideos.length + 1}`,
+        isDefault: !hasDefault,
+        durationMs: result.durationMs,
+        frameCount: result.frameCount,
+        droppedFrameCount: result.droppedFrameCount,
+        encoderName: result.encoderName,
+        codec: result.codec,
+        resolution: result.resolution,
+        pageTransition: result.pageTransition,
+      },
+      ...mockRecordingVideos,
+    ];
     window.setTimeout(() => {
       emitNativeEvent({ type: 'listening.recording.completed', payload: result });
     }, 40);
     return result;
+  }
+  if (type === 'recording.videoList') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    return {
+      articleId,
+      outputDirectory: mockRecordingSettings.outputDirectory,
+      versions: mockRecordingVideos.filter((version) => version.articleId === articleId),
+    };
+  }
+  if (type === 'recording.videoSetDefault') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const videoId = String(payload.videoId ?? '');
+    let found = false;
+    mockRecordingVideos = mockRecordingVideos.map((version) => {
+      if (version.articleId !== articleId) return version;
+      const selected = version.id === videoId;
+      found = found || selected;
+      return { ...version, isDefault: selected };
+    });
+    if (!found) {
+      throw new Error('没有找到视频版本');
+    }
+    return {
+      articleId,
+      outputDirectory: mockRecordingSettings.outputDirectory,
+      versions: mockRecordingVideos.filter((version) => version.articleId === articleId),
+    };
+  }
+  if (type === 'recording.videoPlay') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const videoId = String(payload.videoId ?? '');
+    const versions = mockRecordingVideos.filter((version) => version.articleId === articleId);
+    const selected = videoId
+      ? versions.find((version) => version.id === videoId)
+      : versions.find((version) => version.isDefault) ?? versions[0];
+    if (!selected) {
+      throw new Error('还没有可播放的视频版本');
+    }
+    return {
+      played: true,
+      articleId,
+      videoId: selected.id,
+      videoPath: selected.videoPath,
+    };
   }
   if (type === 'listening.cancelRecording') {
     return { cancelled: true };
@@ -1327,6 +1432,12 @@ const mockSeries: StorySeries[] = [
     id: 1,
     title: 'Space Story Series',
     description: 'A gentle space-adventure picture book about curious children exploring small wonders together.',
+    characters: [
+      {
+        name: 'Tom',
+        description: 'Curious child explorer wearing a red hoodie and small silver backpack.',
+      },
+    ],
     coverImagePath: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -1375,18 +1486,14 @@ function mockPictureBookPromptReview(
       sentenceStartIndex: 0,
       sentenceEndIndex: 0,
       paragraphText: 'Tom finds a bright snack box.',
-      title: 'The Snack Box',
       sceneDescription: 'Tom discovers a bright snack box.',
-      visual: 'Tom, a curious child in a red hoodie, finds a bright snack box inside a cozy spaceship kitchen with warm light and clear expression.',
     },
     {
       pageIndex: 1,
       sentenceStartIndex: 1,
       sentenceEndIndex: 1,
       paragraphText: 'He shares it with his team.',
-      title: 'Sharing',
       sceneDescription: 'Tom shares the box with his team.',
-      visual: 'Tom, the same curious child in a red hoodie, shares the bright snack box with teammates around a small spaceship table.',
     },
   ];
   return {
@@ -1394,30 +1501,56 @@ function mockPictureBookPromptReview(
     articleId,
     chapterId: 1,
     seriesId: mockSeries[0].id,
+    bookTitle: mockSeries[0].title,
     regenerate,
     bookDescription: mockSeries[0].description ?? '',
+    bookCharacters: mockSeries[0].characters ?? [],
+    relevantCharacters: mockSeries[0].characters ?? [],
+    newCharacters: [],
     chapterDescription:
-      'A gentle space-adventure chapter where Tom, a curious child in a red hoodie, finds a bright snack box and turns the discovery into a warm sharing moment with his team.',
-    groupPrompt: mockGroupPrompt(scenes),
+      'A gentle space-adventure chapter where Tom finds a bright snack box and turns the discovery into a warm sharing moment with his team.',
+    groupPrompt: mockGroupPrompt(scenes, mockSeries[0].characters ?? []),
     scenes,
     createdAt: new Date().toISOString(),
   };
 }
 
-function mockGroupPrompt(scenes: Array<{ title: string; sceneDescription: string; visual: string }>): string {
+function mockGroupPrompt(
+  scenes: Array<{ sceneDescription: string }>,
+  characters: BookCharacter[] = [],
+): string {
+  const characterLines = normalizeMockBookCharacters(characters);
   return [
-    'Generate a coherent sequence of full-frame 16:9 English picture-book illustrations.',
-    'Each image corresponds to exactly one storyboard scene below, in order.',
-    'Keep the same book world, illustration style, color palette, and recurring character appearances across the whole sequence.',
-    'For every image, match the listed segment action, characters, props, location, and mood.',
+    'Book name: Space Story Series',
+    'Book description: A gentle space-adventure picture book about curious children exploring small wonders together.',
+    ...(characterLines.length > 0
+      ? [
+          '',
+          'Relevant characters:',
+          ...characterLines.map((character) => `- ${character.name}: ${character.description}`),
+        ]
+      : []),
+    '',
+    'Chapter description: A gentle space-adventure chapter where Tom finds a bright snack box and turns the discovery into a warm sharing moment with his team.',
     ...scenes.flatMap((scene, index) => [
       '',
       `Image ${index + 1}:`,
-      `Scene title: ${scene.title}`,
       `Scene description: ${scene.sceneDescription}`,
-      `Visual direction: ${scene.visual}`,
     ]),
   ].join('\n').trim();
+}
+
+function normalizeMockBookCharacters(raw: unknown): BookCharacter[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const record = item as Partial<BookCharacter>;
+      return {
+        name: String(record.name ?? '').replace(/\s+/g, ' ').trim(),
+        description: String(record.description ?? '').replace(/\s+/g, ' ').trim(),
+      };
+    })
+    .filter((item) => item.name && item.description);
 }
 
 function assetUrl(name: string): string {
@@ -1722,3 +1855,23 @@ let mockRecordingSettings: RecordingSettings = {
   quality: 'high',
   hardwareBackend: 'auto',
 };
+
+let mockRecordingVideos: RecordingVideoVersion[] = [
+  {
+    id: 'mock-video-default',
+    articleId: mockArticles[0].id,
+    videoPath: 'C:\\Program Files\\TomatoEnglishHappyTalking\\recording-export\\Space Snacks.mp4',
+    subtitlePath: 'C:\\Program Files\\TomatoEnglishHappyTalking\\recording-export\\Space Snacks.srt',
+    createdAt: new Date().toISOString(),
+    source: 'listening',
+    title: 'Space Snacks',
+    isDefault: true,
+    durationMs: 4200,
+    frameCount: 105,
+    droppedFrameCount: 0,
+    encoderName: 'libx264',
+    codec: 'h264',
+    resolution: '1920x1080',
+    pageTransition: 'none',
+  },
+];

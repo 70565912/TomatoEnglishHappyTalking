@@ -63,12 +63,11 @@ void main() {
         return;
       }
 
-      final reply = await TextGenerationService.generate(
+      final reply = await TextGenerationService.generateStrict(
         turns: const [
           TextGenerationTurn(role: 'user', content: 'Reply OK only.'),
         ],
         cachePurpose: 'openai_text_live_smoke',
-        fallbackText: 'OK',
         maxTokens: 8,
       );
 
@@ -130,11 +129,6 @@ void main() {
         'replyPreview=${reply.text.length > 120 ? reply.text.substring(0, 120) : reply.text} '
         'error=${reply.errorMessage ?? '(none)'}',
       );
-
-      if (reply.source == RealtimeReplySource.mockOnError) {
-        debugPrint('Realtime validation skipped after service fallback.');
-        return;
-      }
 
       expect(
         reply.source,

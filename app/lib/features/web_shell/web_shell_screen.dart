@@ -75,6 +75,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   final Map<String, String> _songTimelineErrors = {};
   InAppWebViewController? _sunoController;
   Timer? _sunoAutomationTimer;
+  int _sunoWebViewInstance = 0;
   int? _sunoArticleId;
   String _sunoStylePrompt = '';
   String _sunoLyrics = '';
@@ -93,6 +94,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   final Set<String> _sunoDownloadedDownloadKeys = <String>{};
   final Set<String> _sunoDownloadInFlightKeys = <String>{};
   final Set<String> _sunoDetectedSongUrls = <String>{};
+  final Set<String> _sunoTrustedSongUrls = <String>{};
   final Set<String> _sunoRejectedCandidateSongUrls = <String>{};
   String? _sunoPendingDownloadSongUrl;
   String? _sunoPendingDownloadTitle;
@@ -177,6 +179,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'listening.recordingReady': _handleListeningRecordingReady,
         'listening.recordVideo': _handleListeningRecordVideo,
         'listening.cancelRecording': _handleListeningCancelRecording,
+        'recording.videoList': _handleRecordingVideoList,
+        'recording.videoSetDefault': _handleRecordingVideoSetDefault,
+        'recording.videoPlay': _handleRecordingVideoPlay,
+        'recording.videoDelete': _handleRecordingVideoDelete,
+        'recording.videoOpenDirectory': _handleRecordingVideoOpenDirectory,
         'listening.songState': _handleListeningSongState,
         'listening.songGenerate': _handleListeningSongGenerate,
         'listening.songConfirmSunoCreate':
@@ -186,6 +193,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'listening.songTimelineGenerate': _handleListeningSongTimelineGenerate,
         'listening.songPlay': _handleListeningSongPlay,
         'listening.songSetDefault': _handleListeningSongSetDefault,
+        'listening.songDeleteVersion': _handleListeningSongDeleteVersion,
         'listening.songStop': _handleListeningSongStop,
         'listening.songRecordVideo': _handleListeningSongRecordVideo,
         'suno.debugInspect': _handleSunoDebugInspect,
@@ -439,6 +447,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             child: Container(
               color: Colors.white,
               child: InAppWebView(
+                key: ValueKey('suno-webview-$_sunoWebViewInstance'),
                 initialUrlRequest: URLRequest(
                   url: WebUri(_sunoInitialUrl),
                 ),
@@ -614,6 +623,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _payloadString(message.payload, 'seriesTitle').trim();
     final requestedSeriesDescription =
         _payloadString(message.payload, 'seriesDescription').trim();
+    final requestedSeriesCharactersProvided =
+        message.payload.containsKey('seriesCharacters');
+    final requestedSeriesCharacters =
+        _payloadBookCharacters(message.payload, 'seriesCharacters');
     if (content.isEmpty) {
       throw const FormatException('请填写文章内容');
     }
@@ -653,18 +666,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         sentences: sentences,
         parsedInput: parsedInput,
       );
-      if (!parsedInput.usesLocalEnglish) {
-        await PracticeTextService.attachTranslateToEnglishForPracticeCache(
-          content: content,
-          articleId: id,
-        );
-      }
-      if (requestedTitle.isEmpty && parsedInput.titleCandidate.trim().isEmpty) {
-        await PracticeTextService.attachSuggestArticleTitleCache(
-          content: englishContent,
-          articleId: id,
-        );
-      }
 
       final savedArticle = article.copyWith(id: id);
       if (pictureBookEnabled) {
@@ -672,7 +673,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           requestedSeriesId: requestedSeriesId,
           requestedSeriesTitle: requestedSeriesTitle,
           requestedSeriesDescription: requestedSeriesDescription,
-          fallbackTitle: title,
+          requestedSeriesCharacters: requestedSeriesCharacters,
+          requestedSeriesCharactersProvided: requestedSeriesCharactersProvided,
         );
         final seriesId = series.id;
         seriesIdForRollback = seriesId;
@@ -681,6 +683,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         }
         final chapter = await PictureBookService.ensureChapterForArticle(
           seriesId: seriesId,
+          article: savedArticle,
+        );
+        await _ensureStorySeriesDescription(
+          series: series,
           article: savedArticle,
         );
         // Saving only persists the chapter relationship. The Web UI must open
@@ -783,6 +789,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _payloadString(message.payload, 'articleTitle').trim();
     final currentDescription =
         _payloadString(message.payload, 'description').trim();
+    final currentCharacters =
+        _payloadBookCharacters(message.payload, 'characters');
     final content = _payloadString(message.payload, 'content').trim();
     if (content.isEmpty) {
       throw const FormatException('请先填写文章内容');
@@ -801,15 +809,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final articleTitle = _firstNonEmptyString([
           requestedArticleTitle,
           parsedInput.titleCandidate,
-          _fallbackArticleTitle(englishContent),
         ]) ??
-        'English Story';
-    final seriesTitle = _firstNonEmptyString([
-          requestedSeriesTitle,
-          articleTitle,
-          'Picture Book Story',
-        ]) ??
-        'Picture Book Story';
+        'Untitled chapter';
+    final seriesTitle = requestedSeriesTitle;
+    if (seriesTitle.isEmpty) {
+      throw const FormatException('请填写书籍名称');
+    }
     final now = DateTime.now();
     final article = Article(
       title: articleTitle,
@@ -817,25 +822,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       sentences: sentences,
       createdAt: now,
     );
-    final chapter = StoryChapter(
-      seriesId: 0,
-      articleId: 0,
-      chapterOrder: 1,
-      chapterTitle: articleTitle,
-      summaryJson: '{}',
-      createdAt: now,
-      updatedAt: now,
-    );
-    final description = await PictureBookService.suggestBookDescription(
+    final suggestion = await PictureBookService.suggestBookDescription(
       article: article,
-      chapter: chapter,
       seriesTitle: seriesTitle,
       currentDescription: currentDescription,
+      currentCharacters: currentCharacters,
     );
-    if (description.trim().isEmpty) {
+    if (suggestion.description.trim().isEmpty) {
       throw const FormatException('自动书籍简介暂时生成失败');
     }
-    return {'description': description.trim()};
+    return suggestion.toJson();
   }
 
   Future<Map<String, dynamic>> _handleSeriesCreate(
@@ -843,12 +839,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   ) async {
     final title = _payloadString(message.payload, 'title').trim();
     final description = _payloadString(message.payload, 'description').trim();
+    final characters = _payloadBookCharacters(message.payload, 'characters');
     if (title.isEmpty) {
       throw const FormatException('请填写书籍名称');
     }
     await PictureBookService.createSeries(
       title: title,
       description: description,
+      characters: characters,
     );
     final payload = await _articleListPayload();
     unawaited(_pushEvent('article.state', payload));
@@ -861,6 +859,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final seriesId = _payloadInt(message.payload, 'seriesId');
     final title = _payloadString(message.payload, 'title').trim();
     final description = _payloadString(message.payload, 'description').trim();
+    final characters = _payloadBookCharacters(message.payload, 'characters');
     if (title.isEmpty) {
       throw const FormatException('请填写书籍名称');
     }
@@ -875,6 +874,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       series.copyWith(
         title: title,
         description: description,
+        characters: characters,
         updatedAt: DateTime.now(),
       ),
     );
@@ -905,6 +905,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _payloadString(message.payload, 'seriesTitle').trim();
     final requestedSeriesDescription =
         _payloadString(message.payload, 'seriesDescription').trim();
+    final requestedSeriesCharactersProvided =
+        message.payload.containsKey('seriesCharacters');
+    final requestedSeriesCharacters =
+        _payloadBookCharacters(message.payload, 'seriesCharacters');
     final rawArticle = await DatabaseService.getArticleById(articleId);
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
@@ -915,7 +919,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       requestedSeriesId: requestedSeriesId,
       requestedSeriesTitle: requestedSeriesTitle,
       requestedSeriesDescription: requestedSeriesDescription,
-      fallbackTitle: article.title,
+      requestedSeriesCharacters: requestedSeriesCharacters,
+      requestedSeriesCharactersProvided: requestedSeriesCharactersProvided,
     );
     final seriesId = series.id;
     if (seriesId == null) {
@@ -995,6 +1000,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       target: _payloadString(message.payload, 'target').trim(),
       bookDescription:
           _payloadString(message.payload, 'bookDescription').trim(),
+      bookCharacters: _payloadBookCharacters(message.payload, 'bookCharacters'),
+      newCharacters: _payloadBookCharacters(message.payload, 'newCharacters'),
       chapterDescription:
           _payloadString(message.payload, 'chapterDescription').trim(),
       scenes: _payloadMapList(message.payload, 'scenes'),
@@ -1013,16 +1020,24 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _payloadString(message.payload, 'bookDescription').trim();
     final chapterDescription =
         _payloadString(message.payload, 'chapterDescription').trim();
+    final bookCharacters =
+        _payloadBookCharacters(message.payload, 'bookCharacters');
+    final newCharacters =
+        _payloadBookCharacters(message.payload, 'newCharacters');
     final scenes = _payloadMapList(message.payload, 'scenes');
     final state = await PictureBookService.confirmPromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
       bookDescription: bookDescription,
+      bookCharacters: bookCharacters,
+      newCharacters: newCharacters,
       chapterDescription: chapterDescription,
       scenes: scenes,
       onProgress: (payload) => _pushEvent('pictureBook.state', payload),
     );
     unawaited(_pushEvent('pictureBook.state', state));
+    final articlePayload = await _articleListPayload();
+    unawaited(_pushEvent('article.state', articlePayload));
     return state;
   }
 
@@ -1038,11 +1053,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _payloadString(message.payload, 'bookDescription').trim();
     final chapterDescription =
         _payloadString(message.payload, 'chapterDescription').trim();
+    final bookCharacters =
+        _payloadBookCharacters(message.payload, 'bookCharacters');
+    final newCharacters =
+        _payloadBookCharacters(message.payload, 'newCharacters');
     final scenes = _payloadMapList(message.payload, 'scenes');
     return PictureBookService.savePromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
       bookDescription: bookDescription,
+      bookCharacters: bookCharacters,
+      newCharacters: newCharacters,
       chapterDescription: chapterDescription,
       scenes: scenes,
     );
@@ -1140,6 +1161,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
     final state = await PictureBookService.statePayload(articleId);
     unawaited(_pushEvent('pictureBook.state', state));
+    final articlePayload = await _articleListPayload();
+    unawaited(_pushEvent('article.state', articlePayload));
     return {
       ...result,
       'pictureBook': state,
@@ -1387,14 +1410,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           : (_sunoVersions.isNotEmpty ? _sunoVersions.first.audioPath : null),
       errorMessage: _sunoErrorMessage,
       source: 'suno',
-      songUrl: _sunoSongUrl ??
-          (_sunoVersions.isNotEmpty ? _sunoVersions.first.songUrl : null),
+      songUrl: _canonicalSunoSongUrl(_sunoSongUrl) ??
+          (_sunoVersions.isNotEmpty
+              ? _canonicalSunoSongUrl(_sunoVersions.first.songUrl)
+              : null),
       metadataPath: _sunoMetadataPath,
       manualActionMessage: _sunoManualActionMessage,
       automationStatus: _sunoAutomationStatus,
       creditsRemaining: _sunoCreditsRemaining,
       downloadComplete: _currentSunoDownloadsComplete(),
-      detectedSongUrls: _sunoDetectedSongUrls.toList(growable: false),
+      detectedSongUrls: _mergeSunoSongUrls([_sunoDetectedSongUrls]),
       versions: _songVersionsForPayload(articleId, _sunoVersions),
     );
   }
@@ -1402,7 +1427,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   bool _isTransientSunoWebViewError(Object error) {
     final message = error.toString();
     return message.contains('MissingPluginException') &&
-        message.contains('evaluateJavascript');
+        (message.contains('evaluateJavascript') ||
+            message.contains('loadUrl') ||
+            message.contains('getUrl'));
   }
 
   Future<List<SunoCachedSongGroup>> _cachedSunoSongGroups(
@@ -1482,7 +1509,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             id: 'suno_legacy_${articleId}_${audioPath.hashCode}',
             audioPath: audioPath,
             title: 'Suno 版本 1',
-            songUrl: _nonEmptyString(metadata['songUrl']),
+            songUrl: _canonicalSunoSongUrl(metadata['songUrl']),
             stylePrompt: stylePrompt.isEmpty ? null : stylePrompt,
             lyricsHash: groupLyricsHash,
           ),
@@ -1491,10 +1518,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       builder.detectedSongUrls.addAll(
         _sunoSongUrlList(metadata['detectedSongUrls']),
       );
-      final songUrl = _nonEmptyString(metadata['songUrl']) ??
+      final songUrl = _canonicalSunoSongUrl(metadata['songUrl']) ??
           _firstNonEmptyString(builder.detectedSongUrls) ??
           _firstNonEmptyString(
-            builder.versions.map((version) => version.songUrl),
+            builder.versions
+                .map((version) => _canonicalSunoSongUrl(version.songUrl)),
           );
       builder.songUrl ??= songUrl;
       builder.metadataPath ??= _nonEmptyString(resolvedMetadataPath);
@@ -1523,11 +1551,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final rawVersions =
         groups.expand((group) => group.versions).toList(growable: false);
     final versions = _songVersionsForPayload(articleId, rawVersions);
-    final detectedSongUrls = groups
-        .expand((group) => group.detectedSongUrls)
-        .where((value) => value.trim().isNotEmpty)
-        .toSet()
-        .toList(growable: false);
+    final detectedSongUrls = _mergeSunoSongUrls(
+      groups.map((group) => group.detectedSongUrls),
+    );
     final hasAudio = versions.isNotEmpty;
     final downloadComplete = latestGroup.hasKnownCompleteDownloads;
     return ArticleSongState(
@@ -1700,7 +1726,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               id: version.id,
               audioPath: audioPath,
               title: version.title,
-              songUrl: version.songUrl,
+              songUrl: _canonicalSunoSongUrl(version.songUrl),
               durationMs: version.durationMs,
               createdAt: version.createdAt,
               stylePrompt: version.stylePrompt ?? fallbackStylePrompt,
@@ -1723,12 +1749,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   bool _hasSunoVersionForSongUrl(String songUrl) {
-    final normalized = songUrl.trim();
-    if (normalized.isEmpty) {
+    final normalized = _canonicalSunoSongUrl(songUrl);
+    if (normalized == null || normalized.isEmpty) {
       return false;
     }
     return _sunoVersions.any(
-      (version) => (version.songUrl ?? '').trim() == normalized,
+      (version) => _canonicalSunoSongUrl(version.songUrl) == normalized,
     );
   }
 
@@ -2181,10 +2207,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final english = (item['english'] ?? '').toString().trim();
       if (english.isNotEmpty) {
         requiredEnglish += 1;
-        final ready = await TtsMemoryCacheService.hasInMemory(
+        final ready = await TtsMemoryCacheService.hasCachedFile(
           text: english,
           voiceType: TtsService.defaultVoiceType,
           preferRequestedVoice: false,
+          articleId: articleId,
           cachePurpose: 'listening_tts',
         );
         if (!ready) {
@@ -2200,7 +2227,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     const chineseFailed = 0;
     final reasons = <String>[];
     if (missingEnglish.isNotEmpty) {
-      reasons.add('当前和下一句英文音频还没有加载到内存');
+      reasons.add('当前和下一句英文音频文件还没有预热完成');
     }
     final failed = englishFailed + chineseFailed;
     if (failed > 0 &&
@@ -2274,6 +2301,96 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     token.cancel();
     return {'cancelled': true};
+  }
+
+  Future<Map<String, dynamic>> _handleRecordingVideoList(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final library = await RecordingExportService.videoLibrary(articleId);
+    return library.toJson();
+  }
+
+  Future<Map<String, dynamic>> _handleRecordingVideoSetDefault(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final videoId = _payloadString(message.payload, 'videoId').trim();
+    if (videoId.isEmpty) {
+      throw const FormatException('请选择要设为默认播放的视频');
+    }
+    final library = await RecordingExportService.setDefaultVideo(
+      articleId: articleId,
+      videoId: videoId,
+    );
+    return library.toJson();
+  }
+
+  Future<Map<String, dynamic>> _handleRecordingVideoPlay(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final video = await RecordingExportService.resolveVideo(
+      articleId: articleId,
+      videoId: _payloadString(message.payload, 'videoId').trim(),
+    );
+    await _openWithSystemPlayer(video.videoPath);
+    return {
+      'played': true,
+      'articleId': articleId,
+      'videoId': video.id,
+      'videoPath': video.videoPath,
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleRecordingVideoDelete(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final videoId = _payloadString(message.payload, 'videoId').trim();
+    if (videoId.isEmpty) {
+      throw const FormatException('请选择要删除的视频');
+    }
+    final library = await RecordingExportService.deleteVideo(
+      articleId: articleId,
+      videoId: videoId,
+    );
+    return library.toJson();
+  }
+
+  Future<Map<String, dynamic>> _handleRecordingVideoOpenDirectory(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final library = await RecordingExportService.videoLibrary(articleId);
+    final directory = Directory(library.outputDirectory);
+    await directory.create(recursive: true);
+    await _openWithSystemFileManager(directory.path);
+    return {
+      'opened': true,
+      'articleId': articleId,
+      'outputDirectory': directory.path,
+    };
   }
 
   Future<Map<String, dynamic>> _handleListeningSongState(
@@ -2537,6 +2654,87 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return _songStatePayload(articleId);
   }
 
+  Future<Map<String, dynamic>> _handleListeningSongDeleteVersion(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final versionId = _payloadString(message.payload, 'versionId').trim();
+    if (versionId.isEmpty) {
+      throw const FormatException('请选择要删除的歌曲');
+    }
+    final article = await _songArticle(articleId);
+    final currentPayload = await _songStatePayload(articleId);
+    final currentVersions = ((currentPayload['versions'] as List?) ?? const [])
+        .map(ArticleSongVersion.fromJson)
+        .whereType<ArticleSongVersion>()
+        .toList();
+    ArticleSongVersion? target;
+    final remainingVersions = <ArticleSongVersion>[];
+    for (final version in currentVersions) {
+      if (version.id == versionId) {
+        target = version;
+      } else {
+        remainingVersions.add(version);
+      }
+    }
+    if (target == null) {
+      throw FormatException('没有找到歌曲版本：$versionId');
+    }
+    final timelineKey = _songTimelineKey(articleId, versionId);
+    if (_songTimelineTasks.containsKey(timelineKey)) {
+      throw const FormatException('歌曲字幕正在生成，请等待完成后再删除');
+    }
+    await _stopSongPlayback();
+    await _deleteFileIfExists(target.audioPath);
+    final timelinePath = (target.timelinePath ?? '').trim();
+    if (timelinePath.isNotEmpty) {
+      await _deleteFileIfExists(timelinePath);
+    }
+    if (remainingVersions.isNotEmpty &&
+        !remainingVersions.any((version) => version.isDefault)) {
+      remainingVersions[0] = remainingVersions[0].copyWith(isDefault: true);
+    }
+    final deletedSource = _normalizeSongProvider(target.source);
+    final remainingForDeletedSource = remainingVersions
+        .where(
+          (version) => _normalizeSongProvider(version.source) == deletedSource,
+        )
+        .toList(growable: false);
+    if (deletedSource == AppConfig.songProviderBailianFunMusic) {
+      await _saveBailianMusicMetadataForVersions(
+        article: article,
+        versions: remainingForDeletedSource,
+        model: await AppConfig.aliyunBailianMusicModel,
+      );
+    } else {
+      await _saveSunoMetadataForVersions(
+        article: article,
+        versions: remainingForDeletedSource,
+      );
+    }
+    final deletedSongUrl = _canonicalSunoSongUrl(target.songUrl);
+    if (_sunoArticleId == articleId) {
+      _sunoVersions
+        ..clear()
+        ..addAll(remainingVersions.where(
+          (version) =>
+              _normalizeSongProvider(version.source) ==
+              AppConfig.songProviderSuno,
+        ));
+      if (deletedSongUrl != null) {
+        _sunoDownloadedSongUrls.remove(deletedSongUrl);
+        _sunoTrustedSongUrls.remove(deletedSongUrl);
+      }
+    }
+    _songTimelineErrors.remove(timelineKey);
+    await _pushSongState(articleId);
+    return _songStatePayload(articleId);
+  }
+
   Future<Map<String, dynamic>> _handleListeningSongStop(
     BridgeMessage message,
   ) async {
@@ -2701,7 +2899,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return;
     }
     final currentVersions = versions
-        .map((version) => version.copyWith(source: AppConfig.songProviderSuno))
+        .map((version) => version.copyWith(
+              source: AppConfig.songProviderSuno,
+              songUrl: _canonicalSunoSongUrl(version.songUrl),
+            ))
         .toList(growable: false);
     final directory = Directory(await _resolvedSunoOutputDirectorySetting());
     await directory.create(recursive: true);
@@ -2709,25 +2910,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       directory.path,
       'article_${articleId}_suno_${DateTime.now().millisecondsSinceEpoch}.json',
     );
-    final detectedSongUrlSet = <String>{
-      ...currentVersions.map((version) => (version.songUrl ?? '').trim()).where(
-          (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
-      if (_sunoArticleId == articleId)
-        ..._sunoDetectedSongUrls.map((value) => value.trim()).where(
-            (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
+    final detectedSongUrlSet = _mergeSunoSongUrls([
+      currentVersions.map((version) => version.songUrl),
+      if (_sunoArticleId == articleId) _sunoDetectedSongUrls,
       for (final group in await _cachedSunoSongGroups(article))
-        ...group.detectedSongUrls.map((value) => value.trim()).where(
-            (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
-    };
+        group.detectedSongUrls,
+    ]).toSet();
     final detectedSongUrls = detectedSongUrlSet.toList(growable: false);
     final downloadedSongUrls = currentVersions
-        .map((version) => (version.songUrl ?? '').trim())
-        .where((value) => value.isNotEmpty)
+        .map(_canonicalSunoSongUrl)
+        .whereType<String>()
+        .where((value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value))
         .toSet();
     final currentAudioPath =
         currentVersions.isNotEmpty ? currentVersions.first.audioPath : null;
     final currentSongUrl = _firstNonEmptyString(
-      currentVersions.map((version) => version.songUrl),
+      currentVersions.map((version) => _canonicalSunoSongUrl(version.songUrl)),
     );
     final lyricsHash = await _articleSongLyricsHash(article);
     final stylePrompt = _firstNonEmptyString(
@@ -2979,6 +3177,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     _stopSunoAutomation(clearVisible: false);
     _sunoArticleId = articleId;
+    _sunoController = null;
+    _sunoWebViewInstance += 1;
     _sunoStylePrompt = stylePrompt.trim();
     _sunoLyrics = lyrics.trim();
     _sunoInitialUrl = 'https://suno.com/create';
@@ -2997,6 +3197,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _sunoDownloadedDownloadKeys.clear();
     _sunoDownloadInFlightKeys.clear();
     _sunoDetectedSongUrls.clear();
+    _sunoTrustedSongUrls.clear();
     _sunoRejectedCandidateSongUrls.clear();
     _sunoPendingDownloadSongUrl = null;
     _sunoPendingDownloadTitle = null;
@@ -3009,9 +3210,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       _sunoVersions.addAll(cachedSuno.versions);
       _rememberDownloadedSunoUrls();
     }
-    for (final group in cachedGroups) {
-      _sunoDetectedSongUrls.addAll(group.detectedSongUrls);
-    }
+    final cachedDetectedSongUrls = _mergeSunoSongUrls(
+      cachedGroups.map((group) => group.detectedSongUrls),
+    );
+    _sunoDetectedSongUrls
+      ..clear()
+      ..addAll(cachedDetectedSongUrls);
+    _sunoTrustedSongUrls.addAll(cachedDetectedSongUrls);
+    _sunoTrustedSongUrls.addAll(
+      _sunoVersions
+          .map((version) => _canonicalSunoSongUrl(version.songUrl))
+          .whereType<String>()
+          .where(
+              (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
+    );
     _syncDownloadedSunoUrlsIntoDetected();
     _sunoCreateSubmitted = false;
     _sunoExistingDownloadOnly = false;
@@ -3049,11 +3261,15 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final groups = await _cachedSunoSongGroups(article);
     final group = groups.isEmpty ? null : groups.first;
     final missingSongUrls = group?.missingSongUrls ?? const <String>[];
-    final songUrl =
-        (missingSongUrls.isNotEmpty ? missingSongUrls.first : '').trim();
+    final songUrl = _canonicalSunoSongUrl(
+          missingSongUrls.isNotEmpty ? missingSongUrls.first : '',
+        ) ??
+        '';
 
     _stopSunoAutomation(clearVisible: false);
     _sunoArticleId = articleId;
+    _sunoController = null;
+    _sunoWebViewInstance += 1;
     _sunoStylePrompt = '';
     _sunoLyrics = _articleSongLyrics(article);
     _sunoInitialUrl = songUrl.isEmpty ? 'https://suno.com/me' : songUrl;
@@ -3078,7 +3294,24 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       ..addAll(await _sunoSongUrlsForOtherArticles(articleId));
     _sunoDetectedSongUrls
       ..clear()
-      ..addAll(group?.detectedSongUrls ?? const <String>[]);
+      ..addAll(
+        _mergeSunoSongUrls([
+          group?.detectedSongUrls ?? const <String>[],
+        ]),
+      );
+    _sunoTrustedSongUrls
+      ..clear()
+      ..addAll(_sunoDetectedSongUrls);
+    _sunoTrustedSongUrls.addAll(
+      _sunoVersions
+          .map((version) => _canonicalSunoSongUrl(version.songUrl))
+          .whereType<String>()
+          .where(
+              (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
+    );
+    if (songUrl.isNotEmpty) {
+      _sunoTrustedSongUrls.add(songUrl);
+    }
     _rememberDownloadedSunoUrls();
     _syncDownloadedSunoUrlsIntoDetected();
     _sunoPendingDownloadSongUrl = songUrl.isEmpty ? null : songUrl;
@@ -3106,14 +3339,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
     if (mounted) {
       setState(() {});
-    }
-    final controller = _sunoController;
-    if (controller != null) {
-      unawaited(
-        controller.loadUrl(
-          urlRequest: URLRequest(url: WebUri(_sunoInitialUrl)),
-        ),
-      );
     }
     unawaited(_pushSongState(articleId));
     _startSunoPolling();
@@ -3157,6 +3382,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _sunoLastLoadStopAt = null;
     _sunoDownloadInFlightKeys.clear();
     _sunoRejectedCandidateSongUrls.clear();
+    _sunoTrustedSongUrls.clear();
     if (clearVisible && mounted) {
       setState(() {
         _sunoVisible = false;
@@ -3279,6 +3505,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             expectedStylePrompt: _sunoStylePrompt,
             expectedLyrics: _sunoLyrics,
             requireExpectedMatch: true,
+            trustedSongUrls: _trustedSunoSongUrls(),
           ),
         );
         final resultSongUrls = (result['songUrls'] as List?)
@@ -3286,6 +3513,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                 .where((value) => value.isNotEmpty)
                 .toList() ??
             <String>[];
+        _trustSunoSongUrls(resultSongUrls);
         final detectedSongUrls = _mergeSunoSongUrls([
           resultSongUrls,
           _sunoDetectedSongUrls,
@@ -3370,6 +3598,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'fieldCount': fill['fieldCount'],
             'magicClicked': fill['magicClicked'],
             'styleLength': (fill['stylePrompt'] ?? '').toString().length,
+            'magicTarget': fill['magicTarget'],
+            'styleExpandTarget': fill['styleExpandTarget'],
+            'stylePlaceholder': fill['stylePlaceholder'],
+            'lyricsField': fill['lyricsField'],
+            'styleField': fill['styleField'],
           },
         );
         final ignoredStylePrompt =
@@ -3381,13 +3614,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         if (generatedStyle.isNotEmpty) {
           _sunoStylePrompt = generatedStyle;
           _sunoIgnoredStylePrompt = '';
-          _sunoStyleMagicRequestedAt = null;
         }
         if (fill['magicClicked'] == true) {
           _sunoStyleMagicRequestedAt = DateTime.now();
           await _setSunoStatus(
-            'waitingConfirm',
-            'Tomato 已点击 Suno 自动风格魔法棒一次。请等待 Styles 写入完成并确认内容后，再决定是否创建歌曲。',
+            'manualAction',
+            'Tomato 已点击 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成 Styles。',
           );
           return;
         }
@@ -3432,6 +3664,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             expectedStylePrompt: _sunoStylePrompt,
             expectedLyrics: _sunoLyrics,
             requireExpectedMatch: true,
+            trustedSongUrls: _trustedSunoSongUrls(),
           ),
         );
         TomatoLogger.info(
@@ -3444,13 +3677,15 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'songUrl': result['songUrl'],
             'songUrlCount': (result['songUrls'] as List?)?.length ?? 0,
             'currentPageExpectedScore': result['currentPageExpectedScore'],
+            'currentPageLyricsExactMatch':
+                result['currentPageLyricsExactMatch'],
             'expectedMatchThreshold': result['expectedMatchThreshold'],
           },
         );
-        var songUrl = (result['songUrl'] ?? '').toString().trim();
+        var songUrl = _canonicalSunoSongUrl(result['songUrl']) ?? '';
         final currentUrl = (await controller.getUrl())?.toString() ?? '';
         final currentPageKind = _sunoPageKind(currentUrl);
-        final knownSongUrl = (_sunoSongUrl ?? '').trim();
+        final knownSongUrl = _canonicalSunoSongUrl(_sunoSongUrl) ?? '';
         if (_sunoExistingDownloadOnly &&
             knownSongUrl.isNotEmpty &&
             currentPageKind != 'library') {
@@ -3460,18 +3695,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             currentPageKind != 'library') {
           songUrl = knownSongUrl;
         }
-        final currentPageExpectedScore = _intFromDynamic(
-          result['currentPageExpectedScore'],
-        );
-        final expectedMatchThreshold =
-            _intFromDynamic(result['expectedMatchThreshold']) ?? 18;
+        final currentPageLyricsExactMatch =
+            result['currentPageLyricsExactMatch'] == true;
         if (_sunoExistingDownloadOnly && songUrl.isEmpty) {
-          final pendingCandidate = (_sunoPendingDownloadSongUrl ?? '').trim();
+          final pendingCandidate =
+              _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl) ?? '';
           if (currentPageKind == 'song' &&
               pendingCandidate.isNotEmpty &&
               currentUrl.startsWith(pendingCandidate) &&
               _isSunoPageSettled(currentUrl) &&
-              (currentPageExpectedScore ?? 0) < expectedMatchThreshold) {
+              !currentPageLyricsExactMatch) {
             _sunoRejectedCandidateSongUrls.add(pendingCandidate);
             _sunoPendingDownloadSongUrl = null;
             await controller.loadUrl(
@@ -3583,6 +3816,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           final resultDetectedSongUrls = _mergeSunoSongUrls([resultSongUrls]);
           if (currentSongUrls.isNotEmpty) {
             _sunoDetectedSongUrls.addAll(currentSongUrls);
+            _trustSunoSongUrls(resultDetectedSongUrls);
             _syncDownloadedSunoUrlsIntoDetected();
           }
           final completedUrls = currentSongUrls
@@ -3693,6 +3927,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               expectedStylePrompt: _sunoStylePrompt,
               expectedLyrics: _sunoLyrics,
               requireExpectedMatch: true,
+              trustedSongUrls: _trustedSunoSongUrls(completedUrls),
             ),
           );
           TomatoLogger.info(
@@ -3702,7 +3937,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             status: _sunoAutomationStatus,
             data: _sunoDownloadProbeLogData(download),
           );
-          final pendingSongUrl = (download['songUrl'] ?? '').toString().trim();
+          final pendingSongUrl =
+              _canonicalSunoSongUrl(download['songUrl']) ?? '';
           final pendingTitle = (download['title'] ?? '').toString().trim();
           if (pendingSongUrl.isNotEmpty &&
               !_isSyntheticSunoSongKey(pendingSongUrl)) {
@@ -3791,6 +4027,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               expectedStylePrompt: _sunoStylePrompt,
               expectedLyrics: _sunoLyrics,
               requireExpectedMatch: true,
+              trustedSongUrls: _trustedSunoSongUrls(),
             ),
           );
           TomatoLogger.info(
@@ -3800,7 +4037,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             status: _sunoAutomationStatus,
             data: _sunoDownloadProbeLogData(download),
           );
-          final pendingSongUrl = (download['songUrl'] ?? '').toString().trim();
+          final pendingSongUrl =
+              _canonicalSunoSongUrl(download['songUrl']) ?? '';
           final pendingTitle = (download['title'] ?? '').toString().trim();
           if (pendingSongUrl.isNotEmpty &&
               !_isSyntheticSunoSongKey(pendingSongUrl)) {
@@ -3921,7 +4159,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (articleId == null) {
       return;
     }
-    final songUrl = (_sunoPendingDownloadSongUrl ?? _sunoSongUrl ?? '').trim();
+    final songUrl =
+        _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl ?? _sunoSongUrl) ??
+            '';
     final requestUrl = request.url.toString();
     if (_isRejectedSunoMediaUrl(requestUrl)) {
       TomatoLogger.info(
@@ -3963,6 +4203,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             _hasSunoVersionForSongUrl(songUrl))) {
       _sunoDownloadedSongUrls.add(songUrl);
       _sunoDetectedSongUrls.add(songUrl);
+      _sunoTrustedSongUrls.add(songUrl);
       _sunoPendingDownloadSongUrl = null;
       _sunoPendingDownloadTitle = null;
       await _setSunoStatus(
@@ -3997,6 +4238,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (songUrl.isNotEmpty) {
         _sunoDownloadedSongUrls.add(songUrl);
         _sunoDetectedSongUrls.add(songUrl);
+        _sunoTrustedSongUrls.add(songUrl);
       }
       _sunoDownloadedDownloadKeys.add(downloadKey);
       final lyricsHash = await _articleSongLyricsHash(
@@ -4008,7 +4250,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         title: (_sunoPendingDownloadTitle ?? '').trim().isEmpty
             ? 'Suno 版本 ${_sunoVersions.length + 1}'
             : _sunoPendingDownloadTitle!.trim(),
-        songUrl: songUrl.isEmpty ? _sunoSongUrl : songUrl,
+        songUrl:
+            songUrl.isEmpty ? _canonicalSunoSongUrl(_sunoSongUrl) : songUrl,
         createdAt: DateTime.now().toIso8601String(),
         stylePrompt:
             _sunoStylePrompt.trim().isEmpty ? null : _sunoStylePrompt.trim(),
@@ -4017,7 +4260,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       _sunoVersions.removeWhere((item) =>
           item.songUrl != null &&
           version.songUrl != null &&
-          item.songUrl == version.songUrl);
+          _canonicalSunoSongUrl(item.songUrl) ==
+              _canonicalSunoSongUrl(version.songUrl));
       _sunoVersions.add(version);
       TomatoLogger.info(
         category: 'suno',
@@ -4167,6 +4411,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         expectedStylePrompt: _sunoStylePrompt,
         expectedLyrics: _sunoLyrics,
         requireExpectedMatch: false,
+        trustedSongUrls: _trustedSunoSongUrls(),
       ),
     );
     final currentSongUrl = (_sunoSongUrl ?? '').trim();
@@ -4187,6 +4432,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               expectedStylePrompt: _sunoStylePrompt,
               expectedLyrics: _sunoLyrics,
               requireExpectedMatch: true,
+              trustedSongUrls: _trustedSunoSongUrls(
+                currentSongUrl.isEmpty ? const <String>[] : [currentSongUrl],
+              ),
               dryRun: true,
             ),
           )
@@ -4331,6 +4579,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
   }
 
+  Future<void> _deleteFileIfExists(String path) async {
+    final trimmed = path.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final file = File(trimmed);
+    try {
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (error, stackTrace) {
+      TomatoLogger.warn(
+        category: 'filesystem',
+        event: 'delete_file_failed',
+        message: _displayError(error),
+        stackTrace: stackTrace,
+        data: {'path': trimmed},
+      );
+    }
+  }
+
   Future<int> _downloadSunoDirectMediaUrls({
     required int articleId,
     required Iterable<String> songUrls,
@@ -4343,15 +4612,26 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final lyricsHash = await _articleSongLyricsHash(
       await _songArticle(articleId),
     );
+    final canonicalMediaBySongUrl = <String, String>{};
+    for (final entry in mediaBySongUrl.entries) {
+      final key = _canonicalSunoSongUrl(entry.key);
+      final value = entry.value.trim();
+      if (key != null &&
+          key.isNotEmpty &&
+          !_isSyntheticSunoSongKey(key) &&
+          value.isNotEmpty) {
+        canonicalMediaBySongUrl[key] = value;
+      }
+    }
 
     for (final rawSongUrl in songUrls) {
-      final songUrl = rawSongUrl.trim();
+      final songUrl = _canonicalSunoSongUrl(rawSongUrl) ?? '';
       if (songUrl.isEmpty ||
           _sunoDownloadedSongUrls.contains(songUrl) ||
           _hasSunoVersionForSongUrl(songUrl)) {
         continue;
       }
-      final mediaUrl = (mediaBySongUrl[songUrl] ??
+      final mediaUrl = (canonicalMediaBySongUrl[songUrl] ??
               _matchingSunoMediaUrl(
                 fallbackMediaUrl,
                 songUrl,
@@ -4390,6 +4670,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _sunoAudioPath = target.path;
         _sunoDownloadedSongUrls.add(songUrl);
         _sunoDetectedSongUrls.add(songUrl);
+        _sunoTrustedSongUrls.add(songUrl);
         _sunoDownloadedDownloadKeys.add(downloadKey);
         final title = (_sunoPendingDownloadTitle ?? '').trim();
         final version = ArticleSongVersion(
@@ -4405,7 +4686,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _sunoVersions.removeWhere((item) =>
             item.songUrl != null &&
             version.songUrl != null &&
-            item.songUrl == version.songUrl);
+            _canonicalSunoSongUrl(item.songUrl) ==
+                _canonicalSunoSongUrl(version.songUrl));
         _sunoVersions.add(version);
         downloadedCount += 1;
         TomatoLogger.info(
@@ -4474,7 +4756,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final match = RegExp(
       r'/song/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})',
     ).firstMatch(songUrl);
-    return match?.group(1);
+    return match?.group(1)?.toLowerCase();
+  }
+
+  String? _canonicalSunoSongUrl(Object? value) {
+    final text = _nonEmptyString(value);
+    if (text == null || _isSyntheticSunoSongKey(text)) {
+      return text;
+    }
+    final songId = _sunoSongId(text);
+    if (songId == null) {
+      return text;
+    }
+    return 'https://suno.com/song/$songId';
   }
 
   bool _isRejectedSunoMediaUrl(String mediaUrl) {
@@ -4518,6 +4812,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'songUrl': result['songUrl'],
       'title': result['title'],
       'currentPageExpectedScore': result['currentPageExpectedScore'],
+      'currentPageLyricsExactMatch': result['currentPageLyricsExactMatch'],
       'expectedMatchThreshold': result['expectedMatchThreshold'],
       'candidateCount': (result['candidates'] as List?)?.length ?? 0,
       'candidates': candidates,
@@ -4589,14 +4884,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       directory.path,
       'article_${articleId}_suno_${DateTime.now().millisecondsSinceEpoch}.json',
     );
-    final currentVersions = _sunoVersions.toList(growable: false);
+    final currentVersions = _sunoVersions
+        .map((version) =>
+            version.copyWith(songUrl: _canonicalSunoSongUrl(version.songUrl)))
+        .toList(growable: false);
     final currentAudioPath = currentVersions.isNotEmpty
         ? currentVersions.first.audioPath
         : _sunoAudioPath;
     final currentSongUrl = _firstNonEmptyString([
-      _sunoSongUrl,
+      _canonicalSunoSongUrl(_sunoSongUrl),
       ..._sunoDetectedSongUrls,
-      ...currentVersions.map((version) => version.songUrl),
+      ...currentVersions
+          .map((version) => _canonicalSunoSongUrl(version.songUrl)),
+    ]);
+    final detectedSongUrls = _mergeSunoSongUrls([
+      _sunoDetectedSongUrls,
+      currentVersions.map((version) => version.songUrl),
     ]);
     final metadata = {
       'provider': 'suno',
@@ -4606,7 +4909,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (_sunoStylePrompt.trim().isNotEmpty)
         'stylePrompt': _sunoStylePrompt.trim(),
       'songUrl': currentSongUrl,
-      'detectedSongUrls': _sunoDetectedSongUrls.toList(growable: false),
+      'detectedSongUrls': detectedSongUrls,
       'downloadComplete': _currentSunoDownloadsComplete(),
       'audioPath': currentAudioPath,
       'metadataPath': metadataPath,
@@ -5100,7 +5403,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     .slice(0, 4)
     .map((value) => value.slice(0, 90));
   const expectedMatchThreshold = lyricSamples.length > 0
-    ? 18
+    ? 14
     : Math.max(1, Math.min(8, Math.ceil(expectedTokens.length * 0.35)));
   const expectedScore = (text) => {
     const haystack = normalizeLoose(text);
@@ -5693,6 +5996,125 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (el.matches?.('input,textarea')) return normalize(el.value || '');
     return normalize(el.innerText || el.textContent || el.value || '');
   };
+  const rendered = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      Number(style.opacity || '1') > 0.01;
+  };
+  const textIsMuted = (el) => {
+    if (!el) return true;
+    const color = window.getComputedStyle(el).color || '';
+    const match = color.match(/rgba?\\(([^)]+)\\)/i);
+    if (!match) return false;
+    const parts = match[1]
+      .split(',')
+      .map((part) => Number(String(part).trim()))
+      .filter((part) => Number.isFinite(part));
+    if (parts.length < 3) return false;
+    const alpha = parts.length >= 4 ? parts[3] : 1;
+    const luma = parts[0] * 0.299 + parts[1] * 0.587 + parts[2] * 0.114;
+    return alpha < 0.65 || luma < 150;
+  };
+  const isStyleToolText = (el) =>
+    Boolean(el?.closest?.('button,[role="button"],a,label'));
+  const stylePanelSelector =
+    '[data-testid="create-form-styles-wrapper"],[data-test-id="create-form-styles-wrapper"]';
+  const findStylePanel = (anchor = null) => {
+    const direct = anchor?.closest?.(stylePanelSelector);
+    if (rendered(direct)) return direct;
+    const panels = Array.from(document.querySelectorAll(stylePanelSelector))
+      .filter(rendered);
+    if (panels.length > 0) {
+      const lyricsRect = lyricsField?.getBoundingClientRect?.();
+      if (lyricsRect) {
+        const belowLyrics = panels
+          .filter((panel) => panel.getBoundingClientRect().top > lyricsRect.top)
+          .sort((left, right) =>
+            left.getBoundingClientRect().top - right.getBoundingClientRect().top
+          );
+        if (belowLyrics.length > 0) return belowLyrics[0];
+      }
+      return panels[0];
+    }
+    const styleCards = Array.from(document.querySelectorAll('section,article,div,[role="group"]'))
+      .filter(rendered)
+      .filter((el) => {
+        const rect = el.getBoundingClientRect();
+        const ownText = normalize(textOf(el));
+        if (!/^\\s*styles?\\b/i.test(ownText)) return false;
+        if (rect.height < 44 || rect.width < 180) return false;
+        return /styles?|personalize style prompt|magic|wand|风格|曲风/i.test(
+          normalize(ownText + ' ' + contextText(el))
+        );
+      })
+      .sort((left, right) =>
+        left.getBoundingClientRect().top - right.getBoundingClientRect().top
+      );
+    return styleCards[0] || null;
+  };
+  const stylePanelTextValue = (panel) => {
+    if (!panel) return '';
+    const usableLine = (value) => {
+      const line = normalize(value);
+      if (!line) return '';
+      if (/^styles?\$/i.test(line)) return '';
+      if (/^\\d+\\s*\\/\\s*\\d+\$/.test(line)) return '';
+      if (/personalize style prompt|refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|歌词|创建|下载|删除|上传|登录/i.test(line)) {
+        return '';
+      }
+      const cleaned = line.replace(/\\s+\\d+\\s*\\/\\s*\\d+\$/, '').trim();
+      return looksLikeSunoGeneratedStyle(cleaned) ? cleaned : '';
+    };
+    const walker = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      if (rendered(parent) && !isStyleToolText(parent) && !textIsMuted(parent)) {
+        const lines = String(node.textContent || '').split(/\\n+/);
+        for (const line of lines) {
+          const candidate = usableLine(line);
+          if (candidate) return candidate;
+        }
+      }
+      node = walker.nextNode();
+    }
+    return '';
+  };
+  const findStyleContainer = (anchor = null) => {
+    const panel = findStylePanel(anchor);
+    let node = panel || anchor;
+    while (node && node !== document.body && node !== document.documentElement) {
+      if (rendered(node)) {
+        const text = normalize(node.innerText || node.textContent || '');
+        const hasStyleTitle = /\\bstyles?\\b|风格|曲风/i.test(text);
+        const hasLyricsTitle = /\\blyrics?\\b|歌词|歌詞/i.test(text);
+        const hasControls = node.querySelectorAll?.('button,[role="button"],a,label').length > 0;
+        if (hasStyleTitle && !hasLyricsTitle && hasControls) {
+          return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return panel || anchor;
+  };
+  const getStyleValue = (rawEl) => {
+    const el = fillTarget(rawEl);
+    if (el) {
+      const direct = el.matches?.('input,textarea')
+        ? normalize(el.value || '')
+        : normalize(el.innerText || el.textContent || el.value || '');
+      if (looksLikeSunoGeneratedStyle(direct) &&
+          (el.matches?.('input,textarea') || !textIsMuted(el))) {
+        return direct;
+      }
+    }
+    return stylePanelTextValue(findStylePanel(rawEl));
+  };
   const getPlaceholder = (rawEl) => {
     const el = fillTarget(rawEl);
     return normalize(
@@ -5713,7 +6135,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const lyricProbe = expectedLyricTokens.slice(0, 14).join(' ');
   const containsLyricProbe = (value) =>
     lyricProbe.length >= 24 && presenceText(value).includes(lyricProbe);
-  const styleLooksLikeLyrics = styleField ? containsLyricProbe(getValue(styleField)) : false;
+  const stylePanel = findStylePanel(styleField);
+  const styleSurface = styleField || stylePanel;
+  const styleLooksLikeLyrics = styleSurface ? containsLyricProbe(getStyleValue(styleSurface)) : false;
   const lyricsValueAlreadyPresent = Array.from(document.querySelectorAll(editorSelector))
     .some((el) => {
       const labelText = normalize([textOf(el), contextText(el)].join(' '));
@@ -5724,9 +6148,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     lyricsValueAlreadyPresent || (containsLyricProbe(bodyText) && !styleLooksLikeLyrics);
   if (readOnly) {
     return JSON.stringify({
-      ok: Boolean((lyricsField || lyricsAlreadyPresent) && styleField),
+      ok: Boolean((lyricsField || lyricsAlreadyPresent) && styleSurface),
       retry: false,
-      stylePrompt: styleField ? getValue(styleField) : '',
+      stylePrompt: styleSurface ? getStyleValue(styleSurface) : '',
       lyricsPrompt: lyricsField ? getValue(lyricsField) : '',
       stylePlaceholder: styleField ? getPlaceholder(styleField) : '',
       lyricsAlreadyPresent,
@@ -5740,12 +6164,43 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const isRejectedStyleMagicLabel = (label, context) => {
     const labelText = normalize(label);
     const text = normalize(String(label || '') + ' ' + String(context || ''));
-    if (/refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|instrumental|extend|cover|\\bpersona\\b|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|歌词|创建|下载|删除|上传|登录/i.test(labelText)) {
+    if (/refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|more options|additional options|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|instrumental|extend|cover|\\bpersona\\b|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|更多选项|更多设置|歌词|创建|下载|删除|上传|登录/i.test(labelText)) {
       return true;
     }
     return /refresh recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|刷新推荐|添加风格|保存提示|撤销|清空/i.test(text);
   };
+  const hasVisibleStyleMagic = (panel) => {
+    const root = findStyleContainer(panel);
+    if (!root) return false;
+    return Array.from(root.querySelectorAll('button,[role="button"],a,label,[aria-label],[data-testid],[data-test-id]'))
+      .filter(visible)
+      .some((el) => {
+        const clickable = clickableAncestor(el);
+        if (!clickable || isDisabled(clickable)) return false;
+        const label = normalize(textOf(el));
+        const context = contextText(el);
+        const hasIcon = Boolean(clickable.querySelector?.('svg,img,[class*="icon"],[class*="magic"],[class*="wand"],[class*="spark"]'));
+        const classText = normalize(String(clickable.className || '') + ' ' + String(el.className || ''));
+        const styleText = normalize([
+          clickable.getAttribute?.('style'),
+          el.getAttribute?.('style')
+        ].filter(Boolean).join(' '));
+        const hasStyleMagicColor =
+          /accent-blue|bg-accent-blue|blue|primary-blue/i.test(classText) ||
+          /rgb\\(47,\\s*127,\\s*252\\)|rgb\\(59,\\s*130,\\s*246\\)|rgb\\(37,\\s*99,\\s*235\\)|#2f7ffc|#3b82f6|#2563eb|blue/i.test(styleText);
+        const positive = /personalize style prompt|magic wand|magic|wand|spark|auto.*style|style.*auto|generate.*style|style.*generate|inspire|style prompt|风格.*魔法|魔法.*风格|自动.*风格|风格.*自动|生成.*风格|风格.*生成|曲风.*生成|生成.*曲风/i;
+        if (isRejectedStyleMagicLabel(label, context)) return false;
+        if (/^styles?\$/i.test(label) && !hasStyleMagicColor) return false;
+        if (/chevron|accordion|collapse|expand/i.test(classText) && !hasStyleMagicColor) return false;
+        return positive.test(label) || positive.test(context) || hasStyleMagicColor || (hasIcon && hasStyleMagicColor);
+      });
+  };
   const findStyleExpansionButton = () => {
+    const hasVisibleStylesPanel = Boolean(
+      styleField ||
+      hasVisibleStyleMagic(stylePanel)
+    );
+    if (hasVisibleStylesPanel) return null;
     const lyricsRect = lyricsField?.getBoundingClientRect?.();
     const styleRect = styleField?.getBoundingClientRect?.();
     const candidates = Array.from(document.querySelectorAll(
@@ -5756,15 +6211,29 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         const clickable = clickableAncestor(el);
         if (!clickable || isDisabled(clickable)) return null;
         const label = normalize(textOf(el));
-        const context = contextText(el);
+        const ownMeta = normalize([
+          label,
+          clickable.getAttribute?.('aria-label'),
+          el.getAttribute?.('aria-label'),
+          clickable.getAttribute?.('data-testid'),
+          el.getAttribute?.('data-testid'),
+          clickable.getAttribute?.('data-test-id'),
+          el.getAttribute?.('data-test-id')
+        ].filter(Boolean).join(' '));
         const className = normalize(String(clickable.className || '') + ' ' + String(el.className || ''));
-        const text = normalize(label + ' ' + context);
-        const styleText = /\\bstyles?\\b|style of music|style prompt|music style|genre|风格|曲风/i.test(text);
-        const moreOptionsText = /more options|additional options|options|更多选项|更多设置/i.test(text);
+        const styleText = /\\bstyles?\\b|style of music|style prompt|music style|genre|风格|曲风/i.test(ownMeta);
+        const moreOptionsText = /more options|additional options|options|更多选项|更多设置/i.test(ownMeta);
         if (!styleText || moreOptionsText) return null;
-        if (/advanced|simple|create song|lyrics?|download|login|sign in|credits|refresh recommended|add style|save prompt|clear all|instrumental|创建|歌词|下载|登录|推荐风格|添加风格/i.test(label)) {
+        if (/advanced|simple|create song|lyrics?|download|login|sign in|credits|refresh recommended|add style|save prompt|clear all|instrumental|terms|policies|home|explore|studio|library|notifications|labs|more|创建|歌词|下载|登录|推荐风格|添加风格/i.test(ownMeta)) {
           return null;
         }
+        const rect = clickable.getBoundingClientRect();
+        const nearbyText = contextText(clickable);
+        const expandedContentVisible = Boolean(
+          styleField ||
+          hasVisibleStyleMagic(stylePanel) ||
+          /\\b\\d+\\s*\\/\\s*\\d+\\b|personalize style prompt|undo changes|save prompt|clear styles|refresh recommended styles|add style:|create-form-styles-wrapper|自动风格|生成风格|保存提示|清空风格/i.test(nearbyText)
+        );
         const expandedAttr = normalize(
           clickable.getAttribute?.('aria-expanded') ||
           el.getAttribute?.('aria-expanded') ||
@@ -5777,12 +6246,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           el.getAttribute?.('aria-label'),
           className
         ].filter(Boolean).join(' '));
-        const collapsed =
+        const inferredCollapsed =
+          !expandedContentVisible &&
+          rect.height <= 80 &&
+          /\\bstyles?\\b|style prompt|music style|genre|风格|曲风/i.test(
+            ownMeta
+          );
+        const explicitCollapsed =
           expandedAttr === 'false' ||
           /closed|collapsed|折叠|收起/i.test(stateText) ||
-          !styleField;
-        if (!collapsed && styleField) return null;
-        const rect = clickable.getBoundingClientRect();
+          inferredCollapsed;
+        if (!explicitCollapsed) return null;
         const belowLyrics = lyricsRect
           ? rect.top > lyricsRect.top + 20 &&
             rect.left < lyricsRect.right + 80 &&
@@ -5798,12 +6272,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         if (styleText) score += 26;
         if (expandedAttr === 'false') score += 12;
         if (/closed|collapsed|折叠|收起/i.test(stateText)) score += 8;
+        if (inferredCollapsed) score += 8;
         if (belowLyrics) score += 6;
         if (nearStyle) score += 6;
         if (/chevron|accordion|collapse|expand/i.test(className)) score += 4;
         if (clickable.tagName === 'BUTTON' || clickable.tagName === 'SUMMARY') score += 4;
         score -= Math.max(0, label.length - 80) / 30;
-        return { clickable, label, context, score };
+        return { clickable, label, context: ownMeta, score };
       })
       .filter(Boolean)
       .sort((left, right) => right.score - left.score);
@@ -5853,12 +6328,79 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       textSample: normalize(document.body?.innerText || '').slice(0, 1000)
     });
   };
+  const scrollParentFor = (element) => {
+    let node = element?.parentElement;
+    while (node && node !== document.body && node !== document.documentElement) {
+      const computed = window.getComputedStyle(node);
+      const overflowText = String(computed.overflowY || '') +
+        ' ' +
+        String(computed.overflow || '');
+      if (/(auto|scroll|overlay)/i.test(overflowText) &&
+          node.scrollHeight > node.clientHeight + 12) {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return document.scrollingElement || document.documentElement;
+  };
+  const scrollStylesPanelIntoView = (reason) => {
+    const target = findStyleContainer(styleSurface || stylePanel) ||
+      styleSurface ||
+      stylePanel;
+    if (!target) return null;
+    const before = target.getBoundingClientRect();
+    const parent = scrollParentFor(target);
+    const scrollDown = () => {
+      try {
+        target.scrollIntoView({ block: 'center', inline: 'nearest' });
+      } catch (_) {}
+      try {
+        parent?.scrollBy?.({ top: 220, left: 0, behavior: 'auto' });
+      } catch (_) {
+        try {
+          if (parent) parent.scrollTop += 220;
+        } catch (_) {}
+      }
+    };
+    scrollDown();
+    try {
+      window.setTimeout(scrollDown, 120);
+    } catch (_) {}
+    return JSON.stringify({
+      ok: false,
+      retry: true,
+      magicClicked: false,
+      styleScrolled: true,
+      message: 'Tomato 已滚动到 Suno Styles 工具栏，正在等待蓝色魔法棒出现。',
+      stylePrompt: '',
+      styleSource: 'sunoMagic',
+      styleScrollReason: reason,
+      styleScrollTarget: summarize(target),
+      styleScrollParent: summarize(parent),
+      styleScrollBefore: {
+        top: before.top,
+        bottom: before.bottom,
+        height: before.height
+      },
+      fieldCount: allFields.length,
+      lyricsField: summarize(lyricsField),
+      styleField: summarize(styleField),
+      stylePlaceholder,
+      lyricsAlreadyPresent,
+      fields,
+      textSample: normalize(document.body?.innerText || '').slice(0, 1000)
+    });
+  };
   const findStyleMagicButton = () => {
-    if (!styleField) return null;
-    const styleRect = styleField.getBoundingClientRect();
-    const candidates = Array.from(document.querySelectorAll(
-      'button,[role="button"],a,label,[aria-label],[data-testid],[data-test-id]'
-    ))
+    const styleAnchor = styleField || stylePanel;
+    if (!styleAnchor) return null;
+    const styleRect = styleAnchor.getBoundingClientRect();
+    const searchRoot = findStyleContainer(styleAnchor);
+    const roots = searchRoot ? [searchRoot] : [document];
+    const candidates = roots
+      .flatMap((root) => Array.from(root.querySelectorAll(
+        'button,[role="button"],a,label,[aria-label],[data-testid],[data-test-id]'
+      )))
       .filter(visible)
       .map((el) => {
         const clickable = clickableAncestor(el);
@@ -5872,12 +6414,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           rect.right >= styleRect.left - 260 &&
           rect.left <= styleRect.right + 260;
         const hasIcon = Boolean(clickable.querySelector?.('svg,img,[class*="icon"],[class*="magic"],[class*="wand"],[class*="spark"]'));
-        const hasAccent = /accent|aura|magic|wand|spark|blue/i.test(String(clickable.className || ''));
+        const classText = normalize(String(clickable.className || '') + ' ' + String(el.className || ''));
+        const styleText = normalize([
+          clickable.getAttribute?.('style'),
+          el.getAttribute?.('style')
+        ].filter(Boolean).join(' '));
+        const hasStyleMagicColor =
+          /accent-blue|bg-accent-blue|blue|primary-blue/i.test(classText) ||
+          /rgb\\(47,\\s*127,\\s*252\\)|rgb\\(59,\\s*130,\\s*246\\)|rgb\\(37,\\s*99,\\s*235\\)|#2f7ffc|#3b82f6|#2563eb|blue/i.test(styleText);
         const positive = /personalize style prompt|magic wand|magic|wand|spark|auto.*style|style.*auto|generate.*style|style.*generate|inspire|style prompt|风格.*魔法|魔法.*风格|自动.*风格|风格.*自动|生成.*风格|风格.*生成|曲风.*生成|生成.*曲风/i;
         const strongMagic = /personalize style prompt|magic wand|magic|wand|spark|魔法|自动.*风格|生成.*风格|曲风.*生成|inspire/i;
         if (isRejectedStyleMagicLabel(label, context)) return null;
-        if (!nearStyle) return null;
-        if (!positive.test(label) && !positive.test(context) && !hasAccent && !hasIcon) {
+        if (!searchRoot && !nearStyle) return null;
+        if (/^styles?\$/i.test(label) && !hasStyleMagicColor) return null;
+        if (/chevron|accordion|collapse|expand/i.test(classText) && !hasStyleMagicColor) return null;
+        if (!positive.test(label) && !positive.test(context) && !hasStyleMagicColor) {
           return null;
         }
         let score = 0;
@@ -5886,10 +6437,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         if (strongMagic.test(context)) score += 10;
         if (/style|music|genre|风格|曲风/i.test(label)) score += 8;
         if (/style|music|genre|风格|曲风/i.test(context)) score += 5;
-        if (hasAccent) score += 8;
+        if (hasStyleMagicColor) score += 12;
         if (hasIcon) score += 4;
         if (clickable.tagName === 'BUTTON') score += 3;
-        if (!label && (hasAccent || hasIcon)) score += 7;
+        if (!label && (hasStyleMagicColor || hasIcon)) score += 7;
         score -= Math.max(0, label.length - 80) / 25;
         return { clickable, label, context, score };
       })
@@ -5900,7 +6451,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return match;
   };
   const missing = [];
-  let styleValue = styleField ? getValue(styleField) : '';
+  let styleValue = styleSurface ? getStyleValue(styleSurface) : '';
   let stylePlaceholder = styleField ? getPlaceholder(styleField) : '';
   let styleFilled = false;
   let styleSource = '';
@@ -5949,15 +6500,31 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       textSample: normalize(document.body?.innerText || '').slice(0, 1000)
     });
   }
-  if (!styleField) {
+  if (!styleSurface) {
     const expanded = expandStylesIfNeeded();
     if (expanded) {
       return expanded;
     }
+    const scrolled = scrollStylesPanelIntoView('missingStyleSurface');
+    if (scrolled) {
+      return scrolled;
+    }
     missing.push('style');
   } else {
     const magic = findStyleMagicButton();
-    if (magicAlreadyRequested &&
+    const expandedStyleSurface = Boolean(styleField || magic ||
+      (magicAlreadyRequested && looksLikeSunoGeneratedStyle(styleValue)));
+    if (!expandedStyleSurface) {
+      const expanded = expandStylesIfNeeded();
+      if (expanded) {
+        return expanded;
+      }
+      const scrolled = scrollStylesPanelIntoView('styleSurfaceNeedsToolbar');
+      if (scrolled) {
+        return scrolled;
+      }
+      missing.push('style');
+    } else if (magicAlreadyRequested &&
         styleValue.length >= 6 &&
         styleValue !== ignoredStyle) {
       styleSource = 'sunoMagic';
@@ -5965,6 +6532,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       const expanded = expandStylesIfNeeded();
       if (expanded) {
         return expanded;
+      }
+      const scrolled = scrollStylesPanelIntoView('styleMagicNotVisible');
+      if (scrolled) {
+        return scrolled;
       }
       if (magicAlreadyRequested) {
         return JSON.stringify({
@@ -5985,10 +6556,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         });
       }
       missing.push('styleMagic');
-    } else if (styleValue.length >= 6 && !magicAlreadyRequested) {
+    } else if (styleField && styleValue.length >= 6 && !magicAlreadyRequested) {
       const ignoredStylePrompt = ignoredStyle || styleValue;
       styleFilled = setValue(styleField, '');
-      styleValue = getValue(styleField);
+      styleValue = getStyleValue(styleField);
       return JSON.stringify({
         ok: false,
         retry: true,
@@ -6105,10 +6676,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required String expectedStylePrompt,
     required String expectedLyrics,
     required bool requireExpectedMatch,
+    List<String> trustedSongUrls = const <String>[],
   }) {
     final expectedStyleJson = jsonEncode(expectedStylePrompt.trim());
     final expectedLyricsJson = jsonEncode(expectedLyrics.trim());
     final requireExpectedJson = jsonEncode(requireExpectedMatch);
+    final trustedSongUrlsJson = jsonEncode(
+      _mergeSunoSongUrls([trustedSongUrls]),
+    );
     return '''
 (() => {
   const expectedStyle = $expectedStyleJson;
@@ -6116,6 +6691,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const requireExpectedMatch = $requireExpectedJson;
   const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
   const normalizeLoose = (value) => normalize(value).toLowerCase();
+  const normalizeLyricsExact = (value) => normalize(value)
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .toLowerCase()
+    .replace(/[^a-z0-9\\u4e00-\\u9fff']+/g, ' ')
+    .replace(/\\s+/g, ' ')
+    .trim();
+  const expectedLyricsExact = normalizeLyricsExact(expectedLyrics);
+  const lyricsExactMatch = (text) => {
+    if (!expectedLyricsExact) return false;
+    return normalizeLyricsExact(text).includes(expectedLyricsExact);
+  };
   const expectedTokens = normalize(expectedLyrics)
     .split(/[^A-Za-z0-9\\u4e00-\\u9fff'-]+/g)
     .map((value) => value.trim())
@@ -6127,10 +6714,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     .filter((value) => value.length >= 24)
     .slice(0, 4)
     .map((value) => value.slice(0, 90));
-  // E28 Part2 exposed a real false-positive: an E28 Part1 song scored 12
-  // from nearby Alice chapter vocabulary when this threshold was only 6.
   const expectedMatchThreshold = lyricSamples.length > 0
-    ? 18
+    ? 14
     : Math.max(1, Math.min(8, Math.ceil(expectedTokens.length * 0.35)));
   const expectedScore = (text) => {
     const haystack = normalizeLoose(text);
@@ -6153,6 +6738,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       style.display !== 'none' &&
       Number(style.opacity || '1') > 0.01;
   };
+  const songIdFromUrl = (url) => {
+    const match = String(url || '').match(/\\/song\\/([0-9a-fA-F-]{36})/);
+    return match ? match[1].toLowerCase() : '';
+  };
+  const canonicalSongUrl = (url) => {
+    const songId = songIdFromUrl(url);
+    return songId ? 'https://suno.com/song/' + songId : String(url || '').trim();
+  };
+  const trustedSongUrls = new Set(
+    ($trustedSongUrlsJson).map(canonicalSongUrl).filter(Boolean)
+  );
+  const isTrustedSongUrl = (url) => trustedSongUrls.has(canonicalSongUrl(url));
   const incomplete = /generating|creating|processing|queued|loading|failed|error|retry|生成中|创建中|处理中|排队|失败|重试/i;
   const preview = /preview|demo|sample|clip|snippet|teaser|试听|試聽|预览|預覽|片段|样例|樣例/i;
   const rawAnchors = Array.from(document.querySelectorAll('a[href]'))
@@ -6162,22 +6759,34 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       const container = a.closest('article,section,[data-testid],[data-test-id],div') || a;
       const text = normalize(container.innerText || container.textContent || a.innerText || '');
       const title = normalize(container.querySelector?.('h1,h2,h3,[role="heading"]')?.innerText || a.innerText || '');
-      return { href: a.href, title, text, expectedScore: expectedScore(title + '\\n' + text) };
+      return {
+        href: canonicalSongUrl(a.href),
+        title,
+        text,
+        expectedScore: expectedScore(title + '\\n' + text),
+        lyricsExactMatch: lyricsExactMatch(title + '\\n' + text)
+      };
     })
     .filter((item) => item.href && !incomplete.test(item.text) && !preview.test(item.text));
   const anchors = rawAnchors
-    .filter((item) => !requireExpectedMatch || item.expectedScore >= expectedMatchThreshold);
+    .filter((item) => !requireExpectedMatch || item.lyricsExactMatch || isTrustedSongUrl(item.href));
   const rawRows = Array.from(document.querySelectorAll('[data-testid="clip-row"],.clip-row,[role="group"][aria-label]'))
     .map((row, index) => {
       const text = normalize(row.innerText || row.textContent || '');
       const title = normalize(row.getAttribute('aria-label') || row.querySelector?.('h1,h2,h3,[role="heading"]')?.innerText || text.split('\\n')[0] || '');
       const anchor = row.querySelector?.('a[href*="/song/"],a[href*="suno.com/song"]');
-      const href = anchor?.href || ('suno-row:' + index + ':' + (title || 'untitled'));
-      return { href, title, text, expectedScore: expectedScore(title + '\\n' + text) };
+      const href = canonicalSongUrl(anchor?.href || '') || ('suno-row:' + index + ':' + (title || 'untitled'));
+      return {
+        href,
+        title,
+        text,
+        expectedScore: expectedScore(title + '\\n' + text),
+        lyricsExactMatch: lyricsExactMatch(title + '\\n' + text)
+      };
     })
     .filter((item) => item.href && !incomplete.test(item.text) && !preview.test(item.text));
   const rows = rawRows
-    .filter((item) => !requireExpectedMatch || item.expectedScore >= expectedMatchThreshold);
+    .filter((item) => !requireExpectedMatch || item.lyricsExactMatch || isTrustedSongUrl(item.href));
   const seen = new Set();
   const songCandidates = anchors.concat(rows).filter((item) => {
     if (seen.has(item.href)) return false;
@@ -6187,14 +6796,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const rawSeen = new Set();
   const unverifiedSongCandidates = rawAnchors.concat(rawRows).filter((item) => {
     if (!/\\/song\\//i.test(item.href)) return false;
+    if (requireExpectedMatch && !item.lyricsExactMatch && !isTrustedSongUrl(item.href)) return false;
     if (rawSeen.has(item.href)) return false;
     rawSeen.add(item.href);
     return true;
   }).sort((left, right) => right.expectedScore - left.expectedScore);
-  const songIdFromUrl = (url) => {
-    const match = String(url || '').match(/\\/song\\/([0-9a-fA-F-]{36})/);
-    return match ? match[1] : '';
-  };
   const mediaRank = (url) => {
     if (/\\.mp3(?:[?#]|\$)/i.test(url)) return 4;
     if (/\\.m4a(?:[?#]|\$)/i.test(url)) return 3;
@@ -6220,9 +6826,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (matched) mediaBySongUrl[song.href] = matched;
   }
   const currentPageExpectedScore = expectedScore(document.body?.innerText || document.body?.textContent || '');
+  const currentPageLyricsExactMatch = lyricsExactMatch(document.body?.innerText || document.body?.textContent || '');
+  const canonicalCurrentUrl = canonicalSongUrl(location.href);
   const currentSongUrl = /\\/song\\//i.test(location.href) &&
-    (!requireExpectedMatch || currentPageExpectedScore >= expectedMatchThreshold)
-    ? location.href
+    (!requireExpectedMatch ||
+      currentPageLyricsExactMatch ||
+      isTrustedSongUrl(canonicalCurrentUrl))
+    ? canonicalCurrentUrl
     : '';
   // Suno detail pages can match the lyrics without exposing their own /song/
   // anchor. Keep the verified current URL so Dart can download by songUrl.
@@ -6259,6 +6869,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     mediaUrls,
     mediaBySongUrl,
     currentPageExpectedScore,
+    currentPageLyricsExactMatch,
     expectedMatchThreshold,
     linkCount: songCandidates.length
   });
@@ -6272,6 +6883,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required String expectedStylePrompt,
     required String expectedLyrics,
     required bool requireExpectedMatch,
+    List<String> trustedSongUrls = const <String>[],
     bool dryRun = false,
     String? pendingSongUrl,
   }) {
@@ -6282,17 +6894,43 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final requireExpectedJson = jsonEncode(requireExpectedMatch);
     final dryRunJson = jsonEncode(dryRun);
     final pendingJson = jsonEncode((pendingSongUrl ?? '').trim());
+    final trustedSongUrlsJson = jsonEncode(
+      _mergeSunoSongUrls([trustedSongUrls]),
+    );
     return '''
 (() => {
-  const downloadedSongUrls = new Set($downloadedJson);
-  const allowedSongUrls = new Set($allowedJson);
+  const canonicalSongUrl = (url) => {
+    const match = String(url || '').match(/\\/song\\/([0-9a-fA-F-]{36})/);
+    return match ? 'https://suno.com/song/' + match[1].toLowerCase() : String(url || '').trim();
+  };
+  const downloadedSongUrls = new Set(
+    ($downloadedJson).map(canonicalSongUrl).filter(Boolean)
+  );
+  const allowedSongUrls = new Set(
+    ($allowedJson).map(canonicalSongUrl).filter(Boolean)
+  );
+  const trustedSongUrls = new Set(
+    ($trustedSongUrlsJson).map(canonicalSongUrl).filter(Boolean)
+  );
   const expectedStyle = $expectedStyleJson;
   const expectedLyrics = $expectedLyricsJson;
   const requireExpectedMatch = $requireExpectedJson;
   const dryRun = $dryRunJson;
-  const pendingSongUrl = $pendingJson;
+  const pendingSongUrl = canonicalSongUrl($pendingJson);
   const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
   const normalizeLoose = (value) => normalize(value).toLowerCase();
+  const normalizeLyricsExact = (value) => normalize(value)
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .toLowerCase()
+    .replace(/[^a-z0-9\\u4e00-\\u9fff']+/g, ' ')
+    .replace(/\\s+/g, ' ')
+    .trim();
+  const expectedLyricsExact = normalizeLyricsExact(expectedLyrics);
+  const lyricsExactMatch = (text) => {
+    if (!expectedLyricsExact) return false;
+    return normalizeLyricsExact(text).includes(expectedLyricsExact);
+  };
   const expectedTokens = normalize(expectedLyrics)
     .split(/[^A-Za-z0-9\\u4e00-\\u9fff'-]+/g)
     .map((value) => value.trim())
@@ -6304,10 +6942,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     .filter((value) => value.length >= 24)
     .slice(0, 4)
     .map((value) => value.slice(0, 90));
-  // Keep this above neighboring-chapter weak matches; the detail page must
-  // show strong overlap with the exact lyrics before we download its audio.
   const expectedMatchThreshold = lyricSamples.length > 0
-    ? 18
+    ? 14
     : Math.max(1, Math.min(8, Math.ceil(expectedTokens.length * 0.35)));
   const expectedScore = (text) => {
     const haystack = normalizeLoose(text);
@@ -6323,8 +6959,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const currentPageExpectedScore = expectedScore(
     document.body?.innerText || document.body?.textContent || ''
   );
-  const isExpectedMatch = (score) =>
-    !requireExpectedMatch || score >= expectedMatchThreshold;
+  const currentPageLyricsExactMatch = lyricsExactMatch(
+    document.body?.innerText || document.body?.textContent || ''
+  );
+  const isExpectedMatch = (text) =>
+    !requireExpectedMatch || lyricsExactMatch(text);
+  const isTrustedSongUrl = (url) => trustedSongUrls.has(canonicalSongUrl(url));
+  const isBoundSongUrl = (url) => {
+    const canonical = canonicalSongUrl(url);
+    return Boolean(canonical) && (
+      allowedSongUrls.has(canonical) ||
+      isTrustedSongUrl(canonical)
+    );
+  };
   const visible = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
@@ -6448,7 +7095,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       el.querySelector?.('a[href*="/song/"],a[href*="suno.com/song"]') ||
       el.closest?.('[data-testid],[data-test-id],article,section,div')?.querySelector?.('a[href*="/song/"],a[href*="suno.com/song"]');
     const href = String(anchor?.href || '');
-    return href || '';
+    return canonicalSongUrl(href) || '';
   };
   const titleFor = (el) => {
     const container = el.closest?.('article,section,[data-testid],[data-test-id],div') || el;
@@ -6472,14 +7119,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       const label = textOf(el);
       const context = contextText(el);
       const matchScore = expectedScore(context);
+      const contextMatchesLyrics = isExpectedMatch(context);
       const inOpenMenu = Boolean(menuLayerFor(clickable) || menuLayerFor(el));
-      if (requireExpectedMatch && !pendingSongUrl && !isExpectedMatch(matchScore)) return null;
+      const hasBoundSongTarget =
+        Boolean(pendingSongUrl) || allowedSongUrls.size > 0 || trustedSongUrls.size > 0;
+      if (requireExpectedMatch && !hasBoundSongTarget && !contextMatchesLyrics) return null;
       const href = String(clickable.href || el.href || '');
       if (/suno\\.com\\/@|\\/\\@/i.test(href)) return null;
       if (/\\/style\\//i.test(href)) return null;
       if (href && !/\\/song\\//i.test(href) && !/download|audio|mp3/i.test(href)) return null;
       const songUrl = songUrlFor(clickable) || songUrlFor(el);
       const onSongDetail = /\\/song\\//i.test(location.href);
+      const currentSongUrl = canonicalSongUrl(location.href);
       const currentUrlMatchesPending = pendingSongUrl &&
         location.href.startsWith(pendingSongUrl);
       if (allowedSongUrls.size > 0 && !songUrl && !onSongDetail && !pendingSongUrl) return null;
@@ -6487,18 +7138,25 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (pendingSongUrl && songUrl && songUrl !== pendingSongUrl) return null;
       if (songUrl && downloadedSongUrls.has(songUrl)) return null;
       if (!songUrl && pendingSongUrl && downloadedSongUrls.has(pendingSongUrl)) return null;
-      if (requireExpectedMatch && songUrl && !isExpectedMatch(matchScore)) {
+      if (requireExpectedMatch && songUrl && !contextMatchesLyrics && !isBoundSongUrl(songUrl)) {
         const trustedSongDetail =
-          onSongDetail && location.href.startsWith(songUrl) && isExpectedMatch(currentPageExpectedScore);
+          onSongDetail &&
+          currentSongUrl === songUrl &&
+          (isBoundSongUrl(songUrl) || currentPageLyricsExactMatch);
         if (!trustedSongDetail) return null;
       }
       if (requireExpectedMatch && pendingSongUrl && !songUrl) {
+        const pendingTrusted = isBoundSongUrl(pendingSongUrl);
         const trustedPendingDetail =
-          onSongDetail && currentUrlMatchesPending && isExpectedMatch(currentPageExpectedScore);
+          onSongDetail &&
+          currentUrlMatchesPending &&
+          (pendingTrusted || currentPageLyricsExactMatch);
         const trustedLibraryContext =
-          !onSongDetail && isExpectedMatch(matchScore);
+          !onSongDetail && contextMatchesLyrics;
         const trustedOpenMenu =
-          inOpenMenu && !onSongDetail && isExpectedMatch(currentPageExpectedScore);
+          inOpenMenu &&
+          ((onSongDetail && pendingTrusted) ||
+            (!onSongDetail && currentPageLyricsExactMatch));
         if (!trustedPendingDetail && !trustedLibraryContext && !trustedOpenMenu) {
           return null;
         }
@@ -6556,7 +7214,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (menuPattern.test(label)) score += 9;
       if (inOpenMenu && audioPattern.test(label)) score += 28;
       if (inOpenMenu && downloadPattern.test(label)) score += 18;
-      if (isExpectedMatch(matchScore)) score += Math.min(18, 6 + matchScore * 2);
+      if (contextMatchesLyrics) score += 18;
       if (/download|audio|mp3/i.test(href)) score += 20;
       if (clickable.tagName === 'A' && href) score += 6;
       if (clickable.tagName === 'BUTTON') score += 4;
@@ -6630,6 +7288,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         target: summarize(item.clickable)
       })),
       currentPageExpectedScore,
+      currentPageLyricsExactMatch,
       expectedMatchThreshold
     });
   }
@@ -6652,6 +7311,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         target: summarize(item.clickable)
       })),
       currentPageExpectedScore,
+      currentPageLyricsExactMatch,
       expectedMatchThreshold
     });
   }
@@ -6675,6 +7335,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         target: summarize(item.clickable)
       })),
       currentPageExpectedScore,
+      currentPageLyricsExactMatch,
       expectedMatchThreshold
     });
   }
@@ -6697,6 +7358,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       target: summarize(item.clickable)
     })),
     currentPageExpectedScore,
+    currentPageLyricsExactMatch,
     expectedMatchThreshold
   });
 })()
@@ -7328,7 +7990,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     await _disposeListeningPlayer();
 
     try {
-      final handle = await TtsMemoryCacheService.load(
+      final handle = await TtsMemoryCacheService.loadFile(
         text: text,
         voiceType: TtsService.defaultVoiceType,
         preferRequestedVoice: false,
@@ -7342,9 +8004,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final player = AudioPlayer();
       _listeningPlayer = player;
       try {
-        await _playAudioSourceToEnd(
+        await _playAudioFileToEnd(
           player: player,
-          source: handle.toAudioSource(),
+          path: handle.filePath,
           isActive: () => _isActiveListeningPlayback(token),
         );
       } on TimeoutException {
@@ -7398,12 +8060,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final player = AudioPlayer();
     _listeningPlayer = player;
     var currentPlaybackIndex = safeStart;
-    final pendingHandles = <int, Future<TtsMemoryHandle>>{};
+    final pendingHandles = <int, Future<TtsFileHandle>>{};
 
-    Future<TtsMemoryHandle> loadHandleAt(int itemIndex) {
+    Future<TtsFileHandle> loadHandleAt(int itemIndex) {
       final item = cleanItems[itemIndex];
       final english = (item['english'] ?? '').toString().trim();
-      return TtsMemoryCacheService.load(
+      return TtsMemoryCacheService.loadFile(
         text: english,
         voiceType: TtsService.defaultVoiceType,
         preferRequestedVoice: false,
@@ -7450,9 +8112,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         if (!singleItem) {
           warmHandleAt(index + 1);
         }
-        await _playAudioSourceToEnd(
+        await _playAudioFileToEnd(
           player: player,
-          source: englishHandle.toAudioSource(),
+          path: englishHandle.filePath,
           isActive: () => _isActiveListeningPlayback(token),
         );
       }
@@ -7546,7 +8208,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           text: newEnglish,
           deleteDiskCache: true,
         );
-        await TtsMemoryCacheService.load(
+        await TtsMemoryCacheService.loadFile(
           text: newEnglish,
           voiceType: TtsService.defaultVoiceType,
           preferRequestedVoice: false,
@@ -8213,16 +8875,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required int? requestedSeriesId,
     required String requestedSeriesTitle,
     required String requestedSeriesDescription,
-    required String fallbackTitle,
+    required List<BookCharacter> requestedSeriesCharacters,
+    required bool requestedSeriesCharactersProvided,
   }) async {
     if (requestedSeriesId != null) {
       final series =
           await DatabaseService.getStorySeriesById(requestedSeriesId);
       if (series != null) {
         final description = requestedSeriesDescription.trim();
-        if (description.isNotEmpty && description != series.description) {
+        final characters = requestedSeriesCharacters;
+        if ((description.isNotEmpty && description != series.description) ||
+            requestedSeriesCharactersProvided) {
           final updated = series.copyWith(
-            description: description,
+            description:
+                description.isNotEmpty ? description : series.description,
+            characters: requestedSeriesCharactersProvided
+                ? characters
+                : series.characters,
             updatedAt: DateTime.now(),
           );
           await DatabaseService.updateStorySeries(updated);
@@ -8232,18 +8901,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
 
-    final title = requestedSeriesTitle.isNotEmpty
-        ? requestedSeriesTitle
-        : fallbackTitle.trim().isEmpty
-            ? 'Picture Book Story'
-            : fallbackTitle.trim();
+    final title = requestedSeriesTitle.trim();
+    if (title.isEmpty) {
+      throw const FormatException('请填写书籍名称');
+    }
     final existingSeries = await DatabaseService.getStorySeries();
     for (final series in existingSeries) {
       if (series.title.trim().toLowerCase() == title.trim().toLowerCase()) {
         final description = requestedSeriesDescription.trim();
-        if (description.isNotEmpty && description != series.description) {
+        final characters = requestedSeriesCharacters;
+        if ((description.isNotEmpty && description != series.description) ||
+            requestedSeriesCharactersProvided) {
           final updated = series.copyWith(
-            description: description,
+            description:
+                description.isNotEmpty ? description : series.description,
+            characters: requestedSeriesCharactersProvided
+                ? characters
+                : series.characters,
             updatedAt: DateTime.now(),
           );
           await DatabaseService.updateStorySeries(updated);
@@ -8256,7 +8930,37 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return PictureBookService.createSeries(
       title: title,
       description: requestedSeriesDescription,
+      characters: requestedSeriesCharacters,
     );
+  }
+
+  Future<StorySeries> _ensureStorySeriesDescription({
+    required StorySeries series,
+    required Article article,
+  }) async {
+    final seriesId = series.id;
+    if (seriesId == null || series.description.trim().isNotEmpty) {
+      return series;
+    }
+    final suggestion = await PictureBookService.suggestBookDescription(
+      article: article,
+      seriesTitle: series.title,
+      currentDescription: series.description,
+      currentCharacters: series.characters,
+    );
+    final trimmed = suggestion.description.trim();
+    if (trimmed.isEmpty) {
+      return series;
+    }
+    final updated = series.copyWith(
+      description: trimmed,
+      characters: suggestion.characters.isNotEmpty
+          ? suggestion.characters
+          : series.characters,
+      updatedAt: DateTime.now(),
+    );
+    await DatabaseService.updateStorySeries(updated);
+    return updated;
   }
 
   Future<String> _resolveArticleTitle(
@@ -8278,58 +8982,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           : normalizedCandidate;
     }
 
-    try {
-      final reply = await PracticeTextService.suggestArticleTitle(
-        content: englishContent,
-      ).timeout(const Duration(seconds: 12));
-      final generated = _normalizeEnglishWordJoiners(reply.text.trim());
-      if (generated.isNotEmpty) {
-        return generated.length > 80 ? generated.substring(0, 80) : generated;
-      }
-    } catch (error) {
-      TomatoLogger.warn(
-        category: 'article',
-        event: 'title_suggestion.failed',
-        error: error,
-      );
+    final reply = await PracticeTextService.suggestArticleTitle(
+      content: englishContent,
+    );
+    final generated = _normalizeEnglishWordJoiners(reply.text.trim());
+    if (generated.isEmpty) {
+      throw const TextGenerationException('标题生成失败：AI 未返回有效标题，请重试。');
     }
-
-    final fallback = _fallbackArticleTitle(englishContent);
-    return fallback.length > 80 ? fallback.substring(0, 80) : fallback;
-  }
-
-  String _fallbackArticleTitle(String englishContent) {
-    final sentences = NlpService.splitSentences(englishContent);
-    final firstSentence = sentences.isEmpty ? null : sentences.first;
-    final base = (firstSentence ?? englishContent)
-        .replaceAll(RegExp(r"[^A-Za-z0-9\s'\-]"), ' ')
-        .trim();
-    final words = base
-        .split(RegExp(r'\s+'))
-        .where((word) => RegExp(r'[A-Za-z]').hasMatch(word))
-        .take(5)
-        .toList(growable: false);
-    if (words.isEmpty) {
-      return 'English Story';
-    }
-    return words.map(_titleCaseFallbackWord).join(' ');
-  }
-
-  String _titleCaseFallbackWord(String word) {
-    final cleaned = word
-        .replaceAll(RegExp(r'[‘’]'), "'")
-        .replaceAll(RegExp(r"[^A-Za-z'\-]"), '');
-    if (cleaned.isEmpty) {
-      return word;
-    }
-    return cleaned
-        .split('-')
-        .map(
-          (part) => part.isEmpty
-              ? part
-              : '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
-        )
-        .join('-');
+    return generated.length > 80 ? generated.substring(0, 80) : generated;
   }
 
   Future<void> _saveArticleTranslationsAtCreate({
@@ -8362,16 +9022,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         sentencesByIndex: missingSentences,
         articleId: articleId,
       );
-      final source = batch.source == TextGenerationReplySource.cached
-          ? 'cached_batch_at_create'
-          : 'generated_batch_at_create';
       for (final entry in batch.translationsByIndex.entries) {
         rowsByIndex[entry.key] = ArticleSentenceTranslation(
           articleId: articleId,
           sentenceIndex: entry.key,
           englishSentence: sentences[entry.key],
           chineseText: entry.value,
-          source: source,
+          source: 'generated_batch_at_create',
           createdAt: createdAt,
           updatedAt: createdAt,
         );
@@ -8410,7 +9067,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           : await PracticeTextService.translateToEnglishForPractice(
               content: trimmed,
               articleId: articleId,
-            ).timeout(const Duration(seconds: 12));
+            );
       final translated = _normalizeEnglishWordJoiners(reply.text.trim());
       if (strictAi && translated.isEmpty) {
         throw const TextGenerationException(
@@ -8620,6 +9277,46 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       pageTransition: RecordingPageTransition.parse(transitionText),
       fps: fps <= 0 ? RecordingExportService.defaultFps : fps,
     );
+  }
+
+  Future<void> _openWithSystemPlayer(String filePath) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw FormatException('视频文件不存在：$filePath');
+    }
+    if (Platform.isWindows) {
+      await Process.start('cmd', ['/c', 'start', '', file.path]);
+      return;
+    }
+    if (Platform.isMacOS) {
+      await Process.start('open', [file.path]);
+      return;
+    }
+    if (Platform.isLinux) {
+      await Process.start('xdg-open', [file.path]);
+      return;
+    }
+    throw const FormatException('当前平台不支持调用系统播放器');
+  }
+
+  Future<void> _openWithSystemFileManager(String directoryPath) async {
+    final directory = Directory(directoryPath);
+    if (!await directory.exists()) {
+      throw FormatException('目录不存在：$directoryPath');
+    }
+    if (Platform.isWindows) {
+      await Process.start('explorer.exe', [directory.path]);
+      return;
+    }
+    if (Platform.isMacOS) {
+      await Process.start('open', [directory.path]);
+      return;
+    }
+    if (Platform.isLinux) {
+      await Process.start('xdg-open', [directory.path]);
+      return;
+    }
+    throw const FormatException('当前平台不支持打开文件管理器');
   }
 
   Map<int, String> _payloadSubtitleTranslations(Map<String, dynamic> payload) {
@@ -9594,6 +10291,25 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         .toList(growable: false);
   }
 
+  List<BookCharacter> _payloadBookCharacters(
+    Map<String, dynamic> payload,
+    String key,
+  ) {
+    return [
+      for (final item in _payloadMapList(payload, key))
+        if ((item['name']?.toString().trim() ?? '').isNotEmpty &&
+            (item['description']?.toString().trim() ?? '').isNotEmpty)
+          BookCharacter(
+            name:
+                item['name']!.toString().replaceAll(RegExp(r'\s+'), ' ').trim(),
+            description: item['description']!
+                .toString()
+                .replaceAll(RegExp(r'\s+'), ' ')
+                .trim(),
+          ),
+    ];
+  }
+
   Map<String, dynamic> _decodeJsonObject(String? text) {
     final raw = text?.trim() ?? '';
     if (raw.isEmpty) {
@@ -9631,7 +10347,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final urls = <String>[];
     if (value is List) {
       for (final item in value) {
-        final text = _nonEmptyString(item);
+        final text = _canonicalSunoSongUrl(item);
         if (text == null || _isSyntheticSunoSongKey(text)) {
           continue;
         }
@@ -9646,7 +10362,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final urls = <String>[];
     for (final source in sources) {
       for (final value in source) {
-        final text = _nonEmptyString(value);
+        final text = _canonicalSunoSongUrl(value);
         if (text == null || _isSyntheticSunoSongKey(text) || !seen.add(text)) {
           continue;
         }
@@ -9654,6 +10370,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
     return urls;
+  }
+
+  List<String> _trustedSunoSongUrls([Iterable<Object?> extra = const []]) =>
+      _mergeSunoSongUrls([_sunoTrustedSongUrls, extra]);
+
+  void _trustSunoSongUrls(Iterable<Object?> values) {
+    _sunoTrustedSongUrls.addAll(
+      _mergeSunoSongUrls([values]).where(
+        (value) => !_sunoRejectedCandidateSongUrls.contains(value),
+      ),
+    );
   }
 
   String _songTimelineKey(int articleId, String versionId) =>
@@ -9751,17 +10478,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       ..clear()
       ..addAll(
         _sunoVersions
-            .map(
-              (version) => (version.songUrl ?? '').trim(),
-            )
-            .where((value) => value.isNotEmpty),
+            .map((version) => _canonicalSunoSongUrl(version.songUrl))
+            .whereType<String>()
+            .where(
+                (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
       );
   }
 
   void _syncDownloadedSunoUrlsIntoDetected() {
     _sunoDetectedSongUrls.addAll(
-      _sunoVersions.map((version) => (version.songUrl ?? '').trim()).where(
-          (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
+      _sunoVersions
+          .map((version) => _canonicalSunoSongUrl(version.songUrl))
+          .whereType<String>()
+          .where(
+              (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
     );
   }
 
@@ -9782,7 +10512,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (entryArticleId == null || entryArticleId == articleId) {
         continue;
       }
-      final songUrl = _nonEmptyString(metadata['songUrl']);
+      final songUrl = _canonicalSunoSongUrl(metadata['songUrl']);
       if (songUrl != null && !_isSyntheticSunoSongKey(songUrl)) {
         urls.add(songUrl);
       }
@@ -9796,7 +10526,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           if (version is! Map) {
             continue;
           }
-          final versionSongUrl = _nonEmptyString(version['songUrl']);
+          final versionSongUrl = _canonicalSunoSongUrl(version['songUrl']);
           if (versionSongUrl != null &&
               !_isSyntheticSunoSongKey(versionSongUrl)) {
             urls.add(versionSongUrl);
@@ -9816,14 +10546,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return false;
     }
     final downloaded = _sunoVersions
-        .map((version) => (version.songUrl ?? '').trim())
-        .where((value) => value.isNotEmpty)
+        .map((version) => _canonicalSunoSongUrl(version.songUrl))
+        .whereType<String>()
+        .where((value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value))
         .toSet();
-    return _sunoDetectedSongUrls.every(downloaded.contains);
+    return _sunoDetectedSongUrls.every((value) {
+      final songUrl = _canonicalSunoSongUrl(value);
+      return songUrl != null && downloaded.contains(songUrl);
+    });
   }
 
   String? _pendingSunoDownloadTarget(List<String> missingSongUrls) {
-    final currentPending = (_sunoPendingDownloadSongUrl ?? '').trim();
+    final currentPending =
+        _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl) ?? '';
     if (currentPending.isNotEmpty && missingSongUrls.contains(currentPending)) {
       return currentPending;
     }
