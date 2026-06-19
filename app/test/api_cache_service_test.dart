@@ -819,6 +819,73 @@ void main() {
     expect(seenBody?['parameters'], containsPair('size', '2688*1536'));
   });
 
+  test(
+      'Aliyun Wanx single image generation uses reference without sequential mode',
+      () async {
+    AppConfig.setRuntimeConfigForTest(
+      aiProvider: AppConfig.aiProviderAliyunBailian,
+      aliyunBailianApiKey: 'dashscope-single-key-1234567890',
+      aliyunBailianApiBaseUrl: 'https://dashscope.example.com/api/v1/',
+      aliyunBailianImageModel: 'wan2.7-test',
+      aliyunBailianImageSize: '2K',
+    );
+    final referenceFile = File(
+      '${tempDir.path}${Platform.pathSeparator}wanx-reference.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 7, 7, 7]);
+    Map<String, dynamic>? seenBody;
+    AliyunWanxImageService.setOverridesForTest(
+      post: ({required endpoint, required headers, required body}) async {
+        seenBody = body;
+        return {
+          'output': {'task_id': 'task-picture-single-1'},
+        };
+      },
+      get: ({required endpoint, required headers}) async {
+        return {
+          'output': {
+            'task_status': 'SUCCEEDED',
+            'results': [
+              {
+                'image': 'data:image/png;base64,${base64Encode([
+                      137,
+                      80,
+                      78,
+                      71,
+                      41
+                    ])}',
+              },
+            ],
+          },
+        };
+      },
+    );
+
+    final results = await PictureBookImageService.generatePictureBookImageGroup(
+      requests: const [
+        VolcImageBatchRequest(
+          pageIndex: 1,
+          prompt: 'Image two: Alice looks back at the same garden.',
+          promptMetadata: {'page': 1},
+        ),
+      ],
+      seriesId: 21,
+      referenceImagePaths: [referenceFile.path],
+      groupPromptOverride: 'Single replacement Alice garden scene.',
+      useSequential: false,
+      reusePartialCache: false,
+    );
+
+    expect(results, hasLength(1));
+    expect(results.single.source, VolcImageResultSource.remote);
+    expect(seenBody?['parameters'], containsPair('enable_sequential', false));
+    expect(seenBody?['parameters'], containsPair('n', 1));
+    final messages = ((seenBody?['input'] as Map)['messages'] as List);
+    final content = (messages.single as Map)['content'] as List;
+    expect((content.first as Map)['image'], startsWith('data:image/png;'));
+    expect((content.last as Map)['text'],
+        'Single replacement Alice garden scene.');
+  });
+
   test('Aliyun Wanx settings sizes map to landscape API sizes', () {
     expect(AliyunWanxImageService.apiImageSizeForSetting('2K'), '2688*1536');
     expect(AliyunWanxImageService.apiImageSizeForSetting('1K'), '1696*960');
@@ -2165,6 +2232,176 @@ but the three were all crowded together at one corner of it.
     expect(pages.first.promptJson, contains('Edited scene 1 description.'));
     final updatedSeries = await DatabaseService.getStorySeriesById(series.id!);
     expect(updatedSeries?.description, contains('blue dress and white apron'));
+  });
+
+  test('picture-book single-page prompt review replaces only target page',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-page-review-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Single Page Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    final referenceFile = File(
+      '${tempDir.path}${Platform.pathSeparator}page-0-reference.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 51]);
+    final oldTargetFile = File(
+      '${tempDir.path}${Platform.pathSeparator}page-1-old.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 52]);
+    final now = DateTime(2026, 1, 1);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Alice walks into the garden.',
+        promptJson: '{}',
+        imagePath: referenceFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 1,
+        sentenceStartIndex: 1,
+        sentenceEndIndex: 1,
+        paragraphText: 'The Queen points at the croquet ground.',
+        promptJson: '{}',
+        imagePath: oldTargetFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final review = await PictureBookService.pagePromptReviewPayload(
+      article: article,
+      chapter: chapter,
+      pageIndex: 1,
+    );
+
+    expect(review['mode'], 'singlePage');
+    expect(review['targetPageIndex'], 1);
+    expect(review['referencePageIndex'], 0);
+    expect(review['scenes'], hasLength(1));
+    expect((review['scenes'] as List).single['pageIndex'], 1);
+    expect(review['groupPrompt'], contains('Generate exactly one picture'));
+    expect(review['groupPrompt'], contains('Image 2:'));
+    expect(review['groupPrompt'], isNot(contains('Image 1:')));
+
+    Map<String, dynamic>? imageBody;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageBody = body;
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 53])
+            },
+          ],
+        };
+      },
+    );
+
+    await PictureBookService.confirmPagePromptReview(
+      reviewId: review['reviewId'].toString(),
+      groupPrompt: 'Edited single-page prompt for Image 2 only.',
+      bookDescription: review['bookDescription'].toString(),
+      bookCharacters: const [],
+      newCharacters: const [],
+      chapterDescription: review['chapterDescription'].toString(),
+      scenes: [
+        for (final scene in review['scenes'] as List)
+          {
+            ...Map<String, dynamic>.from(scene as Map),
+            'sceneDescription': 'Edited only the Queen croquet scene.',
+          },
+      ],
+    );
+
+    expect(imageBody?['sequential_image_generation'], 'disabled');
+    expect((imageBody?['image'] as List), hasLength(1));
+    expect(imageBody?['prompt'], 'Edited single-page prompt for Image 2 only.');
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(2));
+    expect(pages[0].imagePath, referenceFile.path);
+    expect(pages[0].status, 'ready');
+    expect(pages[1].status, 'ready');
+    expect(pages[1].imagePath, isNot(oldTargetFile.path));
+    expect(pages[1].promptJson, contains('singlePage'));
+    expect(
+        pages[1].promptJson, contains('Edited only the Queen croquet scene'));
+
+    final updatedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    final summary = jsonDecode(updatedChapter!.summaryJson) as Map;
+    final scenes = summary['scenes'] as List;
+    expect(scenes, hasLength(2));
+    expect(scenes.first['sceneDescription'], 'Alice walks into the garden.');
+    expect(scenes.last['sceneDescription'],
+        'Edited only the Queen croquet scene.');
+  });
+
+  test('picture-book single-page review falls back to group when no reference',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-page-fallback-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Single Page Fallback Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+
+    final review = await PictureBookService.pagePromptReviewPayload(
+      article: article,
+      chapter: chapter,
+      pageIndex: 1,
+    );
+
+    expect(review['mode'], 'group');
+    expect(review['regenerate'], isTrue);
+    expect(review['scenes'], hasLength(2));
+    expect(review.containsKey('targetPageIndex'), isFalse);
+    expect(review.containsKey('referencePageIndex'), isFalse);
   });
 
   test('picture-book cover payload uses the first ready generated image',

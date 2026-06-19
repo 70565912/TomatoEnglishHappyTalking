@@ -482,6 +482,26 @@ function App() {
     }
   };
 
+  const openPictureBookPagePromptReview = async (articleId: number, pageIndex: number) => {
+    setPicturePromptReviewLoadingArticleId(articleId);
+    setNotice(`正在准备第 ${pageIndex + 1} 页绘本提示词`);
+    try {
+      const review = await sendNative<PictureBookPromptReview>('pictureBook.pagePromptReview', {
+        articleId,
+        pageIndex,
+      });
+      if (!review?.reviewId || !Array.isArray(review.scenes)) {
+        throw new Error('绘本提示词准备失败');
+      }
+      setPicturePromptReview(review);
+      setNotice(null);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '绘本提示词准备失败');
+    } finally {
+      setPicturePromptReviewLoadingArticleId(null);
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
     const offArticles = onNativeEvent<{ articles: Article[]; series?: StorySeries[] }>(
@@ -764,6 +784,7 @@ function App() {
             onNavigate={navigate}
             onNotice={setNotice}
             onOpenPicturePromptReview={openPictureBookPromptReview}
+            onOpenPicturePagePromptReview={openPictureBookPagePromptReview}
             onArticlesUpdated={(payload) => {
               if (payload.articles) setArticles(payload.articles);
               if (payload.series) setSeries(payload.series);
@@ -850,7 +871,11 @@ function App() {
           onConfirmed={(payload) => {
             setPictureBookState(payload);
             setPicturePromptReview(null);
-            setNotice('已提交绘本组图生成');
+            setNotice(
+              picturePromptReview.mode === 'singlePage'
+                ? '已提交单张绘本图生成'
+                : '已提交绘本组图生成',
+            );
           }}
           onNotice={setNotice}
         />
@@ -858,7 +883,7 @@ function App() {
       {picturePromptReviewLoadingArticleId !== null && (
         <AiBlockingOverlay
           title="正在准备绘本提示词"
-          detail="正在生成或读取章节分镜计划，请等待审核弹窗打开。"
+          detail="正在生成或读取分镜计划，请等待审核弹窗打开。"
           timeoutSeconds={180}
         />
       )}
@@ -1895,6 +1920,7 @@ function CreationCenterPage({
   onNavigate,
   onNotice,
   onOpenPicturePromptReview,
+  onOpenPicturePagePromptReview,
   onArticlesUpdated,
   onDelete,
   onDeleteSeries,
@@ -1909,6 +1935,7 @@ function CreationCenterPage({
   onNavigate: (path: string) => void;
   onNotice: (message: string) => void;
   onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
+  onOpenPicturePagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onDelete: (articleId: number) => Promise<void>;
   onDeleteSeries: (seriesId: number) => Promise<void>;
@@ -2181,6 +2208,7 @@ function CreationCenterPage({
             promptReviewLoading={picturePromptReviewLoadingArticleId === selectedArticle.id}
             onNotice={onNotice}
             onOpenPromptReview={onOpenPicturePromptReview}
+            onOpenPagePromptReview={onOpenPicturePagePromptReview}
           />
         ) : activeTab === 'song' ? (
           <SongCreationPanel article={selectedArticle} onNotice={onNotice} />
@@ -2274,12 +2302,14 @@ function PictureBookCreationPanel({
   promptReviewLoading,
   onNotice,
   onOpenPromptReview,
+  onOpenPagePromptReview,
 }: {
   article: Article;
   pictureBookRetryGate: PictureBookRetryGate;
   promptReviewLoading: boolean;
   onNotice: (message: string) => void;
   onOpenPromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
+  onOpenPagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2312,8 +2342,8 @@ function PictureBookCreationPanel({
 
   const retryPage = (page: PictureBookPage) => {
     if (!pictureBookRetryGate.begin(article.id, page.pageIndex)) return;
-    Promise.resolve(onOpenPromptReview(article.id, true))
-      .then(() => onNotice('请审核提示词后确认重新生成'))
+    Promise.resolve(onOpenPagePromptReview(article.id, page.pageIndex))
+      .then(() => onNotice('请审核这一页提示词后确认重新生成'))
       .catch((error) => onNotice(error instanceof Error ? error.message : '绘本重试失败'))
       .finally(() => pictureBookRetryGate.finish(article.id, page.pageIndex));
   };
@@ -2353,6 +2383,7 @@ function PictureBookCreationPanel({
               const safePageIndex = Number.isFinite(page.pageIndex) ? page.pageIndex : index;
               const imageSource = directImageSource(page.imageUri);
               const scenePreview = pictureBookPageScenePreview(page);
+              const retrying = pictureBookRetryGate.isRetrying(article.id, safePageIndex);
               return (
                 <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
                   <div className={`picture-creation-media ${imageSource ? '' : 'is-empty'}`}>
@@ -2368,16 +2399,14 @@ function PictureBookCreationPanel({
                     {scenePreview.sceneDescription && <p className="picture-scene-description">{scenePreview.sceneDescription}</p>}
                     <p>{page.paragraphText}</p>
                     {page.errorMessage && <em>{page.errorMessage}</em>}
-                    {page.status === 'error' && (
-                      <button
-                        className="ghost-action small"
-                        type="button"
-                        disabled={pictureBookRetryGate.isRetrying(article.id, safePageIndex)}
-                        onClick={() => retryPage({ ...page, pageIndex: safePageIndex })}
-                      >
-                        <Icon name="refresh" /> {pictureBookRetryGate.isRetrying(article.id, safePageIndex) ? '重试中' : '重试'}
-                      </button>
-                    )}
+                    <button
+                      className="ghost-action small"
+                      type="button"
+                      disabled={retrying || promptReviewLoading}
+                      onClick={() => retryPage({ ...page, pageIndex: safePageIndex })}
+                    >
+                      <Icon name="refresh" /> {retrying ? '准备中' : '重新生成'}
+                    </button>
                   </div>
                 </article>
               );
@@ -2422,6 +2451,13 @@ function PictureBookPromptReviewDialog({
   const [refreshingPrompt, setRefreshingPrompt] = useState<PictureBookPromptRefreshTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = savingPrompt || submitting || refreshingPrompt !== null;
+  const isSinglePageReview = review.mode === 'singlePage';
+  const targetPageNumber = Math.max(
+    1,
+    Number(
+      review.targetPageIndex ?? scenes[0]?.pageIndex ?? 0,
+    ) + 1,
+  );
 
   useEffect(() => {
     const nextScenes = review.scenes ?? [];
@@ -2440,7 +2476,7 @@ function PictureBookPromptReviewDialog({
 
   useEffect(() => {
     if (groupPromptTouched) return;
-    setGroupPrompt(composePictureBookGroupPrompt({
+    setGroupPrompt(composePictureBookPromptForReview({
       ...review,
       bookDescription,
       relevantCharacters,
@@ -2511,7 +2547,7 @@ function PictureBookPromptReviewDialog({
 
   const savePrompt = async () => {
     if (!groupPrompt.trim()) {
-      setError('组图总提示词不能为空');
+      setError(isSinglePageReview ? '单张生成提示词不能为空' : '组图总提示词不能为空');
       return;
     }
     setSavingPrompt(true);
@@ -2534,15 +2570,18 @@ function PictureBookPromptReviewDialog({
 
   const confirm = async () => {
     if (!groupPrompt.trim()) {
-      setError('组图总提示词不能为空');
+      setError(isSinglePageReview ? '单张生成提示词不能为空' : '组图总提示词不能为空');
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      const payload = await sendNative<PictureBookState>('pictureBook.confirmPromptReview', {
-        ...reviewSubmissionPayload(),
-      });
+      const payload = await sendNative<PictureBookState>(
+        isSinglePageReview ? 'pictureBook.confirmPagePromptReview' : 'pictureBook.confirmPromptReview',
+        {
+          ...reviewSubmissionPayload(),
+        },
+      );
       onConfirmed(payload);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2554,14 +2593,20 @@ function PictureBookPromptReviewDialog({
   };
 
   const savePromptLabel = savingPrompt ? '保存中' : '保存提示词';
-  const confirmLabel = submitting ? '生成中' : '生成组图';
+  const confirmLabel = submitting ? '生成中' : isSinglePageReview ? '生成这一张' : '生成组图';
   const aiBlockingState =
     submitting
-      ? {
-          title: '正在提交绘本组图',
-          detail: `正在按 ${Math.max(1, scenes.length)} 个分镜生成连续组图，请等待服务返回。`,
-          timeoutSeconds: Math.min(2700, Math.max(180, Math.max(1, scenes.length) * 150)),
-        }
+      ? isSinglePageReview
+        ? {
+            title: '正在提交单张绘本图',
+            detail: `正在重新生成第 ${targetPageNumber} 页绘本图，请等待服务返回。`,
+            timeoutSeconds: 180,
+          }
+        : {
+            title: '正在提交绘本组图',
+            detail: `正在按 ${Math.max(1, scenes.length)} 个分镜生成连续组图，请等待服务返回。`,
+            timeoutSeconds: Math.min(2700, Math.max(180, Math.max(1, scenes.length) * 150)),
+          }
       : refreshingPrompt
         ? {
             title: '正在刷新绘本提示词',
@@ -2592,11 +2637,22 @@ function PictureBookPromptReviewDialog({
 
   return createPortal(
     <div className="edit-dialog-backdrop picture-prompt-backdrop" role="presentation">
-      <section className="edit-dialog picture-prompt-dialog" role="dialog" aria-modal="true" aria-label="绘本提示词审核">
+      <section
+        className="edit-dialog picture-prompt-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={isSinglePageReview ? '绘本单页提示词审核' : '绘本提示词审核'}
+      >
         <div className="edit-dialog-heading">
           <div>
-            <b>绘本提示词审核</b>
-            <small>{review.regenerate ? '确认后会删除旧组图并重新生成' : '确认后才会提交图片生成'}</small>
+            <b>{isSinglePageReview ? '绘本单页提示词审核' : '绘本提示词审核'}</b>
+            <small>
+              {isSinglePageReview
+                ? `确认后只替换第 ${targetPageNumber} 页`
+                : review.regenerate
+                  ? '确认后会删除旧组图并重新生成'
+                  : '确认后才会提交图片生成'}
+            </small>
           </div>
           <button className="icon-button small" type="button" aria-label="关闭绘本提示词审核" onClick={onClose} disabled={busy}>
             <Icon name="close" />
@@ -2607,7 +2663,7 @@ function PictureBookPromptReviewDialog({
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
               <h3>书籍简介</h3>
-              {renderRefreshButton('bookDescription', '自动生成书籍简介', 'AI 自动生成书籍简介')}
+              {!isSinglePageReview && renderRefreshButton('bookDescription', '自动生成书籍简介', 'AI 自动生成书籍简介')}
             </div>
             <textarea
               aria-label="书籍简介"
@@ -2630,7 +2686,7 @@ function PictureBookPromptReviewDialog({
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
               <h3>章节描述</h3>
-              {renderRefreshButton('chapterPlan', '自动生成章节规划', 'AI 自动生成章节描述和分镜描述')}
+              {!isSinglePageReview && renderRefreshButton('chapterPlan', '自动生成章节规划', 'AI 自动生成章节描述和分镜描述')}
             </div>
             <textarea
               aria-label="章节描述"
@@ -2651,11 +2707,11 @@ function PictureBookPromptReviewDialog({
 
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
-              <h3>组图总 Prompt</h3>
+              <h3>{isSinglePageReview ? '单张生成 Prompt' : '组图总 Prompt'}</h3>
               {groupPromptTouched && <span>已手动锁定</span>}
             </div>
             <textarea
-              aria-label="组图总提示词"
+              aria-label={isSinglePageReview ? '单张生成提示词' : '组图总提示词'}
               value={groupPrompt}
               rows={10}
               onChange={(event) => {
@@ -2663,22 +2719,22 @@ function PictureBookPromptReviewDialog({
                 setGroupPromptTouched(true);
               }}
             />
-            {groupPromptTouched && (
+            {groupPromptTouched && !isSinglePageReview && (
               <p className="picture-prompt-note">后续每页 prompt 修改不会自动覆盖组图总 prompt，最终以当前组图总 prompt 为准。</p>
             )}
           </section>
 
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
-              <h3>章节分镜描述</h3>
+              <h3>{isSinglePageReview ? '当前分镜描述' : '章节分镜描述'}</h3>
             </div>
             <div className="picture-page-prompt-list">
-              {scenes.map((scene, index) => (
+              {scenes.map((scene) => (
                 <label key={scene.pageIndex}>
-                  <span>第 {index + 1} 张 · 句子 {scene.sentenceStartIndex + 1} - {scene.sentenceEndIndex + 1}</span>
+                  <span>第 {scene.pageIndex + 1} 张 · 句子 {scene.sentenceStartIndex + 1} - {scene.sentenceEndIndex + 1}</span>
                   <small>{scene.paragraphText}</small>
                   <AutoResizeTextarea
-                    aria-label={`第 ${index + 1} 个分镜描述`}
+                    aria-label={`第 ${scene.pageIndex + 1} 个分镜描述`}
                     value={scene.sceneDescription}
                     rows={2}
                     placeholder="这一张图对应的分镜描述"
@@ -2695,9 +2751,11 @@ function PictureBookPromptReviewDialog({
           <button className="ghost-action" type="button" onClick={onClose} disabled={busy}>
             取消
           </button>
-          <button className="ghost-action" type="button" onClick={() => void savePrompt()} disabled={busy}>
-            <Icon name={savingPrompt ? 'refresh' : 'save'} /> {savePromptLabel}
-          </button>
+          {!isSinglePageReview && (
+            <button className="ghost-action" type="button" onClick={() => void savePrompt()} disabled={busy}>
+              <Icon name={savingPrompt ? 'refresh' : 'save'} /> {savePromptLabel}
+            </button>
+          )}
           <button className="primary-action" type="button" onClick={() => void confirm()} disabled={busy}>
             <Icon name={submitting ? 'refresh' : 'wand'} /> {confirmLabel}
           </button>
@@ -2771,7 +2829,13 @@ function normalizeInlineText(value: string): string {
 function resolvePictureBookGroupPrompt(
   review: Pick<
     PictureBookPromptReview,
-    'bookTitle' | 'bookDescription' | 'chapterDescription' | 'groupPrompt' | 'relevantCharacters' | 'newCharacters'
+    | 'bookTitle'
+    | 'bookDescription'
+    | 'chapterDescription'
+    | 'groupPrompt'
+    | 'mode'
+    | 'relevantCharacters'
+    | 'newCharacters'
   >,
   scenes: PictureBookPromptReviewScene[],
 ): string {
@@ -2779,7 +2843,7 @@ function resolvePictureBookGroupPrompt(
   if (pictureBookGroupPromptHasSceneDetails(nativePrompt, scenes)) {
     return nativePrompt;
   }
-  return composePictureBookGroupPrompt(review, scenes);
+  return composePictureBookPromptForReview(review, scenes);
 }
 
 function pictureBookGroupPromptHasSceneDetails(
@@ -2800,6 +2864,50 @@ function pictureBookGroupPromptHasSceneDetails(
     imageBlocks.length >= scenes.length &&
     /Scene description:/i.test(prompt)
   );
+}
+
+function composePictureBookPromptForReview(
+  review: Pick<
+    PictureBookPromptReview,
+    | 'bookTitle'
+    | 'bookDescription'
+    | 'chapterDescription'
+    | 'mode'
+    | 'relevantCharacters'
+    | 'newCharacters'
+  >,
+  scenes: PictureBookPromptReviewScene[],
+): string {
+  if (review.mode !== 'singlePage') {
+    return composePictureBookGroupPrompt(review, scenes);
+  }
+  const scene = scenes[0];
+  const imageNumber = Math.max(1, Number(scene?.pageIndex ?? 0) + 1);
+  const characters = mergeBookCharacters(
+    normalizeBookCharacters(review.relevantCharacters),
+    normalizeBookCharacters(review.newCharacters),
+  );
+  const lines = [
+    `Book name: ${review.bookTitle ?? ''}`,
+    `Book description: ${review.bookDescription ?? ''}`,
+  ];
+  if (characters.length > 0) {
+    lines.push('', 'Relevant characters:');
+    characters.forEach((character) => {
+      lines.push(`- ${character.name}: ${character.description}`);
+    });
+  }
+  lines.push(
+    '',
+    `Chapter description: ${review.chapterDescription ?? ''}`,
+    '',
+    `Generate exactly one picture for Image ${imageNumber}. Use the reference image only for visual consistency.`,
+    'Do not generate other scenes, a collage, comic panels, or a multi-image sheet.',
+  );
+  if (scene) {
+    lines.push('', `Image ${imageNumber}:`, `Scene description: ${scene.sceneDescription}`);
+  }
+  return lines.join('\n').trim();
 }
 
 function composePictureBookGroupPrompt(

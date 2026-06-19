@@ -667,6 +667,21 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       payload.regenerate === true,
     );
   }
+  if (type === 'pictureBook.pagePromptReview') {
+    const articleId = Number(payload.articleId ?? 1);
+    const pageIndex = Number(payload.pageIndex ?? 0);
+    const review = mockPictureBookPromptReview(articleId, true);
+    const scene = review.scenes.find((item) => item.pageIndex === pageIndex) ?? review.scenes[0];
+    return {
+      ...review,
+      reviewId: `mock-page-review-${articleId}-${pageIndex}`,
+      mode: 'singlePage',
+      targetPageIndex: scene?.pageIndex ?? pageIndex,
+      referencePageIndex: (scene?.pageIndex ?? pageIndex) > 0 ? (scene?.pageIndex ?? pageIndex) - 1 : 1,
+      scenes: scene ? [scene] : [],
+      groupPrompt: mockSinglePagePrompt(scene, review.bookCharacters ?? []),
+    };
+  }
   if (type === 'pictureBook.refreshPromptReview') {
     const review = mockPictureBookPromptReview(1, false);
     const target = String(payload.target ?? '');
@@ -701,6 +716,9 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return review;
   }
   if (type === 'pictureBook.confirmPromptReview') {
+    return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
+  }
+  if (type === 'pictureBook.confirmPagePromptReview') {
     return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
   }
   if (type === 'pictureBook.savePromptReview') {
@@ -1617,6 +1635,33 @@ function mockGroupPrompt(
       `Image ${index + 1}:`,
       `Scene description: ${scene.sceneDescription}`,
     ]),
+  ].join('\n').trim();
+}
+
+function mockSinglePagePrompt(
+  scene: { pageIndex: number; sceneDescription: string } | undefined,
+  characters: BookCharacter[] = [],
+): string {
+  const imageNumber = Math.max(1, Number(scene?.pageIndex ?? 0) + 1);
+  const characterLines = normalizeMockBookCharacters(characters);
+  return [
+    'Book name: Space Story Series',
+    'Book description: A gentle space-adventure picture book about curious children exploring small wonders together.',
+    ...(characterLines.length > 0
+      ? [
+          '',
+          'Relevant characters:',
+          ...characterLines.map((character) => `- ${character.name}: ${character.description}`),
+        ]
+      : []),
+    '',
+    'Chapter description: A gentle space-adventure chapter where Tom finds a bright snack box and turns the discovery into a warm sharing moment with his team.',
+    '',
+    `Generate exactly one picture for Image ${imageNumber}. Use the reference image only for visual consistency.`,
+    'Do not generate other scenes, a collage, comic panels, or a multi-image sheet.',
+    '',
+    `Image ${imageNumber}:`,
+    `Scene description: ${scene?.sceneDescription ?? ''}`,
   ].join('\n').trim();
 }
 

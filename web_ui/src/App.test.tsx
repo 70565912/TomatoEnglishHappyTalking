@@ -3141,6 +3141,182 @@ describe('App', () => {
     expect(screen.queryByText('加载缩略图')).not.toBeInTheDocument();
   });
 
+  it('opens single-page picture prompt review from a creation page card', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const now = new Date().toISOString();
+    const article = {
+      id: 1,
+      title: 'Single Page Retry Chapter',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: now,
+      averageScore: 86,
+      seriesId: 1,
+      seriesTitle: 'Single Retry Book',
+      chapterOrder: 1,
+    };
+    const series = [
+      {
+        id: 1,
+        title: 'Single Retry Book',
+        description: 'A warm space picture book with stable character design.',
+        coverImagePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const pictureState = {
+      articleId: article.id,
+      enabled: true,
+      status: 'ready',
+      pages: [
+        {
+          articleId: article.id,
+          seriesId: 1,
+          pageIndex: 0,
+          sentenceStartIndex: 0,
+          sentenceEndIndex: 0,
+          paragraphText: article.sentences[0],
+          prompt: {
+            scene: {
+              sceneDescription: 'Tom discovers the snack box.',
+            },
+          },
+          imagePath: 'F:/Tomato/picture_book/original-0.png',
+          imageUri: 'data:image/png;base64,THUMBNAIL_0',
+          imageVariant: 'thumbnail',
+          status: 'ready',
+          errorMessage: null,
+        },
+        {
+          articleId: article.id,
+          seriesId: 1,
+          pageIndex: 1,
+          sentenceStartIndex: 1,
+          sentenceEndIndex: 1,
+          paragraphText: article.sentences[1],
+          prompt: {
+            scene: {
+              sceneDescription: 'Tom shares the snack box with his team.',
+            },
+          },
+          imagePath: 'F:/Tomato/picture_book/original-1.png',
+          imageUri: 'data:image/png;base64,THUMBNAIL_1',
+          imageVariant: 'thumbnail',
+          status: 'ready',
+          errorMessage: null,
+        },
+      ],
+    };
+    const singlePageReview = {
+      ...promptReviewPayloadForTest(article.id, true),
+      reviewId: 'page-review-1-1',
+      mode: 'singlePage',
+      targetPageIndex: 1,
+      referencePageIndex: 0,
+      chapterDescription: 'Tom finds a snack box and shares it with the team.',
+      groupPrompt:
+        'Book name: Single Retry Book\nBook description: A warm space picture book with stable character design.\nChapter description: Tom finds a snack box and shares it with the team.\n\nGenerate exactly one picture for Image 2. Use the reference image only for visual consistency.\nDo not generate other scenes, a collage, comic panels, or a multi-image sheet.\n\nImage 2:\nScene description: Tom shares the snack box with his team.',
+      scenes: [
+        {
+          pageIndex: 1,
+          sentenceStartIndex: 1,
+          sentenceEndIndex: 1,
+          paragraphText: article.sentences[1],
+          sceneDescription: 'Tom shares the snack box with his team.',
+        },
+      ],
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, pictureState);
+        }
+        if (type === 'pictureBook.pagePromptReview') {
+          return ok(message.id, type, singlePageReview);
+        }
+        if (type === 'pictureBook.confirmPagePromptReview') {
+          return ok(message.id, type, {
+            ...pictureState,
+            status: 'generating',
+            pages: pictureState.pages.map((page) =>
+              page.pageIndex === 1 ? { ...page, status: 'generating' } : page,
+            ),
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('绘本组图')).toBeInTheDocument();
+    const pageTwoCard = (await screen.findByText('第 2 页')).closest('article');
+    expect(pageTwoCard).not.toBeNull();
+    fireEvent.click(within(pageTwoCard as HTMLElement).getByRole('button', { name: '重新生成' }));
+
+    await waitFor(() => {
+      expect(calls).toContainEqual({
+        type: 'pictureBook.pagePromptReview',
+        payload: { articleId: 1, pageIndex: 1 },
+      });
+    });
+
+    const dialog = await screen.findByRole('dialog', { name: '绘本单页提示词审核' });
+    expect(within(dialog).getByText('确认后只替换第 2 页')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'AI 自动生成书籍简介' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'AI 自动生成章节描述和分镜描述' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '保存提示词' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: '当前分镜描述' })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('第 2 个分镜描述')).toHaveValue(
+      'Tom shares the snack box with his team.',
+    );
+    expect(within(dialog).queryByLabelText('第 1 个分镜描述')).not.toBeInTheDocument();
+
+    const promptInput = within(dialog).getByLabelText('单张生成提示词') as HTMLTextAreaElement;
+    expect(promptInput.value).toContain('Generate exactly one picture');
+    expect(promptInput.value).toContain('Image 2:');
+    expect(promptInput.value).not.toContain('Image 1:');
+    fireEvent.change(promptInput, {
+      target: {
+        value:
+          'Edited single prompt\n\nGenerate exactly one picture for Image 2.\n\nImage 2:\nScene description: Tom shares the snack box under a glowing window.',
+      },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '生成这一张' }));
+
+    await waitFor(() => {
+      const confirmCall = calls.find((call) => call.type === 'pictureBook.confirmPagePromptReview');
+      expect(confirmCall?.payload).toMatchObject({
+        reviewId: 'page-review-1-1',
+        groupPrompt:
+          'Edited single prompt\n\nGenerate exactly one picture for Image 2.\n\nImage 2:\nScene description: Tom shares the snack box under a glowing window.',
+        scenes: [
+          expect.objectContaining({
+            pageIndex: 1,
+            sceneDescription: 'Tom shares the snack box with his team.',
+          }),
+        ],
+      });
+    });
+    expect(calls.some((call) => call.type === 'pictureBook.confirmPromptReview')).toBe(false);
+  });
+
   it('shows queued storyboard descriptions before picture images are ready', async () => {
     window.location.hash = '/creation?articleId=1';
     const now = new Date().toISOString();

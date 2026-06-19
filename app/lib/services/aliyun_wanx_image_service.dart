@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -56,8 +57,10 @@ class AliyunWanxImageService {
     required List<VolcImageBatchRequest> requests,
     int? articleId,
     int? seriesId,
+    List<String> referenceImagePaths = const [],
     String? groupPromptOverride,
     String cachePurpose = 'picture_book_image',
+    bool useSequential = true,
     bool reusePartialCache = true,
     bool cacheOnly = false,
   }) async {
@@ -82,9 +85,12 @@ class AliyunWanxImageService {
         'groupPromptOverride': groupPromptOverride?.trim().isNotEmpty == true,
         'cachePurpose': cachePurpose,
         'cacheOnly': cacheOnly,
+        'referencePathCount': referenceImagePaths.length,
+        'useSequential': useSequential,
         'reusePartialCache': reusePartialCache,
       },
     );
+    final enableSequential = useSequential && cleaned.length > 1;
 
     final endpoint = await AppConfig.aliyunWanxImageGenerationEndpoint;
     final model = await AppConfig.aliyunBailianImageModel;
@@ -99,6 +105,7 @@ class AliyunWanxImageService {
       purpose: cachePurpose,
     );
     final promptHash = await ApiCacheService.hashUtf8(groupPrompt);
+    final referenceImages = await _referenceImages(referenceImagePaths);
     TomatoLogger.info(
       category: _logCategory,
       event: 'aliyun_wanx.group.prompt_ready',
@@ -114,6 +121,7 @@ class AliyunWanxImageService {
         'contentSafetyChanged': rawGroupPrompt != groupPrompt,
         'pageCount': cleaned.length,
         'pageIndexes': _pageIndexes(cleaned),
+        'referenceImageCount': referenceImages.length,
       },
     );
     final groupMetadata = {
@@ -142,6 +150,8 @@ class AliyunWanxImageService {
           pageIndex: cleaned[index].pageIndex,
           outputIndex: index,
           maxImages: cleaned.length,
+          enableSequential: enableSequential,
+          referenceImages: referenceImages,
         ),
     ];
     final cacheKeys = <String>[
@@ -240,8 +250,10 @@ class AliyunWanxImageService {
         requests: missingRequests,
         articleId: articleId,
         seriesId: seriesId,
+        referenceImagePaths: referenceImagePaths,
         groupPromptOverride: groupPromptOverride,
         cachePurpose: cachePurpose,
+        useSequential: useSequential,
         reusePartialCache: reusePartialCache,
       );
       final byPage = <int, VolcImageResult>{
@@ -317,12 +329,13 @@ class AliyunWanxImageService {
           'model': model,
           'size': apiSize,
           'sizeSetting': sizeSetting.trim().isEmpty ? '2K' : sizeSetting.trim(),
-          'enableSequential': true,
+          'enableSequential': enableSequential,
           'imageCount': cleaned.length,
           'pollTimeoutSeconds':
               _pollTimeoutForImageCount(cleaned.length).inSeconds,
           'promptLength': groupPrompt.length,
           'promptHash': promptHash,
+          'referenceImageCount': referenceImages.length,
         },
       );
       final taskPayload = await _postJson(
@@ -333,6 +346,8 @@ class AliyunWanxImageService {
           prompt: groupPrompt,
           size: apiSize,
           imageCount: cleaned.length,
+          enableSequential: enableSequential,
+          referenceImages: referenceImages,
         ),
       );
       final taskId = _extractTaskId(taskPayload);
@@ -504,6 +519,8 @@ class AliyunWanxImageService {
     required int? pageIndex,
     required int outputIndex,
     required int maxImages,
+    required bool enableSequential,
+    required List<_AliyunReferenceImage> referenceImages,
   }) =>
       {
         'engine': 'aliyun_wanx_image_generation_async',
@@ -511,7 +528,7 @@ class AliyunWanxImageService {
         'model': model,
         'size': size,
         'size_setting': sizeSetting.trim().isEmpty ? '2K' : sizeSetting.trim(),
-        'enable_sequential': true,
+        'enable_sequential': enableSequential,
         'n': maxImages.clamp(1, 12),
         'output_index': outputIndex,
         'watermark': false,
@@ -519,6 +536,8 @@ class AliyunWanxImageService {
         'prompt_metadata': promptMetadata,
         'series_id': seriesId,
         'page_index': pageIndex,
+        'reference_image_hashes':
+            referenceImages.map((image) => image.hash).toList(growable: false),
       };
 
   static Map<String, dynamic> _requestBody({
@@ -526,6 +545,8 @@ class AliyunWanxImageService {
     required String prompt,
     required String size,
     required int imageCount,
+    required bool enableSequential,
+    required List<_AliyunReferenceImage> referenceImages,
   }) =>
       {
         'model': model,
@@ -534,13 +555,14 @@ class AliyunWanxImageService {
             {
               'role': 'user',
               'content': [
+                for (final image in referenceImages) {'image': image.dataUri},
                 {'text': prompt},
               ],
             },
           ],
         },
         'parameters': {
-          'enable_sequential': true,
+          'enable_sequential': enableSequential,
           'n': imageCount.clamp(1, 12),
           'size': size.trim().isEmpty ? '2K' : size.trim(),
           'watermark': false,
@@ -720,6 +742,46 @@ class AliyunWanxImageService {
     return refs.toList(growable: false);
   }
 
+  static Future<List<_AliyunReferenceImage>> _referenceImages(
+    List<String> paths,
+  ) async {
+    final images = <_AliyunReferenceImage>[];
+    for (final rawPath in paths) {
+      final path = rawPath.trim();
+      if (path.isEmpty) {
+        continue;
+      }
+      final file = File(path);
+      if (!await file.exists()) {
+        continue;
+      }
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        continue;
+      }
+      final hash = await ApiCacheService.hashBytes(bytes);
+      images.add(
+        _AliyunReferenceImage(
+          hash: hash,
+          dataUri:
+              'data:${_contentTypeForPath(path)};base64,${base64Encode(bytes)}',
+        ),
+      );
+    }
+    return images;
+  }
+
+  static String _contentTypeForPath(String path) {
+    final lower = path.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    return 'image/png';
+  }
+
   static Future<List<int>> _imageBytes(String value) async {
     if (value.startsWith('data:image/')) {
       final comma = value.indexOf(',');
@@ -857,4 +919,14 @@ class _AliyunWanxException implements Exception {
 
   @override
   String toString() => message;
+}
+
+class _AliyunReferenceImage {
+  const _AliyunReferenceImage({
+    required this.hash,
+    required this.dataUri,
+  });
+
+  final String hash;
+  final String dataUri;
 }

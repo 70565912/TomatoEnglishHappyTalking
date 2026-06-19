@@ -156,11 +156,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'pictureBook.state': _handlePictureBookState,
         'pictureBook.pageImage': _handlePictureBookPageImage,
         'pictureBook.promptReview': _handlePictureBookPromptReview,
+        'pictureBook.pagePromptReview': _handlePictureBookPagePromptReview,
         'pictureBook.refreshPromptReview':
             _handlePictureBookRefreshPromptReview,
         'pictureBook.savePromptReview': _handlePictureBookSavePromptReview,
         'pictureBook.confirmPromptReview':
             _handlePictureBookConfirmPromptReview,
+        'pictureBook.confirmPagePromptReview':
+            _handlePictureBookConfirmPagePromptReview,
         'pictureBook.cancelPromptReview': _handlePictureBookCancelPromptReview,
         'pictureBook.generate': _handlePictureBookGenerate,
         'pictureBook.retryPage': _handlePictureBookRetryPage,
@@ -1046,6 +1049,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
   }
 
+  Future<Map<String, dynamic>> _handlePictureBookPagePromptReview(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final pageIndex = _payloadInt(message.payload, 'pageIndex');
+    return _pictureBookPagePromptReviewForArticle(
+      articleId: articleId,
+      pageIndex: pageIndex,
+    );
+  }
+
   Future<Map<String, dynamic>> _handlePictureBookRefreshPromptReview(
     BridgeMessage message,
   ) async {
@@ -1084,6 +1098,39 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         _payloadBookCharacters(message.payload, 'newCharacters');
     final scenes = _payloadMapList(message.payload, 'scenes');
     final state = await PictureBookService.confirmPromptReview(
+      reviewId: reviewId,
+      groupPrompt: groupPrompt,
+      bookDescription: bookDescription,
+      bookCharacters: bookCharacters,
+      newCharacters: newCharacters,
+      chapterDescription: chapterDescription,
+      scenes: scenes,
+      onProgress: (payload) => _pushEvent('pictureBook.state', payload),
+    );
+    unawaited(_pushEvent('pictureBook.state', state));
+    final articlePayload = await _articleListPayload();
+    unawaited(_pushEvent('article.state', articlePayload));
+    return state;
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookConfirmPagePromptReview(
+    BridgeMessage message,
+  ) async {
+    final reviewId = _payloadString(message.payload, 'reviewId').trim();
+    if (reviewId.isEmpty) {
+      throw const FormatException('缺少绘本提示词审核 ID');
+    }
+    final groupPrompt = _payloadString(message.payload, 'groupPrompt').trim();
+    final bookDescription =
+        _payloadString(message.payload, 'bookDescription').trim();
+    final chapterDescription =
+        _payloadString(message.payload, 'chapterDescription').trim();
+    final bookCharacters =
+        _payloadBookCharacters(message.payload, 'bookCharacters');
+    final newCharacters =
+        _payloadBookCharacters(message.payload, 'newCharacters');
+    final scenes = _payloadMapList(message.payload, 'scenes');
+    final state = await PictureBookService.confirmPagePromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
       bookDescription: bookDescription,
@@ -1207,6 +1254,29 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       article: article,
       chapter: chapter,
       regenerate: regenerate,
+    );
+  }
+
+  Future<Map<String, dynamic>> _pictureBookPagePromptReviewForArticle({
+    required int articleId,
+    required int pageIndex,
+  }) async {
+    final rawArticle = await DatabaseService.getArticleById(articleId);
+    if (rawArticle == null) {
+      throw FormatException('文章不存在（id=$articleId）');
+    }
+    final article = await _articleWithCurrentSentences(rawArticle);
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    if (chapter == null) {
+      return _pictureBookPromptReviewForArticle(
+        articleId: articleId,
+        regenerate: true,
+      );
+    }
+    return PictureBookService.pagePromptReviewPayload(
+      article: article,
+      chapter: chapter,
+      pageIndex: pageIndex,
     );
   }
 

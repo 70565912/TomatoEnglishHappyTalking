@@ -365,6 +365,102 @@ class PictureBookService {
     return draft.toPayload();
   }
 
+  static Future<Map<String, dynamic>> pagePromptReviewPayload({
+    required Article article,
+    required StoryChapter chapter,
+    required int pageIndex,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      throw StateError('Article must be saved before reviewing picture book');
+    }
+
+    final currentChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId) ?? chapter;
+    final series =
+        await DatabaseService.getStorySeriesById(currentChapter.seriesId);
+    if (series == null) {
+      throw const TextGenerationException('文本提交处理失败：书籍信息不存在，请重试。');
+    }
+
+    final plan = await ensureChapterPlanForArticle(
+      article: article,
+      chapter: currentChapter,
+      series: series,
+    );
+    final segments = _segmentArticle(article, plan);
+    _PicturePageSegment? targetSegment;
+    for (final segment in segments) {
+      if (segment.pageIndex == pageIndex) {
+        targetSegment = segment;
+        break;
+      }
+    }
+    if (targetSegment == null) {
+      throw FormatException('第 ${pageIndex + 1} 页不在当前章节分镜内。');
+    }
+
+    final referencePage = await _nearestReferencePage(
+      articleId: articleId,
+      targetPageIndex: pageIndex,
+    );
+    if (referencePage == null) {
+      return promptReviewPayload(
+        article: article,
+        chapter: currentChapter,
+        regenerate: true,
+      );
+    }
+
+    final refreshedSeries =
+        await DatabaseService.getStorySeriesById(currentChapter.seriesId) ??
+            series;
+    final reviewBookDescription =
+        _sanitizeBookDescription(refreshedSeries.description);
+    final reviewSeries = refreshedSeries.copyWith(
+      description: reviewBookDescription,
+    );
+    final bookCharacters = _sanitizeBookCharacters(reviewSeries.characters);
+    final relevantCharacters = _relevantBookCharactersForArticle(
+      article,
+      bookCharacters,
+    );
+    final newCharacters = _sanitizeBookCharacters(plan.newCharacters);
+    final finalRelevantCharacters = _mergeBookCharacters(
+      relevantCharacters,
+      newCharacters,
+    );
+    final singlePrompt = _composeSinglePagePrompt(
+      series: reviewSeries,
+      chapterDescription: plan.chapterDescription,
+      segment: targetSegment,
+      relevantCharacters: finalRelevantCharacters,
+    );
+    final reviewId = _nextPromptReviewId(articleId);
+    final draft = _PictureBookPromptReviewDraft(
+      reviewId: reviewId,
+      article: article,
+      chapter: currentChapter,
+      series: reviewSeries,
+      regenerate: true,
+      pages: [_PromptReviewPageDraft(segment: targetSegment)],
+      bookDescription: reviewBookDescription,
+      bookCharacters: bookCharacters,
+      relevantCharacters: relevantCharacters,
+      newCharacters: newCharacters,
+      chapterDescription: plan.chapterDescription,
+      groupPrompt: singlePrompt,
+      createdAt: DateTime.now(),
+      mode: 'singlePage',
+      targetPageIndex: pageIndex,
+      referencePageIndex: referencePage.pageIndex,
+      referenceImagePath: referencePage.imagePath,
+    );
+    _promptReviewDrafts[reviewId] = draft;
+    _prunePromptReviewDrafts();
+    return draft.toPayload();
+  }
+
   static Future<Map<String, dynamic>> refreshPromptReview({
     required String reviewId,
     required String target,
@@ -812,6 +908,158 @@ class PictureBookService {
     return statePayload(articleId);
   }
 
+  static Future<Map<String, dynamic>> confirmPagePromptReview({
+    required String reviewId,
+    required String groupPrompt,
+    required String bookDescription,
+    required List<BookCharacter> bookCharacters,
+    required List<BookCharacter> newCharacters,
+    required String chapterDescription,
+    required List<Map<String, dynamic>> scenes,
+    PictureBookProgressCallback? onProgress,
+  }) async {
+    final draft = _promptReviewDrafts[reviewId];
+    if (draft == null) {
+      throw const FormatException('绘本提示词审核已过期，请重新打开审核弹窗。');
+    }
+    if (draft.mode != 'singlePage') {
+      throw const FormatException('当前审核不是单页重生成审核，请重新打开审核弹窗。');
+    }
+    final articleId = draft.article.id;
+    final seriesId = draft.series.id;
+    final referenceImagePath = draft.referenceImagePath?.trim() ?? '';
+    if (articleId == null || seriesId == null) {
+      throw const FormatException('绘本提示词审核缺少文章或书籍信息。');
+    }
+    if (referenceImagePath.isEmpty ||
+        !(await File(referenceImagePath).exists())) {
+      throw const FormatException('参考图文件不存在，请重新打开单页重生成。');
+    }
+
+    final confirmedChapterDescription = chapterDescription.trim().isEmpty
+        ? draft.chapterDescription
+        : _sanitizeForImagePrompt(chapterDescription);
+    final confirmedBookDescription = _sanitizeBookDescription(bookDescription);
+    final confirmedBookCharacters = _sanitizeBookCharacters(bookCharacters);
+    final confirmedNewCharacters = _sanitizeBookCharacters(newCharacters);
+    final confirmedRelevantCharacters = _relevantBookCharactersForArticle(
+      draft.article,
+      confirmedBookCharacters,
+    );
+    final finalRelevantCharacters = _mergeBookCharacters(
+      confirmedRelevantCharacters,
+      confirmedNewCharacters,
+    );
+    final mergedCharacters = _mergeBookCharacters(
+      confirmedBookCharacters,
+      confirmedNewCharacters,
+    );
+    final updatedSeries = draft.series.copyWith(
+      description: confirmedBookDescription,
+      characters: mergedCharacters,
+      updatedAt: DateTime.now(),
+    );
+    await DatabaseService.updateStorySeries(updatedSeries);
+
+    final confirmedSegments = _submittedSegmentsForDraft(draft, scenes);
+    if (confirmedSegments.length != 1) {
+      throw const FormatException('单页重生成只能提交一个分镜。');
+    }
+    final targetSegment = confirmedSegments.single;
+    final fallbackSinglePrompt = _composeSinglePagePrompt(
+      series: updatedSeries,
+      chapterDescription: confirmedChapterDescription,
+      segment: targetSegment,
+      relevantCharacters: finalRelevantCharacters,
+    );
+    final confirmedSinglePrompt = groupPrompt.trim().isEmpty
+        ? fallbackSinglePrompt
+        : _sanitizeForImagePrompt(groupPrompt);
+
+    await _saveSinglePageConfirmedChapterPlan(
+      article: draft.article,
+      chapter: draft.chapter,
+      bookDescription: confirmedBookDescription,
+      relevantCharacters: finalRelevantCharacters,
+      chapterDescription: confirmedChapterDescription,
+      segment: targetSegment,
+      newCharacters: confirmedNewCharacters,
+    );
+
+    final promptJson = {
+      ..._promptJsonForSegment(
+        series: updatedSeries,
+        chapter: draft.chapter,
+        segment: targetSegment,
+        chapterDescription: confirmedChapterDescription,
+        relevantCharacters: finalRelevantCharacters,
+        newCharacters: confirmedNewCharacters,
+        groupPrompt: confirmedSinglePrompt,
+        reviewId: reviewId,
+      ),
+      'mode': 'singlePage',
+      'targetPageIndex': targetSegment.pageIndex,
+      'referencePageIndex': draft.referencePageIndex,
+    };
+    final generatingPage = await _markPage(
+      targetSegment,
+      articleId: articleId,
+      seriesId: seriesId,
+      status: 'generating',
+      promptJson: promptJson,
+      errorMessage: '',
+    );
+    _imageUriCache.clear();
+    _thumbnailPathCache.clear();
+    await _emit(articleId, onProgress);
+
+    final results = await PictureBookImageService.generatePictureBookImageGroup(
+      requests: [
+        VolcImageBatchRequest(
+          pageIndex: targetSegment.pageIndex,
+          prompt: confirmedSinglePrompt,
+          promptMetadata: promptJson,
+        ),
+      ],
+      articleId: articleId,
+      seriesId: seriesId,
+      referenceImagePaths: [referenceImagePath],
+      groupPromptOverride: confirmedSinglePrompt,
+      useSequential: false,
+      reusePartialCache: false,
+    );
+    final result = results.firstWhere(
+      (item) => item.pageIndex == targetSegment.pageIndex,
+      orElse: () => results.isNotEmpty
+          ? results.first
+          : VolcImageResult(
+              source: VolcImageResultSource.failed,
+              pageIndex: targetSegment.pageIndex,
+              errorMessage: '单页图片接口未返回第 ${targetSegment.pageIndex + 1} 张图片',
+            ),
+    );
+    final status = switch (result.source) {
+      VolcImageResultSource.remote || VolcImageResultSource.cached => 'ready',
+      VolcImageResultSource.skippedNoKey => 'skipped',
+      VolcImageResultSource.failed => 'error',
+    };
+    await DatabaseService.upsertPictureBookPage(
+      generatingPage.copyWith(
+        imageCacheKey: result.hasImage ? result.cacheKey : null,
+        imagePath: result.hasImage ? result.filePath : null,
+        status: status,
+        errorMessage: result.errorMessage ?? '',
+        updatedAt: DateTime.now(),
+      ),
+    );
+    _imageUriCache.clear();
+    _thumbnailPathCache.clear();
+    await _emit(articleId, onProgress);
+
+    _promptReviewDrafts.remove(reviewId);
+    return statePayload(articleId);
+  }
+
   static Future<Map<String, dynamic>> cancelPromptReview(
       String reviewId) async {
     final removed = _promptReviewDrafts.remove(reviewId);
@@ -1180,6 +1428,44 @@ class PictureBookService {
         : error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
     final trimmed = message.trim();
     return trimmed.isEmpty ? '文本提交处理失败，请重试。' : trimmed;
+  }
+
+  static Future<PictureBookPage?> _nearestReferencePage({
+    required int articleId,
+    required int targetPageIndex,
+  }) async {
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    final before = pages
+        .where((page) => page.pageIndex < targetPageIndex)
+        .toList(growable: false)
+      ..sort((a, b) => b.pageIndex.compareTo(a.pageIndex));
+    for (final page in before) {
+      if (await _hasUsableReferenceImage(page)) {
+        return page;
+      }
+    }
+
+    final after = pages
+        .where((page) => page.pageIndex > targetPageIndex)
+        .toList(growable: false)
+      ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+    for (final page in after) {
+      if (await _hasUsableReferenceImage(page)) {
+        return page;
+      }
+    }
+    return null;
+  }
+
+  static Future<bool> _hasUsableReferenceImage(PictureBookPage page) async {
+    if (page.status != 'ready') {
+      return false;
+    }
+    final imagePath = page.imagePath?.trim() ?? '';
+    if (imagePath.isEmpty) {
+      return false;
+    }
+    return File(imagePath).exists();
   }
 
   static Future<void> regeneratePage({
@@ -1735,6 +2021,48 @@ class PictureBookService {
     return buffer.toString().trim();
   }
 
+  static String _composeSinglePagePrompt({
+    required StorySeries series,
+    required String chapterDescription,
+    required _PicturePageSegment segment,
+    List<BookCharacter> relevantCharacters = const [],
+  }) {
+    final sanitizedCharacters = _sanitizeBookCharacters(relevantCharacters);
+    final sceneDescription = _sanitizeForImagePrompt(segment.summary);
+    final buffer = StringBuffer()
+      ..writeln(
+        'Book name: ${_sanitizeForImagePrompt(series.title.trim())}',
+      )
+      ..writeln(
+        'Book description: ${_sanitizeForImagePrompt(series.description.trim())}',
+      );
+    if (sanitizedCharacters.isNotEmpty) {
+      buffer
+        ..writeln()
+        ..writeln('Relevant characters:');
+      for (final character in sanitizedCharacters) {
+        buffer.writeln('- ${character.name}: ${character.description}');
+      }
+    }
+    buffer
+      ..writeln()
+      ..writeln(
+          'Chapter description: ${_sanitizeForImagePrompt(chapterDescription)}')
+      ..writeln()
+      ..writeln(
+        'Generate exactly one picture for Image ${segment.pageIndex + 1}. Use the reference image only for visual consistency.',
+      )
+      ..writeln(
+        'Do not generate other scenes, a collage, comic panels, or a multi-image sheet.',
+      )
+      ..writeln()
+      ..writeln('Image ${segment.pageIndex + 1}:');
+    if (sceneDescription.isNotEmpty) {
+      buffer.writeln('Scene description: $sceneDescription');
+    }
+    return buffer.toString().trim();
+  }
+
   static String _scenePromptForRequest(_PicturePageSegment segment) {
     return _sanitizeForImagePrompt([
       'Image ${segment.pageIndex + 1}',
@@ -1814,6 +2142,75 @@ class PictureBookService {
         }),
         updatedAt: DateTime.now(),
       ),
+    );
+  }
+
+  static Future<void> _saveSinglePageConfirmedChapterPlan({
+    required Article article,
+    required StoryChapter chapter,
+    required String bookDescription,
+    required List<BookCharacter> relevantCharacters,
+    required String chapterDescription,
+    required _PicturePageSegment segment,
+    List<BookCharacter> newCharacters = const [],
+  }) async {
+    final articleId = article.id;
+    final baseChapter = articleId == null
+        ? chapter
+        : await DatabaseService.getStoryChapterForArticle(articleId) ?? chapter;
+    final rawSummary = _decodeJson(
+      baseChapter.summaryJson,
+      const <String, dynamic>{},
+    );
+    final scenes = _pictureBookScenesFromJson(
+      rawSummary['scenes'],
+      sentenceCount: article.sentences.length,
+    );
+    final mergedScenes = <PictureBookScene>[];
+    var replaced = false;
+    for (final scene in scenes) {
+      if (scene.pageIndex == segment.pageIndex) {
+        mergedScenes.add(
+          PictureBookScene(
+            pageIndex: segment.pageIndex,
+            sentenceStartIndex: segment.sentenceStartIndex,
+            sentenceEndIndex: segment.sentenceEndIndex,
+            sceneDescription: segment.summary,
+          ),
+        );
+        replaced = true;
+      } else {
+        mergedScenes.add(scene);
+      }
+    }
+    if (!replaced) {
+      mergedScenes.add(
+        PictureBookScene(
+          pageIndex: segment.pageIndex,
+          sentenceStartIndex: segment.sentenceStartIndex,
+          sentenceEndIndex: segment.sentenceEndIndex,
+          sceneDescription: segment.summary,
+        ),
+      );
+      mergedScenes.sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+    }
+    final mergedSegments = _segmentArticle(
+      article,
+      ChapterPicturePlan(
+        chapterDescription: chapterDescription,
+        scenes: mergedScenes,
+        newCharacters: newCharacters,
+        source: TextGenerationReplySource.cached,
+      ),
+    );
+    await _saveConfirmedChapterPlan(
+      article: article,
+      chapter: baseChapter,
+      bookDescription: bookDescription,
+      relevantCharacters: relevantCharacters,
+      chapterDescription: chapterDescription,
+      segments: mergedSegments,
+      newCharacters: newCharacters,
     );
   }
 
@@ -2655,6 +3052,10 @@ class _PictureBookPromptReviewDraft {
     required this.chapterDescription,
     required this.groupPrompt,
     required this.createdAt,
+    this.mode = 'group',
+    this.targetPageIndex,
+    this.referencePageIndex,
+    this.referenceImagePath,
   });
 
   final String reviewId;
@@ -2670,6 +3071,10 @@ class _PictureBookPromptReviewDraft {
   final String chapterDescription;
   final String groupPrompt;
   final DateTime createdAt;
+  final String mode;
+  final int? targetPageIndex;
+  final int? referencePageIndex;
+  final String? referenceImagePath;
 
   _PictureBookPromptReviewDraft copyWith({
     StorySeries? series,
@@ -2695,6 +3100,10 @@ class _PictureBookPromptReviewDraft {
         chapterDescription: chapterDescription ?? this.chapterDescription,
         groupPrompt: groupPrompt ?? this.groupPrompt,
         createdAt: createdAt,
+        mode: mode,
+        targetPageIndex: targetPageIndex,
+        referencePageIndex: referencePageIndex,
+        referenceImagePath: referenceImagePath,
       );
 
   Map<String, dynamic> toPayload() => {
@@ -2703,6 +3112,10 @@ class _PictureBookPromptReviewDraft {
         'chapterId': chapter.id,
         'seriesId': series.id,
         'bookTitle': series.title,
+        'mode': mode,
+        if (targetPageIndex != null) 'targetPageIndex': targetPageIndex,
+        if (referencePageIndex != null)
+          'referencePageIndex': referencePageIndex,
         'regenerate': regenerate,
         'bookDescription': bookDescription,
         'bookCharacters':

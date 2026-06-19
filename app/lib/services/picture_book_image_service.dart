@@ -33,8 +33,10 @@ class PictureBookImageService {
       requests: requests,
       articleId: articleId,
       seriesId: seriesId,
+      referenceImagePaths: referenceImagePaths,
       groupPromptOverride: groupPromptOverride,
       cachePurpose: cachePurpose,
+      useSequential: useSequential || requests.length > 1,
       reusePartialCache: reusePartialCache,
       cacheOnly: cacheOnly,
     );

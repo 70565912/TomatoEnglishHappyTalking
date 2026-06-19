@@ -127,6 +127,9 @@ export interface PictureBookPromptReview {
   chapterId?: number | null;
   seriesId?: number | null;
   bookTitle?: string;
+  mode?: 'group' | 'singlePage' | string;
+  targetPageIndex?: number | null;
+  referencePageIndex?: number | null;
   regenerate: boolean;
   bookDescription: string;
   bookCharacters?: BookCharacter[];
