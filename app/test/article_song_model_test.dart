@@ -61,6 +61,28 @@ void main() {
     expect(json['versions'], hasLength(1));
   });
 
+  test('preserves external audio song source', () {
+    const version = ArticleSongVersion(
+      id: 'external_audio_hash',
+      audioPath: r'F:\songs\imported.mp3',
+      title: 'imported',
+      source: 'external_audio',
+      submittedLyrics: 'hello song',
+      timelineStatus: 'missing',
+      isDefault: true,
+    );
+
+    final json = version.toJson();
+    expect(json['source'], 'external_audio');
+    expect(json['timelineStatus'], 'missing');
+
+    final decoded = ArticleSongVersion.fromJson(json);
+    expect(decoded?.source, 'external_audio');
+    expect(decoded?.title, 'imported');
+    expect(decoded?.submittedLyrics, 'hello song');
+    expect(decoded?.isDefault, isTrue);
+  });
+
   test('builds lyrics-based Suno cache groups', () {
     final legacy = SunoCachedSongGroupBuilder(
       lyricsHash: 'lyrics-a',

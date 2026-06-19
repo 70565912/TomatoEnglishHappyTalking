@@ -2830,6 +2830,21 @@ function SongCreationPanel({
     }
   };
 
+  const importExternalSong = async () => {
+    setBusy(true);
+    try {
+      const next = await sendNative<ListeningSongStatePayload>('listening.songImportExternal', {
+        articleId: article.id,
+      });
+      setSongState(next);
+      onNotice(next.importCancelled ? '已取消导入本地音乐' : '已导入本地音乐');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '本地音乐导入失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const recordSongVideoFromCreation = async (versionId: string) => {
     setBusy(true);
     try {
@@ -2947,6 +2962,14 @@ function SongCreationPanel({
           }, '已打开 Suno 歌曲生成流程')}
         >
           <Icon name="music" /> 生成 Suno 歌曲
+        </button>
+        <button
+          className="ghost-action"
+          type="button"
+          disabled={busy || songState?.status === 'generating'}
+          onClick={() => void importExternalSong()}
+        >
+          <Icon name="folder" /> 导入本地音乐
         </button>
         {songState?.source === 'suno' && waitingConfirm && (
           <button
@@ -3832,6 +3855,7 @@ function ArticlePage({
 
 type ListeningStatus = 'loading' | 'ready' | 'playing' | 'stopping' | 'done' | 'error';
 type ListeningPart = 'english' | 'chinese' | null;
+type SongGenerationSource = Exclude<SongSource, 'external_audio'>;
 type WordCardState = {
   word: string;
   sentence: string;
@@ -3852,7 +3876,7 @@ type SentenceEditState = {
 type SongDialogTab = 'play' | 'settings';
 type SongDialogState = {
   activeTab: SongDialogTab;
-  source: SongSource;
+  source: SongGenerationSource;
   suggesting: boolean;
   submitting: boolean;
   error: string | null;
@@ -4135,7 +4159,7 @@ function ListeningPage({
             ? {
                 ...current,
                 activeTab: 'play',
-                source: normalizeSongSource(payload.source ?? current.source),
+                source: normalizeSongGenerationSource(payload.source ?? current.source),
                 submitting: false,
                 suggesting: false,
                 error: null,
@@ -4149,7 +4173,7 @@ function ListeningPage({
             ? {
                 ...current,
                 activeTab: 'play',
-                source: normalizeSongSource(payload.source ?? current.source),
+                source: normalizeSongGenerationSource(payload.source ?? current.source),
                 submitting: false,
                 suggesting: false,
                 error: null,
@@ -4475,8 +4499,8 @@ function ListeningPage({
       }
     }
     const versions = currentSongState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
-    const preferredSource = normalizeSongSource(
-      currentSongState?.source ?? songSettings?.songProvider ?? 'suno',
+    const preferredSource = normalizeSongGenerationSource(
+      songSettings?.songProvider ?? currentSongState?.source ?? 'suno',
     );
     setSongDialog({
       activeTab: mode === 'song' || versions.length > 0 ? 'play' : 'settings',
@@ -4491,7 +4515,7 @@ function ListeningPage({
     if (!songDialog || songDialog.submitting || songDialog.suggesting) return;
 
     const lyrics = songLyricsFromItems(items);
-    const selectedSource = normalizeSongSource(songDialog.source);
+    const selectedSource = normalizeSongGenerationSource(songDialog.source);
     const confirmed = selectedSource === 'suno'
       ? window.confirm(
           '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词，并每次点击 Suno 蓝色魔法棒根据歌词重新生成风格；点击 Create 前会再次确认消耗 Suno credits。是否继续？',
@@ -4522,7 +4546,7 @@ function ListeningPage({
             ? {
                 ...current,
                 activeTab: payload.status === 'ready' || isSunoWaitingConfirm(payload) ? 'play' : current.activeTab,
-                source: normalizeSongSource(payload.source ?? selectedSource),
+                source: normalizeSongGenerationSource(payload.source ?? selectedSource),
                 submitting: false,
               }
             : current,
@@ -4544,6 +4568,40 @@ function ListeningPage({
             }
           : current,
       );
+    }
+  };
+
+  const importExternalSong = async () => {
+    if (songDialog?.submitting || songDialog?.suggesting) return;
+    setSongDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
+    try {
+      const payload = await sendNative<ListeningSongStatePayload>('listening.songImportExternal', {
+        articleId,
+      });
+      setSongState(payload);
+      setSongDialog((current) =>
+        current
+          ? {
+              ...current,
+              activeTab: 'play',
+              submitting: false,
+              error: null,
+            }
+          : current,
+      );
+      onNotice(payload.importCancelled ? '已取消导入本地音乐' : '已导入本地音乐');
+    } catch (importError) {
+      const message = importError instanceof Error ? importError.message : '本地音乐导入失败';
+      setSongDialog((current) =>
+        current
+          ? {
+              ...current,
+              submitting: false,
+              error: message,
+            }
+          : current,
+      );
+      onNotice(message);
     }
   };
 
@@ -5312,6 +5370,7 @@ function ListeningPage({
             setSongDialog(null);
           }}
           onConfirm={() => void generateSong()}
+          onImportExternal={() => void importExternalSong()}
           onConfirmSunoCreate={() => void confirmSunoCreate()}
           onRetrySunoDownload={() => void retrySunoDownload()}
           onPlayVersion={(versionId) => void playSongVersion(versionId)}
@@ -5426,6 +5485,7 @@ function SongDialog({
   onSourceChange,
   onCancel,
   onConfirm,
+  onImportExternal,
   onConfirmSunoCreate,
   onRetrySunoDownload,
   onPlayVersion,
@@ -5443,9 +5503,10 @@ function SongDialog({
   songPlaying: boolean;
   recordingBusy: boolean;
   onTabChange: (tab: SongDialogTab) => void;
-  onSourceChange: (source: SongSource) => void;
+  onSourceChange: (source: SongGenerationSource) => void;
   onCancel: () => void;
   onConfirm: () => void;
+  onImportExternal: () => void;
   onConfirmSunoCreate: () => void;
   onRetrySunoDownload: () => void;
   onPlayVersion: (versionId?: string) => void;
@@ -5620,6 +5681,9 @@ function SongDialog({
         <div className="edit-dialog-actions">
           <button className="ghost-action" type="button" onClick={onCancel}>
             取消
+          </button>
+          <button className="ghost-action" type="button" onClick={onImportExternal} disabled={busy || songGenerating}>
+            <Icon name="folder" /> 导入本地音乐
           </button>
           {state.activeTab === 'settings' && (
             <button
@@ -7725,8 +7789,8 @@ function SettingsPage({
   const [selectedVoiceId, setSelectedVoiceId] = useState(settings?.tts.speakerId ?? '');
   const [sunoOutputDirectory, setSunoOutputDirectory] = useState(settings?.song?.sunoOutputDirectory ?? '');
   const [sunoTimeoutMinutes, setSunoTimeoutMinutes] = useState(settings?.song?.sunoTimeoutMinutes ?? 20);
-  const [songProvider, setSongProvider] = useState<SongSource>(
-    normalizeSongSource(settings?.song?.songProvider ?? 'suno'),
+  const [songProvider, setSongProvider] = useState<SongGenerationSource>(
+    normalizeSongGenerationSource(settings?.song?.songProvider ?? 'suno'),
   );
   const [aiProvider, setAiProvider] = useState<AiProvider>(
     normalizeAiProvider(settings?.cloud?.aiProvider),
@@ -7769,7 +7833,7 @@ function SettingsPage({
     setSelectedVoiceId(payload.tts.speakerId);
     setSunoOutputDirectory(payload.song?.sunoOutputDirectory ?? '');
     setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
-    setSongProvider(normalizeSongSource(payload.song?.songProvider ?? 'suno'));
+    setSongProvider(normalizeSongGenerationSource(payload.song?.songProvider ?? 'suno'));
     setAiProvider(normalizeAiProvider(payload.cloud?.aiProvider));
     setAliyunBailianApiKey('');
     setClearAliyunBailianApiKey(false);
@@ -7837,7 +7901,7 @@ function SettingsPage({
   const songSettingsUnchanged =
     sunoOutputDirectory.trim() === (current.song?.sunoOutputDirectory ?? '').trim() &&
     Number(sunoTimeoutMinutes) === Number(current.song?.sunoTimeoutMinutes ?? 20) &&
-    songProvider === normalizeSongSource(current.song?.songProvider ?? 'suno');
+    songProvider === normalizeSongGenerationSource(current.song?.songProvider ?? 'suno');
   const cloudSettingsUnchanged =
     aiProvider === normalizeAiProvider(current.cloud?.aiProvider) &&
     !aliyunBailianApiKey.trim() &&
@@ -9315,6 +9379,11 @@ function songLyricsFromItems(items: ListeningItem[]): string {
 }
 
 function normalizeSongSource(source?: string | null): SongSource {
+  if (source === 'external_audio') return 'external_audio';
+  return source === 'bailian_fun_music' ? 'bailian_fun_music' : 'suno';
+}
+
+function normalizeSongGenerationSource(source?: string | null): SongGenerationSource {
   return source === 'bailian_fun_music' ? 'bailian_fun_music' : 'suno';
 }
 
@@ -9323,9 +9392,9 @@ function normalizeAiProvider(provider?: string | null): AiProvider {
 }
 
 function songSourceLabel(source?: string | null): string {
-  return normalizeSongSource(source) === 'bailian_fun_music'
-    ? '阿里云百聆'
-    : 'Suno 网页自动化';
+  const normalized = normalizeSongSource(source);
+  if (normalized === 'external_audio') return '外部导入';
+  return normalized === 'bailian_fun_music' ? '阿里云百聆' : 'Suno 网页自动化';
 }
 
 function groupSongVersionsForDisplay(versions: SongVersionPayload[]): SongVersionGroup[] {

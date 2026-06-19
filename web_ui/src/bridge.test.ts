@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emitNativeEvent, onNativeEvent, sendNative } from './bridge';
-import type { SettingsState } from './types';
+import type { ListeningSongStatePayload, SettingsState } from './types';
 
 describe('bridge client', () => {
   afterEach(() => {
@@ -26,6 +26,21 @@ describe('bridge client', () => {
     const response = await sendNative<{ articles: unknown[] }>('article.list');
 
     expect(response.articles.length).toBeGreaterThan(0);
+  });
+
+  it('mocks external song imports when Flutter bridge is unavailable', async () => {
+    const response = await sendNative<ListeningSongStatePayload>(
+      'listening.songImportExternal',
+      { articleId: 12 },
+    );
+
+    expect(response.articleId).toBe(12);
+    expect(response.source).toBe('external_audio');
+    expect(response.versions?.[0]).toMatchObject({
+      title: '导入音乐',
+      source: 'external_audio',
+      timelineStatus: 'missing',
+    });
   });
 
   it('waits for a delayed Flutter bridge in embedded WebView', async () => {

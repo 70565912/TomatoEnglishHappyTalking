@@ -4187,6 +4187,82 @@ describe('App', () => {
     expect(await screen.findByText('阿里云百聆版本 1')).toBeInTheDocument();
   });
 
+  it('imports external audio songs from the creation center', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const importPayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'empty',
+            source: 'suno',
+            versions: [],
+          });
+        }
+        if (type === 'listening.songImportExternal') {
+          importPayloads.push(payload);
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            source: 'external_audio',
+            audioPath: 'external-song.mp3',
+            downloadComplete: true,
+            versions: [
+              {
+                id: 'external-1',
+                audioPath: 'external-song.mp3',
+                title: '导入音乐',
+                durationMs: 36000,
+                source: 'external_audio',
+                timelineStatus: 'missing',
+                isDefault: true,
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    await clickSelectedCreationAction('歌曲');
+    const importButton = await screen.findByRole('button', { name: /导入本地音乐/ });
+    await waitFor(() => expect(importButton).not.toBeDisabled());
+    fireEvent.click(importButton);
+
+    await waitFor(() => expect(importPayloads[0]).toMatchObject({ articleId: 1 }));
+    expect(await screen.findByText('外部导入')).toBeInTheDocument();
+    expect(screen.getByText('导入音乐 · 默认')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '生成歌曲字幕' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '导出歌曲视频' })).toBeDisabled();
+  });
+
   it('submits Suno song generation with explicit login guidance', async () => {
     window.location.hash = '/creation?articleId=1';
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);

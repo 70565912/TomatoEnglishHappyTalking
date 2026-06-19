@@ -197,7 +197,7 @@ export interface ListeningSynthesisPayload {
   error?: string | null;
 }
 
-export type SongSource = 'suno' | 'bailian_fun_music';
+export type SongSource = 'suno' | 'bailian_fun_music' | 'external_audio';
 export type AiProvider = 'aliyun_bailian' | 'volcengine';
 
 export interface ListeningSongStatePayload {
@@ -215,6 +215,7 @@ export interface ListeningSongStatePayload {
   automationStatus?: string | null;
   creditsRemaining?: number | null;
   downloadComplete?: boolean | null;
+  importCancelled?: boolean | null;
   detectedSongUrls?: string[];
   versions?: Array<{
     id: string;

@@ -742,6 +742,36 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     }, 40);
     return sunoResult;
   }
+  if (type === 'listening.songImportExternal') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const result = {
+      articleId,
+      status: 'ready',
+      stylePrompt: '',
+      audioPath: 'mock-external-audio.mp3',
+      errorMessage: '',
+      durationMs: 36000,
+      source: 'external_audio',
+      automationStatus: 'complete',
+      manualActionMessage: '',
+      downloadComplete: true,
+      versions: [
+        {
+          id: 'mock-external-audio-1',
+          audioPath: 'mock-external-audio.mp3',
+          title: '导入音乐',
+          durationMs: 36000,
+          source: 'external_audio',
+          timelineStatus: 'missing',
+          isDefault: true,
+        },
+      ],
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({ type: 'listening.song.state', payload: result });
+    }, 40);
+    return result;
+  }
   if (type === 'listening.songConfirmSunoCreate') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
     const result = {
@@ -1145,12 +1175,15 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return mockSettings;
   }
   if (type === 'settings.saveSong') {
+    const songProvider = String(payload.songProvider ?? mockSettings.song?.songProvider ?? 'suno') === 'bailian_fun_music'
+      ? 'bailian_fun_music'
+      : 'suno';
     mockSettings = {
       ...mockSettings,
       song: {
         sunoOutputDirectory: String(payload.sunoOutputDirectory ?? mockSettings.song?.sunoOutputDirectory ?? ''),
         sunoTimeoutMinutes: Number(payload.sunoTimeoutMinutes ?? mockSettings.song?.sunoTimeoutMinutes ?? 20),
-        songProvider: String(payload.songProvider ?? mockSettings.song?.songProvider ?? 'suno') as SongSource,
+        songProvider: songProvider as SongSource,
       },
     };
     return mockSettings;

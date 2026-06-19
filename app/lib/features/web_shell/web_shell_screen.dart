@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
@@ -22,6 +23,7 @@ import '../../services/asset_path_service.dart';
 import '../../services/bailian_music_service.dart';
 import '../../services/database_service.dart';
 import '../../services/content_safety_service.dart';
+import '../../services/external_song_import_service.dart';
 import '../../services/nlp_service.dart';
 import '../../services/picture_book_service.dart';
 import '../../services/practice_input_parser.dart';
@@ -186,6 +188,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'recording.videoOpenDirectory': _handleRecordingVideoOpenDirectory,
         'listening.songState': _handleListeningSongState,
         'listening.songGenerate': _handleListeningSongGenerate,
+        'listening.songImportExternal': _handleListeningSongImportExternal,
         'listening.songConfirmSunoCreate':
             _handleListeningSongConfirmSunoCreate,
         'listening.songDownloadSunoExisting':
@@ -724,6 +727,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   ) async {
     final articleId = _payloadInt(message.payload, 'articleId');
     await DatabaseService.deleteArticle(articleId);
+    await ExternalSongImportService.deleteArticleAssets(articleId);
     _clearPreloadAggregatesForArticle(articleId);
     TtsMemoryCacheService.releaseArticle(articleId);
     if (_activeFollowArticleId == articleId) {
@@ -1696,6 +1700,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
   }
 
+  Future<ArticleSongState?> _cachedExternalSongState(Article article) {
+    return ExternalSongImportService.loadState(article);
+  }
+
   Future<List<ArticleSongVersion>> _sunoVersionsFromMetadata(
     Map<String, dynamic> metadata, {
     required String fallbackStylePrompt,
@@ -1767,13 +1775,29 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }) async {
     final article = await _songArticle(articleId);
     final activeSuno = await _activeSunoSongState(articleId);
-    final preferredSource = _normalizeSongProvider(
+    final preferredSource = _normalizeSongSource(
       sourceOverride ?? await AppConfig.songGenerationProvider,
     );
     if (activeSuno != null &&
-        _normalizeSongProvider(sourceOverride ?? AppConfig.songProviderSuno) ==
+        _normalizeSongSource(sourceOverride ?? AppConfig.songProviderSuno) ==
             AppConfig.songProviderSuno) {
+      final cachedBailian = await _cachedBailianSongState(article);
+      final cachedExternal = await _cachedExternalSongState(article);
+      final combinedVersions = <ArticleSongVersion>[
+        ...activeSuno.versions,
+        ...?cachedBailian?.versions,
+        ...?cachedExternal?.versions,
+      ];
       var state = activeSuno;
+      if (combinedVersions.isNotEmpty) {
+        final versions = _songVersionsForPayload(articleId, combinedVersions);
+        final selected = _defaultSongVersion(versions) ?? versions.first;
+        state = state.copyWith(
+          audioPath: state.audioPath ?? selected.audioPath,
+          durationMs: state.durationMs ?? selected.durationMs,
+          versions: versions,
+        );
+      }
       if (statusOverride != null) {
         state = state.copyWith(status: statusOverride);
       }
@@ -1787,19 +1811,34 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     final cachedSuno = await _cachedSunoSongState(article);
     final cachedBailian = await _cachedBailianSongState(article);
-    final preferredState =
-        preferredSource == AppConfig.songProviderBailianFunMusic
-            ? cachedBailian
-            : cachedSuno;
-    final otherState = preferredSource == AppConfig.songProviderBailianFunMusic
-        ? cachedSuno
-        : cachedBailian;
+    final cachedExternal = await _cachedExternalSongState(article);
+    final statesBySource = <String, ArticleSongState?>{
+      AppConfig.songProviderSuno: cachedSuno,
+      AppConfig.songProviderBailianFunMusic: cachedBailian,
+      ExternalSongImportService.source: cachedExternal,
+    };
+    final orderedSources = <String>[
+      preferredSource,
+      AppConfig.songProviderSuno,
+      AppConfig.songProviderBailianFunMusic,
+      ExternalSongImportService.source,
+    ].fold<List<String>>(<String>[], (sources, source) {
+      if (!sources.contains(source)) {
+        sources.add(source);
+      }
+      return sources;
+    });
+    final preferredState = statesBySource[preferredSource];
+    final fallbackState = orderedSources
+        .map((source) => statesBySource[source])
+        .whereType<ArticleSongState>()
+        .cast<ArticleSongState?>()
+        .firstWhere((state) => state != null, orElse: () => null);
     final combinedVersions = <ArticleSongVersion>[
-      ...?preferredState?.versions,
-      ...?otherState?.versions,
+      for (final source in orderedSources) ...?statesBySource[source]?.versions,
     ];
     var state = preferredState ??
-        otherState ??
+        fallbackState ??
         ArticleSongState(
           articleId: articleId,
           status: 'empty',
@@ -2431,6 +2470,73 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
   }
 
+  Future<Map<String, dynamic>> _handleListeningSongImportExternal(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ExternalSongImportService.allowedExtensions,
+      allowMultiple: false,
+      withData: false,
+    );
+    if (result == null || result.files.isEmpty) {
+      final payload = await _songStatePayload(
+        articleId,
+        sourceOverride: ExternalSongImportService.source,
+      );
+      payload['importCancelled'] = true;
+      payload['manualActionMessage'] = '已取消导入本地音乐';
+      return payload;
+    }
+    final selectedPath = (result.files.single.path ?? '').trim();
+    if (selectedPath.isEmpty) {
+      throw const FormatException('无法读取选择的音乐文件路径');
+    }
+    await _stopSongPlayback();
+    final article = await _songArticle(articleId);
+    final imported = await ExternalSongImportService.importFile(
+      article: article,
+      sourcePath: selectedPath,
+      lyrics: _articleSongLyrics(article),
+    );
+    final currentPayload = await _songStatePayload(
+      articleId,
+      sourceOverride: ExternalSongImportService.source,
+    );
+    final currentVersions = ((currentPayload['versions'] as List?) ?? const [])
+        .map(ArticleSongVersion.fromJson)
+        .whereType<ArticleSongVersion>()
+        .toList(growable: false);
+    final updatedVersions = currentVersions
+        .map(
+            (version) => version.copyWith(isDefault: version.id == imported.id))
+        .toList(growable: false);
+    await _saveSongMetadataForAllSources(
+      article: article,
+      versions: updatedVersions,
+      includeSources: {
+        AppConfig.songProviderSuno,
+        AppConfig.songProviderBailianFunMusic,
+        ExternalSongImportService.source,
+      },
+    );
+    _syncActiveSunoVersions(articleId, updatedVersions);
+    await _pushSongState(
+      articleId,
+      sourceOverride: ExternalSongImportService.source,
+    );
+    return _songStatePayload(
+      articleId,
+      statusOverride: 'ready',
+      sourceOverride: ExternalSongImportService.source,
+    );
+  }
+
   Future<Map<String, dynamic>> _handleListeningSongConfirmSunoCreate(
     BridgeMessage message,
   ) async {
@@ -2632,24 +2738,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (!found) {
       throw FormatException('没有找到歌曲版本：$versionId');
     }
-    if (_sunoArticleId == articleId) {
-      _sunoVersions
-        ..clear()
-        ..addAll(updatedVersions.where(
-          (version) =>
-              _normalizeSongProvider(version.source) ==
-              AppConfig.songProviderSuno,
-        ));
-    }
-    await _saveSongMetadataForVersions(
+    _syncActiveSunoVersions(articleId, updatedVersions);
+    await _saveSongMetadataForAllSources(
       article: article,
       versions: updatedVersions,
-      source: updatedVersions
-          .firstWhere(
-            (version) => version.id == versionId,
-            orElse: () => updatedVersions.first,
-          )
-          .source,
     );
     return _songStatePayload(articleId);
   }
@@ -2689,42 +2781,30 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       throw const FormatException('歌曲字幕正在生成，请等待完成后再删除');
     }
     await _stopSongPlayback();
-    await _deleteFileIfExists(target.audioPath);
-    final timelinePath = (target.timelinePath ?? '').trim();
-    if (timelinePath.isNotEmpty) {
-      await _deleteFileIfExists(timelinePath);
+    final deletedSource = _normalizeSongSource(target.source);
+    if (deletedSource == ExternalSongImportService.source) {
+      await ExternalSongImportService.deleteVersionAssets(target);
+    } else {
+      await _deleteFileIfExists(target.audioPath);
+      final timelinePath = (target.timelinePath ?? '').trim();
+      if (timelinePath.isNotEmpty) {
+        await _deleteFileIfExists(timelinePath);
+      }
     }
     if (remainingVersions.isNotEmpty &&
         !remainingVersions.any((version) => version.isDefault)) {
       remainingVersions[0] = remainingVersions[0].copyWith(isDefault: true);
     }
-    final deletedSource = _normalizeSongProvider(target.source);
-    final remainingForDeletedSource = remainingVersions
-        .where(
-          (version) => _normalizeSongProvider(version.source) == deletedSource,
-        )
-        .toList(growable: false);
-    if (deletedSource == AppConfig.songProviderBailianFunMusic) {
-      await _saveBailianMusicMetadataForVersions(
-        article: article,
-        versions: remainingForDeletedSource,
-        model: await AppConfig.aliyunBailianMusicModel,
-      );
-    } else {
-      await _saveSunoMetadataForVersions(
-        article: article,
-        versions: remainingForDeletedSource,
-      );
-    }
-    final deletedSongUrl = _canonicalSunoSongUrl(target.songUrl);
+    await _saveSongMetadataForAllSources(
+      article: article,
+      versions: remainingVersions,
+      includeSources: {deletedSource},
+    );
+    final deletedSongUrl = deletedSource == AppConfig.songProviderSuno
+        ? _canonicalSunoSongUrl(target.songUrl)
+        : null;
+    _syncActiveSunoVersions(articleId, remainingVersions);
     if (_sunoArticleId == articleId) {
-      _sunoVersions
-        ..clear()
-        ..addAll(remainingVersions.where(
-          (version) =>
-              _normalizeSongProvider(version.source) ==
-              AppConfig.songProviderSuno,
-        ));
       if (deletedSongUrl != null) {
         _sunoDownloadedSongUrls.remove(deletedSongUrl);
         _sunoTrustedSongUrls.remove(deletedSongUrl);
@@ -2850,15 +2930,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (!replaced) {
       currentVersions.add(updated);
     }
-    if (_sunoArticleId == articleId) {
-      _sunoVersions
-        ..clear()
-        ..addAll(currentVersions.where(
-          (version) =>
-              _normalizeSongProvider(version.source) ==
-              AppConfig.songProviderSuno,
-        ));
-    }
+    _syncActiveSunoVersions(articleId, currentVersions);
     await _saveSongMetadataForVersions(
       article: article,
       versions: currentVersions,
@@ -2871,10 +2943,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required List<ArticleSongVersion> versions,
     required String source,
   }) async {
-    final normalizedSource = _normalizeSongProvider(source);
+    final normalizedSource = _normalizeSongSource(source);
     final scopedVersions = versions
         .where((version) =>
-            _normalizeSongProvider(version.source) == normalizedSource)
+            _normalizeSongSource(version.source) == normalizedSource)
         .toList(growable: false);
     if (normalizedSource == AppConfig.songProviderBailianFunMusic) {
       await _saveBailianMusicMetadataForVersions(
@@ -2884,10 +2956,53 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       );
       return;
     }
+    if (normalizedSource == ExternalSongImportService.source) {
+      await ExternalSongImportService.saveVersions(
+        article: article,
+        versions: scopedVersions,
+      );
+      return;
+    }
     await _saveSunoMetadataForVersions(
       article: article,
-      versions: scopedVersions.isEmpty ? versions : scopedVersions,
+      versions: scopedVersions,
     );
+  }
+
+  Future<void> _saveSongMetadataForAllSources({
+    required Article article,
+    required List<ArticleSongVersion> versions,
+    Set<String>? includeSources,
+  }) async {
+    final sources = <String>{
+      ...?includeSources?.map(_normalizeSongSource),
+      ...versions.map((version) => _normalizeSongSource(version.source)),
+    };
+    for (final source in sources) {
+      await _saveSongMetadataForVersions(
+        article: article,
+        versions: versions,
+        source: source,
+      );
+    }
+  }
+
+  void _syncActiveSunoVersions(
+    int articleId,
+    Iterable<ArticleSongVersion> versions,
+  ) {
+    if (_sunoArticleId != articleId) {
+      return;
+    }
+    _sunoVersions
+      ..clear()
+      ..addAll(
+        versions.where(
+          (version) =>
+              _normalizeSongSource(version.source) ==
+              AppConfig.songProviderSuno,
+        ),
+      );
   }
 
   Future<void> _saveSunoMetadataForVersions({
@@ -3676,10 +3791,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'ok': result['ok'],
             'songUrl': result['songUrl'],
             'songUrlCount': (result['songUrls'] as List?)?.length ?? 0,
+            'candidateSongUrlCount':
+                (result['candidateSongUrls'] as List?)?.length ?? 0,
             'currentPageExpectedScore': result['currentPageExpectedScore'],
             'currentPageLyricsExactMatch':
                 result['currentPageLyricsExactMatch'],
-            'expectedMatchThreshold': result['expectedMatchThreshold'],
           },
         );
         var songUrl = _canonicalSunoSongUrl(result['songUrl']) ?? '';
@@ -4018,49 +4134,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           );
           _sunoAutomationTimer?.cancel();
         } else if (_sunoExistingDownloadOnly) {
-          final download = await _evaluateSunoJson(
-            controller,
-            _sunoDownloadScript(
-              downloadedSongUrls: _sunoDownloadedSongUrls.toList(),
-              pendingSongUrl: _sunoPendingDownloadSongUrl,
-              allowedSongUrls: const <String>[],
-              expectedStylePrompt: _sunoStylePrompt,
-              expectedLyrics: _sunoLyrics,
-              requireExpectedMatch: true,
-              trustedSongUrls: _trustedSunoSongUrls(),
-            ),
-          );
-          TomatoLogger.info(
-            category: 'suno',
-            event: 'download.probe',
-            articleId: _sunoArticleId,
-            status: _sunoAutomationStatus,
-            data: _sunoDownloadProbeLogData(download),
-          );
-          final pendingSongUrl =
-              _canonicalSunoSongUrl(download['songUrl']) ?? '';
-          final pendingTitle = (download['title'] ?? '').toString().trim();
-          if (pendingSongUrl.isNotEmpty &&
-              !_isSyntheticSunoSongKey(pendingSongUrl)) {
-            _sunoPendingDownloadSongUrl = pendingSongUrl;
-          }
-          if (pendingTitle.isNotEmpty) {
-            _sunoPendingDownloadTitle = pendingTitle;
-          }
-          if (download['ok'] == true || download['retry'] == true) {
-            await _setSunoStatus(
-              'downloading',
-              '正在下载 Suno 已生成的完整歌曲...',
-            );
-            return;
-          }
           final startedAt = _sunoExistingDownloadStartedAt;
           if (startedAt == null ||
               DateTime.now().difference(startedAt) <
                   const Duration(seconds: 75)) {
             await _setSunoStatus(
               'downloading',
-              '正在等待 Suno 歌曲列表加载完成...',
+              '正在等待 Suno 歌曲列表加载完成，或打开候选详情页核对歌词...',
             );
             return;
           }
@@ -4813,7 +4893,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'title': result['title'],
       'currentPageExpectedScore': result['currentPageExpectedScore'],
       'currentPageLyricsExactMatch': result['currentPageLyricsExactMatch'],
-      'expectedMatchThreshold': result['expectedMatchThreshold'],
       'candidateCount': (result['candidates'] as List?)?.length ?? 0,
       'candidates': candidates,
     };
@@ -5402,9 +5481,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     .filter((value) => value.length >= 24)
     .slice(0, 4)
     .map((value) => value.slice(0, 90));
-  const expectedMatchThreshold = lyricSamples.length > 0
-    ? 14
-    : Math.max(1, Math.min(8, Math.ceil(expectedTokens.length * 0.35)));
   const expectedScore = (text) => {
     const haystack = normalizeLoose(text);
     let score = 0;
@@ -5807,76 +5883,91 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     .map((el) => {
       const context = contextText(el);
       const rect = el.getBoundingClientRect();
-      const text = normalize(textOf(el));
-      const lyricMatch = /lyrics?|歌词|歌詞/i.test(context);
-      const styleMatch = /style|genre|music|describe|description|风格|曲风/i.test(context);
-      let lyricScore = 0;
-      let styleScore = 0;
-      if (lyricMatch) lyricScore += 14;
-      if (/lyrics?|歌词|歌詞/i.test(text)) lyricScore += 8;
-      if (rect.height >= 120) lyricScore += 3;
-      if (styleMatch) styleScore += 14;
-      if (/style|genre|music|describe|description|风格|曲风/i.test(text)) styleScore += 8;
-      if (rect.height < 180) styleScore += 2;
-      if (/prompt|song description/i.test(context)) styleScore += 3;
-      if (isUtilityEditor(el, context)) {
-        lyricScore -= 30;
-        styleScore -= 30;
-      }
-      return { el, context, lyricScore, styleScore, rect };
+      return { el, context, rect };
     });
   const formFields = allFields.filter((item) => !isUtilityEditor(item.el, item.context));
-  const hasLyricEvidence = (item) => {
-    const text = normalize([textOf(item.el), item.context].join(' '));
-    return item.lyricScore >= 8 ||
-      /lyrics?|歌词|歌詞/i.test(text);
+  const fieldByExplicitMeta = (pattern, reject = null) => {
+    const match = formFields.find((item) => {
+      const meta = normalize([
+        utilityMeta(item.el),
+        item.el.getAttribute?.('aria-label'),
+        item.el.getAttribute?.('placeholder')
+      ].filter(Boolean).join(' '));
+      return pattern.test(meta) && !(reject && reject.test(meta));
+    });
+    return match?.el || null;
   };
-  const hasStyleEvidence = (item) => {
-    const labeledText = normalize([textOf(item.el), item.context].join(' '));
-    const valueText = normalize([
-      inputValue(item.el),
-      item.el.getAttribute?.('placeholder'),
-      textOf(item.el)
-    ].filter(Boolean).join(' '));
-    return item.styleScore >= 8 ||
-      /style|styles|genre|music|describe|description|风格|曲风/i.test(labeledText) ||
-      looksLikeSunoGeneratedStyle(valueText);
+  const editorIn = (root, reject = null) => {
+    if (!root) return null;
+    const editors = Array.from(root.querySelectorAll(editorSelector))
+      .filter(visible)
+      .filter((el) => !isDisabled(el))
+      .filter((el) => !isUtilityEditor(el, contextText(el)))
+      .filter((el) => !(reject && reject.test(normalize([utilityMeta(el), contextText(el)].join(' ')))))
+      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
+    return editors[0] || null;
   };
-  const choose = (scoreName, exclude) => formFields
-    .filter((item) => item.el !== exclude)
-    .filter((item) => scoreName !== 'lyricScore' || hasLyricEvidence(item))
-    .filter((item) => scoreName !== 'styleScore' || hasStyleEvidence(item))
-    .sort((left, right) => {
-      const scoreDiff = right[scoreName] - left[scoreName];
-      if (scoreDiff !== 0) return scoreDiff;
-      if (scoreName === 'lyricScore') {
-        return right.rect.height - left.rect.height;
-      }
-      return left.rect.height - right.rect.height;
-    })[0]?.el;
-  let lyricsField = choose('lyricScore');
-  let styleField = choose('styleScore', lyricsField);
-  if (lyricsField) {
-    const lyricsRect = lyricsField.getBoundingClientRect();
-    const styleBelowLyrics = formFields
-      .filter((item) => item.el !== lyricsField)
-      .filter(hasStyleEvidence)
-      .filter((item) => item.rect.top > lyricsRect.top + 20)
-      .filter((item) => item.rect.height >= 60)
-      .filter((item) =>
-        Math.min(item.rect.right, lyricsRect.right) -
-          Math.max(item.rect.left, lyricsRect.left) >
-        Math.min(item.rect.width, lyricsRect.width) * 0.35
-      )
-      .sort((left, right) => left.rect.top - right.rect.top)[0]?.el;
-    if (styleBelowLyrics) {
-      styleField = styleBelowLyrics;
-    }
-  }
-  if (formFields.length >= 2 && (!lyricsField || !styleField || lyricsField === styleField)) {
-    const byHeight = [...formFields].sort((left, right) => right.rect.height - left.rect.height);
-    lyricsField = byHeight.find(hasLyricEvidence)?.el;
-    styleField = byHeight.find((item) => item.el !== lyricsField && hasStyleEvidence(item))?.el;
+  const directTextOf = (el) => normalize(
+    Array.from(el.childNodes || [])
+      .filter((node) => node.nodeType === Node.TEXT_NODE)
+      .map((node) => node.textContent || '')
+      .join(' ')
+  );
+  const headingTextOf = (el) => normalize([
+    directTextOf(el),
+    Array.from(el.children || [])
+      .slice(0, 4)
+      .map((child) => child.matches?.('h1,h2,h3,h4,button,[role="button"],summary,[aria-label]')
+        ? textOf(child)
+        : directTextOf(child))
+      .join(' ')
+  ].join(' '));
+  const panelByTestId = (pattern, reject = null) => {
+    const panels = Array.from(document.querySelectorAll('[data-testid],[data-test-id]'))
+      .filter(visible)
+      .filter((el) => {
+        const meta = normalize([
+          el.getAttribute?.('data-testid'),
+          el.getAttribute?.('data-test-id'),
+          el.getAttribute?.('aria-label')
+        ].filter(Boolean).join(' '));
+        return pattern.test(meta) && !(reject && reject.test(meta));
+      })
+      .filter((el) => editorIn(el, reject))
+      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
+    return panels[0] || null;
+  };
+  const panelByTitle = (titlePattern, rejectTitlePattern = null) => {
+    const panels = Array.from(document.querySelectorAll('section,article,[role="group"],div'))
+      .filter(visible)
+      .filter((el) => editorIn(el, rejectTitlePattern))
+      .filter((el) => {
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 160 || rect.height < 36) return false;
+        const title = headingTextOf(el).slice(0, 220);
+        return titlePattern.test(title) &&
+          !(rejectTitlePattern && rejectTitlePattern.test(title));
+      })
+      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
+    return panels[0] || null;
+  };
+  const styleWrapperSelectorForFields =
+    '[data-testid="create-form-styles-wrapper"],[data-test-id="create-form-styles-wrapper"]';
+  const lyricsPanel =
+    panelByTestId(/lyrics?|歌词|歌詞/i, /styles?|风格|曲风/i) ||
+    panelByTitle(/\\blyrics?\\b|歌词|歌詞/i, /\\bstyles?\\b|风格|曲风/i);
+  const stylePanelForFields =
+    document.querySelector(styleWrapperSelectorForFields) ||
+    panelByTestId(/styles?|style|genre|music|风格|曲风/i, /lyrics?|歌词|歌詞/i) ||
+    panelByTitle(/\\bstyles?\\b|style prompt|music style|genre|风格|曲风/i, /\\blyrics?\\b|歌词|歌詞/i);
+  let lyricsField =
+    editorIn(lyricsPanel, /styles?|style prompt|music style|genre|风格|曲风/i) ||
+    fieldByExplicitMeta(/lyrics?|歌词|歌詞/i, /styles?|风格|曲风/i);
+  let styleField =
+    editorIn(stylePanelForFields, /lyrics?|歌词|歌詞/i) ||
+    fieldByExplicitMeta(/styles?|style prompt|music style|genre|风格|曲风/i, /lyrics?|歌词|歌詞/i);
+  if (styleField === lyricsField) {
+    styleField = null;
   }
   const fillTarget = (el) => {
     if (!el) return null;
@@ -5986,8 +6077,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return false;
   };
   const fields = allFields.map((item) => ({
-    lyricScore: item.lyricScore,
-    styleScore: item.styleScore,
     field: summarize(item.el)
   })).slice(0, 20);
   const getValue = (rawEl) => {
@@ -6257,34 +6346,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           /closed|collapsed|折叠|收起/i.test(stateText) ||
           inferredCollapsed;
         if (!explicitCollapsed) return null;
-        const belowLyrics = lyricsRect
-          ? rect.top > lyricsRect.top + 20 &&
-            rect.left < lyricsRect.right + 80 &&
-            rect.right > lyricsRect.left - 80
-          : false;
-        const nearStyle = styleRect
-          ? rect.bottom >= styleRect.top - 220 &&
-            rect.top <= styleRect.bottom + 220 &&
-            rect.right >= styleRect.left - 280 &&
-            rect.left <= styleRect.right + 280
-          : false;
-        let score = 0;
-        if (styleText) score += 26;
-        if (expandedAttr === 'false') score += 12;
-        if (/closed|collapsed|折叠|收起/i.test(stateText)) score += 8;
-        if (inferredCollapsed) score += 8;
-        if (belowLyrics) score += 6;
-        if (nearStyle) score += 6;
-        if (/chevron|accordion|collapse|expand/i.test(className)) score += 4;
-        if (clickable.tagName === 'BUTTON' || clickable.tagName === 'SUMMARY') score += 4;
-        score -= Math.max(0, label.length - 80) / 30;
-        return { clickable, label, context: ownMeta, score };
+        if (lyricsRect &&
+            rect.top <= lyricsRect.top + 20 &&
+            !styleField &&
+            !styleRect) return null;
+        return { clickable, label, context: ownMeta, top: rect.top };
       })
       .filter(Boolean)
-      .sort((left, right) => right.score - left.score);
+      .sort((left, right) => left.top - right.top);
     const match = candidates[0];
-    if (!match || match.score < 12) return null;
-    return match;
+    return match || null;
   };
   const expandStylesIfNeeded = () => {
     const expansion = findStyleExpansionButton();
@@ -6431,24 +6502,26 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         if (!positive.test(label) && !positive.test(context) && !hasStyleMagicColor) {
           return null;
         }
-        let score = 0;
-        if (nearStyle) score += 8;
-        if (strongMagic.test(label)) score += 18;
-        if (strongMagic.test(context)) score += 10;
-        if (/style|music|genre|风格|曲风/i.test(label)) score += 8;
-        if (/style|music|genre|风格|曲风/i.test(context)) score += 5;
-        if (hasStyleMagicColor) score += 12;
-        if (hasIcon) score += 4;
-        if (clickable.tagName === 'BUTTON') score += 3;
-        if (!label && (hasStyleMagicColor || hasIcon)) score += 7;
-        score -= Math.max(0, label.length - 80) / 25;
-        return { clickable, label, context, score };
+        const namedMagic = strongMagic.test(label) || positive.test(label);
+        const blueMagic =
+          hasStyleMagicColor &&
+          (hasIcon || !label || positive.test(context) || strongMagic.test(context));
+        return {
+          clickable,
+          label,
+          context,
+          namedMagic,
+          blueMagic,
+          top: rect.top,
+          left: rect.left
+        };
       })
       .filter(Boolean)
-      .sort((left, right) => right.score - left.score);
-    const match = candidates[0];
-    if (!match || match.score < 8) return null;
-    return match;
+      .sort((left, right) => (left.top - right.top) || (left.left - right.left));
+    return candidates.find((item) => item.namedMagic) ||
+      candidates.find((item) => item.blueMagic) ||
+      candidates[0] ||
+      null;
   };
   const missing = [];
   let styleValue = styleSurface ? getStyleValue(styleSurface) : '';
@@ -6714,9 +6787,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     .filter((value) => value.length >= 24)
     .slice(0, 4)
     .map((value) => value.slice(0, 90));
-  const expectedMatchThreshold = lyricSamples.length > 0
-    ? 14
-    : Math.max(1, Math.min(8, Math.ceil(expectedTokens.length * 0.35)));
   const expectedScore = (text) => {
     const haystack = normalizeLoose(text);
     let score = 0;
@@ -6794,13 +6864,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return true;
   }).sort((left, right) => right.expectedScore - left.expectedScore);
   const rawSeen = new Set();
-  const unverifiedSongCandidates = rawAnchors.concat(rawRows).filter((item) => {
+  const rawSongRows = rawRows.filter((item) => /\\/song\\//i.test(item.href));
+  const unverifiedSource = rawSongRows.length > 0 ? rawSongRows : rawAnchors;
+  const unverifiedSongCandidates = unverifiedSource.filter((item) => {
     if (!/\\/song\\//i.test(item.href)) return false;
-    if (requireExpectedMatch && !item.lyricsExactMatch && !isTrustedSongUrl(item.href)) return false;
     if (rawSeen.has(item.href)) return false;
     rawSeen.add(item.href);
     return true;
-  }).sort((left, right) => right.expectedScore - left.expectedScore);
+  });
   const mediaRank = (url) => {
     if (/\\.mp3(?:[?#]|\$)/i.test(url)) return 4;
     if (/\\.m4a(?:[?#]|\$)/i.test(url)) return 3;
@@ -6870,7 +6941,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     mediaBySongUrl,
     currentPageExpectedScore,
     currentPageLyricsExactMatch,
-    expectedMatchThreshold,
     linkCount: songCandidates.length
   });
 })()
@@ -6942,9 +7012,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     .filter((value) => value.length >= 24)
     .slice(0, 4)
     .map((value) => value.slice(0, 90));
-  const expectedMatchThreshold = lyricSamples.length > 0
-    ? 14
-    : Math.max(1, Math.min(8, Math.ceil(expectedTokens.length * 0.35)));
   const expectedScore = (text) => {
     const haystack = normalizeLoose(text);
     let score = 0;
@@ -7118,7 +7185,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (!clickable || isDisabled(clickable)) return null;
       const label = textOf(el);
       const context = contextText(el);
-      const matchScore = expectedScore(context);
       const contextMatchesLyrics = isExpectedMatch(context);
       const inOpenMenu = Boolean(menuLayerFor(clickable) || menuLayerFor(el));
       const hasBoundSongTarget =
@@ -7130,9 +7196,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (href && !/\\/song\\//i.test(href) && !/download|audio|mp3/i.test(href)) return null;
       const songUrl = songUrlFor(clickable) || songUrlFor(el);
       const onSongDetail = /\\/song\\//i.test(location.href);
+      const onCreatePage = /\\/create(?:\\/|\$)/i.test(location.pathname);
       const currentSongUrl = canonicalSongUrl(location.href);
       const currentUrlMatchesPending = pendingSongUrl &&
         location.href.startsWith(pendingSongUrl);
+      const clickableRect = clickable.getBoundingClientRect();
+      const downloadMenuContext =
+        /download|save|export|mp3|下载|下載|保存|导出|匯出|音频下载|下载音频|音頻下載|下載音頻/i.test(context);
+      const targetBoundToExpected =
+        Boolean(songUrl && isBoundSongUrl(songUrl)) ||
+        Boolean(pendingSongUrl && currentUrlMatchesPending && isBoundSongUrl(pendingSongUrl));
+      const currentSongDetailMatchesExpected =
+        onSongDetail &&
+        currentSongUrl &&
+        currentPageLyricsExactMatch &&
+        (!pendingSongUrl || currentUrlMatchesPending || isBoundSongUrl(currentSongUrl));
       if (allowedSongUrls.size > 0 && !songUrl && !onSongDetail && !pendingSongUrl) return null;
       if (allowedSongUrls.size > 0 && songUrl && !allowedSongUrls.has(songUrl)) return null;
       if (pendingSongUrl && songUrl && songUrl !== pendingSongUrl) return null;
@@ -7155,11 +7233,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           !onSongDetail && contextMatchesLyrics;
         const trustedOpenMenu =
           inOpenMenu &&
+          downloadMenuContext &&
           ((onSongDetail && pendingTrusted) ||
             (!onSongDetail && currentPageLyricsExactMatch));
         if (!trustedPendingDetail && !trustedLibraryContext && !trustedOpenMenu) {
           return null;
         }
+      }
+      if (requireExpectedMatch &&
+          !contextMatchesLyrics &&
+          !targetBoundToExpected &&
+          !currentSongDetailMatchesExpected &&
+          !(inOpenMenu && downloadMenuContext && currentPageLyricsExactMatch)) {
+        return null;
       }
       let score = 0;
       const audioPattern = /\\bmp3\\b|\\baudio\\b|download audio|下载音频|音频下载|音频|聲音/i;
@@ -7167,13 +7253,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       const menuPattern = /more|options|menu|actions|ellipsis|更多|菜单|選單|操作/i;
       const confirmDownloadPattern =
         /download anyway|keep download|continue download|confirm download|仍然下载|继续下载|确认下载/i;
+      const audioDownloadIntent =
+        /download audio|audio download|mp3|下载音频|音频下载|下載音頻|音頻下載/i.test(label) ||
+        (inOpenMenu && audioPattern.test(label) && downloadMenuContext) ||
+        /download|audio|mp3/i.test(href);
       const hasDownloadIntent =
-        audioPattern.test(label) ||
+        audioDownloadIntent ||
         downloadPattern.test(label) ||
         confirmDownloadPattern.test(label) ||
         confirmDownloadPattern.test(context) ||
-        /download|audio|mp3/i.test(href) ||
-        (inOpenMenu && (audioPattern.test(context) || downloadPattern.test(context)));
+        (inOpenMenu && (downloadMenuContext || downloadPattern.test(context)));
       const hasMenuIntent =
         menuPattern.test(label) ||
         /more menu contents|more options/i.test(label) ||
@@ -7190,25 +7279,35 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (previewReject.test(label) || previewReject.test(context)) return null;
       if (incompleteReject.test(context)) return null;
       if (profileReject.test(label) && !audioPattern.test(label)) return null;
-      const clickableRect = clickable.getBoundingClientRect();
       if (menuPattern.test(label) && clickableRect.left < 220 && clickableRect.width >= 80) return null;
       if (globalMenuReject.test(label) ||
           /listen-and-rank|release-notes|help\\.suno|\\/about|\\/blog|ashbyhq|x\\.com|instagram|discord/i.test(href)) return null;
       if (menuPattern.test(label) &&
           sidebarReject.test(context) &&
           !/download|audio|mp3|remix|edit|publish|share/i.test(context)) return null;
-      if (/\\/create(?:\\/|\$)/i.test(location.pathname) && createFormReject.test(label)) return null;
+      if (onCreatePage &&
+          !songUrl &&
+          clickableRect.left < Math.min(820, window.innerWidth * 0.55) &&
+          (createFormReject.test(label) ||
+            (audioPattern.test(label) && !downloadMenuContext))) {
+        return null;
+      }
+      if (onCreatePage &&
+          inOpenMenu &&
+          /upload|record|browse|上传|錄音|录音/i.test(context) &&
+          !downloadMenuContext) {
+        return null;
+      }
       if (reject.test(label) && !audioPattern.test(label)) return null;
       if (allowedSongUrls.size > 0 &&
           !songUrl &&
           !onSongDetail &&
           pendingSongUrl &&
-          !openMenuContext &&
-          matchScore <= 0) return null;
+          !openMenuContext) return null;
       if (confirmDownloadPattern.test(label)) score += 42;
       if (confirmDownloadPattern.test(context)) score += 16;
-      if (audioPattern.test(label)) score += 35;
-      if (audioPattern.test(context)) score += 12;
+      if (audioDownloadIntent) score += 35;
+      if (audioPattern.test(context) && downloadMenuContext) score += 12;
       if (downloadPattern.test(label)) score += 24;
       if (downloadPattern.test(context)) score += 8;
       if (menuPattern.test(label)) score += 9;
@@ -7222,8 +7321,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       score -= Math.max(0, label.length - 80) / 30;
       if (songUrl) score += 8;
       const directDownload = confirmDownloadPattern.test(label) ||
-        audioPattern.test(label) ||
         /download audio|audio download|mp3/i.test(label) ||
+        (inOpenMenu && audioPattern.test(label) && downloadMenuContext) ||
         /download|audio|mp3/i.test(href);
       return {
         clickable,
@@ -7263,7 +7362,26 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     });
   }
   augmentedControls.sort((left, right) => right.score - left.score);
-  const direct = augmentedControls.find((item) => item.directDownload && item.score >= 28);
+  const isDownloadMenuItem = (item) =>
+    item.directDownload ||
+    /download audio|audio download|mp3|下载音频|音频下载|下載音頻|音頻下載/i.test(
+      [
+        item.label,
+        item.context,
+        item.href
+      ].join(' ')
+    );
+  const canUseCurrentSongDetail =
+    location.href.toLowerCase().includes('/song/') &&
+    currentPageLyricsExactMatch &&
+    (!pendingSongUrl || location.href.startsWith(pendingSongUrl));
+  const isSongMenuTrigger = (item) =>
+    !item.inOpenMenu &&
+    /more menu contents|more options|actions|ellipsis|更多|菜单|選單|操作/i.test(
+      [item.label, item.context].join(' ')
+    ) &&
+    canUseCurrentSongDetail;
+  const direct = augmentedControls.find(isDownloadMenuItem);
   const openMenuText = normalize(Array.from(document.querySelectorAll(menuLayerSelector))
     .filter(visible)
     .map((el) => el.innerText || el.textContent || '')
@@ -7288,13 +7406,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         target: summarize(item.clickable)
       })),
       currentPageExpectedScore,
-      currentPageLyricsExactMatch,
-      expectedMatchThreshold
+      currentPageLyricsExactMatch
     });
   }
   const menu = augmentedControls.find((item) =>
-    item.inOpenMenu && item.score >= 10 && !/more menu contents/i.test(item.label)
-  ) || augmentedControls.find((item) => item.score >= 10);
+    item.inOpenMenu &&
+    !/more menu contents/i.test(item.label) &&
+    isDownloadMenuItem(item)
+  ) || augmentedControls.find(isSongMenuTrigger);
   const target = direct || menu;
   if (!target) {
     return JSON.stringify({
@@ -7311,8 +7430,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         target: summarize(item.clickable)
       })),
       currentPageExpectedScore,
-      currentPageLyricsExactMatch,
-      expectedMatchThreshold
+      currentPageLyricsExactMatch
     });
   }
   if (dryRun) {
@@ -7335,8 +7453,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         target: summarize(item.clickable)
       })),
       currentPageExpectedScore,
-      currentPageLyricsExactMatch,
-      expectedMatchThreshold
+      currentPageLyricsExactMatch
     });
   }
   clickLikeUser(target.clickable);
@@ -7358,8 +7475,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       target: summarize(item.clickable)
     })),
     currentPageExpectedScore,
-    currentPageLyricsExactMatch,
-    expectedMatchThreshold
+    currentPageLyricsExactMatch
   });
 })()
 ''';
@@ -10276,6 +10392,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         : AppConfig.songProviderSuno;
   }
 
+  String _normalizeSongSource(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == ExternalSongImportService.source) {
+      return ExternalSongImportService.source;
+    }
+    return _normalizeSongProvider(normalized);
+  }
+
   List<Map<String, dynamic>> _payloadMapList(
     Map<String, dynamic> payload,
     String key,
@@ -10398,6 +10522,30 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return versions.first;
   }
 
+  List<ArticleSongVersion> _ensureSingleDefaultSongVersion(
+    List<ArticleSongVersion> versions,
+  ) {
+    if (versions.isEmpty) {
+      return const <ArticleSongVersion>[];
+    }
+    var defaultSeen = false;
+    final normalized = <ArticleSongVersion>[];
+    for (final version in versions) {
+      if (version.isDefault && !defaultSeen) {
+        defaultSeen = true;
+        normalized.add(version);
+      } else if (version.isDefault) {
+        normalized.add(version.copyWith(isDefault: false));
+      } else {
+        normalized.add(version);
+      }
+    }
+    if (!defaultSeen) {
+      normalized[0] = normalized[0].copyWith(isDefault: true);
+    }
+    return normalized;
+  }
+
   List<ArticleSongVersion> _dedupeSongVersions(
     List<ArticleSongVersion> versions,
   ) {
@@ -10447,7 +10595,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     int articleId,
     List<ArticleSongVersion> versions,
   ) {
-    final payloadVersions = versions.map((version) {
+    final payloadVersions = _ensureSingleDefaultSongVersion(
+      _dedupeSongVersions(versions),
+    ).map((version) {
       final key = _songTimelineKey(articleId, version.id);
       if (_songTimelineTasks.containsKey(key)) {
         return version.copyWith(
