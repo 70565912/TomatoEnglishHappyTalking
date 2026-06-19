@@ -2442,9 +2442,14 @@ function PictureBookPromptReviewDialog({
     () => resolveRelevantCharactersForReview(chapterDescription, scenes, bookCharacters),
     [bookCharacters, chapterDescription, scenes],
   );
-  const [groupPrompt, setGroupPrompt] = useState(
-    resolvePictureBookGroupPrompt(review, review.scenes ?? []),
-  );
+  const initialGroupPrompt = resolvePictureBookGroupPrompt(review, review.scenes ?? []);
+  const [groupPrompt, setGroupPrompt] = useState(initialGroupPrompt);
+  const groupPromptRef = useRef(initialGroupPrompt);
+  const groupPromptTouchedRef = useRef(false);
+  const setGroupPromptValue = (value: string) => {
+    groupPromptRef.current = value;
+    setGroupPrompt(value);
+  };
   const [groupPromptTouched, setGroupPromptTouched] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -2466,7 +2471,8 @@ function PictureBookPromptReviewDialog({
     setNewCharacters(editableBookCharacters(review.newCharacters));
     setChapterDescription(review.chapterDescription ?? '');
     setScenes(nextScenes);
-    setGroupPrompt(resolvePictureBookGroupPrompt(review, nextScenes));
+    groupPromptTouchedRef.current = false;
+    setGroupPromptValue(resolvePictureBookGroupPrompt(review, nextScenes));
     setGroupPromptTouched(false);
     setError(null);
     setSavingPrompt(false);
@@ -2475,8 +2481,8 @@ function PictureBookPromptReviewDialog({
   }, [review]);
 
   useEffect(() => {
-    if (groupPromptTouched) return;
-    setGroupPrompt(composePictureBookPromptForReview({
+    if (groupPromptTouched || groupPromptTouchedRef.current) return;
+    setGroupPromptValue(composePictureBookPromptForReview({
       ...review,
       bookDescription,
       relevantCharacters,
@@ -2504,8 +2510,8 @@ function PictureBookPromptReviewDialog({
     setNewCharacters(editableBookCharacters(nextReview.newCharacters));
     setChapterDescription(nextReview.chapterDescription ?? '');
     setScenes(nextScenes);
-    if (!groupPromptTouched) {
-      setGroupPrompt(resolvePictureBookGroupPrompt(nextReview, nextScenes));
+    if (!groupPromptTouched && !groupPromptTouchedRef.current) {
+      setGroupPromptValue(resolvePictureBookGroupPrompt(nextReview, nextScenes));
     }
   };
 
@@ -2535,9 +2541,9 @@ function PictureBookPromptReviewDialog({
     }
   };
 
-  const reviewSubmissionPayload = () => ({
+  const reviewSubmissionPayload = (currentGroupPrompt = groupPromptRef.current) => ({
     reviewId: review.reviewId,
-    groupPrompt,
+    groupPrompt: currentGroupPrompt,
     bookDescription,
     bookCharacters: normalizeBookCharacters(bookCharacters),
     newCharacters: normalizeBookCharacters(newCharacters),
@@ -2546,7 +2552,8 @@ function PictureBookPromptReviewDialog({
   });
 
   const savePrompt = async () => {
-    if (!groupPrompt.trim()) {
+    const currentGroupPrompt = groupPromptRef.current;
+    if (!currentGroupPrompt.trim()) {
       setError(isSinglePageReview ? '单张生成提示词不能为空' : '组图总提示词不能为空');
       return;
     }
@@ -2555,7 +2562,7 @@ function PictureBookPromptReviewDialog({
     try {
       const payload = await sendNative<PictureBookPromptReview>(
         'pictureBook.savePromptReview',
-        reviewSubmissionPayload(),
+        reviewSubmissionPayload(currentGroupPrompt),
       );
       applyReviewUpdate(payload);
       onNotice('提示词已保存，尚未生成组图。');
@@ -2569,7 +2576,8 @@ function PictureBookPromptReviewDialog({
   };
 
   const confirm = async () => {
-    if (!groupPrompt.trim()) {
+    const currentGroupPrompt = groupPromptRef.current;
+    if (!currentGroupPrompt.trim()) {
       setError(isSinglePageReview ? '单张生成提示词不能为空' : '组图总提示词不能为空');
       return;
     }
@@ -2579,7 +2587,7 @@ function PictureBookPromptReviewDialog({
       const payload = await sendNative<PictureBookState>(
         isSinglePageReview ? 'pictureBook.confirmPagePromptReview' : 'pictureBook.confirmPromptReview',
         {
-          ...reviewSubmissionPayload(),
+          ...reviewSubmissionPayload(currentGroupPrompt),
         },
       );
       onConfirmed(payload);
@@ -2715,7 +2723,8 @@ function PictureBookPromptReviewDialog({
               value={groupPrompt}
               rows={10}
               onChange={(event) => {
-                setGroupPrompt(event.target.value);
+                groupPromptTouchedRef.current = true;
+                setGroupPromptValue(event.target.value);
                 setGroupPromptTouched(true);
               }}
             />
