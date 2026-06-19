@@ -55,6 +55,19 @@ export interface StorySeries {
   updatedAt: string;
 }
 
+export interface BookTransferPayload {
+  cancelled?: boolean;
+  seriesId?: number;
+  title?: string;
+  outputPath?: string;
+  articleIds?: number[];
+  articleCount?: number;
+  assetCount?: number;
+  warnings?: string[];
+  articles?: Article[];
+  series?: StorySeries[];
+}
+
 export interface PreloadState {
   articleId: number;
   mode: 'listening' | 'follow' | 'chat' | string;

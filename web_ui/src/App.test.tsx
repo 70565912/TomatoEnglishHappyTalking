@@ -1147,6 +1147,110 @@ describe('App', () => {
     expect(await screen.findByText('章节已删除')).toBeInTheDocument();
   });
 
+  it('exports and imports books from the creation center', async () => {
+    window.location.hash = '/';
+    const article = {
+      id: 7,
+      title: 'Chapter Export',
+      content: 'Alice saves a book.',
+      sentences: ['Alice saves a book.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 0,
+      pictureBookEnabled: true,
+      seriesId: 3,
+      seriesTitle: 'Portable Book',
+      chapterOrder: 1,
+    };
+    const series = [{
+      id: 3,
+      title: 'Portable Book',
+      description: '',
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }];
+    const importedSeries = {
+      ...series[0],
+      id: 4,
+      title: 'Imported Book',
+    };
+    const importedArticle = {
+      ...article,
+      id: 8,
+      title: 'Imported Chapter',
+      seriesId: 4,
+      seriesTitle: 'Imported Book',
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'series.export') {
+          return ok(message.id, type, {
+            cancelled: false,
+            seriesId: 3,
+            title: 'Portable Book',
+            outputPath: 'C:\\Exports\\Portable Book.zip',
+            warnings: [],
+          });
+        }
+        if (type === 'series.import') {
+          return ok(message.id, type, {
+            cancelled: false,
+            seriesId: 4,
+            title: 'Imported Book',
+            articleIds: [8],
+            warnings: [],
+            articles: [importedArticle, article],
+            series: [importedSeries, ...series],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: Number(payload.articleId ?? article.id),
+            enabled: true,
+            status: 'ready',
+            completed: 0,
+            total: 0,
+            pages: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: '创作中心' }));
+    expect(await screen.findByRole('heading', { name: '创作中心' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '导出书籍' }));
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'series.export')?.payload).toMatchObject({ seriesId: 3 });
+    });
+    expect(await screen.findByText(/书籍已导出/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '导入书籍' }));
+    await waitFor(() => {
+      expect(calls.some((call) => call.type === 'series.import')).toBe(true);
+    });
+    expect(await screen.findByText('Imported Chapter')).toBeInTheDocument();
+    expect(await screen.findByText(/书籍已导入/)).toBeInTheDocument();
+  });
+
   it('refreshes creation picture thumbnails when generated image paths change', async () => {
     window.location.hash = '/creation?articleId=1&seriesId=1';
     const article = {

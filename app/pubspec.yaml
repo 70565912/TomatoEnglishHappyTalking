@@ -26,6 +26,9 @@ dependencies:
   # 本地文件选择
   file_picker: ^10.3.7
 
+  # 本地书籍迁移包
+  archive: ^4.0.9
+
   # 音频播放
   just_audio: ^0.10.2
 

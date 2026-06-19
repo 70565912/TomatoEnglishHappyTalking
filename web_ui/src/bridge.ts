@@ -604,6 +604,53 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       ),
     };
   }
+  if (type === 'series.export') {
+    const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
+    const series = mockSeries.find((item) => item.id === seriesId) ?? mockSeries[0];
+    return {
+      cancelled: false,
+      seriesId,
+      title: series.title,
+      outputPath: `C:\\TomatoExports\\${series.title}.zip`,
+      articleCount: mockArticles.filter((article) => article.seriesId === seriesId).length,
+      assetCount: 3,
+      warnings: [],
+    };
+  }
+  if (type === 'series.import') {
+    const importedSeries: StorySeries = {
+      id: 99,
+      title: 'Imported Book',
+      description: 'Imported from a Tomato English transfer package.',
+      characters: [],
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const importedArticle: Article = {
+      ...mockArticles[0],
+      id: 9901,
+      title: 'Imported Chapter',
+      seriesId: importedSeries.id,
+      seriesTitle: importedSeries.title,
+      seriesDescription: importedSeries.description,
+      chapterOrder: 1,
+      createdAt: new Date().toISOString(),
+    };
+    const articles = [importedArticle, ...mockArticles];
+    const series = [importedSeries, ...mockSeries];
+    return {
+      cancelled: false,
+      seriesId: importedSeries.id,
+      title: importedSeries.title,
+      articleIds: [importedArticle.id],
+      articleCount: 1,
+      assetCount: 3,
+      warnings: [],
+      articles,
+      series,
+    };
+  }
   if (type === 'pictureBook.state') {
     return mockPictureBook(Number(payload.articleId ?? 1));
   }

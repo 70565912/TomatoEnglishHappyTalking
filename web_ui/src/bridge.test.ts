@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emitNativeEvent, onNativeEvent, sendNative } from './bridge';
-import type { ListeningSongStatePayload, SettingsState } from './types';
+import type {
+  BookTransferPayload,
+  ListeningSongStatePayload,
+  SettingsState,
+} from './types';
 
 describe('bridge client', () => {
   afterEach(() => {
@@ -41,6 +45,20 @@ describe('bridge client', () => {
       source: 'external_audio',
       timelineStatus: 'missing',
     });
+  });
+
+  it('mocks book export and import when Flutter bridge is unavailable', async () => {
+    const exported = await sendNative<BookTransferPayload>('series.export', {
+      seriesId: 1,
+    });
+    expect(exported.cancelled).toBe(false);
+    expect(exported.outputPath).toContain('.zip');
+
+    const imported = await sendNative<BookTransferPayload>('series.import');
+    expect(imported.cancelled).toBe(false);
+    expect(imported.seriesId).toBe(99);
+    expect(imported.articles?.[0].seriesId).toBe(99);
+    expect(imported.series?.[0].title).toBe('Imported Book');
   });
 
   it('waits for a delayed Flutter bridge in embedded WebView', async () => {

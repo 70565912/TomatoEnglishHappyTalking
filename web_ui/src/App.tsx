@@ -5,6 +5,7 @@ import { onNativeEvent, sendNative } from './bridge';
 import { splitSentences } from './sentenceSplitter';
 import type {
   Article,
+  BookTransferPayload,
   BookCharacter,
   ChatState,
   DiagnosticLogExportPayload,
@@ -1931,6 +1932,7 @@ function CreationCenterPage({
   const [bookEditSaving, setBookEditSaving] = useState(false);
   const [bookEditGeneratingDescription, setBookEditGeneratingDescription] = useState(false);
   const [bookEditError, setBookEditError] = useState<string | null>(null);
+  const [bookTransferBusy, setBookTransferBusy] = useState<'export' | 'import' | null>(null);
   const resolvedSelectedBookKey =
     selectedBookKey && books.some((book) => book.key === selectedBookKey)
       ? selectedBookKey
@@ -2014,9 +2016,73 @@ function CreationCenterPage({
     }
   };
 
+  const exportSelectedBook = async () => {
+    const seriesId = selectedBook?.seriesId;
+    if (seriesId == null) {
+      onNotice('请选择要导出的书籍');
+      return;
+    }
+    setBookTransferBusy('export');
+    try {
+      const payload = await sendNative<BookTransferPayload>('series.export', { seriesId });
+      if (payload.cancelled) {
+        onNotice('已取消导出书籍');
+        return;
+      }
+      const warningSuffix = payload.warnings?.length ? `，${payload.warnings.length} 个提示` : '';
+      onNotice(`书籍已导出：${payload.outputPath ?? payload.title ?? '完成'}${warningSuffix}`);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '书籍导出失败');
+    } finally {
+      setBookTransferBusy(null);
+    }
+  };
+
+  const importBook = async () => {
+    setBookTransferBusy('import');
+    try {
+      const payload = await sendNative<BookTransferPayload>('series.import');
+      if (payload.cancelled) {
+        onNotice('已取消导入书籍');
+        return;
+      }
+      onArticlesUpdated({ articles: payload.articles, series: payload.series });
+      if (payload.seriesId != null) {
+        setSelectedBookKey(`series:${payload.seriesId}`);
+        setChapterPage(0);
+        setChapterListCollapsed(false);
+        setSelectedArticleId(payload.articleIds?.[0] ?? null);
+      }
+      const warningSuffix = payload.warnings?.length ? `，${payload.warnings.length} 个提示` : '';
+      onNotice(`书籍已导入：${payload.title ?? '新书籍'}${warningSuffix}`);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '书籍导入失败');
+    } finally {
+      setBookTransferBusy(null);
+    }
+  };
+
   return (
     <section className="page creation-center-page">
       <TopBar title="创作中心" onBack={() => onNavigate('/')}>
+        <button
+          className="ghost-action"
+          type="button"
+          onClick={() => void importBook()}
+          disabled={bookTransferBusy !== null}
+        >
+          <Icon name={bookTransferBusy === 'import' ? 'refresh' : 'upload'} />
+          {bookTransferBusy === 'import' ? '导入中' : '导入书籍'}
+        </button>
+        <button
+          className="ghost-action"
+          type="button"
+          onClick={() => void exportSelectedBook()}
+          disabled={bookTransferBusy !== null || selectedBook?.seriesId == null}
+        >
+          <Icon name={bookTransferBusy === 'export' ? 'refresh' : 'download'} />
+          {bookTransferBusy === 'export' ? '导出中' : '导出书籍'}
+        </button>
         {selectedBook?.seriesId != null && (
           <button className="ghost-action" type="button" onClick={() => onNavigate(`/books/${selectedBook.seriesId}`)}>
             <Icon name="back" /> 返回书籍

@@ -21,6 +21,7 @@ import '../../data/models/picture_book_model.dart';
 import '../../services/api_cache_service.dart';
 import '../../services/asset_path_service.dart';
 import '../../services/bailian_music_service.dart';
+import '../../services/book_transfer_service.dart';
 import '../../services/database_service.dart';
 import '../../services/content_safety_service.dart';
 import '../../services/external_song_import_service.dart';
@@ -150,6 +151,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'series.update': _handleSeriesUpdate,
         'series.delete': _handleSeriesDelete,
         'series.attachArticle': _handleSeriesAttachArticle,
+        'series.export': _handleSeriesExport,
+        'series.import': _handleSeriesImport,
         'pictureBook.state': _handlePictureBookState,
         'pictureBook.pageImage': _handlePictureBookPageImage,
         'pictureBook.promptReview': _handlePictureBookPromptReview,
@@ -940,6 +943,57 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return {
       'article': await _articleJsonWithStory(article),
       'chapter': chapter.toJson(series),
+      'articles': payload['articles'],
+      'series': payload['series'],
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleSeriesExport(
+    BridgeMessage message,
+  ) async {
+    final seriesId = _payloadInt(message.payload, 'seriesId');
+    var outputDirectory =
+        _payloadString(message.payload, 'outputDirectory').trim();
+    if (outputDirectory.isEmpty) {
+      outputDirectory = (await FilePicker.platform.getDirectoryPath(
+            dialogTitle: '选择书籍导出目录',
+          )) ??
+          '';
+    }
+    if (outputDirectory.isEmpty) {
+      return {'cancelled': true};
+    }
+    final result = await BookTransferService.exportSeries(
+      seriesId: seriesId,
+      outputDirectory: outputDirectory,
+    );
+    return result.toJson();
+  }
+
+  Future<Map<String, dynamic>> _handleSeriesImport(
+    BridgeMessage message,
+  ) async {
+    var filePath = _payloadString(message.payload, 'filePath').trim();
+    if (filePath.isEmpty) {
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['zip'],
+        allowMultiple: false,
+        withData: false,
+        dialogTitle: '选择书籍迁移包',
+      );
+      filePath = picked?.files.single.path?.trim() ?? '';
+    }
+    if (filePath.isEmpty) {
+      return {'cancelled': true};
+    }
+    final result = await BookTransferService.importSeriesArchive(
+      filePath: filePath,
+    );
+    final payload = await _articleListPayload();
+    unawaited(_pushEvent('article.state', payload));
+    return {
+      ...result.toJson(),
       'articles': payload['articles'],
       'series': payload['series'],
     };
