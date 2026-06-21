@@ -2234,6 +2234,105 @@ but the three were all crowded together at one corner of it.
     expect(updatedSeries?.description, contains('blue dress and white apron'));
   });
 
+  test(
+      'picture-book single-page prompt review opens from existing pages without AI',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-page-local-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Single Page Local Review Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    var textAiCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        throw StateError('single-page prompt review should not call text AI');
+      },
+    );
+    final referenceFile = File(
+      '${tempDir.path}${Platform.pathSeparator}page-0-reference.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 61]);
+    final targetFile = File(
+      '${tempDir.path}${Platform.pathSeparator}page-1-target.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 62]);
+    final now = DateTime(2026, 1, 1);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Alice walks into the garden.',
+        promptJson: '{}',
+        imagePath: referenceFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 1,
+        sentenceStartIndex: 1,
+        sentenceEndIndex: 1,
+        paragraphText: 'The Queen points at the croquet ground.',
+        promptJson: jsonEncode({
+          'chapterDescription': 'A royal garden croquet chapter.',
+          'scene': {
+            'sceneDescription':
+                'The Queen points sternly across the croquet ground.',
+          },
+          'newCharacters': [
+            {
+              'name': 'The Queen',
+              'description': 'A commanding royal figure.',
+            },
+          ],
+        }),
+        imagePath: targetFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final review = await PictureBookService.pagePromptReviewPayload(
+      article: article,
+      chapter: chapter,
+      pageIndex: 1,
+    );
+
+    expect(textAiCalls, 0);
+    expect(review['mode'], 'singlePage');
+    expect(review['targetPageIndex'], 1);
+    expect(review['referencePageIndex'], 0);
+    expect(review['chapterDescription'], 'A royal garden croquet chapter.');
+    expect(review['scenes'], hasLength(1));
+    expect((review['scenes'] as List).single['sceneDescription'],
+        'The Queen points sternly across the croquet ground.');
+    expect(review['groupPrompt'],
+        contains('The Queen points sternly across the croquet ground.'));
+  });
+
   test('picture-book single-page prompt review replaces only target page',
       () async {
     _writeImageArkKey(tempDir, 'ark-page-review-key-12345678901234567890');

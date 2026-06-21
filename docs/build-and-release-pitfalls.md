@@ -403,6 +403,7 @@ npm --prefix web_ui run build
 症状：
 
 - `tools/build_windows.ps1` 卡在 `=== 检查 Flutter 环境 ===`，或者 `flutter.bat --version` 长时间无输出。
+- Web UI 已构建完成，但脚本打印 `=== 构建 Windows Release ===` 后长时间没有 `Building Windows application...` 输出；此时 Release EXE 时间戳不会更新。
 - 直接运行 Flutter tools snapshot 报：
   `Flutter failed to open a file at "D:\DevTools\flutter\bin\cache\lockfile"`。
 - `dart.exe --version` 正常，说明 Dart SDK 本身没坏。
@@ -449,6 +450,7 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 - `D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe --version` 能正常输出。
 - `flutter.bat --version` 能正常输出 Flutter 版本。
 - `tools/build_windows.ps1 -Release` 能进入 Web UI 构建和 Windows build 阶段。
+- 新版 `tools/build_windows.ps1` 会先检查 `D:\DevTools\flutter\bin\cache\lockfile` 是否可写；如果在 Codex 受限沙箱内直接运行，应快速报出 Flutter cache lockfile 不可写，而不是静默卡在 Flutter build。
 
 注意：
 

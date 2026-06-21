@@ -86,6 +86,7 @@ class AppConfig {
   static const _recordingCodec = 'recording_codec';
   static const _recordingResolution = 'recording_resolution';
   static const _recordingPageTransition = 'recording_page_transition';
+  static const _recordingSubtitleMode = 'recording_subtitle_mode';
   static const _songProvider = 'song_provider';
   static const _sunoOutputDirectory = 'suno_output_directory';
   static const _sunoTimeoutMinutes = 'suno_timeout_minutes';
@@ -310,12 +311,17 @@ class AppConfig {
           key: _recordingPageTransition,
           defaultValue: 'none',
         ),
+        'subtitleMode': await _readSecret(
+          key: _recordingSubtitleMode,
+          defaultValue: 'srt',
+        ),
       };
 
   static Future<void> saveRecordingSettings({
     required String codec,
     required String resolution,
     required String pageTransition,
+    required String subtitleMode,
   }) async {
     await _storage.write(key: _recordingCodec, value: codec.trim());
     await _storage.write(key: _recordingResolution, value: resolution.trim());
@@ -323,9 +329,14 @@ class AppConfig {
       key: _recordingPageTransition,
       value: pageTransition.trim(),
     );
+    await _storage.write(
+      key: _recordingSubtitleMode,
+      value: subtitleMode.trim(),
+    );
     _runtimeSecrets[_recordingCodec] = codec.trim();
     _runtimeSecrets[_recordingResolution] = resolution.trim();
     _runtimeSecrets[_recordingPageTransition] = pageTransition.trim();
+    _runtimeSecrets[_recordingSubtitleMode] = subtitleMode.trim();
   }
 
   static Future<Map<String, String>> get songSettings async => {

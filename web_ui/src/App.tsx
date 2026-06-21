@@ -5,6 +5,7 @@ import { onNativeEvent, sendNative } from './bridge';
 import { splitSentences } from './sentenceSplitter';
 import type {
   Article,
+  ArticleFullTextPayload,
   BookTransferPayload,
   BookCharacter,
   ChatState,
@@ -51,6 +52,12 @@ const RECENT_SERIES_STORAGE_KEY = 'tomato.recentSeriesKey.v1';
 type SelectOption = {
   value: string;
   label: string;
+};
+
+type BlockingOverlayConfig = {
+  title: string;
+  detail: string;
+  timeoutSeconds: number;
 };
 
 const ALIYUN_TEXT_MODEL_OPTIONS: SelectOption[] = [
@@ -154,11 +161,7 @@ function AiBlockingOverlay({
   title,
   detail,
   timeoutSeconds,
-}: {
-  title: string;
-  detail: string;
-  timeoutSeconds: number;
-}) {
+}: BlockingOverlayConfig) {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
@@ -429,6 +432,9 @@ function App() {
   const [chatState, setChatState] = useState<ChatState | null>(null);
   const [settings, setSettings] = useState<SettingsState | null>(null);
   const [recordingSettings, setRecordingSettings] = useState<RecordingSettings | null>(null);
+  const applyRecordingSettings = (payload: RecordingSettings) => {
+    setRecordingSettings(normalizeRecordingSettings(payload));
+  };
   const [series, setSeries] = useState<StorySeries[]>([]);
   const [preloadStates, setPreloadStates] = useState<PreloadStateMap>({});
   const [recentSeriesKey, setRecentSeriesKey] = useState<string | null>(() => {
@@ -439,6 +445,7 @@ function App() {
     }
   });
   const [notice, setNotice] = useState<string | null>(null);
+  const [appBlockingOverlay, setAppBlockingOverlay] = useState<BlockingOverlayConfig | null>(null);
   const [picturePromptReview, setPicturePromptReview] = useState<PictureBookPromptReview | null>(null);
   const [picturePromptReviewLoadingArticleId, setPicturePromptReviewLoadingArticleId] = useState<number | null>(null);
   const pictureBookRetryGate = usePictureBookRetryGate();
@@ -457,6 +464,7 @@ function App() {
   };
 
   const navigate = (path: string) => {
+    if (appBlockingOverlay) return;
     setNotice(null);
     setRoute(path);
     void sendNative('app.navigate', { path });
@@ -528,7 +536,7 @@ function App() {
       if (isMounted) setSettings(payload);
     });
     const offRecordingSettings = onNativeEvent<RecordingSettings>('recording.settings.state', (payload) => {
-      if (isMounted) setRecordingSettings(payload);
+      if (isMounted) applyRecordingSettings(payload);
     });
     const offPreload = onNativeEvent<PreloadState>('preload.state', (payload) => {
       if (!isMounted) return;
@@ -562,7 +570,7 @@ function App() {
       });
     sendNative<RecordingSettings>('recording.settings.load')
       .then((payload) => {
-        if (isMounted) setRecordingSettings(payload);
+        if (isMounted) applyRecordingSettings(payload);
       })
       .catch(() => undefined);
     sendNative<SettingsState>('settings.load')
@@ -675,16 +683,6 @@ function App() {
               }
               rememberSeriesKey(book.key);
             }}
-            onRename={async (articleId, title) => {
-              const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
-                'article.rename',
-                { articleId, title },
-              );
-              setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
-              rememberSeriesKey(bookKeyForArticle(payload.article));
-              setNotice('文章标题已更新');
-            }}
             onUpdateSeries={updateSeries}
           />
         )}
@@ -714,16 +712,6 @@ function App() {
             series={series}
             onNavigate={navigate}
             onRecentBookKeyChange={rememberSeriesKey}
-            onRename={async (articleId, title) => {
-              const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
-                'article.rename',
-                { articleId, title },
-              );
-              setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
-              rememberSeriesKey(bookKeyForArticle(payload.article));
-              setNotice('章节标题已更新');
-            }}
             onUpdateSeries={updateSeries}
           />
         )}
@@ -742,7 +730,7 @@ function App() {
             onOpenPicturePromptReview={openPictureBookPromptReview}
             englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
             recordingSettings={recordingSettings}
-            onRecordingSettingsLoaded={setRecordingSettings}
+            onRecordingSettingsLoaded={applyRecordingSettings}
             songSettings={settings?.song ?? null}
             onNotice={setNotice}
             onArticlesUpdated={(payload) => {
@@ -763,7 +751,7 @@ function App() {
             onOpenPicturePromptReview={openPictureBookPromptReview}
             englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
             recordingSettings={recordingSettings}
-            onRecordingSettingsLoaded={setRecordingSettings}
+            onRecordingSettingsLoaded={applyRecordingSettings}
             songSettings={settings?.song ?? null}
             onNotice={setNotice}
             onArticlesUpdated={(payload) => {
@@ -779,15 +767,28 @@ function App() {
             series={series}
             initialSeriesId={parsedRoute.seriesId}
             initialArticleId={parsedRoute.articleId}
+            recordingSettings={recordingSettings}
+            onRecordingSettingsLoaded={applyRecordingSettings}
             pictureBookRetryGate={pictureBookRetryGate}
             picturePromptReviewLoadingArticleId={picturePromptReviewLoadingArticleId}
             onNavigate={navigate}
             onNotice={setNotice}
+            onBlockingOverlayChange={setAppBlockingOverlay}
             onOpenPicturePromptReview={openPictureBookPromptReview}
             onOpenPicturePagePromptReview={openPictureBookPagePromptReview}
             onArticlesUpdated={(payload) => {
               if (payload.articles) setArticles(payload.articles);
               if (payload.series) setSeries(payload.series);
+            }}
+            onRename={async (articleId, title) => {
+              const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
+                'article.rename',
+                { articleId, title },
+              );
+              setArticles(payload.articles);
+              if (payload.series) setSeries(payload.series);
+              rememberSeriesKey(bookKeyForArticle(payload.article));
+              setNotice('章节标题已更新');
             }}
             onDelete={async (articleId) => {
               const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
@@ -887,6 +888,13 @@ function App() {
           timeoutSeconds={180}
         />
       )}
+      {appBlockingOverlay && (
+        <AiBlockingOverlay
+          title={appBlockingOverlay.title}
+          detail={appBlockingOverlay.detail}
+          timeoutSeconds={appBlockingOverlay.timeoutSeconds}
+        />
+      )}
     </div>
   );
 }
@@ -899,7 +907,6 @@ function HomePage({
   onRecentBookKeyChange,
   onNavigate,
   onOpenBook,
-  onRename,
   onUpdateSeries,
 }: {
   articles: Article[];
@@ -909,15 +916,11 @@ function HomePage({
   onRecentBookKeyChange: (key: string | null) => void;
   onNavigate: (path: string) => void;
   onOpenBook: (book: BookGroup) => void;
-  onRename: (articleId: number, title: string) => Promise<void>;
   onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
 }) {
   const [selectedBookKey, setSelectedBookKey] = useState<string | null>(null);
   const [chapterPage, setChapterPage] = useState(0);
   const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
-  const [renameDraft, setRenameDraft] = useState<{ article: Article; title: string } | null>(null);
-  const [renameSaving, setRenameSaving] = useState(false);
-  const [renameError, setRenameError] = useState<string | null>(null);
   const [bookEditDraft, setBookEditDraft] = useState<BookGroup | null>(null);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
@@ -1062,42 +1065,9 @@ function HomePage({
               onRecentBookKeyChange(book.key);
               onNavigate(`/chat/${article.id}`);
             }}
-            onRename={() => {
-              setRenameDraft({ article, title: article.title });
-              setRenameError(null);
-            }}
           />
         )}
       />
-      {renameDraft && (
-        <EditTitleDialog
-          title={renameDraft.title}
-          error={renameError}
-          saving={renameSaving}
-          onTitleChange={(title) => {
-            setRenameDraft((current) => (current ? { ...current, title } : current));
-            setRenameError(null);
-          }}
-          onCancel={() => {
-            if (renameSaving) return;
-            setRenameDraft(null);
-            setRenameError(null);
-          }}
-          onSave={async () => {
-            if (!renameDraft || renameSaving) return;
-            setRenameSaving(true);
-            setRenameError(null);
-            try {
-              await onRename(renameDraft.article.id, renameDraft.title.trim());
-              setRenameDraft(null);
-            } catch (error) {
-              setRenameError(error instanceof Error ? error.message : '文章标题保存失败');
-            } finally {
-              setRenameSaving(false);
-            }
-          }}
-        />
-      )}
       {bookEditDraft && (
         <BookEditDialog
           title={bookEditTitle}
@@ -1152,7 +1122,6 @@ function BookDetailPage({
   series,
   onNavigate,
   onRecentBookKeyChange,
-  onRename,
   onUpdateSeries,
 }: {
   seriesId: number;
@@ -1160,13 +1129,9 @@ function BookDetailPage({
   series: StorySeries[];
   onNavigate: (path: string) => void;
   onRecentBookKeyChange: (key: string | null) => void;
-  onRename: (articleId: number, title: string) => Promise<void>;
   onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
 }) {
   const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
-  const [renameDraft, setRenameDraft] = useState<{ article: Article; title: string } | null>(null);
-  const [renameSaving, setRenameSaving] = useState(false);
-  const [renameError, setRenameError] = useState<string | null>(null);
   const [bookEditOpen, setBookEditOpen] = useState(false);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
@@ -1274,10 +1239,6 @@ function BookDetailPage({
                 onListen={() => openPlayer('listening', article.id)}
                 onFollow={() => onNavigate(`/follow/${article.id}`)}
                 onChat={() => onNavigate(`/chat/${article.id}`)}
-                onRename={() => {
-                  setRenameDraft({ article, title: article.title });
-                  setRenameError(null);
-                }}
                 extraAction={
                   <button className="ghost-action small" type="button" onClick={() => onNavigate(`/creation?articleId=${article.id}&seriesId=${seriesId}`)}>
                     <Icon name="recordVideo" /> 生成
@@ -1289,35 +1250,6 @@ function BookDetailPage({
         )}
       </section>
 
-      {renameDraft && (
-        <EditTitleDialog
-          title={renameDraft.title}
-          error={renameError}
-          saving={renameSaving}
-          onTitleChange={(title) => {
-            setRenameDraft((current) => (current ? { ...current, title } : current));
-            setRenameError(null);
-          }}
-          onCancel={() => {
-            if (renameSaving) return;
-            setRenameDraft(null);
-            setRenameError(null);
-          }}
-          onSave={async () => {
-            if (!renameDraft || renameSaving) return;
-            setRenameSaving(true);
-            setRenameError(null);
-            try {
-              await onRename(renameDraft.article.id, renameDraft.title.trim());
-              setRenameDraft(null);
-            } catch (error) {
-              setRenameError(error instanceof Error ? error.message : '章节标题保存失败');
-            } finally {
-              setRenameSaving(false);
-            }
-          }}
-        />
-      )}
       {bookEditOpen && (
         <BookEditDialog
           title={bookEditTitle}
@@ -1915,13 +1847,17 @@ function CreationCenterPage({
   series,
   initialSeriesId,
   initialArticleId,
+  recordingSettings,
+  onRecordingSettingsLoaded,
   pictureBookRetryGate,
   picturePromptReviewLoadingArticleId,
   onNavigate,
   onNotice,
+  onBlockingOverlayChange,
   onOpenPicturePromptReview,
   onOpenPicturePagePromptReview,
   onArticlesUpdated,
+  onRename,
   onDelete,
   onDeleteSeries,
   onUpdateSeries,
@@ -1930,13 +1866,17 @@ function CreationCenterPage({
   series: StorySeries[];
   initialSeriesId?: number;
   initialArticleId?: number;
+  recordingSettings: RecordingSettings | null;
+  onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   pictureBookRetryGate: PictureBookRetryGate;
   picturePromptReviewLoadingArticleId: number | null;
   onNavigate: (path: string) => void;
   onNotice: (message: string) => void;
+  onBlockingOverlayChange: (overlay: BlockingOverlayConfig | null) => void;
   onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPicturePagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
+  onRename: (articleId: number, title: string) => Promise<void>;
   onDelete: (articleId: number) => Promise<void>;
   onDeleteSeries: (seriesId: number) => Promise<void>;
   onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
@@ -1952,6 +1892,9 @@ function CreationCenterPage({
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(() => initialArticleId ?? null);
   const [activeTab, setActiveTab] = useState<'picture' | 'song' | 'video'>('picture');
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
+  const [renameDraft, setRenameDraft] = useState<{ article: Article; title: string } | null>(null);
+  const [renameSaving, setRenameSaving] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [bookEditDraft, setBookEditDraft] = useState<BookGroup | null>(null);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
@@ -2159,6 +2102,10 @@ function CreationCenterPage({
             selected={article.id === selectedArticle?.id}
             openLabel="创作"
             onOpen={() => selectCreationArticle(article.id)}
+            onRename={() => {
+              setRenameDraft({ article, title: article.title });
+              setRenameError(null);
+            }}
             extraAction={
               <>
                 <button
@@ -2211,11 +2158,52 @@ function CreationCenterPage({
             onOpenPagePromptReview={onOpenPicturePagePromptReview}
           />
         ) : activeTab === 'song' ? (
-          <SongCreationPanel article={selectedArticle} onNotice={onNotice} />
+          <SongCreationPanel
+            article={selectedArticle}
+            recordingSettings={recordingSettings}
+            onRecordingSettingsLoaded={onRecordingSettingsLoaded}
+            onNotice={onNotice}
+            onBlockingOverlayChange={onBlockingOverlayChange}
+          />
         ) : (
-          <VideoCreationPanel article={selectedArticle} onNotice={onNotice} onArticlesUpdated={onArticlesUpdated} />
+          <VideoCreationPanel
+            article={selectedArticle}
+            recordingSettings={recordingSettings}
+            onRecordingSettingsLoaded={onRecordingSettingsLoaded}
+            onNotice={onNotice}
+            onArticlesUpdated={onArticlesUpdated}
+          />
         )}
       </section>
+      {renameDraft && (
+        <EditTitleDialog
+          title={renameDraft.title}
+          error={renameError}
+          saving={renameSaving}
+          onTitleChange={(title) => {
+            setRenameDraft((current) => (current ? { ...current, title } : current));
+            setRenameError(null);
+          }}
+          onCancel={() => {
+            if (renameSaving) return;
+            setRenameDraft(null);
+            setRenameError(null);
+          }}
+          onSave={async () => {
+            if (!renameDraft || renameSaving) return;
+            setRenameSaving(true);
+            setRenameError(null);
+            try {
+              await onRename(renameDraft.article.id, renameDraft.title.trim());
+              setRenameDraft(null);
+            } catch (error) {
+              setRenameError(error instanceof Error ? error.message : '章节标题保存失败');
+            } finally {
+              setRenameSaving(false);
+            }
+          }}
+        />
+      )}
       {bookEditDraft && (
         <BookEditDialog
           title={bookEditTitle}
@@ -2348,6 +2336,16 @@ function PictureBookCreationPanel({
       .finally(() => pictureBookRetryGate.finish(article.id, page.pageIndex));
   };
 
+  const copyFullText = async () => {
+    try {
+      const payload = await sendNative<ArticleFullTextPayload>('article.fullText', { articleId: article.id });
+      await copyArticleFullText(payload);
+      onNotice('全文已复制到剪贴板');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '全文复制失败');
+    }
+  };
+
   return (
     <section className="creation-panel">
       <div className="section-heading with-action">
@@ -2364,6 +2362,9 @@ function PictureBookCreationPanel({
           </button>
           <button className="ghost-action small" type="button" onClick={loadState} disabled={loading}>
             <Icon name="refresh" /> 刷新状态
+          </button>
+          <button className="ghost-action small" type="button" onClick={() => void copyFullText()}>
+            <Icon name="copy" /> 复制全文
           </button>
         </div>
       </div>
@@ -2438,6 +2439,8 @@ function PictureBookPromptReviewDialog({
   );
   const [chapterDescription, setChapterDescription] = useState(review.chapterDescription ?? '');
   const [scenes, setScenes] = useState<PictureBookPromptReviewScene[]>(review.scenes ?? []);
+  const [bookDescriptionExpanded, setBookDescriptionExpanded] = useState(false);
+  const [bookCharactersExpanded, setBookCharactersExpanded] = useState(false);
   const relevantCharacters = useMemo(
     () => resolveRelevantCharactersForReview(chapterDescription, scenes, bookCharacters),
     [bookCharacters, chapterDescription, scenes],
@@ -2457,6 +2460,7 @@ function PictureBookPromptReviewDialog({
   const [error, setError] = useState<string | null>(null);
   const busy = savingPrompt || submitting || refreshingPrompt !== null;
   const isSinglePageReview = review.mode === 'singlePage';
+  const reviewBookTitle = review.bookTitle?.trim() || '书籍信息';
   const targetPageNumber = Math.max(
     1,
     Number(
@@ -2471,6 +2475,8 @@ function PictureBookPromptReviewDialog({
     setNewCharacters(editableBookCharacters(review.newCharacters));
     setChapterDescription(review.chapterDescription ?? '');
     setScenes(nextScenes);
+    setBookDescriptionExpanded(false);
+    setBookCharactersExpanded(false);
     groupPromptTouchedRef.current = false;
     setGroupPromptValue(resolvePictureBookGroupPrompt(review, nextScenes));
     setGroupPromptTouched(false);
@@ -2669,26 +2675,49 @@ function PictureBookPromptReviewDialog({
 
         <div className="picture-prompt-layout">
           <section className="picture-prompt-section full">
-            <div className="picture-prompt-section-heading">
-              <h3>书籍简介</h3>
+            <div className="picture-prompt-section-heading collapsible">
+              <button
+                className={`collapsible-heading ${bookDescriptionExpanded ? 'expanded' : ''}`}
+                type="button"
+                aria-expanded={bookDescriptionExpanded}
+                onClick={() => setBookDescriptionExpanded((expanded) => !expanded)}
+              >
+                <Icon name="chevron" />
+                <span>{reviewBookTitle}</span>
+              </button>
               {!isSinglePageReview && renderRefreshButton('bookDescription', '自动生成书籍简介', 'AI 自动生成书籍简介')}
             </div>
-            <textarea
-              aria-label="书籍简介"
-              value={bookDescription}
-              rows={5}
-              placeholder="时代、整体画风和视觉世界；角色外貌请放在角色列表里。"
-              onChange={(event) => setBookDescription(event.target.value)}
-            />
+            {bookDescriptionExpanded && (
+              <textarea
+                aria-label="书籍简介"
+                value={bookDescription}
+                rows={5}
+                placeholder="时代、整体画风和视觉世界；角色外貌请放在角色列表里。"
+                onChange={(event) => setBookDescription(event.target.value)}
+              />
+            )}
           </section>
 
           <section className="picture-prompt-section full">
-            <BookCharacterEditor
-              label="书籍角色"
-              characters={bookCharacters}
-              onChange={setBookCharacters}
-              disabled={busy}
-            />
+            <div className="picture-prompt-section-heading collapsible">
+              <button
+                className={`collapsible-heading ${bookCharactersExpanded ? 'expanded' : ''}`}
+                type="button"
+                aria-expanded={bookCharactersExpanded}
+                onClick={() => setBookCharactersExpanded((expanded) => !expanded)}
+              >
+                <Icon name="chevron" />
+                <span>书籍角色</span>
+              </button>
+            </div>
+            {bookCharactersExpanded && (
+              <BookCharacterEditor
+                label="书籍角色"
+                characters={bookCharacters}
+                onChange={setBookCharacters}
+                disabled={busy}
+              />
+            )}
           </section>
 
           <section className="picture-prompt-section full">
@@ -2715,26 +2744,6 @@ function PictureBookPromptReviewDialog({
 
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
-              <h3>{isSinglePageReview ? '单张生成 Prompt' : '组图总 Prompt'}</h3>
-              {groupPromptTouched && <span>已手动锁定</span>}
-            </div>
-            <textarea
-              aria-label={isSinglePageReview ? '单张生成提示词' : '组图总提示词'}
-              value={groupPrompt}
-              rows={10}
-              onChange={(event) => {
-                groupPromptTouchedRef.current = true;
-                setGroupPromptValue(event.target.value);
-                setGroupPromptTouched(true);
-              }}
-            />
-            {groupPromptTouched && !isSinglePageReview && (
-              <p className="picture-prompt-note">后续每页 prompt 修改不会自动覆盖组图总 prompt，最终以当前组图总 prompt 为准。</p>
-            )}
-          </section>
-
-          <section className="picture-prompt-section full">
-            <div className="picture-prompt-section-heading">
               <h3>{isSinglePageReview ? '当前分镜描述' : '章节分镜描述'}</h3>
             </div>
             <div className="picture-page-prompt-list">
@@ -2752,6 +2761,26 @@ function PictureBookPromptReviewDialog({
                 </label>
               ))}
             </div>
+          </section>
+
+          <section className="picture-prompt-section full">
+            <div className="picture-prompt-section-heading">
+              <h3>{isSinglePageReview ? '单张生成 Prompt' : '组图总 Prompt'}</h3>
+              {groupPromptTouched && <span>已手动锁定</span>}
+            </div>
+            <textarea
+              aria-label={isSinglePageReview ? '单张生成提示词' : '组图总提示词'}
+              value={groupPrompt}
+              rows={10}
+              onChange={(event) => {
+                groupPromptTouchedRef.current = true;
+                setGroupPromptValue(event.target.value);
+                setGroupPromptTouched(true);
+              }}
+            />
+            {groupPromptTouched && !isSinglePageReview && (
+              <p className="picture-prompt-note">后续每页 prompt 修改不会自动覆盖组图总 prompt，最终以当前组图总 prompt 为准。</p>
+            )}
           </section>
         </div>
 
@@ -2956,15 +2985,23 @@ function composePictureBookGroupPrompt(
 
 function SongCreationPanel({
   article,
+  recordingSettings,
+  onRecordingSettingsLoaded,
   onNotice,
+  onBlockingOverlayChange,
 }: {
   article: Article;
+  recordingSettings: RecordingSettings | null;
+  onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   onNotice: (message: string) => void;
+  onBlockingOverlayChange: (overlay: BlockingOverlayConfig | null) => void;
 }) {
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
   const [busy, setBusy] = useState(false);
-  const [blockingSongSource, setBlockingSongSource] = useState<SongSource | null>(null);
   const [playingSongVersionId, setPlayingSongVersionId] = useState<string | null>(null);
+  const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
+  const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
+  const [recordingDialogVersionId, setRecordingDialogVersionId] = useState('');
 
   const loadState = () => {
     setBusy(true);
@@ -2983,21 +3020,36 @@ function SongCreationPanel({
     if (payload.articleId === article.id) {
       setSongState(payload);
       setPlayingSongVersionId((current) => {
-        if (payload.status !== 'playing') return null;
-        if (current && !payload.versions?.some((version) => version.id === current)) return null;
+        if (!current) return null;
+        if (payload.status === 'empty' || payload.status === 'error') return null;
+        if (!payload.versions?.some((version) => version.id === current)) return null;
         return current;
       });
     }
   }), [article.id]);
 
+  useEffect(() => onNativeEvent<ListeningSongPositionPayload>('listening.song.position', (payload) => {
+    if (payload.articleId !== article.id) return;
+    const durationMs = payload.durationMs ?? null;
+    const reachedEnd =
+      durationMs !== null &&
+      durationMs > 0 &&
+      payload.positionMs >= Math.max(0, durationMs - 250);
+    if (!reachedEnd) return;
+    setPlayingSongVersionId((current) => {
+      if (!current) return current;
+      if (payload.versionId && payload.versionId !== current) return current;
+      return null;
+    });
+  }), [article.id]);
   const runSongCommand = async (
     command: string,
     payload: Record<string, unknown> = {},
     successMessage?: string,
-    blockingSource?: SongSource,
+    blockingOverlay?: BlockingOverlayConfig,
   ) => {
     setBusy(true);
-    if (blockingSource) setBlockingSongSource(blockingSource);
+    if (blockingOverlay) onBlockingOverlayChange(blockingOverlay);
     try {
       const next = await sendNative<ListeningSongStatePayload>(command, {
         articleId: article.id,
@@ -3009,7 +3061,7 @@ function SongCreationPanel({
       onNotice(error instanceof Error ? error.message : '歌曲操作失败');
     } finally {
       setBusy(false);
-      if (blockingSource) setBlockingSongSource(null);
+      if (blockingOverlay) onBlockingOverlayChange(null);
     }
   };
 
@@ -3018,6 +3070,7 @@ function SongCreationPanel({
     try {
       const next = await sendNative<ListeningSongStatePayload>('listening.songImportExternal', {
         articleId: article.id,
+        source: songState?.source ?? 'suno',
       });
       setSongState(next);
       onNotice(next.importCancelled ? '已取消导入本地音乐' : '已导入本地音乐');
@@ -3028,12 +3081,22 @@ function SongCreationPanel({
     }
   };
 
-  const recordSongVideoFromCreation = async (versionId: string) => {
+  const recordSongVideoFromCreation = async (versionId: string, selectedSettings: RecordingSettings) => {
     setBusy(true);
+    onBlockingOverlayChange({
+      title: '正在导出歌曲视频',
+      detail: '正在合成歌曲音频、字幕和绘本画面，请等待导出完成。',
+      timeoutSeconds: 900,
+    });
     try {
       await sendNative<ListeningRecordingResultPayload>('listening.songRecordVideo', {
         articleId: article.id,
         versionId,
+        codec: selectedSettings.codec,
+        resolution: selectedSettings.resolution,
+        pageTransition: selectedSettings.pageTransition,
+        subtitleMode: selectedSettings.subtitleMode,
+        fps: selectedSettings.fps || 25,
       });
       const next = await sendNative<ListeningSongStatePayload>('listening.songState', {
         articleId: article.id,
@@ -3044,11 +3107,47 @@ function SongCreationPanel({
       onNotice(error instanceof Error ? error.message : '歌曲视频导出失败');
     } finally {
       setBusy(false);
+      onBlockingOverlayChange(null);
+    }
+  };
+
+  const openSongRecordingDialog = (versionId: string) => {
+    if (!recordingSettings) {
+      onNotice('录制设置尚未加载，请稍后重试');
+      return;
+    }
+    setRecordingDialogVersionId(versionId);
+    setRecordingDialogDraft(recordingSettings);
+  };
+
+  const updateRecordingDialogDraft = (patch: Partial<RecordingSettings>) => {
+    setRecordingDialogDraft((draft) => (draft ? { ...draft, ...patch } : draft));
+  };
+
+  const confirmSongRecordingDialog = async () => {
+    if (!recordingDialogDraft || !recordingDialogVersionId || recordingDialogSaving) return;
+    setRecordingDialogSaving(true);
+    try {
+      const savedSettings = await sendNative<RecordingSettings>('recording.settings.save', {
+        codec: recordingDialogDraft.codec,
+        resolution: recordingDialogDraft.resolution,
+        pageTransition: recordingDialogDraft.pageTransition,
+        subtitleMode: recordingDialogDraft.subtitleMode,
+      });
+      onRecordingSettingsLoaded(savedSettings);
+      const versionId = recordingDialogVersionId;
+      setRecordingDialogDraft(null);
+      setRecordingDialogVersionId('');
+      await recordSongVideoFromCreation(versionId, savedSettings);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '录制设置保存失败');
+    } finally {
+      setRecordingDialogSaving(false);
     }
   };
 
   const playSongVersionFromCreation = async (versionId: string) => {
-    const isPlaying = songState?.status === 'playing' && playingSongVersionId === versionId;
+    const isPlaying = playingSongVersionId === versionId;
     setBusy(true);
     try {
       if (isPlaying) {
@@ -3075,7 +3174,7 @@ function SongCreationPanel({
     title: string,
     timelineStatus: string,
   ) => {
-    const deleteTimeline = timelineStatus === 'ready';
+    const deleteTimeline = timelineStatus === 'ready' || timelineStatus === 'stale';
     const message = deleteTimeline
       ? `确认删除歌曲「${title}」以及它的字幕时间轴？删除后不可恢复。`
       : `确认删除歌曲「${title}」？删除后不可恢复。`;
@@ -3131,7 +3230,11 @@ function SongCreationPanel({
           onClick={() => runSongCommand('listening.songGenerate', {
             source: 'bailian_fun_music',
             lyrics: '',
-          }, '已提交阿里云百聆生成任务', 'bailian_fun_music')}
+          }, '已提交阿里云百聆生成任务', {
+            title: '正在提交百聆歌曲',
+            detail: '正在向阿里云百聆 Fun-Music 提交歌曲生成，请等待服务返回。',
+            timeoutSeconds: 480,
+          })}
         >
           <Icon name="music" /> 生成百聆歌曲
         </button>
@@ -3145,14 +3248,6 @@ function SongCreationPanel({
           }, '已打开 Suno 歌曲生成流程')}
         >
           <Icon name="music" /> 生成 Suno 歌曲
-        </button>
-        <button
-          className="ghost-action"
-          type="button"
-          disabled={busy || songState?.status === 'generating'}
-          onClick={() => void importExternalSong()}
-        >
-          <Icon name="folder" /> 导入本地音乐
         </button>
         {songState?.source === 'suno' && waitingConfirm && (
           <button
@@ -3179,6 +3274,14 @@ function SongCreationPanel({
             <Icon name="download" /> 检测下载
           </button>
         )}
+        <button
+          className="ghost-action"
+          type="button"
+          disabled={busy || songState?.status === 'generating'}
+          onClick={() => void importExternalSong()}
+        >
+          <Icon name="folder" /> 导入本地音乐
+        </button>
       </div>
       <div className="song-style-groups creation-song-groups">
         {groupedVersions.length === 0 ? (
@@ -3193,7 +3296,9 @@ function SongCreationPanel({
               {group.versions.map((version, index) => {
                 const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
                 const title = version.title?.trim() || `版本 ${index + 1}`;
-                const isPlaying = songState?.status === 'playing' && playingSongVersionId === version.id;
+                const isPlaying = playingSongVersionId === version.id;
+                const timelineBlockedTitle =
+                  timelineStatus === 'stale' ? '歌曲字幕时间线版本过旧，请重新生成字幕' : '请先生成歌曲字幕';
                 return (
                   <div className="song-version-actions" key={version.id}>
                     <button
@@ -3225,10 +3330,30 @@ function SongCreationPanel({
                     >
                       <Icon name="trash" />
                     </button>
-                    <button className="ghost-action small" type="button" disabled={busy || timelineStatus === 'generating'} onClick={() => runSongCommand('listening.songTimelineGenerate', { versionId: version.id }, '已提交歌词时间轴生成')}>
+                    <button
+                      className="ghost-action small"
+                      type="button"
+                      disabled={busy || timelineStatus === 'generating'}
+                      onClick={() => runSongCommand(
+                        'listening.songTimelineGenerate',
+                        { versionId: version.id },
+                        '已提交歌词时间轴生成',
+                        {
+                          title: '正在生成歌曲字幕',
+                          detail: '正在识别歌曲音频并生成字幕时间轴，请等待服务返回。',
+                          timeoutSeconds: 600,
+                        },
+                      )}
+                    >
                       <Icon name={timelineStatus === 'generating' ? 'refresh' : 'sentence'} /> {songTimelineLabel(timelineStatus)}
                     </button>
-                    <button className="ghost-action small" type="button" disabled={busy || timelineStatus !== 'ready'} onClick={() => recordSongVideoFromCreation(version.id)}>
+                    <button
+                      className="ghost-action small"
+                      type="button"
+                      disabled={busy || timelineStatus !== 'ready'}
+                      title={timelineStatus === 'ready' ? '导出歌曲视频' : timelineBlockedTitle}
+                      onClick={() => openSongRecordingDialog(version.id)}
+                    >
                       <Icon name="recordVideo" /> 导出歌曲视频
                     </button>
                   </div>
@@ -3238,11 +3363,17 @@ function SongCreationPanel({
           </div>
         ))}
       </div>
-      {blockingSongSource === 'bailian_fun_music' && (
-        <AiBlockingOverlay
-          title="正在提交百聆歌曲"
-          detail="正在向阿里云百聆 Fun-Music 提交歌曲生成，请等待服务返回。"
-          timeoutSeconds={480}
+      {recordingDialogDraft && (
+        <RecordingSettingsDialog
+          settings={recordingDialogDraft}
+          saving={recordingDialogSaving}
+          onChange={updateRecordingDialogDraft}
+          onCancel={() => {
+            if (recordingDialogSaving) return;
+            setRecordingDialogDraft(null);
+            setRecordingDialogVersionId('');
+          }}
+          onConfirm={() => void confirmSongRecordingDialog()}
         />
       )}
     </section>
@@ -3251,10 +3382,14 @@ function SongCreationPanel({
 
 function VideoCreationPanel({
   article,
+  recordingSettings,
+  onRecordingSettingsLoaded,
   onNotice,
   onArticlesUpdated,
 }: {
   article: Article;
+  recordingSettings: RecordingSettings | null;
+  onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   onNotice: (message: string) => void;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
@@ -3263,14 +3398,19 @@ function VideoCreationPanel({
   const [busy, setBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
   const [exportingListeningVideo, setExportingListeningVideo] = useState(false);
+  const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
+  const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
 
   const checkReady = () => {
+    const selectedSettings = recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings);
     setBusy(true);
     sendNative<ListeningRecordingReadyPayload>('listening.recordingReady', {
       articleId: article.id,
-      codec: 'h264',
-      resolution: '1920x1080',
-      pageTransition: 'crossFade',
+      codec: selectedSettings.codec,
+      resolution: selectedSettings.resolution,
+      pageTransition: selectedSettings.pageTransition,
+      subtitleMode: selectedSettings.subtitleMode,
+      fps: selectedSettings.fps || 25,
     })
       .then(setRecordingReady)
       .catch((error) => onNotice(error instanceof Error ? error.message : '视频准备状态检查失败'))
@@ -3291,20 +3431,22 @@ function VideoCreationPanel({
     }
   };
 
-  useEffect(checkReady, [article.id]);
+  useEffect(checkReady, [article.id, recordingSettings?.codec, recordingSettings?.resolution, recordingSettings?.pageTransition, recordingSettings?.subtitleMode, recordingSettings?.fps]);
   useEffect(() => {
     void loadVideoLibrary();
   }, [article.id]);
 
-  const recordListeningVideo = async () => {
+  const recordListeningVideo = async (selectedSettings: RecordingSettings) => {
     setBusy(true);
     setExportingListeningVideo(true);
     try {
       await sendNative<ListeningRecordingResultPayload>('listening.recordVideo', {
         articleId: article.id,
-        codec: 'h264',
-        resolution: '1920x1080',
-        pageTransition: 'crossFade',
+        codec: selectedSettings.codec,
+        resolution: selectedSettings.resolution,
+        pageTransition: selectedSettings.pageTransition,
+        subtitleMode: selectedSettings.subtitleMode,
+        fps: selectedSettings.fps || 25,
       });
       onNotice('听力视频导出完成');
       await loadVideoLibrary();
@@ -3314,6 +3456,38 @@ function VideoCreationPanel({
     } finally {
       setBusy(false);
       setExportingListeningVideo(false);
+    }
+  };
+
+  const openRecordingDialog = () => {
+    if (!recordingSettings) {
+      onNotice('录制设置尚未加载，请稍后重试');
+      return;
+    }
+    setRecordingDialogDraft(recordingSettings);
+  };
+
+  const updateRecordingDialogDraft = (patch: Partial<RecordingSettings>) => {
+    setRecordingDialogDraft((draft) => (draft ? { ...draft, ...patch } : draft));
+  };
+
+  const confirmRecordingDialog = async () => {
+    if (!recordingDialogDraft || recordingDialogSaving) return;
+    setRecordingDialogSaving(true);
+    try {
+      const savedSettings = await sendNative<RecordingSettings>('recording.settings.save', {
+        codec: recordingDialogDraft.codec,
+        resolution: recordingDialogDraft.resolution,
+        pageTransition: recordingDialogDraft.pageTransition,
+        subtitleMode: recordingDialogDraft.subtitleMode,
+      });
+      onRecordingSettingsLoaded(savedSettings);
+      setRecordingDialogDraft(null);
+      await recordListeningVideo(savedSettings);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '录制设置保存失败');
+    } finally {
+      setRecordingDialogSaving(false);
     }
   };
 
@@ -3444,7 +3618,7 @@ function VideoCreationPanel({
         )}
       </div>
       <div className="button-row">
-        <button className="primary-action" type="button" disabled={busy || !recordingReady?.ready} onClick={() => void recordListeningVideo()}>
+        <button className="primary-action" type="button" disabled={busy || !recordingReady?.ready} onClick={openRecordingDialog}>
           <Icon name="recordVideo" /> 导出听力视频
         </button>
         <button className="ghost-action" type="button" disabled>
@@ -3456,6 +3630,18 @@ function VideoCreationPanel({
           title="正在导出听力视频"
           detail="正在渲染听力视频文件，请等待导出完成。"
           timeoutSeconds={900}
+        />
+      )}
+      {recordingDialogDraft && (
+        <RecordingSettingsDialog
+          settings={recordingDialogDraft}
+          saving={recordingDialogSaving}
+          onChange={updateRecordingDialogDraft}
+          onCancel={() => {
+            if (recordingDialogSaving) return;
+            setRecordingDialogDraft(null);
+          }}
+          onConfirm={() => void confirmRecordingDialog()}
         />
       )}
     </section>
@@ -3626,6 +3812,54 @@ function chapterDescriptionForArticle(article: Article): string {
   return article.chapterDescription?.replace(/\s+/g, ' ').trim() ?? '';
 }
 
+function formatArticleFullText(payload: ArticleFullTextPayload): string {
+  const bookTitle = payload.bookTitle?.trim() || payload.article.seriesTitle?.trim() || payload.article.title.trim();
+  const chapterTitle = payload.article.title.trim();
+  const lines: string[] = [`书名：${bookTitle}`];
+  if (chapterTitle && chapterTitle !== bookTitle) {
+    lines.push(`章节：${chapterTitle}`);
+  }
+  lines.push('');
+  payload.items.forEach((item) => {
+    const english = item.english.trim();
+    const chinese = item.chinese.trim();
+    if (!english && !chinese) return;
+    lines.push(`${item.index + 1}. ${english}`);
+    if (chinese) {
+      lines.push(chinese);
+    }
+    lines.push('');
+  });
+  return lines.join('\n').trim();
+}
+
+async function writeTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) {
+    throw new Error('复制到剪贴板失败');
+  }
+}
+
+async function copyArticleFullText(payload: ArticleFullTextPayload): Promise<void> {
+  const text = formatArticleFullText(payload);
+  if (!text) {
+    throw new Error('没有可复制的文章内容');
+  }
+  await writeTextToClipboard(text);
+}
+
 function bookCoverSource(book: BookGroup, index: number): string {
   const firstGenerated = book.articles.find(
     (article) => directImageSource(article.coverImageUri) || directImageSource(article.coverImagePath),
@@ -3654,6 +3888,7 @@ function ArticlePage({
   const [newSeriesTitle, setNewSeriesTitle] = useState('');
   const [seriesDescription, setSeriesDescription] = useState('');
   const [seriesCharacters, setSeriesCharacters] = useState<BookCharacter[]>([]);
+  const [bookInfoExpanded, setBookInfoExpanded] = useState(false);
   const [generatingSeriesDescription, setGeneratingSeriesDescription] = useState(false);
   const [savingSeries, setSavingSeries] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -3688,6 +3923,9 @@ function ArticlePage({
     () => series.find((item) => String(item.id) === selectedSeriesId) ?? null,
     [selectedSeriesId, series],
   );
+  const currentBookTitle = creatingNewSeries
+    ? newSeriesTitle.trim() || '新建书籍'
+    : selectedSeries?.title?.trim() || '书籍信息';
 
   useEffect(() => {
     let isMounted = true;
@@ -3900,36 +4138,49 @@ function ArticlePage({
                   onChange={(event) => setNewSeriesTitle(event.target.value)}
                 />
               )}
-              <div className="field-label-row">
-                <label htmlFor="series-description">书籍简介</label>
-                {creatingNewSeries && (
-                  <button
-                    className="icon-button small prompt-magic-button"
-                    type="button"
-                    aria-label="AI 自动生成新书籍简介"
-                    title="AI 自动生成新书籍简介"
-                    disabled={!canGenerateSeriesDescription}
-                    onClick={() => void generateSeriesDescription()}
-                  >
-                    <Icon name={generatingSeriesDescription ? 'refresh' : 'wand'} />
-                    <span>{generatingSeriesDescription ? '生成中' : '自动生成'}</span>
-                  </button>
-                )}
-              </div>
-              <textarea
-                id="series-description"
-                aria-label="书籍简介"
-                value={seriesDescription}
-                rows={4}
-                placeholder="可写时代、整体画风和视觉世界；角色外貌请放在角色列表里。"
-                onChange={(event) => setSeriesDescription(event.target.value)}
-              />
-              <BookCharacterEditor
-                label="书籍角色"
-                characters={seriesCharacters}
-                onChange={setSeriesCharacters}
-                disabled={saving || savingSeries || generatingSeriesDescription}
-              />
+              <button
+                className={`collapsible-heading book-info-toggle ${bookInfoExpanded ? 'expanded' : ''}`}
+                type="button"
+                aria-expanded={bookInfoExpanded}
+                onClick={() => setBookInfoExpanded((expanded) => !expanded)}
+              >
+                <Icon name="chevron" />
+                <span>{currentBookTitle}</span>
+              </button>
+              {bookInfoExpanded && (
+                <div className="book-info-collapsible">
+                  <div className="field-label-row">
+                    <label htmlFor="series-description">书籍简介</label>
+                    {creatingNewSeries && (
+                      <button
+                        className="icon-button small prompt-magic-button"
+                        type="button"
+                        aria-label="AI 自动生成新书籍简介"
+                        title="AI 自动生成新书籍简介"
+                        disabled={!canGenerateSeriesDescription}
+                        onClick={() => void generateSeriesDescription()}
+                      >
+                        <Icon name={generatingSeriesDescription ? 'refresh' : 'wand'} />
+                        <span>{generatingSeriesDescription ? '生成中' : '自动生成'}</span>
+                      </button>
+                    )}
+                  </div>
+                  <textarea
+                    id="series-description"
+                    aria-label="书籍简介"
+                    value={seriesDescription}
+                    rows={4}
+                    placeholder="可写时代、整体画风和视觉世界；角色外貌请放在角色列表里。"
+                    onChange={(event) => setSeriesDescription(event.target.value)}
+                  />
+                  <BookCharacterEditor
+                    label="书籍角色"
+                    characters={seriesCharacters}
+                    onChange={setSeriesCharacters}
+                    disabled={saving || savingSeries || generatingSeriesDescription}
+                  />
+                </div>
+              )}
               {creatingNewSeries && (
                 <div className="series-save-row">
                   <button
@@ -4332,8 +4583,18 @@ function ListeningPage({
   useEffect(() => {
     return onNativeEvent<ListeningSongStatePayload>('listening.song.state', (payload) => {
       if (payload.articleId !== articleId) return;
-      setSongState(payload);
-      if (payload.status !== 'playing') {
+      setSongState((current) => {
+        if (
+          current?.status === 'playing' &&
+          payload.status !== 'playing' &&
+          payload.status !== 'empty' &&
+          payload.status !== 'error'
+        ) {
+          return { ...payload, status: 'playing' };
+        }
+        return payload;
+      });
+      if (payload.status === 'empty' || payload.status === 'error') {
         setSongCue(null);
       }
       if (payload.status === 'ready') {
@@ -4371,12 +4632,23 @@ function ListeningPage({
     return onNativeEvent<ListeningSongPositionPayload>('listening.song.position', (payload) => {
       if (payload.articleId !== articleId) return;
       const cue = payload.cue ?? null;
-      setSongCue(cue);
       if (cue) {
+        setSongCue(cue);
         setCurrentIndex(cue.lineIndex);
         setActivePart('english');
       } else {
         setActivePart(null);
+        const durationMs = payload.durationMs ?? null;
+        if (
+          durationMs !== null &&
+          durationMs > 0 &&
+          payload.positionMs >= Math.max(0, durationMs - 250)
+        ) {
+          setSongCue(null);
+          setSongState((current) =>
+            current?.status === 'playing' ? { ...current, status: 'ready' } : current,
+          );
+        }
       }
     });
   }, [articleId]);
@@ -4478,6 +4750,7 @@ function ListeningPage({
       codec: recordingSettings.codec,
       resolution: recordingSettings.resolution,
       pageTransition: recordingSettings.pageTransition,
+      subtitleMode: recordingSettings.subtitleMode,
       fps: recordingSettings.fps || 25,
       subtitleTranslations,
     })
@@ -4494,6 +4767,7 @@ function ListeningPage({
           codec: recordingSettings.codec,
           resolution: recordingSettings.resolution,
           pageTransition: recordingSettings.pageTransition,
+          subtitleMode: recordingSettings.subtitleMode,
           outputDirectory: recordingSettings.outputDirectory,
           requiredEnglish: 0,
           readyEnglish: 0,
@@ -4618,6 +4892,7 @@ function ListeningPage({
         codec: selectedSettings.codec,
         resolution: selectedSettings.resolution,
         pageTransition: selectedSettings.pageTransition,
+        subtitleMode: selectedSettings.subtitleMode,
         fps: selectedSettings.fps || 25,
         subtitleTranslations,
       });
@@ -4634,6 +4909,19 @@ function ListeningPage({
     setRecordingError(null);
   };
 
+  const copyFullText = async () => {
+    if (!article || items.length === 0) {
+      onNotice('没有可复制的文章内容');
+      return;
+    }
+    try {
+      await copyArticleFullText({ article, bookTitle, items });
+      onNotice('全文已复制到剪贴板');
+    } catch (copyError) {
+      onNotice(copyError instanceof Error ? copyError.message : '全文复制失败');
+    }
+  };
+
   const updateRecordingDialogDraft = (patch: Partial<RecordingSettings>) => {
     setRecordingDialogDraft((draft) => (draft ? { ...draft, ...patch } : draft));
   };
@@ -4647,6 +4935,7 @@ function ListeningPage({
         codec: recordingDialogDraft.codec,
         resolution: recordingDialogDraft.resolution,
         pageTransition: recordingDialogDraft.pageTransition,
+        subtitleMode: recordingDialogDraft.subtitleMode,
       });
       onRecordingSettingsLoaded(savedSettings);
       setRecordingDialogDraft(null);
@@ -4760,8 +5049,15 @@ function ListeningPage({
     try {
       const payload = await sendNative<ListeningSongStatePayload>('listening.songImportExternal', {
         articleId,
+        source: songState?.source ?? songDialog?.source ?? 'suno',
       });
       setSongState(payload);
+      if (!payload.importCancelled) {
+        const importedDefaultId = payload.versions?.find((version) => version.isDefault)?.id ?? '';
+        if (importedDefaultId) {
+          setSelectedSongVersionId(importedDefaultId);
+        }
+      }
       setSongDialog((current) =>
         current
           ? {
@@ -4857,7 +5153,9 @@ function ListeningPage({
         articleId,
         versionId,
       });
-      setSongState(payload);
+      setSongState((current) =>
+        current?.status === 'playing' ? { ...payload, status: 'playing' } : payload,
+      );
       setSelectedSongVersionId(versionId);
       onNotice('已设为默认播放歌曲');
     } catch (songError) {
@@ -4890,7 +5188,9 @@ function ListeningPage({
         articleId,
         versionId,
       });
-      setSongState(payload);
+      setSongState((current) =>
+        current?.status === 'playing' ? { ...payload, status: 'playing' } : payload,
+      );
     } catch (songError) {
       const message = songError instanceof Error ? songError.message : '歌曲字幕生成失败';
       setSongState((current) =>
@@ -4928,6 +5228,7 @@ function ListeningPage({
         codec: selectedSettings.codec,
         resolution: selectedSettings.resolution,
         pageTransition: selectedSettings.pageTransition,
+        subtitleMode: selectedSettings.subtitleMode,
         fps: selectedSettings.fps || 25,
       });
     } catch (recordError) {
@@ -5226,6 +5527,12 @@ function ListeningPage({
     fullscreenPictureReadiness,
   );
   const canOpenFullscreen = fullscreenReadiness.ready && !busy && items.length > 0;
+  const recordingPictureReadiness = pictureBookFullscreenReadiness(
+    pictureBookState,
+    items,
+    pictureDecodeState,
+    { requireDecodedImages: false },
+  );
   const recordingNativeReadiness: FullscreenReadiness =
     !recordingSettings
       ? { ready: false, reason: '正在读取录制设置' }
@@ -5239,7 +5546,7 @@ function ListeningPage({
             };
   const recordingReadiness = combineFullscreenReadiness(
     recordingNativeReadiness,
-    fullscreenPictureReadiness,
+    recordingPictureReadiness,
   );
   const canRecordVideo = recordingReadiness.ready && !busy && !recordingBusy && items.length > 0;
   const songWaitingConfirm = isSunoWaitingConfirm(songState);
@@ -5378,7 +5685,7 @@ function ListeningPage({
                     id={`song-version-${articleId}`}
                     aria-label="歌曲列表"
                     value={selectedSongVersion?.id ?? ''}
-                    disabled={busy || songPlaying || songVersions.length === 0}
+                    disabled={busy || songVersions.length === 0}
                     onChange={(event) => setSelectedSongVersionId(event.target.value)}
                   >
                     {songVersions.length === 0 ? (
@@ -5392,7 +5699,7 @@ function ListeningPage({
                   <button
                     className={`icon-button small song-default-button ${selectedSongVersion?.isDefault ? 'active' : ''}`}
                     type="button"
-                    disabled={!selectedSongVersion || busy || songPlaying}
+                    disabled={!selectedSongVersion || busy}
                     aria-label={selectedSongVersion?.isDefault ? '当前歌曲已是默认播放歌曲' : '设为当前默认播放歌曲'}
                     title={selectedSongVersion?.isDefault ? '当前默认播放歌曲' : '设为当前默认播放歌曲'}
                     onClick={() => selectedSongVersion && void setDefaultSongVersion(selectedSongVersion.id)}
@@ -5433,6 +5740,22 @@ function ListeningPage({
                   title={fullscreenReadiness.reason}
                 >
                   <Icon name="fullscreen" /> 全屏播放
+                </button>
+                <button
+                  className="ghost-action"
+                  onClick={openRecordingDialog}
+                  disabled={!canRecordVideo}
+                  title={recordingReadiness.reason}
+                >
+                  <Icon name="recordVideo" /> 导出视频
+                </button>
+                <button
+                  className="ghost-action"
+                  type="button"
+                  onClick={() => void copyFullText()}
+                  disabled={!article || items.length === 0}
+                >
+                  <Icon name="copy" /> 复制全文
                 </button>
               </div>
             )}
@@ -5557,6 +5880,7 @@ function ListeningPage({
           onConfirmSunoCreate={() => void confirmSunoCreate()}
           onRetrySunoDownload={() => void retrySunoDownload()}
           onPlayVersion={(versionId) => void playSongVersion(versionId)}
+          onSetDefaultVersion={(versionId) => void setDefaultSongVersion(versionId)}
           onGenerateTimeline={(versionId) => void generateSongTimeline(versionId)}
           onRecordSongVideo={(versionId) => void recordSongVideo(versionId)}
           onStopSong={() => void stopSong()}
@@ -5672,6 +5996,7 @@ function SongDialog({
   onConfirmSunoCreate,
   onRetrySunoDownload,
   onPlayVersion,
+  onSetDefaultVersion,
   onGenerateTimeline,
   onRecordSongVideo,
   onStopSong,
@@ -5693,6 +6018,7 @@ function SongDialog({
   onConfirmSunoCreate: () => void;
   onRetrySunoDownload: () => void;
   onPlayVersion: (versionId?: string) => void;
+  onSetDefaultVersion: (versionId: string) => void;
   onGenerateTimeline: (versionId: string) => void;
   onRecordSongVideo: (versionId: string) => void;
   onStopSong: () => void;
@@ -5765,16 +6091,28 @@ function SongDialog({
                         const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
                         const timelineReady = timelineStatus === 'ready';
                         const timelineGenerating = timelineStatus === 'generating';
+                        const timelineBlockedTitle =
+                          timelineStatus === 'stale' ? '歌曲字幕时间线版本过旧，请重新生成字幕' : '请先生成歌曲字幕';
                         return (
                           <div className="song-version-actions" key={version.id}>
                             <button
-                              className="ghost-action small"
+                              className={`icon-button small song-default-button ${version.isDefault ? 'active' : ''}`}
+                              type="button"
+                              disabled={busy}
+                              aria-label={version.isDefault ? `${title} 已是默认播放歌曲` : `设为默认播放歌曲：${title}`}
+                              title={version.isDefault ? '默认播放歌曲' : '设为默认播放歌曲'}
+                              onClick={() => onSetDefaultVersion(version.id)}
+                            >
+                              <Icon name="star" />
+                            </button>
+                            <button
+                              className="ghost-action small song-title-button"
                               type="button"
                               onClick={() => onPlayVersion(version.id)}
                               disabled={busy || songGenerating}
                               title={title}
                             >
-                              <Icon name="sound" /> {title}
+                              <Icon name="sound" /> <span className="song-version-title">{title}{version.isDefault ? ' · 默认' : ''}</span>
                             </button>
                             <button
                               className="ghost-action small"
@@ -5790,7 +6128,7 @@ function SongDialog({
                               type="button"
                               onClick={() => onRecordSongVideo(version.id)}
                               disabled={busy || songGenerating || recordingBusy || !timelineReady}
-                              title={timelineReady ? '录制歌曲视频' : '请先生成歌曲字幕'}
+                              title={timelineReady ? '录制歌曲视频' : timelineBlockedTitle}
                             >
                               <Icon name="recordVideo" /> 录制歌曲视频
                             </button>
@@ -5820,6 +6158,9 @@ function SongDialog({
                   <Icon name="download" /> 检测下载
                 </button>
               )}
+              <button className="ghost-action small" type="button" onClick={onImportExternal} disabled={busy || songGenerating}>
+                <Icon name="folder" /> 导入本地音乐
+              </button>
               {allowGeneration && (
                 <button className="ghost-action small" type="button" onClick={() => onTabChange('settings')} disabled={busy}>
                   <Icon name="music" /> 生成新版本
@@ -5864,9 +6205,6 @@ function SongDialog({
         <div className="edit-dialog-actions">
           <button className="ghost-action" type="button" onClick={onCancel}>
             取消
-          </button>
-          <button className="ghost-action" type="button" onClick={onImportExternal} disabled={busy || songGenerating}>
-            <Icon name="folder" /> 导入本地音乐
           </button>
           {state.activeTab === 'settings' && (
             <button
@@ -6779,6 +7117,7 @@ function pictureBookFullscreenReadiness(
   state: PictureBookState | null,
   items: ListeningItem[],
   decodeState: PictureBookDecodeState,
+  options: { requireDecodedImages?: boolean } = {},
 ): FullscreenReadiness {
   if (items.length === 0) {
     return { ready: false, reason: '这篇文章还没有可播放的句子' };
@@ -6816,6 +7155,9 @@ function pictureBookFullscreenReadiness(
   );
   if (missingSentence) {
     return { ready: false, reason: '绘本分镜还没有覆盖全部句子' };
+  }
+  if (options.requireDecodedImages === false) {
+    return { ready: true, reason: '' };
   }
   if (decodeState.missingImagePages.length > 0) {
     return { ready: false, reason: '正在准备当前和下一张绘本图...' };
@@ -7345,7 +7687,7 @@ function RecordingResultCard({
       )}
       <p>
         <span>视频：{result.videoPath}</span>
-        <span>字幕：{result.subtitlePath}</span>
+        {result.subtitlePath.trim() && <span>字幕：{result.subtitlePath}</span>}
       </p>
       <button className="ghost-action small" type="button" onClick={onClose}>
         知道了
@@ -7416,6 +7758,20 @@ function RecordingSettingsDialog({
               <option value="crossFade">淡入淡出</option>
               <option value="panZoomFade">轻微推拉淡入</option>
               <option value="slide">滑动翻页</option>
+            </select>
+          </label>
+          <label>
+            <span>字幕</span>
+            <select
+              value={settings.subtitleMode}
+              disabled={saving}
+              onChange={(event) =>
+                onChange({ subtitleMode: event.target.value as RecordingSettings['subtitleMode'] })
+              }
+            >
+              <option value="srt">仅生成 SRT</option>
+              <option value="burnedIn">烧录到视频</option>
+              <option value="both">视频内字幕 + SRT</option>
             </select>
           </label>
         </div>
@@ -9280,6 +9636,12 @@ const iconPaths: Record<string, ReactNode> = {
       <path d="M5 18.5h14" />
     </>
   ),
+  copy: (
+    <>
+      <rect x="8" y="8" width="10" height="12" rx="2" />
+      <path d="M6 16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+    </>
+  ),
   folder: (
     <>
       <path d="M4 6.5h6l2 2h8v9.5H4z" />
@@ -9542,6 +9904,34 @@ function recordingVideoMeta(version: RecordingVideoVersion): string {
   return parts.join(' · ');
 }
 
+function normalizeRecordingSettings(settings: RecordingSettings): RecordingSettings {
+  const codec = settings.codec === 'h265' ? 'h265' : 'h264';
+  const resolution =
+    settings.resolution === '2560x1440' || settings.resolution === '1280x720'
+      ? settings.resolution
+      : '1920x1080';
+  const pageTransition =
+    settings.pageTransition === 'crossFade' ||
+    settings.pageTransition === 'panZoomFade' ||
+    settings.pageTransition === 'slide'
+      ? settings.pageTransition
+      : 'none';
+  const subtitleMode =
+    settings.subtitleMode === 'burnedIn' || settings.subtitleMode === 'both'
+      ? settings.subtitleMode
+      : 'srt';
+  const fps = Number(settings.fps);
+  return {
+    ...settings,
+    codec,
+    resolution,
+    pageTransition,
+    subtitleMode,
+    outputDirectory: settings.outputDirectory ?? '',
+    fps: Number.isFinite(fps) && fps > 0 ? fps : 25,
+  };
+}
+
 function formatRecordingVideoCreatedAt(value?: string | null): string {
   if (!value) return '';
   const date = new Date(value);
@@ -9612,6 +10002,9 @@ function songSubtitleNoticeForVersion(version?: SongVersionPayload | null): stri
       ? `这首歌字幕生成失败：${detail}。请到创作中心重新生成歌曲字幕。`
       : '这首歌字幕生成失败，请到创作中心重新生成歌曲字幕。';
   }
+  if (status === 'stale') {
+    return '这首歌的字幕时间线版本过旧，请到创作中心重新生成歌曲字幕。';
+  }
   return '这首歌还没有生成字幕，请到创作中心生成歌曲字幕。';
 }
 
@@ -9622,6 +10015,8 @@ function songTimelineLabel(status?: string | null): string {
     case 'generating':
       return '字幕生成中';
     case 'error':
+      return '重新生成字幕';
+    case 'stale':
       return '重新生成字幕';
     default:
       return '生成歌曲字幕';

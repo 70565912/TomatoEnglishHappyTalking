@@ -1,5 +1,6 @@
 import type {
   Article,
+  ArticleFullTextPayload,
   BookCharacter,
   BridgeResponse,
   ChatState,
@@ -514,6 +515,20 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       series: mockSeries,
     };
   }
+  if (type === 'article.fullText') {
+    const articleId = Number(payload.articleId ?? mockArticles[0].id);
+    const article = mockArticles.find((item) => item.id === articleId) ?? mockListening.article;
+    const fullText: ArticleFullTextPayload = {
+      article,
+      bookTitle: article.seriesTitle || mockSeries[0]?.title || article.title,
+      items: article.sentences.map((sentence, index) => ({
+        index,
+        english: sentence,
+        chinese: index === 0 ? '汤姆发现了一个明亮的零食盒。' : '',
+      })),
+    };
+    return fullText;
+  }
   if (type === 'article.suggestTitle') {
     return { title: mockSuggestTitle(String(payload.content ?? '')) };
   }
@@ -949,10 +964,11 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'listening.songRecordVideo') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const subtitleMode = String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode);
     const result = {
       articleId,
       videoPath: 'C:\\Tomato\\recording-export\\mock-song.mp4',
-      subtitlePath: 'C:\\Tomato\\recording-export\\mock-song.srt',
+      subtitlePath: subtitleMode === 'burnedIn' ? '' : 'C:\\Tomato\\recording-export\\mock-song.srt',
       durationMs: 32000,
       frameCount: 800,
       droppedFrameCount: 0,
@@ -1002,6 +1018,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       codec: String(payload.codec ?? mockRecordingSettings.codec),
       resolution: String(payload.resolution ?? mockRecordingSettings.resolution),
       pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition),
+      subtitleMode: String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode),
       outputDirectory: mockRecordingSettings.outputDirectory,
       requiredEnglish: mockListening.items.length,
       readyEnglish: mockListening.items.length,
@@ -1013,7 +1030,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'listening.recordVideo') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
     const videoPath = `${mockRecordingSettings.outputDirectory}\\Space Snacks ${mockRecordingVideos.length + 1}.mp4`;
-    const subtitlePath = videoPath.replace(/\.mp4$/i, '.srt');
+    const subtitleMode = String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode);
+    const subtitlePath = subtitleMode === 'burnedIn' ? '' : videoPath.replace(/\.mp4$/i, '.srt');
     window.setTimeout(() => {
       emitNativeEvent({
         type: 'listening.recording.progress',
@@ -1312,6 +1330,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       codec: String(payload.codec ?? mockRecordingSettings.codec) as RecordingSettings['codec'],
       resolution: String(payload.resolution ?? mockRecordingSettings.resolution) as RecordingSettings['resolution'],
       pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition) as RecordingSettings['pageTransition'],
+      subtitleMode: String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode) as RecordingSettings['subtitleMode'],
     };
     return mockRecordingSettings;
   }
@@ -1974,6 +1993,7 @@ let mockRecordingSettings: RecordingSettings = {
   codec: 'h264',
   resolution: '1920x1080',
   pageTransition: 'none',
+  subtitleMode: 'srt',
   outputDirectory: 'C:\\Program Files\\TomatoEnglishHappyTalking\\recording-export',
   ffmpegPath: 'C:\\Program Files\\TomatoEnglishHappyTalking\\ffmpeg.exe',
   fps: 25,

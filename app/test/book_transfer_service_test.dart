@@ -8,7 +8,6 @@ import 'package:sqflite/sqflite.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
 import 'package:tomato_english_happy_talking/data/models/article_sentence_translation_model.dart';
-import 'package:tomato_english_happy_talking/data/models/article_song_model.dart';
 import 'package:tomato_english_happy_talking/data/models/learning_record_model.dart';
 import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
@@ -120,6 +119,9 @@ void main() {
     expect(imagePath, isNotNull);
     expect(await File(imagePath!).exists(), isTrue);
     expect(imagePath, isNot(contains('recording-export')));
+    expect(imagePath, contains('tomato_api_cache'));
+    expect(imagePath, contains('book-transfer-assets'));
+    expect(path_lib.extension(imagePath).toLowerCase(), '.png');
 
     final recording = await ApiCacheService.getLatestSentenceRecording(
       articleId: imported.articleIds.single,

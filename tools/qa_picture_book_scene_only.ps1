@@ -1,10 +1,10 @@
 param(
   [int]$Port = 39355,
   [int]$ArticleId = 2,
-  [string]$OutPath = "H:\TomatoEnglishHappyTalking\.tmp\qa-picture-book-scene-only.json",
+  [string]$OutPath = (Join-Path (Split-Path -Parent $PSScriptRoot) ".tmp\qa-picture-book-scene-only.json"),
   [ValidateSet("scene-only", "chapter-scene", "book-chapter-scene")]
   [string]$PromptMode = "chapter-scene",
-  [string]$ExePath = "H:\TomatoEnglishHappyTalking\release\windows\tomato_english_happy_talking\tomato_english_happy_talking.exe",
+  [string]$ExePath = (Join-Path (Split-Path -Parent $PSScriptRoot) "release\windows\tomato_english_happy_talking\tomato_english_happy_talking.exe"),
   [string]$DataRoot = "",
   [switch]$NoStart,
   [int]$PromptReviewTimeoutSec = 240,

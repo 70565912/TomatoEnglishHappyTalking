@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:tomato_english_happy_talking/services/recording_export_service.dart';
 import 'package:tomato_english_happy_talking/services/recording_export_utils.dart';
+import 'package:tomato_english_happy_talking/services/song_subtitle_timeline_service.dart';
 import 'package:tomato_english_happy_talking/services/tts_memory_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/tts_service.dart';
 
@@ -74,6 +75,10 @@ void main() {
     const h265SoftwareOnly = '''
  V..... libx265              libx265 H.265 / HEVC encoder
 ''';
+    const h265HardwareAndSoftware = '''
+ V..... hevc_nvenc           NVIDIA NVENC hevc encoder
+ V..... libx265              libx265 H.265 / HEVC encoder
+''';
 
     expect(
       RecordingExportUtils.selectEncoder('h264', h264Encoders),
@@ -86,6 +91,13 @@ void main() {
     expect(
       RecordingExportUtils.selectEncoder('h265', h264Encoders),
       isNull,
+    );
+    expect(
+      RecordingExportUtils.selectEncoderCandidates(
+        'h265',
+        h265HardwareAndSoftware,
+      ),
+      ['hevc_nvenc', 'libx265'],
     );
 
     final srt = RecordingExportUtils.srtForCues([
@@ -112,6 +124,124 @@ void main() {
     expect(baseName, 'Space Story Series - Space Snacks - 20260612-090807');
     expect(baseName, isNot(contains('english')));
     expect(baseName, isNot(contains('bilingual')));
+  });
+
+  test('recording subtitle mode normalizes settings and output behavior', () {
+    expect(RecordingSubtitleMode.parse('').name, 'srt');
+    expect(RecordingSubtitleMode.parse('bad-value').name, 'srt');
+    expect(RecordingSubtitleMode.parse('burnedIn').writesSrt, isFalse);
+    expect(RecordingSubtitleMode.parse('burnedIn').burnsIn, isTrue);
+    expect(RecordingSubtitleMode.parse('both').writesSrt, isTrue);
+    expect(RecordingSubtitleMode.parse('both').burnsIn, isTrue);
+
+    expect(
+      RecordingExportService.normalizeSettingsForTest({
+        'codec': 'h265',
+        'resolution': '2560x1440',
+        'pageTransition': 'slide',
+        'subtitleMode': 'both',
+      }),
+      containsPair('subtitleMode', 'both'),
+    );
+    expect(
+      RecordingExportService.normalizeSettingsForTest({
+        'codec': 'unknown',
+        'resolution': 'too-big',
+        'pageTransition': 'unknown',
+        'subtitleMode': 'unknown',
+      }),
+      containsPair('subtitleMode', 'srt'),
+    );
+  });
+
+  test('song export timeline keeps cue order and blank subtitle gaps', () {
+    final rows = RecordingExportService.songTimelineRowsForTest(
+      const SongSubtitleTimeline(
+        version: 1,
+        articleId: 42,
+        audioHash: 'audio',
+        lyricsHash: 'lyrics',
+        durationMs: 5000,
+        source: 'suno',
+        cues: [
+          SongSubtitleCue(
+            lineIndex: 1,
+            startMs: 1000,
+            endMs: 1600,
+            english: 'First chorus take',
+          ),
+          SongSubtitleCue(
+            lineIndex: 1,
+            startMs: 3000,
+            endMs: 3600,
+            english: 'Second chorus take',
+          ),
+        ],
+      ),
+    );
+
+    expect(rows.map((row) => row['english']), [
+      '',
+      'First chorus take',
+      '',
+      'Second chorus take',
+      '',
+    ]);
+    expect(rows[0], containsPair('startMs', 0));
+    expect(rows[0], containsPair('endMs', 1000));
+    expect(rows[2], containsPair('startMs', 1600));
+    expect(rows[2], containsPair('endMs', 3000));
+    expect(rows[4], containsPair('startMs', 3600));
+    expect(rows[4], containsPair('endMs', 5000));
+  });
+
+  test('hybrid transition rendering limits frame rendering to transition spans',
+      () {
+    final parts = RecordingExportService.hybridRenderPartsForTest(
+      transition: 'slide',
+      segments: const [
+        {'startMs': 0, 'endMs': 1000, 'pageIndex': 0},
+        {'startMs': 1000, 'endMs': 2000, 'pageIndex': 1},
+        {'startMs': 2000, 'endMs': 3000, 'pageIndex': 1},
+      ],
+    );
+
+    expect(parts, [
+      {
+        'startMs': 0,
+        'endMs': 750,
+        'durationMs': 750,
+        'isTransition': false,
+      },
+      {
+        'startMs': 750,
+        'endMs': 1000,
+        'durationMs': 250,
+        'isTransition': true,
+      },
+      {
+        'startMs': 1000,
+        'endMs': 1250,
+        'durationMs': 250,
+        'isTransition': true,
+      },
+      {
+        'startMs': 1250,
+        'endMs': 2000,
+        'durationMs': 750,
+        'isTransition': false,
+      },
+      {
+        'startMs': 2000,
+        'endMs': 3000,
+        'durationMs': 1000,
+        'isTransition': false,
+      },
+    ]);
+    final transitionMs = parts
+        .where((part) => part['isTransition'] == true)
+        .fold<int>(0, (sum, part) => sum + (part['durationMs'] as int));
+    expect(transitionMs, RecordingExportService.transitionMs);
   });
 
   test('recording export utility estimates mp3 duration from frames', () {

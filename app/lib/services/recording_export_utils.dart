@@ -26,18 +26,27 @@ class RecordingExportUtils {
   const RecordingExportUtils._();
 
   static String? selectEncoder(String codec, String encodersOutput) {
+    final candidates = selectEncoderCandidates(codec, encodersOutput);
+    return candidates.isEmpty ? null : candidates.first;
+  }
+
+  static List<String> selectEncoderCandidates(
+    String codec,
+    String encodersOutput,
+  ) {
     final normalized = codec.trim().toLowerCase();
     final candidates = normalized == 'h265'
         ? const ['hevc_nvenc', 'hevc_qsv', 'hevc_amf', 'hevc_mf', 'libx265']
         : const ['h264_nvenc', 'h264_qsv', 'h264_amf', 'h264_mf', 'libx264'];
+    final available = <String>[];
     for (final candidate in candidates) {
       if (RegExp(r'(^|\s)' + RegExp.escape(candidate) + r'(\s|$)',
               multiLine: true)
           .hasMatch(encodersOutput)) {
-        return candidate;
+        available.add(candidate);
       }
     }
-    return null;
+    return available;
   }
 
   static RecordingBitrateProfile bitrateProfile(

@@ -520,7 +520,7 @@ describe('App', () => {
     });
   });
 
-  it('renames an article title from the chapter list', async () => {
+  it('edits article titles only from the creation center list', async () => {
     window.location.hash = '/';
     const now = new Date().toISOString();
     const article = {
@@ -570,7 +570,13 @@ describe('App', () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Alice Series/ }));
+    await screen.findByText('Old Title');
+    expect(screen.queryByRole('button', { name: '修改《Old Title》标题' })).not.toBeInTheDocument();
+
+    cleanup();
+    window.location.hash = '/creation?articleId=5&seriesId=2';
+    render(<App />);
+
     fireEvent.click(await screen.findByRole('button', { name: '修改《Old Title》标题' }));
     const dialog = await screen.findByRole('dialog', { name: '修改文章标题' });
     expect(dialog.closest('.edit-dialog-backdrop')?.parentElement).toBe(document.body);
@@ -825,9 +831,11 @@ describe('App', () => {
     render(<App />);
 
     const bookTitleInput = await screen.findByLabelText('新书籍名称');
-    const descriptionInput = screen.getByLabelText('书籍简介');
     const contentInput = screen.getByLabelText(/文章内容/);
+    expect(screen.queryByLabelText('书籍简介')).not.toBeInTheDocument();
     fireEvent.change(bookTitleInput, { target: { value: savedSeries.title } });
+    fireEvent.click(screen.getByRole('button', { name: savedSeries.title }));
+    const descriptionInput = screen.getByLabelText('书籍简介');
     fireEvent.change(descriptionInput, { target: { value: savedSeries.description } });
     fireEvent.click(screen.getByRole('button', { name: '新增角色' }));
     fireEvent.change(screen.getByLabelText('书籍角色 1 名称'), { target: { value: 'Alice' } });
@@ -916,11 +924,12 @@ describe('App', () => {
     const bookTitleInput = await screen.findByLabelText('新书籍名称');
     const articleTitleInput = screen.getByLabelText(/文章标题/);
     const contentInput = screen.getByLabelText(/文章内容/);
+
+    expect(screen.queryByLabelText('书籍简介')).not.toBeInTheDocument();
+    fireEvent.change(bookTitleInput, { target: { value: 'Lily Garden' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Lily Garden' }));
     const descriptionInput = screen.getByLabelText('书籍简介');
     const generateButton = screen.getByRole('button', { name: 'AI 自动生成新书籍简介' });
-
-    expect(generateButton).toBeDisabled();
-    fireEvent.change(bookTitleInput, { target: { value: 'Lily Garden' } });
     fireEvent.change(articleTitleInput, { target: { value: 'The Little Gate' } });
     fireEvent.change(contentInput, {
       target: { value: 'Lily opens a little green gate. A rabbit waves from the flowers.' },
@@ -972,10 +981,12 @@ describe('App', () => {
 
     await screen.findByPlaceholderText('例如 The Secret Garden');
     const bookTitleInput = document.querySelector('input[placeholder*="The Secret Garden"]') as HTMLInputElement;
-    const generateButton = document.querySelector('.prompt-magic-button') as HTMLButtonElement;
-    expect(generateButton).toBeDisabled();
+    expect(document.querySelector('.prompt-magic-button')).toBeNull();
+    expect(screen.queryByLabelText('书籍简介')).not.toBeInTheDocument();
     fireEvent.change(bookTitleInput, { target: { value: "Alice's Adventures in Wonderland" } });
+    fireEvent.click(screen.getByRole('button', { name: "Alice's Adventures in Wonderland" }));
 
+    const generateButton = screen.getByRole('button', { name: 'AI 自动生成新书籍简介' });
     expect(generateButton).not.toBeDisabled();
     fireEvent.click(generateButton);
 
@@ -1766,20 +1777,27 @@ describe('App', () => {
     expect(within(reviewDialog).getByRole('button', { name: 'AI 自动生成章节描述和分镜描述' })).toHaveTextContent(
       '自动生成章节规划',
     );
+    expect(within(reviewDialog).queryByLabelText('书籍简介')).not.toBeInTheDocument();
     expect(within(reviewDialog).queryByLabelText('章节分镜简述')).not.toBeInTheDocument();
-    expect(within(reviewDialog).getByRole('heading', { name: '章节分镜描述' })).toBeInTheDocument();
+    const sceneHeading = within(reviewDialog).getByRole('heading', { name: '章节分镜描述' });
+    expect(sceneHeading).toBeInTheDocument();
+    const groupPromptInput = within(reviewDialog).getByLabelText('组图总提示词') as HTMLTextAreaElement;
     expect(
-      (within(reviewDialog).getByLabelText('组图总提示词') as HTMLTextAreaElement)
-        .value,
+      Boolean(sceneHeading.compareDocumentPosition(groupPromptInput) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true);
+    expect(
+      groupPromptInput.value,
     ).toContain('Scene description: Tom discovers the snack box.');
+    fireEvent.click(within(reviewDialog).getByRole('button', { name: 'Space Story Series' }));
+    const bookDescriptionInput = within(reviewDialog).getByLabelText('书籍简介');
     fireEvent.click(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' }));
     await waitFor(() => {
       expect(calls.some((call) => call.type === 'pictureBook.refreshPromptReview')).toBe(true);
-      expect(within(reviewDialog).getByLabelText('书籍简介')).toHaveValue(
+      expect(bookDescriptionInput).toHaveValue(
         'Refreshed book description with a consistent Alice look.',
       );
     });
-    fireEvent.change(within(reviewDialog).getByLabelText('书籍简介'), {
+    fireEvent.change(bookDescriptionInput, {
       target: { value: 'Alice keeps a blue dress and white apron.' },
     });
     fireEvent.change(within(reviewDialog).getByLabelText('第 1 个分镜描述'), {
@@ -2326,6 +2344,11 @@ describe('App', () => {
 
   it('opens listening practice with English-only playback while showing subtitles', async () => {
     window.location.hash = '/listen/1';
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    Object.defineProperty(navigator, 'clipboard', {
+      value: clipboard,
+      configurable: true,
+    });
     const article = {
       id: 1,
       title: 'Space Snacks',
@@ -2334,6 +2357,8 @@ describe('App', () => {
       sentenceCount: 2,
       createdAt: new Date().toISOString(),
       averageScore: 86,
+      seriesId: 10,
+      seriesTitle: 'Space Book',
     };
     const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
@@ -2358,6 +2383,90 @@ describe('App', () => {
               { index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' },
               { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
             ],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 1,
+                paragraphText: article.content,
+                imagePath: 'ready.png',
+                imageUri: 'data:image/png;base64,READY',
+                status: 'ready',
+              },
+            ],
+          });
+        }
+        if (type === 'listening.fullscreenReady') {
+          return ok(message.id, type, {
+            ready: true,
+            reasons: [],
+            requiredEnglish: 2,
+            readyEnglish: 2,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: [],
+            missingChinese: [],
+            failed: 0,
+          });
+        }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'none',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
+        if (type === 'recording.settings.save') {
+          return ok(message.id, type, {
+            codec: String(payload.codec ?? 'h264'),
+            resolution: String(payload.resolution ?? '1920x1080'),
+            pageTransition: String(payload.pageTransition ?? 'none'),
+            subtitleMode: String(payload.subtitleMode ?? 'srt'),
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
+        if (type === 'listening.recordingReady') {
+          return ok(message.id, type, {
+            ready: true,
+            reasons: [],
+            encoderName: 'ffmpeg',
+            codec: payload.codec,
+            resolution: payload.resolution,
+            pageTransition: payload.pageTransition,
+            subtitleMode: payload.subtitleMode,
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            requiredEnglish: 2,
+            readyEnglish: 2,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: [],
+            missingChinese: [],
+            failed: 0,
+          });
+        }
+        if (type === 'listening.recordVideo') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            videoPath: 'F:\\Tomato\\recording-export\\listening.mp4',
+            subtitlePath: 'F:\\Tomato\\recording-export\\listening.srt',
+            durationMs: 3200,
+            frameCount: 80,
+            droppedFrameCount: 0,
+            codec: payload.codec,
+            resolution: payload.resolution,
+            warnings: [],
           });
         }
         if (type === 'listening.prepare' || type === 'listening.play' || type === 'listening.playSequence' || type === 'listening.stop') {
@@ -2392,6 +2501,37 @@ describe('App', () => {
       expect(playCalls[0]?.payload).toMatchObject({ startIndex: 1, mode: 'english' });
     });
     expect(calls.some((call) => call.type === 'listening.preloadChinese')).toBe(false);
+
+    const exportButton = await screen.findByRole('button', { name: /导出视频/ });
+    await waitFor(() => expect(exportButton).not.toBeDisabled());
+    fireEvent.click(screen.getByRole('button', { name: /复制全文/ }));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledTimes(1));
+    const copiedText = String(clipboard.writeText.mock.calls[0]?.[0] ?? '');
+    expect(copiedText).toContain('书名：Space Book');
+    expect(copiedText).toContain('章节：Space Snacks');
+    expect(copiedText).toContain('1. Tom finds a bright snack box.');
+    expect(copiedText).toContain('汤姆发现了一个明亮的零食盒。');
+
+    fireEvent.click(exportButton);
+    const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
+    fireEvent.change(within(dialog).getByLabelText('字幕'), { target: { value: 'both' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'recording.settings.save')?.payload).toMatchObject({
+        codec: 'h264',
+        resolution: '1920x1080',
+        pageTransition: 'none',
+        subtitleMode: 'both',
+      });
+      expect(calls.find((call) => call.type === 'listening.recordVideo')?.payload).toMatchObject({
+        articleId: 1,
+        codec: 'h264',
+        resolution: '1920x1080',
+        pageTransition: 'none',
+        subtitleMode: 'both',
+      });
+    });
   });
 
   it('keeps subtitle editing on listening rows but not on the picture subtitle overlay', async () => {
@@ -2829,12 +2969,36 @@ describe('App', () => {
             versions: videoVersions,
           });
         }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'crossFade',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
+        if (type === 'recording.settings.save') {
+          return ok(message.id, type, {
+            codec: String(payload.codec ?? 'h264'),
+            resolution: String(payload.resolution ?? '1920x1080'),
+            pageTransition: String(payload.pageTransition ?? 'crossFade'),
+            subtitleMode: String(payload.subtitleMode ?? 'srt'),
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
         if (type === 'listening.recordingReady') {
           return ok(message.id, type, {
             ready: true,
             reasons: [],
             encoderName: 'ffmpeg',
+            codec: 'h264',
             resolution: '1920x1080',
+            pageTransition: 'crossFade',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
             requiredEnglish: 1,
             readyEnglish: 1,
             requiredChinese: 0,
@@ -2906,14 +3070,32 @@ describe('App', () => {
     const exportButton = await screen.findByRole('button', { name: /导出听力视频/ });
     await waitFor(() => expect(exportButton).not.toBeDisabled());
     fireEvent.click(exportButton);
+    const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
+    fireEvent.change(within(dialog).getByLabelText('字幕'), { target: { value: 'both' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
     await waitFor(() => {
+      const readyCall = calls.find((call) => call.type === 'listening.recordingReady');
+      expect(readyCall?.payload).toMatchObject({
+        articleId: 1,
+        codec: 'h264',
+        resolution: '1920x1080',
+        pageTransition: 'crossFade',
+        subtitleMode: 'srt',
+      });
+      expect(calls.find((call) => call.type === 'recording.settings.save')?.payload).toMatchObject({
+        codec: 'h264',
+        resolution: '1920x1080',
+        pageTransition: 'crossFade',
+        subtitleMode: 'both',
+      });
       const recordCall = calls.find((call) => call.type === 'listening.recordVideo');
       expect(recordCall?.payload).toMatchObject({
         articleId: 1,
         codec: 'h264',
         resolution: '1920x1080',
         pageTransition: 'crossFade',
+        subtitleMode: 'both',
       });
     });
     expect(await screen.findByText('正在导出听力视频')).toBeInTheDocument();
@@ -3014,6 +3196,11 @@ describe('App', () => {
 
   it('loads creation center picture-book images as persisted thumbnails after metadata', async () => {
     window.location.hash = '/creation?articleId=1';
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    Object.defineProperty(navigator, 'clipboard', {
+      value: clipboard,
+      configurable: true,
+    });
     const now = new Date().toISOString();
     const article = {
       id: 1,
@@ -3094,6 +3281,16 @@ describe('App', () => {
             imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
           });
         }
+        if (type === 'article.fullText') {
+          return ok(message.id, type, {
+            article,
+            bookTitle: 'Thumbnail Book',
+            items: [
+              { index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' },
+              { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
+            ],
+          });
+        }
         return ok(message.id, type, {});
       }),
     };
@@ -3139,6 +3336,18 @@ describe('App', () => {
       ]);
     });
     expect(screen.queryByText('加载缩略图')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /复制全文/ }));
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'article.fullText')?.payload).toMatchObject({
+        articleId: 1,
+      });
+      expect(clipboard.writeText).toHaveBeenCalledTimes(1);
+    });
+    const copiedText = String(clipboard.writeText.mock.calls[0]?.[0] ?? '');
+    expect(copiedText).toContain('书名：Thumbnail Book');
+    expect(copiedText).toContain('章节：Thumbnail Chapter');
+    expect(copiedText).toContain('He shares it with his team.');
   });
 
   it('opens single-page picture prompt review from a creation page card', async () => {
@@ -4509,7 +4718,7 @@ describe('App', () => {
           return ok(message.id, type, {
             articleId: article.id,
             status: 'ready',
-            source: 'external_audio',
+            source: 'suno',
             audioPath: 'external-song.mp3',
             downloadComplete: true,
             versions: [
@@ -4536,9 +4745,15 @@ describe('App', () => {
     await waitFor(() => expect(importButton).not.toBeDisabled());
     fireEvent.click(importButton);
 
-    await waitFor(() => expect(importPayloads[0]).toMatchObject({ articleId: 1 }));
+    await waitFor(() => expect(importPayloads[0]).toMatchObject({ articleId: 1, source: 'suno' }));
     expect(await screen.findByText('外部导入')).toBeInTheDocument();
     expect(screen.getByText('导入音乐 · 默认')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /检测下载/ })).toBeInTheDocument();
+    const actionButtons = Array.from(importButton.closest('.creation-actions')?.querySelectorAll('button') ?? []);
+    const actionLabels = actionButtons.map((button) => button.textContent ?? '');
+    expect(actionLabels.findIndex((label) => label.includes('检测下载'))).toBeLessThan(
+      actionLabels.findIndex((label) => label.includes('导入本地音乐')),
+    );
     expect(screen.getByRole('button', { name: '生成歌曲字幕' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '导出歌曲视频' })).toBeDisabled();
   });
@@ -4575,6 +4790,16 @@ describe('App', () => {
             tts: { resourceId: 'seed-tts-2.0', speakerId: 'en_female_dacey_uranus_bigtts' },
             song: { sunoOutputDirectory: 'mock', sunoTimeoutMinutes: 20 },
             voices: [],
+          });
+        }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'none',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
           });
         }
         if (type === 'pictureBook.state') {
@@ -4812,6 +5037,7 @@ describe('App', () => {
       averageScore: 86,
     };
     const playPayloads: Array<Record<string, unknown>> = [];
+    const timelinePayloads: Array<Record<string, unknown>> = [];
     const deletePayloads: Array<Record<string, unknown>> = [];
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
@@ -4858,6 +5084,30 @@ describe('App', () => {
           playPayloads.push(payload);
           return ok(message.id, type, { playbackState: 'playing' });
         }
+        if (type === 'listening.songTimelineGenerate') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          timelinePayloads.push(payload);
+          const generatingState = {
+            ...currentSongState,
+            status: 'ready',
+            versions: currentSongState.versions.map((version) =>
+              version.id === payload.versionId
+                ? { ...version, timelineStatus: 'generating', timelineError: null }
+                : version,
+            ),
+          };
+          window.__tomatoNativeEvent?.({ type: 'listening.song.state', payload: generatingState });
+          currentSongState = {
+            ...currentSongState,
+            status: 'ready',
+            versions: currentSongState.versions.map((version) =>
+              version.id === payload.versionId
+                ? { ...version, timelineStatus: 'ready', timelinePath: 'timeline-v2.json', timelineError: null }
+                : version,
+            ),
+          };
+          return ok(message.id, type, currentSongState);
+        }
         if (type === 'listening.songDeleteVersion') {
           const payload = (message.payload ?? {}) as Record<string, unknown>;
           deletePayloads.push(payload);
@@ -4882,12 +5132,103 @@ describe('App', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Suno 版本 2' }));
 
     await waitFor(() => expect(playPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
+    await waitFor(() => {
+      const playingVersionButton = screen
+        .getAllByRole('button', { name: /Suno 版本 2/ })
+        .find((button) => button.className.includes('song-title-button'));
+      expect(playingVersionButton?.className).toContain('active');
+    });
+    fireEvent.click(screen.getByRole('button', { name: '字幕已生成' }));
+    await waitFor(() => expect(timelinePayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
+    await waitFor(() => {
+      const playingVersionButton = screen
+        .getAllByRole('button', { name: /Suno 版本 2/ })
+        .find((button) => button.className.includes('song-title-button'));
+      expect(playingVersionButton?.className).toContain('active');
+    });
+
     fireEvent.click(screen.getByRole('button', { name: '删除歌曲：Suno 版本 2' }));
 
     expect(confirmSpy).toHaveBeenCalledWith('确认删除歌曲「Suno 版本 2」以及它的字幕时间轴？删除后不可恢复。');
     await waitFor(() => expect(deletePayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
     expect(await screen.findByText('已删除歌曲')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Suno 版本 2' })).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  }, 10000);
+
+  it('marks stale song timelines as needing regeneration in the creation center', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const deletePayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    let currentSongState = {
+      articleId: article.id,
+      status: 'ready',
+      audioPath: 'suno-stale.mp3',
+      source: 'suno',
+      versions: [
+        {
+          id: 'suno-stale',
+          audioPath: 'suno-stale.mp3',
+          title: '旧字幕版本',
+          source: 'suno',
+          timelinePath: 'old-timeline.json',
+          timelineStatus: 'stale',
+          timelineError: '歌曲字幕时间线版本过旧，请重新生成歌曲字幕',
+          isDefault: true,
+        },
+      ],
+    };
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, currentSongState);
+        }
+        if (type === 'listening.songDeleteVersion') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          deletePayloads.push(payload);
+          currentSongState = { ...currentSongState, versions: [] };
+          return ok(message.id, type, currentSongState);
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    await clickSelectedCreationAction('歌曲');
+    expect(await screen.findByRole('button', { name: '旧字幕版本 · 默认' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新生成字幕' })).toBeInTheDocument();
+    const recordButton = screen.getByRole('button', { name: '导出歌曲视频' });
+    expect(recordButton).toBeDisabled();
+    expect(recordButton).toHaveAttribute('title', '歌曲字幕时间线版本过旧，请重新生成字幕');
+
+    fireEvent.click(screen.getByRole('button', { name: '删除歌曲：旧字幕版本' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith('确认删除歌曲「旧字幕版本」以及它的字幕时间轴？删除后不可恢复。');
+    await waitFor(() => expect(deletePayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-stale' }));
     confirmSpy.mockRestore();
   });
 
@@ -4917,6 +5258,7 @@ describe('App', () => {
     const versions = [
       { id: 'suno-v1', audioPath: 'suno-v1.mp3', title: 'Suno 版本 1', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style', timelineStatus: 'ready', timelinePath: 'timeline-v1.json', isDefault: true },
       { id: 'suno-v2', audioPath: 'suno-v2.mp3', title: 'Suno 版本 2', stylePrompt: 'Suno auto style', styleKey: 'suno:suno auto style', timelineStatus: 'missing' },
+      { id: 'external-v1', audioPath: 'external-v1.mp3', title: 'Alice 外部导入', source: 'external_audio', timelineStatus: 'missing' },
     ];
     const playPayloads: Array<Record<string, unknown>> = [];
     const defaultPayloads: Array<Record<string, unknown>> = [];
@@ -4968,13 +5310,15 @@ describe('App', () => {
         }
         if (type === 'listening.songSetDefault') {
           defaultPayloads.push(payload);
+          const selectedVersionId = String(payload.versionId ?? '');
+          const selectedVersion = versions.find((version) => version.id === selectedVersionId) ?? versions[0];
           return ok(message.id, type, {
             articleId: article.id,
             status: 'ready',
             source: 'suno',
             stylePrompt: 'Suno auto style',
-            audioPath: 'suno-v2.mp3',
-            versions: versions.map((version) => ({ ...version, isDefault: version.id === 'suno-v2' })),
+            audioPath: selectedVersion.audioPath,
+            versions: versions.map((version) => ({ ...version, isDefault: version.id === selectedVersionId })),
           });
         }
         if (type === 'listening.songPlay') {
@@ -4994,14 +5338,213 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /选择本地歌曲/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /去创作中心生成/ })).not.toBeInTheDocument();
 
-    fireEvent.change(songSelect, { target: { value: 'suno-v2' } });
+    fireEvent.change(songSelect, { target: { value: 'external-v1' } });
     expect(await screen.findByText('这首歌还没有生成字幕，请到创作中心生成歌曲字幕。')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '设为当前默认播放歌曲' }));
-    await waitFor(() => expect(defaultPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
+    await waitFor(() => expect(defaultPayloads[0]).toMatchObject({ articleId: 1, versionId: 'external-v1' }));
+    expect(await screen.findByRole('button', { name: '当前歌曲已是默认播放歌曲' })).not.toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: '开始播放' }));
-    await waitFor(() => expect(playPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
+    await waitFor(() => expect(playPayloads[0]).toMatchObject({ articleId: 1, versionId: 'external-v1' }));
+    expect(await screen.findByRole('button', { name: '停止歌曲' })).toBeInTheDocument();
+    expect(songSelect).not.toBeDisabled();
+    fireEvent.change(songSelect, { target: { value: 'suno-v2' } });
+    fireEvent.click(screen.getByRole('button', { name: '设为当前默认播放歌曲' }));
+    await waitFor(() => expect(defaultPayloads[1]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
+    expect(screen.getByRole('button', { name: '当前歌曲已是默认播放歌曲' })).not.toBeDisabled();
     expect(screen.getAllByRole('button', { name: '创作中心' }).length).toBeGreaterThan(0);
+  });
+
+  it('keeps the current picture during song subtitle gaps', async () => {
+    window.location.hash = '/books/7/player?articleId=1&mode=song';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+      seriesId: 7,
+      seriesTitle: 'Space Story Series',
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, {
+            articles: [article],
+            series: [
+              {
+                id: 7,
+                title: 'Space Story Series',
+                description: '',
+                coverImagePath: null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: article.sentences.map((english, index) => ({ index, english, chinese: '' })),
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                seriesId: 7,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.sentences[0],
+                imagePath: 'F:/Tomato/picture_book/original-0.png',
+                imageUri: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+              {
+                articleId: article.id,
+                seriesId: 7,
+                pageIndex: 1,
+                sentenceStartIndex: 1,
+                sentenceEndIndex: 1,
+                paragraphText: article.sentences[1],
+                imagePath: 'F:/Tomato/picture_book/original-1.png',
+                imageUri: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        if (type === 'pictureBook.pageImage') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            pageIndex: Number(payload.pageIndex ?? 0),
+            variant: payload.variant,
+            imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
+          });
+        }
+        if (type === 'listening.fullscreenReady') {
+          return ok(message.id, type, {
+            ready: true,
+            reasons: [],
+            requiredEnglish: 2,
+            readyEnglish: 2,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: [],
+            missingChinese: [],
+            failed: 0,
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            source: 'suno',
+            audioPath: 'suno-v1.mp3',
+            versions: [
+              {
+                id: 'suno-v1',
+                audioPath: 'suno-v1.mp3',
+                title: 'Suno 版本 1',
+                timelineStatus: 'ready',
+                timelinePath: 'timeline-v1.json',
+                isDefault: true,
+              },
+            ],
+          });
+        }
+        if (type === 'listening.songPlay') {
+          return ok(message.id, type, { playbackState: 'playing' });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    const sceneImage = () => document.querySelector('.picture-book-scene img') as HTMLImageElement | null;
+    await waitFor(() => expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_0'));
+    fireEvent.click(await screen.findByRole('button', { name: '开始播放' }));
+
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'listening.song.position',
+        payload: {
+          articleId: article.id,
+          versionId: 'suno-v1',
+          positionMs: 1000,
+          durationMs: 5000,
+          cue: {
+            lineIndex: 0,
+            startMs: 900,
+            endMs: 1300,
+            english: 'Song first line',
+            chinese: '',
+            confidence: 0.92,
+            method: 'matched',
+          },
+        },
+      });
+    });
+    expect(await screen.findByRole('heading', { name: 'Song first line' })).toBeInTheDocument();
+    await waitFor(() => expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_0'));
+
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'listening.song.position',
+        payload: {
+          articleId: article.id,
+          versionId: 'suno-v1',
+          positionMs: 1800,
+          durationMs: 5000,
+          cue: null,
+        },
+      });
+    });
+    expect(screen.getByRole('heading', { name: 'Song first line' })).toBeInTheDocument();
+    expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_0');
+
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'listening.song.position',
+        payload: {
+          articleId: article.id,
+          versionId: 'suno-v1',
+          positionMs: 2600,
+          durationMs: 5000,
+          cue: {
+            lineIndex: 1,
+            startMs: 2500,
+            endMs: 3000,
+            english: 'Song second line',
+            chinese: '',
+            confidence: 0.9,
+            method: 'matched',
+          },
+        },
+      });
+    });
+    expect(await screen.findByRole('heading', { name: 'Song second line' })).toBeInTheDocument();
+    await waitFor(() => expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_1'));
   });
 
   it('generates song subtitles before recording a Suno song video', async () => {
@@ -5017,6 +5560,9 @@ describe('App', () => {
     };
     const timelinePayloads: Array<Record<string, unknown>> = [];
     const recordPayloads: Array<Record<string, unknown>> = [];
+    const settingsPayloads: Array<Record<string, unknown>> = [];
+    let resolveTimelineCommand: (() => void) | null = null;
+    let resolveRecordCommand: (() => void) | null = null;
     let currentSongState: ListeningSongStatePayload = {
       articleId: article.id,
       status: 'ready',
@@ -5055,6 +5601,28 @@ describe('App', () => {
             voices: [],
           });
         }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'none',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
+        if (type === 'recording.settings.save') {
+          const payload = (message.payload ?? {}) as Record<string, unknown>;
+          settingsPayloads.push(payload);
+          return ok(message.id, type, {
+            codec: String(payload.codec ?? 'h264'),
+            resolution: String(payload.resolution ?? '1920x1080'),
+            pageTransition: String(payload.pageTransition ?? 'none'),
+            subtitleMode: String(payload.subtitleMode ?? 'srt'),
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
         if (type === 'pictureBook.state') {
           return ok(message.id, type, {
             articleId: article.id,
@@ -5078,36 +5646,44 @@ describe('App', () => {
         if (type === 'listening.songTimelineGenerate') {
           const payload = (message.payload ?? {}) as Record<string, unknown>;
           timelinePayloads.push(payload);
-          currentSongState = {
-            articleId: article.id,
-            status: 'ready',
-            stylePrompt: 'Suno auto style',
-            audioPath: 'suno-v1.mp3',
-            errorMessage: '',
-            source: 'suno',
-            versions: [
-              {
-                id: 'suno-v1',
-                audioPath: 'suno-v1.mp3',
-                title: 'Suno 版本 1',
+          return new Promise<BridgeResponse>((resolve) => {
+            resolveTimelineCommand = () => {
+              currentSongState = {
+                articleId: article.id,
+                status: 'ready',
                 stylePrompt: 'Suno auto style',
-                styleKey: 'suno:suno auto style',
-                timelineStatus: 'ready',
-                timelinePath: 'timeline.json',
-                timelineConfidence: 0.92,
-              },
-            ],
-          };
-          return ok(message.id, type, currentSongState);
+                audioPath: 'suno-v1.mp3',
+                errorMessage: '',
+                source: 'suno',
+                versions: [
+                  {
+                    id: 'suno-v1',
+                    audioPath: 'suno-v1.mp3',
+                    title: 'Suno 版本 1',
+                    stylePrompt: 'Suno auto style',
+                    styleKey: 'suno:suno auto style',
+                    timelineStatus: 'ready',
+                    timelinePath: 'timeline.json',
+                    timelineConfidence: 0.92,
+                  },
+                ],
+              };
+              resolve(ok(message.id, type, currentSongState));
+            };
+          });
         }
         if (type === 'listening.songRecordVideo') {
           const payload = (message.payload ?? {}) as Record<string, unknown>;
           recordPayloads.push(payload);
-          return ok(message.id, type, {
-            outputPath: 'F:\\Tomato\\recording-export\\song.mp4',
-            srtPath: 'F:\\Tomato\\recording-export\\song.srt',
-            durationMs: 3200,
-            segments: 1,
+          return new Promise<BridgeResponse>((resolve) => {
+            resolveRecordCommand = () => {
+              resolve(ok(message.id, type, {
+                outputPath: 'F:\\Tomato\\recording-export\\song.mp4',
+                srtPath: 'F:\\Tomato\\recording-export\\song.srt',
+                durationMs: 3200,
+                segments: 1,
+              }));
+            };
           });
         }
         return ok(message.id, type, {});
@@ -5125,16 +5701,45 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '生成歌曲字幕' }));
 
     await waitFor(() => expect(timelinePayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v1' }));
+    expect(screen.getByText('正在生成歌曲字幕')).toBeInTheDocument();
+    expect(screen.getByText(/预计超时倒计时/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    expect(window.location.hash).toBe('#/creation?articleId=1');
+    expect(screen.getByText('正在生成歌曲字幕')).toBeInTheDocument();
+    await act(async () => {
+      resolveTimelineCommand?.();
+    });
+    await waitFor(() => expect(screen.queryByText('正在生成歌曲字幕')).not.toBeInTheDocument());
     expect(await screen.findByRole('button', { name: '字幕已生成' })).toBeInTheDocument();
     const enabledRecordButton = screen.getByRole('button', { name: '导出歌曲视频' });
     expect(enabledRecordButton).not.toBeDisabled();
     fireEvent.click(enabledRecordButton);
+    const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
+    fireEvent.change(within(dialog).getByLabelText('字幕'), { target: { value: 'burnedIn' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
-    await waitFor(() => expect(recordPayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v1' }));
+    await waitFor(() => expect(recordPayloads[0]).toMatchObject({
+      articleId: 1,
+      versionId: 'suno-v1',
+      codec: 'h264',
+      resolution: '1920x1080',
+      pageTransition: 'none',
+      subtitleMode: 'burnedIn',
+    }));
+    expect(settingsPayloads[0]).toMatchObject({ subtitleMode: 'burnedIn' });
+    expect(screen.getByText('正在导出歌曲视频')).toBeInTheDocument();
+    expect(screen.getByText(/预计超时倒计时/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '设置' }));
+    expect(window.location.hash).toBe('#/creation?articleId=1');
+    expect(screen.getByText('正在导出歌曲视频')).toBeInTheDocument();
+    await act(async () => {
+      resolveRecordCommand?.();
+    });
+    await waitFor(() => expect(screen.queryByText('正在导出歌曲视频')).not.toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Suno 版本 1' })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: '字幕已生成' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '导出歌曲视频' })).not.toBeDisabled();
-  });
+  }, 10000);
 
   it('opens a word translation card and resumes listening after closing it', async () => {
     window.location.hash = '/listen/1';

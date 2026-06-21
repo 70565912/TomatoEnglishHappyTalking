@@ -34,16 +34,19 @@ class AsrWordTiming {
     required this.text,
     required this.startMs,
     required this.endMs,
+    this.confidence,
   });
 
   final String text;
   final int startMs;
   final int endMs;
+  final double? confidence;
 
   Map<String, dynamic> toJson() => {
         'text': text,
         'startMs': startMs,
         'endMs': endMs,
+        if (confidence != null) 'confidence': confidence,
       };
 }
 
@@ -142,6 +145,7 @@ class StreamingAsrService {
     required List<int> audioBytes,
     int? articleId,
     String cachePurpose = 'asr_recognize',
+    String audioMimeType = 'audio/wav',
   }) async {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '录音为空，无法识别');
@@ -151,17 +155,23 @@ class StreamingAsrService {
         audioBytes: audioBytes,
         articleId: articleId,
         cachePurpose: cachePurpose,
+        audioMimeType: audioMimeType,
       );
     }
 
+    final audioFormat = _audioFormatFromMimeType(audioMimeType);
+    final normalizedMimeType = _normalizeAudioMimeType(audioMimeType);
     final audioHash = await ApiCacheService.hashBytes(audioBytes);
     final cacheRequest = {
       'service': 'bigasr',
       'endpoint': _endpoint,
-      'audioFormat': 'wav',
-      'sampleRate': 16000,
-      'bits': 16,
-      'channel': 1,
+      'audioFormat': audioFormat,
+      'audioMimeType': normalizedMimeType,
+      if (audioFormat == 'wav' || audioFormat == 'pcm') ...{
+        'sampleRate': 16000,
+        'bits': 16,
+        'channel': 1,
+      },
       'language': 'en-US',
       'audioHash': audioHash,
     };
@@ -193,7 +203,7 @@ class StreamingAsrService {
         requestId: requestId,
       );
 
-      socket.add(_buildFullClientRequestFrame(audioFormat: 'wav'));
+      socket.add(_buildFullClientRequestFrame(audioFormat: audioFormat));
 
       var offset = 0;
       while (offset < audioBytes.length) {
@@ -310,6 +320,7 @@ class StreamingAsrService {
     required List<int> audioBytes,
     int? articleId,
     String cachePurpose = 'asr_recognize',
+    required String audioMimeType,
   }) async {
     final audioHash = await ApiCacheService.hashBytes(audioBytes);
     final endpoint = '${await AppConfig.aliyunBailianBaseUrl}/chat/completions';
@@ -318,10 +329,13 @@ class StreamingAsrService {
       'service': 'aliyun_qwen_asr',
       'endpoint': endpoint,
       'model': model,
-      'audioFormat': 'wav',
-      'sampleRate': 16000,
-      'bits': 16,
-      'channel': 1,
+      'audioFormat': _audioFormatFromMimeType(audioMimeType),
+      'audioMimeType': audioMimeType,
+      if (_audioFormatFromMimeType(audioMimeType) == 'wav') ...{
+        'sampleRate': 16000,
+        'bits': 16,
+        'channel': 1,
+      },
       'language': 'en-US',
       'audioHash': audioHash,
     };
@@ -337,6 +351,7 @@ class StreamingAsrService {
 
     final text = await _postAliyunAsr(
       audioBytes: audioBytes,
+      audioMimeType: audioMimeType,
       endpoint: endpoint,
       model: model,
     );
@@ -353,11 +368,13 @@ class StreamingAsrService {
 
   static Future<AsrTimelineResult> _recognizeAliyunWithTimeline({
     required List<int> audioBytes,
+    required String audioMimeType,
   }) async {
     final endpoint = '${await AppConfig.aliyunBailianBaseUrl}/chat/completions';
     final model = await AppConfig.aliyunBailianAsrModel;
     final text = await _postAliyunAsr(
       audioBytes: audioBytes,
+      audioMimeType: audioMimeType,
       endpoint: endpoint,
       model: model,
     );
@@ -368,6 +385,8 @@ class StreamingAsrService {
         'provider': AppConfig.aiProviderAliyunBailian,
         'model': model,
         'endpoint': endpoint,
+        'audioFormat': _audioFormatFromMimeType(audioMimeType),
+        'audioMimeType': audioMimeType,
       },
       durationMs: null,
     );
@@ -375,6 +394,7 @@ class StreamingAsrService {
 
   static Future<String> _postAliyunAsr({
     required List<int> audioBytes,
+    required String audioMimeType,
     required String endpoint,
     required String model,
   }) async {
@@ -385,11 +405,13 @@ class StreamingAsrService {
         '未配置阿里云百炼 API Key，请在设置的云服务中配置。',
       );
     }
-    final dataUri = 'data:audio/wav;base64,${base64.encode(audioBytes)}';
+    final normalizedMimeType = _normalizeAudioMimeType(audioMimeType);
+    final dataUri =
+        'data:$normalizedMimeType;base64,${base64.encode(audioBytes)}';
     if (dataUri.length > _aliyunAudioDataLimit) {
       throw const AsrException(
         AsrFailureType.unknown,
-        '阿里云 Qwen-ASR 音频超过 10MB 输入限制，请缩短录音后重试',
+        '阿里云 Qwen-ASR 音频 Base64 后超过 10MB 输入限制，请压缩音频或缩短后重试',
       );
     }
     try {
@@ -455,12 +477,16 @@ class StreamingAsrService {
 
   static Future<AsrTimelineResult> recognizeWithTimeline({
     required List<int> audioBytes,
+    String audioMimeType = 'audio/wav',
   }) async {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '音频为空，无法识别');
     }
     if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
-      return _recognizeAliyunWithTimeline(audioBytes: audioBytes);
+      return _recognizeAliyunWithTimeline(
+        audioBytes: audioBytes,
+        audioMimeType: audioMimeType,
+      );
     }
 
     final apiKey = await AppConfig.volcBigAsrApiKey;
@@ -483,8 +509,9 @@ class StreamingAsrService {
         requestId: requestId,
       );
 
+      final audioFormat = _audioFormatFromMimeType(audioMimeType);
       socket.add(_buildFullClientRequestFrame(
-        audioFormat: 'wav',
+        audioFormat: audioFormat,
         enablePunc: false,
         showUtterances: true,
       ));
@@ -902,6 +929,38 @@ class StreamingAsrService {
   ) =>
       _extractTimelineResult(payload);
 
+  static String _normalizeAudioMimeType(String mimeType) {
+    final normalized = mimeType.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return 'audio/wav';
+    }
+    if (normalized == 'audio/mp3') {
+      return 'audio/mpeg';
+    }
+    return normalized;
+  }
+
+  static String _audioFormatFromMimeType(String mimeType) {
+    final normalized = _normalizeAudioMimeType(mimeType);
+    switch (normalized) {
+      case 'audio/mpeg':
+        return 'mp3';
+      case 'audio/mp4':
+      case 'audio/aac':
+        return 'aac';
+      case 'audio/flac':
+      case 'audio/x-flac':
+        return 'flac';
+      case 'audio/ogg':
+      case 'audio/opus':
+        return 'ogg';
+      case 'audio/wav':
+      case 'audio/x-wav':
+      default:
+        return 'wav';
+    }
+  }
+
   static String _extractAliyunAsrText(Object? payload) {
     final map = _mapValue(payload);
     final choices = map['choices'];
@@ -1034,6 +1093,7 @@ class StreamingAsrService {
       },
       'audio': {
         'format': audioFormat,
+        if (audioFormat == 'ogg') 'codec': 'opus',
         'rate': 16000,
         'bits': 16,
         'channel': 1,
@@ -1345,11 +1405,35 @@ class StreamingAsrService {
     if (startMs == null || endMs == null) {
       return null;
     }
+    final confidence = _parseConfidence(source);
     return AsrWordTiming(
       text: text,
       startMs: max(0, startMs),
       endMs: max(startMs, endMs),
+      confidence: confidence,
     );
+  }
+
+  static double? _parseConfidence(Map<String, dynamic> source) {
+    const keys = [
+      'confidence',
+      'confidence_score',
+      'score',
+      'probability',
+      'prob',
+    ];
+    for (final key in keys) {
+      final value = source[key];
+      if (value is! num) {
+        continue;
+      }
+      final raw = value.toDouble();
+      if (!raw.isFinite || raw < 0) {
+        continue;
+      }
+      return raw > 1 ? (raw / 100).clamp(0.0, 1.0) : raw.clamp(0.0, 1.0);
+    }
+    return null;
   }
 
   static String _newRequestId() {

@@ -1,3 +1,8 @@
+const Object _articleSongUnset = Object();
+
+T? _copyNullable<T>(Object? value, T? current) =>
+    identical(value, _articleSongUnset) ? current : value as T?;
+
 class ArticleSongState {
   const ArticleSongState({
     required this.articleId,
@@ -162,10 +167,10 @@ class ArticleSongVersion {
     String? lyricsHash,
     String? submittedLyrics,
     String? source,
-    String? timelinePath,
-    String? timelineStatus,
-    double? timelineConfidence,
-    String? timelineError,
+    Object? timelinePath = _articleSongUnset,
+    Object? timelineStatus = _articleSongUnset,
+    Object? timelineConfidence = _articleSongUnset,
+    Object? timelineError = _articleSongUnset,
     bool? isDefault,
   }) =>
       ArticleSongVersion(
@@ -180,10 +185,16 @@ class ArticleSongVersion {
         lyricsHash: lyricsHash ?? this.lyricsHash,
         submittedLyrics: submittedLyrics ?? this.submittedLyrics,
         source: source ?? this.source,
-        timelinePath: timelinePath ?? this.timelinePath,
-        timelineStatus: timelineStatus ?? this.timelineStatus,
-        timelineConfidence: timelineConfidence ?? this.timelineConfidence,
-        timelineError: timelineError,
+        timelinePath: _copyNullable<String>(timelinePath, this.timelinePath),
+        timelineStatus: _copyNullable<String>(
+          timelineStatus,
+          this.timelineStatus,
+        ),
+        timelineConfidence: _copyNullable<double>(
+          timelineConfidence,
+          this.timelineConfidence,
+        ),
+        timelineError: _copyNullable<String>(timelineError, this.timelineError),
         isDefault: isDefault ?? this.isDefault,
       );
 

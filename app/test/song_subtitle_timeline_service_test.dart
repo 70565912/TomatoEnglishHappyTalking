@@ -1,8 +1,49 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/services/song_subtitle_timeline_service.dart';
 import 'package:tomato_english_happy_talking/services/streaming_asr_service.dart';
 
 void main() {
+  test('cueAtPosition returns null during subtitle gaps', () {
+    const timeline = SongSubtitleTimeline(
+      version: 1,
+      articleId: 7,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 5000,
+      source: 'suno',
+      cues: [
+        SongSubtitleCue(
+          lineIndex: 0,
+          startMs: 1000,
+          endMs: 1500,
+          english: 'First line',
+        ),
+        SongSubtitleCue(
+          lineIndex: 1,
+          startMs: 2500,
+          endMs: 3000,
+          english: 'Second line',
+        ),
+      ],
+    );
+
+    expect(SongSubtitleTimelineService.cueAtPosition(timeline, 999), isNull);
+    expect(
+      SongSubtitleTimelineService.cueAtPosition(timeline, 1200)?.lineIndex,
+      0,
+    );
+    expect(SongSubtitleTimelineService.cueAtPosition(timeline, 2000), isNull);
+    expect(
+      SongSubtitleTimelineService.cueAtPosition(timeline, 2600)?.lineIndex,
+      1,
+    );
+    expect(SongSubtitleTimelineService.cueAtPosition(timeline, 3200), isNull);
+  });
+
   test('builds matched timeline from exact ASR word timings', () {
     final timeline = SongSubtitleTimelineService.buildTimeline(
       articleId: 7,
@@ -35,8 +76,9 @@ void main() {
     expect(timeline.cues.first.method, 'matched');
     expect(timeline.cues.first.english, 'Alice follows the song.');
     expect(timeline.cues.first.chinese, '爱丽丝跟着歌曲。');
-    expect(timeline.cues.first.startMs, 0);
-    expect(timeline.cues.first.endMs, timeline.cues[1].startMs);
+    expect(timeline.cues.first.startMs, 220);
+    expect(timeline.cues.first.endMs, 1940);
+    expect(timeline.cues.first.endMs, lessThan(timeline.cues[1].startMs));
     expect(timeline.confidence, greaterThan(0.8));
   });
 
@@ -91,8 +133,170 @@ void main() {
     expect(timeline.cues[0].method, 'matched');
     expect(timeline.cues[1].method, 'interpolated');
     expect(timeline.cues[2].method, 'matched');
-    expect(timeline.cues[1].startMs, timeline.cues[0].endMs);
+    expect(timeline.cues[1].startMs, greaterThan(timeline.cues[0].endMs));
     expect(timeline.cues[1].endMs, timeline.cues[2].startMs);
+  });
+
+  test('uses recognized words for mismatched interpolated song subtitles', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 90,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 9000,
+      source: 'external_audio',
+      lyricLines: const [
+        'Opening melody starts now.',
+        'Completely different article sentence.',
+        'Last line ends the song.',
+      ],
+      translations: const {
+        1: '这句中文不应复用。',
+      },
+      words: const [
+        AsrWordTiming(text: 'opening', startMs: 1000, endMs: 1400),
+        AsrWordTiming(text: 'melody', startMs: 1400, endMs: 1800),
+        AsrWordTiming(text: 'starts', startMs: 1800, endMs: 2200),
+        AsrWordTiming(text: 'now', startMs: 2200, endMs: 2600),
+        AsrWordTiming(text: 'the', startMs: 3600, endMs: 3850),
+        AsrWordTiming(text: 'singer', startMs: 3850, endMs: 4300),
+        AsrWordTiming(text: 'adds', startMs: 4300, endMs: 4700),
+        AsrWordTiming(text: 'a', startMs: 4700, endMs: 4850),
+        AsrWordTiming(text: 'new', startMs: 4850, endMs: 5200),
+        AsrWordTiming(text: 'refrain', startMs: 5200, endMs: 5700),
+        AsrWordTiming(text: 'last', startMs: 7000, endMs: 7350),
+        AsrWordTiming(text: 'line', startMs: 7350, endMs: 7700),
+        AsrWordTiming(text: 'ends', startMs: 7700, endMs: 8150),
+        AsrWordTiming(text: 'song', startMs: 8150, endMs: 8500),
+      ],
+    );
+
+    expect(timeline.cues[1].method, 'recognized');
+    expect(timeline.cues[1].english, 'The singer adds a new refrain');
+    expect(timeline.cues[1].chinese, isEmpty);
+    expect(timeline.cues[1].startMs, 3420);
+    expect(timeline.cues[1].endMs, 6020);
+    expect(timeline.warnings, contains('部分字幕文字已按 ASR 识别内容替换'));
+  });
+
+  test('adds ASR-only cues between repeated sung lyric anchors', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 91,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 12000,
+      source: 'suno',
+      lyricLines: const [
+        'Silver boats drift softly.',
+        'Golden afternoon shines bright.',
+        'Homeward bells are ringing.',
+      ],
+      translations: const {
+        0: '银色小船轻轻漂过。',
+        1: '金色午后闪闪发亮。',
+        2: '归家的铃声响起。',
+      },
+      words: const [
+        AsrWordTiming(text: 'Silver', startMs: 500, endMs: 900),
+        AsrWordTiming(text: 'boats', startMs: 900, endMs: 1300),
+        AsrWordTiming(text: 'drift', startMs: 1300, endMs: 1700),
+        AsrWordTiming(text: 'softly', startMs: 1700, endMs: 2100),
+        AsrWordTiming(text: 'Golden', startMs: 2600, endMs: 3100),
+        AsrWordTiming(text: 'afternoon', startMs: 3100, endMs: 3700),
+        AsrWordTiming(text: 'shines', startMs: 3700, endMs: 4100),
+        AsrWordTiming(text: 'bright', startMs: 4100, endMs: 4500),
+        AsrWordTiming(text: 'repeat', startMs: 5000, endMs: 5300),
+        AsrWordTiming(text: 'the', startMs: 5300, endMs: 5480),
+        AsrWordTiming(text: 'chorus', startMs: 5480, endMs: 5900),
+        AsrWordTiming(text: 'one', startMs: 5900, endMs: 6200),
+        AsrWordTiming(text: 'more', startMs: 6200, endMs: 6500),
+        AsrWordTiming(text: 'time', startMs: 6500, endMs: 6800),
+        AsrWordTiming(text: 'Golden', startMs: 7200, endMs: 7700),
+        AsrWordTiming(text: 'afternoon', startMs: 7700, endMs: 8300),
+        AsrWordTiming(text: 'shines', startMs: 8300, endMs: 8700),
+        AsrWordTiming(text: 'bright', startMs: 8700, endMs: 9100),
+        AsrWordTiming(text: 'Homeward', startMs: 9500, endMs: 10000),
+        AsrWordTiming(text: 'bells', startMs: 10000, endMs: 10400),
+        AsrWordTiming(text: 'are', startMs: 10400, endMs: 10650),
+        AsrWordTiming(text: 'ringing', startMs: 10650, endMs: 11100),
+      ],
+    );
+
+    expect(timeline.cues.map((cue) => cue.lineIndex), [0, 1, -1, 1, 2]);
+    expect(timeline.cues[2].method, 'recognized');
+    expect(timeline.cues[2].english, 'Repeat the chorus one more time');
+    expect(timeline.cues[2].chinese, isEmpty);
+    expect(
+      timeline.warnings,
+      contains('ASR 检测到重复唱段，已为重复歌词生成额外字幕'),
+    );
+    expect(
+      () => SongSubtitleTimelineService.validateTimelineCompleteness(
+        timeline,
+        3,
+      ),
+      returnsNormally,
+    );
+  });
+
+  test('ignores low confidence ASR-only repeated lyric gaps', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 92,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 12000,
+      source: 'suno',
+      lyricLines: const [
+        'Silver boats drift softly.',
+        'Golden afternoon shines bright.',
+        'Homeward bells are ringing.',
+      ],
+      translations: const {},
+      words: const [
+        AsrWordTiming(
+            text: 'Silver', startMs: 500, endMs: 900, confidence: 0.9),
+        AsrWordTiming(
+            text: 'boats', startMs: 900, endMs: 1300, confidence: 0.9),
+        AsrWordTiming(
+            text: 'drift', startMs: 1300, endMs: 1700, confidence: 0.9),
+        AsrWordTiming(
+            text: 'softly', startMs: 1700, endMs: 2100, confidence: 0.9),
+        AsrWordTiming(
+            text: 'Golden', startMs: 2600, endMs: 3100, confidence: 0.9),
+        AsrWordTiming(
+            text: 'afternoon', startMs: 3100, endMs: 3700, confidence: 0.9),
+        AsrWordTiming(
+            text: 'shines', startMs: 3700, endMs: 4100, confidence: 0.9),
+        AsrWordTiming(
+            text: 'bright', startMs: 4100, endMs: 4500, confidence: 0.9),
+        AsrWordTiming(
+            text: 'garbled', startMs: 5000, endMs: 5400, confidence: 0.2),
+        AsrWordTiming(
+            text: 'uncertain', startMs: 5400, endMs: 5900, confidence: 0.2),
+        AsrWordTiming(
+            text: 'lyrics', startMs: 5900, endMs: 6400, confidence: 0.2),
+        AsrWordTiming(
+            text: 'Golden', startMs: 7200, endMs: 7700, confidence: 0.9),
+        AsrWordTiming(
+            text: 'afternoon', startMs: 7700, endMs: 8300, confidence: 0.9),
+        AsrWordTiming(
+            text: 'shines', startMs: 8300, endMs: 8700, confidence: 0.9),
+        AsrWordTiming(
+            text: 'bright', startMs: 8700, endMs: 9100, confidence: 0.9),
+        AsrWordTiming(
+            text: 'Homeward', startMs: 9500, endMs: 10000, confidence: 0.9),
+        AsrWordTiming(
+            text: 'bells', startMs: 10000, endMs: 10400, confidence: 0.9),
+        AsrWordTiming(
+            text: 'are', startMs: 10400, endMs: 10650, confidence: 0.9),
+        AsrWordTiming(
+            text: 'ringing', startMs: 10650, endMs: 11100, confidence: 0.9),
+      ],
+    );
+
+    expect(timeline.cues.map((cue) => cue.lineIndex), [0, 1, 1, 2]);
+    expect(
+        timeline.cues.any((cue) => cue.english == 'Garbled uncertain lyrics'),
+        isFalse);
   });
 
   test('falls back to weighted continuous cues when no words match', () {
@@ -129,7 +333,12 @@ void main() {
             'end_time': 900,
             'text': 'Alice',
             'words': [
-              {'text': 'Alice', 'start_time': 100, 'end_time': 900},
+              {
+                'text': 'Alice',
+                'start_time': 100,
+                'end_time': 900,
+                'confidence': 0.86,
+              },
             ],
           },
           {
@@ -138,7 +347,12 @@ void main() {
             'end_time': 1500,
             'text': 'sings',
             'words': [
-              {'text': 'sings', 'start_time': 950, 'end_time': 1500},
+              {
+                'text': 'sings',
+                'start_time': 950,
+                'end_time': 1500,
+                'score': 91,
+              },
             ],
           },
         ],
@@ -149,6 +363,8 @@ void main() {
     expect(result!.durationMs, 3696);
     expect(result.words.map((word) => word.text), ['Alice', 'sings']);
     expect(result.words.last.endMs, 1500);
+    expect(result.words.first.confidence, closeTo(0.86, 0.001));
+    expect(result.words.last.confidence, closeTo(0.91, 0.001));
   });
 
   test('writes monotonic SRT with original lyrics and translations', () {
@@ -183,10 +399,10 @@ void main() {
     expect(srt, contains('Tom finds a bright snack box.'));
     expect(srt, contains('汤姆发现了一个明亮的零食盒。'));
     expect(srt, contains('He shares it with his team.'));
-    expect(srt, contains('00:00:00,080 --> 00:00:02,180'));
-    expect(srt, contains('00:00:02,180 --> 00:00:04,500'));
-    expect(timeline.cues.first.endMs, timeline.cues.last.startMs);
-    expect(timeline.cues.last.endMs, 4500);
+    expect(srt, contains('00:00:00,320 --> 00:00:02,340'));
+    expect(srt, contains('00:00:02,420 --> 00:00:04,270'));
+    expect(timeline.cues.first.endMs, lessThan(timeline.cues.last.startMs));
+    expect(timeline.cues.last.endMs, 4270);
   });
 
   test('collapses implausibly short trailing lyrics without vocal anchors', () {
@@ -224,7 +440,7 @@ void main() {
       expect(cue.endMs, lessThanOrEqualTo(timeline.durationMs));
       expect(cue.endMs, greaterThan(cue.startMs));
       if (i > 0) {
-        expect(cue.startMs, timeline.cues[i - 1].endMs);
+        expect(cue.startMs, greaterThan(timeline.cues[i - 1].endMs));
       }
     }
     expect(timeline.warnings.join('\n'), contains('尾部 3 行歌词缺少可靠人声匹配'));
@@ -267,6 +483,77 @@ void main() {
           (error) => error.message,
           'message',
           contains('只覆盖到 2/5 行'),
+        ),
+      ),
+    );
+  });
+
+  test('keeps Aliyun MP3 direct and transcodes unsupported Volc formats', () {
+    final mp3Format =
+        SongSubtitleTimelineService.audioFormatFromMimeTypeForTest(
+      SongSubtitleTimelineService.audioMimeTypeForPathForTest('song.mp3'),
+    );
+    final m4aFormat =
+        SongSubtitleTimelineService.audioFormatFromMimeTypeForTest(
+      SongSubtitleTimelineService.audioMimeTypeForPathForTest('song.m4a'),
+    );
+
+    expect(mp3Format, 'mp3');
+    expect(
+      SongSubtitleTimelineService.providerSupportsOriginalAudioForTest(
+        provider: AppConfig.aiProviderAliyunBailian,
+        audioFormat: mp3Format,
+      ),
+      isTrue,
+    );
+    expect(
+      SongSubtitleTimelineService.providerSupportsOriginalAudioForTest(
+        provider: AppConfig.aiProviderVolcengine,
+        audioFormat: mp3Format,
+      ),
+      isFalse,
+    );
+    expect(m4aFormat, 'aac');
+    expect(
+      SongSubtitleTimelineService.providerSupportsOriginalAudioForTest(
+        provider: AppConfig.aiProviderVolcengine,
+        audioFormat: m4aFormat,
+      ),
+      isFalse,
+    );
+  });
+
+  test('rejects stale timeline files without current alignment version',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'tomato_stale_song_timeline_',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final file = File('${directory.path}/timeline.json');
+    await file.writeAsString(jsonEncode({
+      'version': 1,
+      'articleId': 1,
+      'audioHash': 'audio',
+      'lyricsHash': 'lyrics',
+      'durationMs': 1000,
+      'source': 'suno',
+      'cues': const [],
+    }));
+
+    final raw = await SongSubtitleTimelineService.readTimeline(file.path);
+    expect(raw.alignmentVersion, 0);
+    expect(SongSubtitleTimelineService.isCurrentTimeline(raw), isFalse);
+    await expectLater(
+      SongSubtitleTimelineService.readCurrentTimeline(file.path),
+      throwsA(
+        isA<SongSubtitleTimelineException>().having(
+          (error) => error.message,
+          'message',
+          SongSubtitleTimelineService.staleTimelineMessage,
         ),
       ),
     );

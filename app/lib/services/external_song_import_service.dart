@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import '../data/models/article_model.dart';
 import '../data/models/article_song_model.dart';
 import 'api_cache_service.dart';
 import 'database_service.dart';
+import 'song_subtitle_timeline_service.dart';
 
 typedef ExternalSongDurationProbe = Future<Duration?> Function(String path);
 
@@ -25,12 +27,18 @@ class ExternalSongImportService {
     'flac',
   ];
 
-  static Future<ArticleSongState?> loadState(Article article) async {
+  static Future<ArticleSongState?> loadState(
+    Article article, {
+    bool requireDefault = true,
+  }) async {
     final articleId = article.id;
     if (articleId == null) {
       return null;
     }
-    final versions = await loadVersions(article);
+    final versions = await loadVersions(
+      article,
+      requireDefault: requireDefault,
+    );
     if (versions.isEmpty) {
       return null;
     }
@@ -116,9 +124,14 @@ class ExternalSongImportService {
     final lyricsSnapshot = lyrics.trim();
     final lyricsHash = await ApiCacheService.hashUtf8(lyricsSnapshot);
     final versionId = 'external_audio_${audioHash.substring(0, 24)}';
+    final existingTimelinePath = (existingVersion?.timelinePath ?? '').trim();
+    final existingTimelineStatus =
+        await _timelineStatusForPath(existingTimelinePath);
     final previousTimelineMatchesLyrics =
         existingVersion?.lyricsHash == lyricsHash &&
-            (existingVersion?.timelinePath ?? '').trim().isNotEmpty;
+            existingTimelineStatus != 'missing';
+    final previousTimelineReady =
+        previousTimelineMatchesLyrics && existingTimelineStatus == 'ready';
     final imported = ArticleSongVersion(
       id: versionId,
       audioPath: targetFile.path,
@@ -130,16 +143,16 @@ class ExternalSongImportService {
       lyricsHash: lyricsHash,
       submittedLyrics: lyricsSnapshot,
       source: source,
-      timelinePath:
-          previousTimelineMatchesLyrics ? existingVersion?.timelinePath : null,
-      timelineStatus: previousTimelineMatchesLyrics
-          ? existingVersion?.timelineStatus ?? 'ready'
-          : 'missing',
-      timelineConfidence: previousTimelineMatchesLyrics
-          ? existingVersion?.timelineConfidence
-          : null,
-      timelineError:
-          previousTimelineMatchesLyrics ? existingVersion?.timelineError : null,
+      timelinePath: previousTimelineMatchesLyrics ? existingTimelinePath : null,
+      timelineStatus:
+          previousTimelineMatchesLyrics ? existingTimelineStatus : 'missing',
+      timelineConfidence:
+          previousTimelineReady ? existingVersion?.timelineConfidence : null,
+      timelineError: previousTimelineReady
+          ? existingVersion?.timelineError
+          : previousTimelineMatchesLyrics
+              ? SongSubtitleTimelineService.staleTimelineMessage
+              : null,
       isDefault: true,
     );
     final versions = <ArticleSongVersion>[
@@ -162,7 +175,10 @@ class ExternalSongImportService {
     return imported;
   }
 
-  static Future<List<ArticleSongVersion>> loadVersions(Article article) async {
+  static Future<List<ArticleSongVersion>> loadVersions(
+    Article article, {
+    bool requireDefault = true,
+  }) async {
     final articleId = article.id;
     if (articleId == null) {
       return const <ArticleSongVersion>[];
@@ -190,26 +206,45 @@ class ExternalSongImportService {
         continue;
       }
       final timelinePath = (version.timelinePath ?? '').trim();
-      final hasTimeline =
-          timelinePath.isNotEmpty && await File(timelinePath).exists();
+      final timelineStatus = await _timelineStatusForPath(timelinePath);
+      final hasTimeline = timelineStatus != 'missing';
+      final timelineReady = timelineStatus == 'ready';
       if (timelinePath.isNotEmpty && !hasTimeline) {
+        changed = true;
+      }
+      if (hasTimeline && timelineStatus != _versionTimelineStatus(version)) {
+        changed = true;
+      }
+      if (timelineStatus == 'stale' &&
+          version.timelineError !=
+              SongSubtitleTimelineService.staleTimelineMessage) {
         changed = true;
       }
       versions.add(
         version.copyWith(
           source: source,
           timelinePath: hasTimeline ? timelinePath : null,
-          timelineStatus:
-              hasTimeline ? _versionTimelineStatus(version) : 'missing',
-          timelineConfidence: hasTimeline ? version.timelineConfidence : null,
-          timelineError: hasTimeline ? version.timelineError : null,
+          timelineStatus: timelineStatus,
+          timelineConfidence: timelineReady ? version.timelineConfidence : null,
+          timelineError: timelineReady
+              ? version.timelineError
+              : timelineStatus == 'stale'
+                  ? SongSubtitleTimelineService.staleTimelineMessage
+                  : null,
         ),
       );
     }
-    final normalized = _ensureSingleDefault(versions);
+    final normalized = _ensureSingleDefault(
+      versions,
+      requireDefault: requireDefault,
+    );
     changed = changed || !_sameVersionDefaults(versions, normalized);
     if (changed) {
-      await saveVersions(article: article, versions: normalized);
+      await saveVersions(
+        article: article,
+        versions: normalized,
+        requireDefault: requireDefault,
+      );
     }
     return normalized;
   }
@@ -217,6 +252,7 @@ class ExternalSongImportService {
   static Future<void> saveVersions({
     required Article article,
     required List<ArticleSongVersion> versions,
+    bool requireDefault = true,
   }) async {
     final articleId = article.id;
     if (articleId == null) {
@@ -230,6 +266,7 @@ class ExternalSongImportService {
           .where((version) => version.audioPath.trim().isNotEmpty)
           .map((version) => version.copyWith(source: source))
           .toList(growable: false),
+      requireDefault: requireDefault,
     );
     final selected = currentVersions.isEmpty
         ? null
@@ -282,14 +319,98 @@ class ExternalSongImportService {
   }
 
   static Future<Duration?> _probeDuration(String path) async {
+    final playerDuration = await _probeDurationWithPlayer(path);
+    if (playerDuration != null && playerDuration.inMilliseconds > 0) {
+      return playerDuration;
+    }
+    final ffmpegDuration = await _probeDurationWithFfmpeg(path);
+    if (ffmpegDuration != null && ffmpegDuration.inMilliseconds > 0) {
+      return ffmpegDuration;
+    }
+    return playerDuration;
+  }
+
+  static Future<Duration?> _probeDurationWithPlayer(String path) async {
     final player = AudioPlayer();
     try {
       return await player.setFilePath(path);
+    } catch (error) {
+      TomatoLogger.warn(
+        category: 'music',
+        event: 'external_song.player_duration_probe_failed',
+        error: error,
+        data: {'path': path},
+      );
+      return null;
     } finally {
       await player.dispose();
     }
   }
 
+  static Future<Duration?> _probeDurationWithFfmpeg(String path) async {
+    final executable = _bundledFfmpegPath();
+    if (!await File(executable).exists()) {
+      return null;
+    }
+    try {
+      final result = await Process.run(
+        executable,
+        ['-hide_banner', '-i', path],
+      ).timeout(const Duration(seconds: 15));
+      final output = '${result.stderr}\n${result.stdout}';
+      final duration = _durationFromFfmpegOutput(output);
+      if (duration != null && duration.inMilliseconds > 0) {
+        TomatoLogger.info(
+          category: 'music',
+          event: 'external_song.ffmpeg_duration_probe_used',
+          data: {
+            'path': path,
+            'durationMs': duration.inMilliseconds,
+          },
+        );
+      }
+      return duration;
+    } catch (error) {
+      TomatoLogger.warn(
+        category: 'music',
+        event: 'external_song.ffmpeg_duration_probe_failed',
+        error: error,
+        data: {'path': path},
+      );
+      return null;
+    }
+  }
+
+  static Duration? _durationFromFfmpegOutput(String output) {
+    final match = RegExp(
+      r'Duration:\s*(\d+):(\d{2}):(\d{2})(?:\.(\d+))?',
+    ).firstMatch(output);
+    if (match == null) {
+      return null;
+    }
+    final hours = int.tryParse(match.group(1) ?? '');
+    final minutes = int.tryParse(match.group(2) ?? '');
+    final seconds = int.tryParse(match.group(3) ?? '');
+    if (hours == null || minutes == null || seconds == null) {
+      return null;
+    }
+    final fraction = match.group(4) ?? '';
+    final millis = fraction.isEmpty
+        ? 0
+        : int.parse((fraction.padRight(3, '0')).substring(0, 3));
+    return Duration(
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      milliseconds: millis,
+    );
+  }
+
+  static Duration? parseFfmpegDurationForTest(String output) =>
+      _durationFromFfmpegOutput(output);
+
+  static String _bundledFfmpegPath() => path_lib.join(
+      File(Platform.resolvedExecutable).parent.path, 'ffmpeg.exe');
   static ArticleSongVersion? _firstVersionWithHash(
     List<ArticleSongVersion> versions,
     String hash,
@@ -304,8 +425,9 @@ class ExternalSongImportService {
   }
 
   static List<ArticleSongVersion> _ensureSingleDefault(
-    List<ArticleSongVersion> versions,
-  ) {
+    List<ArticleSongVersion> versions, {
+    bool requireDefault = true,
+  }) {
     if (versions.isEmpty) {
       return const <ArticleSongVersion>[];
     }
@@ -321,7 +443,7 @@ class ExternalSongImportService {
         normalized.add(version);
       }
     }
-    if (!hasDefault) {
+    if (!hasDefault && requireDefault) {
       normalized[0] = normalized[0].copyWith(isDefault: true);
     }
     return normalized;
@@ -358,6 +480,18 @@ class ExternalSongImportService {
       return explicit;
     }
     return (version.timelinePath ?? '').trim().isNotEmpty ? 'ready' : 'missing';
+  }
+
+  static Future<String> _timelineStatusForPath(String timelinePath) async {
+    if (timelinePath.isEmpty) {
+      return 'missing';
+    }
+    if (!await File(timelinePath).exists()) {
+      return 'missing';
+    }
+    return await SongSubtitleTimelineService.timelineFileIsCurrent(timelinePath)
+        ? 'ready'
+        : 'stale';
   }
 
   static Map<String, dynamic> _decodeJsonObject(String? text) {

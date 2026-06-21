@@ -2063,6 +2063,50 @@ img {
   min-height: 72px;
 }
 
+.collapsible-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  background: #fff;
+  font-size: 13px;
+  font-weight: 1000;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapsible-heading .icon {
+  flex: 0 0 auto;
+  transform: rotate(180deg);
+  transition: transform 0.18s ease;
+}
+
+.collapsible-heading span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.collapsible-heading.expanded .icon {
+  transform: rotate(270deg);
+}
+
+.book-info-toggle {
+  margin-top: 2px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.book-info-collapsible {
+  display: grid;
+  gap: 10px;
+}
+
 .sentence-edit-dialog {
   width: min(680px, 100%);
 }
@@ -2115,6 +2159,15 @@ img {
   gap: 10px;
   align-items: center;
   justify-content: flex-start;
+}
+
+.picture-prompt-section-heading.collapsible {
+  justify-content: space-between;
+}
+
+.picture-prompt-section-heading.collapsible .collapsible-heading {
+  width: auto;
+  flex: 1 1 260px;
 }
 
 .reference-toggle-row,
@@ -3302,7 +3355,7 @@ select:disabled {
 
 .recording-dialog-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -5963,6 +6016,7 @@ select:disabled {
   .practice-chapter-row,
   .picture-prompt-layout,
   .picture-character-list,
+  .recording-dialog-grid,
   .resource-row {
     grid-template-columns: 1fr;
   }

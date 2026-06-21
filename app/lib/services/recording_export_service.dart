@@ -54,6 +54,27 @@ enum RecordingPageTransition {
   }
 }
 
+enum RecordingSubtitleMode {
+  srt,
+  burnedIn,
+  both;
+
+  static RecordingSubtitleMode parse(String value) {
+    final normalized = value.trim();
+    return RecordingSubtitleMode.values.firstWhere(
+      (item) => item.name == normalized,
+      orElse: () => RecordingSubtitleMode.srt,
+    );
+  }
+
+  bool get writesSrt =>
+      this == RecordingSubtitleMode.srt || this == RecordingSubtitleMode.both;
+
+  bool get burnsIn =>
+      this == RecordingSubtitleMode.burnedIn ||
+      this == RecordingSubtitleMode.both;
+}
+
 class RecordingExportRequest {
   const RecordingExportRequest({
     required this.articleId,
@@ -61,6 +82,7 @@ class RecordingExportRequest {
     required this.codec,
     required this.resolution,
     required this.pageTransition,
+    this.subtitleMode = RecordingSubtitleMode.srt,
     this.fps = 25,
     this.subtitleTranslations = const <int, String>{},
   });
@@ -70,6 +92,7 @@ class RecordingExportRequest {
   final RecordingCodec codec;
   final RecordingResolution resolution;
   final RecordingPageTransition pageTransition;
+  final RecordingSubtitleMode subtitleMode;
   final int fps;
   final Map<int, String> subtitleTranslations;
 
@@ -84,6 +107,7 @@ class SongRecordingExportRequest {
     required this.codec,
     required this.resolution,
     required this.pageTransition,
+    this.subtitleMode = RecordingSubtitleMode.srt,
     this.fps = 25,
   });
 
@@ -93,6 +117,7 @@ class SongRecordingExportRequest {
   final RecordingCodec codec;
   final RecordingResolution resolution;
   final RecordingPageTransition pageTransition;
+  final RecordingSubtitleMode subtitleMode;
   final int fps;
 }
 
@@ -384,16 +409,19 @@ class RecordingExportService {
     required String codec,
     required String resolution,
     required String pageTransition,
+    required String subtitleMode,
   }) async {
     final normalized = _normalizeSettings({
       'codec': codec,
       'resolution': resolution,
       'pageTransition': pageTransition,
+      'subtitleMode': subtitleMode,
     });
     await AppConfig.saveRecordingSettings(
       codec: normalized['codec']! as String,
       resolution: normalized['resolution']! as String,
       pageTransition: normalized['pageTransition']! as String,
+      subtitleMode: normalized['subtitleMode']! as String,
     );
     return normalized;
   }
@@ -620,7 +648,10 @@ class RecordingExportService {
       series: assets.series,
     );
     final videoPath = path_lib.join(outputDirectory.path, '$baseName.mp4');
-    final subtitlePath = path_lib.join(outputDirectory.path, '$baseName.srt');
+    final subtitleOutputPath =
+        path_lib.join(outputDirectory.path, '$baseName.srt');
+    final subtitlePath =
+        request.subtitleMode.writesSrt ? subtitleOutputPath : '';
     final frameCount = (timeline.durationMs / (1000 / request.fps))
         .ceil()
         .clamp(1, 1 << 31)
@@ -631,10 +662,12 @@ class RecordingExportService {
 
     try {
       token.throwIfCancelled();
-      await File(subtitlePath).writeAsString(
-        _srtForTimeline(timeline),
-        encoding: utf8,
-      );
+      if (request.subtitleMode.writesSrt) {
+        await File(subtitleOutputPath).writeAsString(
+          _srtForTimeline(timeline),
+          encoding: utf8,
+        );
+      }
       onProgress?.call(RecordingExportProgress(
         articleId: request.articleId,
         phase: 'rendering',
@@ -685,7 +718,7 @@ class RecordingExportService {
           onProgress: onProgress,
         );
       } else {
-        await _renderFrames(
+        final videoListPath = await _renderHybridSegments(
           request: request,
           assets: assets,
           timeline: timeline,
@@ -698,17 +731,17 @@ class RecordingExportService {
         onProgress?.call(RecordingExportProgress(
           articleId: request.articleId,
           phase: 'encoding',
-          progress: 0.78,
-          completedFrames: frameCount,
+          progress: 0.35,
+          completedFrames: 0,
           totalFrames: frameCount,
           message: '正在编码 MP4',
         ));
 
-        await _runFfmpegEncode(
+        await _runFfmpegEncodeStillSegments(
           ffmpegPath: encoder.ffmpegExecutable,
           encoderName: encoder.encoderName,
           request: request,
-          frameDirectory: tempDir,
+          videoListPath: videoListPath,
           audioListPath: audioListPath,
           outputPath: videoPath,
           keyFrameTimes: timeline.pageChangeTimesMs,
@@ -748,6 +781,12 @@ class RecordingExportService {
         source: 'listening',
       );
       return result;
+    } catch (_) {
+      await _cleanupFailedExport(
+        videoPath: videoPath,
+        subtitlePath: subtitleOutputPath,
+      );
+      rethrow;
     } finally {
       try {
         await tempDir.delete(recursive: true);
@@ -828,7 +867,10 @@ class RecordingExportService {
       series: assets.series,
     );
     final videoPath = path_lib.join(outputDirectory.path, '$baseName.mp4');
-    final subtitlePath = path_lib.join(outputDirectory.path, '$baseName.srt');
+    final subtitleOutputPath =
+        path_lib.join(outputDirectory.path, '$baseName.srt');
+    final subtitlePath =
+        request.subtitleMode.writesSrt ? subtitleOutputPath : '';
     final frameCount = (timeline.durationMs / (1000 / request.fps))
         .ceil()
         .clamp(1, 1 << 31)
@@ -839,10 +881,12 @@ class RecordingExportService {
 
     try {
       token.throwIfCancelled();
-      await File(subtitlePath).writeAsString(
-        SongSubtitleTimelineService.srtForTimeline(assets.timeline),
-        encoding: utf8,
-      );
+      if (request.subtitleMode.writesSrt) {
+        await File(subtitleOutputPath).writeAsString(
+          SongSubtitleTimelineService.srtForTimeline(assets.timeline),
+          encoding: utf8,
+        );
+      }
       onProgress?.call(RecordingExportProgress(
         articleId: request.articleId,
         phase: 'rendering',
@@ -866,6 +910,7 @@ class RecordingExportService {
             codec: request.codec,
             resolution: request.resolution,
             pageTransition: request.pageTransition,
+            subtitleMode: request.subtitleMode,
             fps: request.fps,
           ),
           assets: assets.toRecordingAssets(),
@@ -884,6 +929,7 @@ class RecordingExportService {
             codec: request.codec,
             resolution: request.resolution,
             pageTransition: request.pageTransition,
+            subtitleMode: request.subtitleMode,
             fps: request.fps,
           ),
           videoListPath: videoListPath,
@@ -901,9 +947,10 @@ class RecordingExportService {
           codec: request.codec,
           resolution: request.resolution,
           pageTransition: request.pageTransition,
+          subtitleMode: request.subtitleMode,
           fps: request.fps,
         );
-        await _renderFrames(
+        final videoListPath = await _renderHybridSegments(
           request: recordingRequest,
           assets: assets.toRecordingAssets(),
           timeline: timeline,
@@ -912,11 +959,11 @@ class RecordingExportService {
           cancelToken: token,
           onProgress: onProgress,
         );
-        await _runFfmpegEncode(
+        await _runFfmpegEncodeStillSegments(
           ffmpegPath: encoder.ffmpegExecutable,
           encoderName: encoder.encoderName,
           request: recordingRequest,
-          frameDirectory: tempDir,
+          videoListPath: videoListPath,
           audioListPath: audioListPath,
           outputPath: videoPath,
           keyFrameTimes: timeline.pageChangeTimesMs,
@@ -957,6 +1004,12 @@ class RecordingExportService {
         source: 'song',
       );
       return result;
+    } catch (_) {
+      await _cleanupFailedExport(
+        videoPath: videoPath,
+        subtitlePath: subtitleOutputPath,
+      );
+      rethrow;
     } finally {
       try {
         await tempDir.delete(recursive: true);
@@ -972,10 +1025,13 @@ class RecordingExportService {
         RecordingResolution.parse(settings['resolution'] ?? '').id;
     final transition =
         RecordingPageTransition.parse(settings['pageTransition'] ?? '').name;
+    final subtitleMode =
+        RecordingSubtitleMode.parse(settings['subtitleMode'] ?? '').name;
     return {
       'codec': codec,
       'resolution': resolution,
       'pageTransition': transition,
+      'subtitleMode': subtitleMode,
       'outputDirectory': defaultOutputDirectory(),
       'ffmpegPath': bundledFfmpegPath(),
       'fps': defaultFps,
@@ -1143,7 +1199,18 @@ class RecordingExportService {
       if (videoPath.isEmpty) {
         continue;
       }
-      if (!await File(videoPath).exists()) {
+      final videoFile = File(videoPath);
+      if (!await videoFile.exists()) {
+        continue;
+      }
+      final stat = await videoFile.stat();
+      if (stat.size <= 0) {
+        await _cleanupFailedExport(
+          videoPath: videoPath,
+          subtitlePath: version.subtitlePath.trim().isNotEmpty
+              ? version.subtitlePath
+              : path_lib.setExtension(videoPath, '.srt'),
+        );
         continue;
       }
       byPath.putIfAbsent(_videoPathKey(videoPath), () => version);
@@ -1200,6 +1267,13 @@ class RecordingExportService {
           continue;
         }
         final stat = await entity.stat();
+        if (stat.size <= 0) {
+          await _cleanupFailedExport(
+            videoPath: entity.path,
+            subtitlePath: path_lib.setExtension(entity.path, '.srt'),
+          );
+          continue;
+        }
         final createdAt = _dateTimeFromStamp(match.group(1)) ?? stat.modified;
         final subtitlePath = path_lib.setExtension(entity.path, '.srt');
         versions.add(RecordingVideoVersion(
@@ -1401,7 +1475,7 @@ class RecordingExportService {
     }
     SongSubtitleTimeline timeline;
     try {
-      timeline = await SongSubtitleTimelineService.readTimeline(
+      timeline = await SongSubtitleTimelineService.readCurrentTimeline(
         request.timelinePath,
       );
     } catch (error) {
@@ -1549,27 +1623,64 @@ class RecordingExportService {
   static _RecordingTimeline _buildSongTimeline(
     _PreparedSongRecordingAssets assets,
   ) {
-    final itemByLine = {
-      for (final item in assets.items) item.index: item,
-    };
     final segments = <_RecordingTimelineSegment>[];
-    for (final cue in assets.timeline.cues) {
-      final item = itemByLine[cue.lineIndex] ??
-          _RecordingSentenceItem(
-            index: cue.lineIndex,
-            english: cue.english,
-            chinese: cue.chinese,
-            pageIndex: 0,
-          );
+    var cursorMs = 0;
+    var currentPageIndex =
+        assets.items.isEmpty ? 0 : assets.items.first.pageIndex;
+
+    void addBlankSegment(int startMs, int endMs, int pageIndex) {
+      if (endMs <= startMs) {
+        return;
+      }
+      segments.add(_RecordingTimelineSegment(
+        item: _RecordingSentenceItem(
+          index: -1,
+          english: '',
+          chinese: '',
+          pageIndex: pageIndex,
+        ),
+        sentenceStartMs: startMs,
+        englishStartMs: startMs,
+        englishEndMs: startMs,
+        chineseStartMs: startMs,
+        chineseEndMs: startMs,
+        sentenceEndMs: endMs,
+      ));
+    }
+
+    for (var i = 0; i < assets.timeline.cues.length; i += 1) {
+      final cue = assets.timeline.cues[i];
+      final cueStart = cue.startMs.clamp(0, assets.timeline.durationMs).toInt();
+      final cueEnd =
+          cue.endMs.clamp(cueStart, assets.timeline.durationMs).toInt();
+      final item = i < assets.items.length
+          ? assets.items[i]
+          : _RecordingSentenceItem(
+              index: cue.lineIndex,
+              english: cue.english,
+              chinese: cue.chinese,
+              pageIndex: 0,
+            );
+      if (cueStart > cursorMs) {
+        addBlankSegment(cursorMs, cueStart, currentPageIndex);
+      }
       segments.add(_RecordingTimelineSegment(
         item: item,
-        sentenceStartMs: cue.startMs,
-        englishStartMs: cue.startMs,
-        englishEndMs: cue.endMs,
-        chineseStartMs: cue.startMs,
-        chineseEndMs: cue.endMs,
-        sentenceEndMs: cue.endMs,
+        sentenceStartMs: cueStart,
+        englishStartMs: cueStart,
+        englishEndMs: cueEnd,
+        chineseStartMs: cueStart,
+        chineseEndMs: cueEnd,
+        sentenceEndMs: cueEnd,
       ));
+      cursorMs = math.max(cursorMs, cueEnd);
+      currentPageIndex = item.pageIndex;
+    }
+    if (cursorMs < assets.timeline.durationMs) {
+      addBlankSegment(cursorMs, assets.timeline.durationMs, currentPageIndex);
+    }
+    if (segments.isEmpty && assets.timeline.durationMs > 0) {
+      addBlankSegment(0, assets.timeline.durationMs, currentPageIndex);
     }
     final pageChangeTimes = <int>[];
     for (var i = 1; i < segments.length; i += 1) {
@@ -1587,7 +1698,7 @@ class RecordingExportService {
     );
   }
 
-  static Future<void> _renderFrames({
+  static Future<String> _renderHybridSegments({
     required RecordingExportRequest request,
     required _PreparedRecordingAssets assets,
     required _RecordingTimeline timeline,
@@ -1597,6 +1708,35 @@ class RecordingExportService {
     void Function(RecordingExportProgress progress)? onProgress,
   }) async {
     final images = <int, ui.Image>{};
+    final parts = _hybridRenderParts(
+      timeline: timeline,
+      transition: request.pageTransition,
+    );
+    final renderedParts = <_RenderedVideoPart>[];
+    var renderedMs = 0.0;
+    var assetIndex = 0;
+
+    Future<void> renderPartProgress(
+      _HybridRenderPart part,
+      double renderedDurationMs,
+    ) async {
+      final completedFrames = math.min(
+        frameCount,
+        (renderedDurationMs * request.fps / 1000).ceil(),
+      );
+      onProgress?.call(RecordingExportProgress(
+        articleId: request.articleId,
+        phase: 'rendering',
+        progress: 0.02 +
+            0.3 *
+                (renderedDurationMs /
+                    math.max(1, timeline.durationMs).toDouble()),
+        completedFrames: completedFrames,
+        totalFrames: frameCount,
+        message: part.isTransition ? '正在渲染转场视频帧' : '正在渲染视频画面',
+      ));
+    }
+
     try {
       for (final page in assets.pages) {
         final imagePath = page.imagePath?.trim() ?? '';
@@ -1606,32 +1746,70 @@ class RecordingExportService {
         }
         images[page.pageIndex] = await _decodeImage(bytes);
       }
-      for (var frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+
+      for (final part in parts) {
         cancelToken.throwIfCancelled();
-        final timeMs = math.min(
-          timeline.durationMs - 1,
-          (frameIndex * 1000 / request.fps).round(),
-        );
-        final bitmap = await _renderFrameBitmap(
-          request: request,
-          timeline: timeline,
-          images: images,
-          timeMs: timeMs,
-        );
-        final framePath = path_lib.join(
-          outputDirectory.path,
-          'frame_${frameIndex.toString().padLeft(6, '0')}.bmp',
-        );
-        await File(framePath).writeAsBytes(bitmap, flush: false);
-        if (frameIndex % request.fps == 0 || frameIndex == frameCount - 1) {
-          onProgress?.call(RecordingExportProgress(
-            articleId: request.articleId,
-            phase: 'rendering',
-            progress: 0.02 + 0.74 * ((frameIndex + 1) / frameCount),
-            completedFrames: frameIndex + 1,
-            totalFrames: frameCount,
-            message: '正在渲染视频帧',
+        if (!part.isTransition) {
+          final timeMs = math.min(
+            math.max(0, timeline.durationMs - 1),
+            part.startMs,
+          );
+          final bitmap = await _renderFrameBitmap(
+            request: request,
+            timeline: timeline,
+            images: images,
+            timeMs: timeMs,
+          );
+          final partPath = path_lib.join(
+            outputDirectory.path,
+            'hybrid_${assetIndex.toString().padLeft(5, '0')}.bmp',
+          );
+          assetIndex += 1;
+          await File(partPath).writeAsBytes(bitmap, flush: false);
+          renderedParts.add(_RenderedVideoPart(
+            path: partPath,
+            durationMs: part.durationMs.toDouble(),
           ));
+          renderedMs += part.durationMs;
+          await renderPartProgress(part, renderedMs);
+          continue;
+        }
+
+        final frameDurationMs = 1000 / math.max(1, request.fps);
+        var cursorMs = part.startMs.toDouble();
+        var localFrameIndex = 0;
+        while (cursorMs < part.endMs) {
+          cancelToken.throwIfCancelled();
+          final nextMs =
+              math.min(part.endMs.toDouble(), cursorMs + frameDurationMs);
+          final timeMs = math.min(
+            math.max(0, timeline.durationMs - 1),
+            cursorMs.round(),
+          );
+          final bitmap = await _renderFrameBitmap(
+            request: request,
+            timeline: timeline,
+            images: images,
+            timeMs: timeMs,
+          );
+          final framePath = path_lib.join(
+            outputDirectory.path,
+            'transition_${assetIndex.toString().padLeft(5, '0')}.bmp',
+          );
+          assetIndex += 1;
+          await File(framePath).writeAsBytes(bitmap, flush: false);
+          final durationMs = math.max(1.0, nextMs - cursorMs);
+          renderedParts.add(_RenderedVideoPart(
+            path: framePath,
+            durationMs: durationMs,
+          ));
+          renderedMs += durationMs;
+          localFrameIndex += 1;
+          if (localFrameIndex % math.max(1, request.fps) == 0 ||
+              nextMs >= part.endMs) {
+            await renderPartProgress(part, renderedMs);
+          }
+          cursorMs = nextMs;
         }
       }
     } finally {
@@ -1639,6 +1817,73 @@ class RecordingExportService {
         image.dispose();
       }
     }
+
+    if (renderedParts.isEmpty) {
+      throw const RecordingExportException('没有可导出的视频画面');
+    }
+
+    final lines = <String>['ffconcat version 1.0'];
+    for (final part in renderedParts) {
+      lines
+        ..add("file '${_ffmpegConcatPath(part.path)}'")
+        ..add('duration ${(part.durationMs / 1000).toStringAsFixed(6)}');
+    }
+    lines.add("file '${_ffmpegConcatPath(renderedParts.last.path)}'");
+    final videoListPath =
+        path_lib.join(outputDirectory.path, 'video_hybrid_concat.txt');
+    await File(videoListPath).writeAsString(lines.join('\n'), encoding: utf8);
+    return videoListPath;
+  }
+
+  static List<_HybridRenderPart> _hybridRenderParts({
+    required _RecordingTimeline timeline,
+    required RecordingPageTransition transition,
+  }) {
+    if (timeline.segments.isEmpty) {
+      return const <_HybridRenderPart>[];
+    }
+    final windows = _transitionWindows(timeline, transition);
+    final parts = <_HybridRenderPart>[];
+    for (final segment in timeline.segments) {
+      final segmentStart = segment.sentenceStartMs
+          .clamp(0, math.max(0, timeline.durationMs))
+          .toInt();
+      final segmentEnd = segment.sentenceEndMs
+          .clamp(segmentStart, math.max(segmentStart, timeline.durationMs))
+          .toInt();
+      var cursor = segmentStart;
+      for (final window in windows) {
+        if (window.endMs <= cursor) {
+          continue;
+        }
+        if (window.startMs >= segmentEnd) {
+          break;
+        }
+        final staticEnd = math.min(segmentEnd, window.startMs).toInt();
+        if (staticEnd > cursor) {
+          parts.add(_HybridRenderPart.static(
+            startMs: cursor,
+            endMs: staticEnd,
+          ));
+        }
+        final transitionStart = math.max(cursor, window.startMs).toInt();
+        final transitionEnd = math.min(segmentEnd, window.endMs).toInt();
+        if (transitionEnd > transitionStart) {
+          parts.add(_HybridRenderPart.transition(
+            startMs: transitionStart,
+            endMs: transitionEnd,
+          ));
+        }
+        cursor = math.max(cursor, transitionEnd).toInt();
+      }
+      if (segmentEnd > cursor) {
+        parts.add(_HybridRenderPart.static(
+          startMs: cursor,
+          endMs: segmentEnd,
+        ));
+      }
+    }
+    return parts.where((part) => part.durationMs > 0).toList(growable: false);
   }
 
   static Future<String> _renderStillSegments({
@@ -1768,6 +2013,10 @@ class RecordingExportService {
       );
     }
 
+    if (request.subtitleMode.burnsIn) {
+      _drawBurnedInSubtitles(canvas, segment, bounds);
+    }
+
     final picture = recorder.endRecording();
     final image =
         await picture.toImage(size.width.toInt(), size.height.toInt());
@@ -1818,6 +2067,139 @@ class RecordingExportService {
       dst += 4;
     }
     return output;
+  }
+
+  static void _drawBurnedInSubtitles(
+    Canvas canvas,
+    _RecordingTimelineSegment segment,
+    Rect bounds,
+  ) {
+    final english = RecordingExportUtils.cleanSubtitleText(
+      segment.item.english,
+    );
+    final chinese = RecordingExportUtils.cleanSubtitleText(
+      segment.item.chinese,
+    );
+    if (english.isEmpty && chinese.isEmpty) {
+      return;
+    }
+
+    final maxWidth = bounds.width * 0.84;
+    final lineGap =
+        chinese.isEmpty ? 0.0 : math.max(6.0, bounds.height * 0.006);
+    final englishFont = math.max(28.0, math.min(54.0, bounds.width / 34));
+    final chineseFont = math.max(22.0, math.min(42.0, bounds.width / 46));
+    final outlineWidth = math.max(3.0, bounds.width * 0.0022);
+    final englishParagraph = _subtitleParagraph(
+      english,
+      fontSize: englishFont,
+      fontWeight: FontWeight.w800,
+      maxLines: 3,
+      maxWidth: maxWidth,
+    );
+    final englishOutline = _subtitleParagraph(
+      english,
+      fontSize: englishFont,
+      fontWeight: FontWeight.w800,
+      maxLines: 3,
+      maxWidth: maxWidth,
+      foreground: Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeJoin = StrokeJoin.round
+        ..strokeWidth = outlineWidth
+        ..color = const Color(0xE607111F),
+    );
+    final chineseParagraph = chinese.isEmpty
+        ? null
+        : _subtitleParagraph(
+            chinese,
+            fontSize: chineseFont,
+            fontWeight: FontWeight.w700,
+            maxLines: 2,
+            maxWidth: maxWidth,
+          );
+    final chineseOutline = chinese.isEmpty
+        ? null
+        : _subtitleParagraph(
+            chinese,
+            fontSize: chineseFont,
+            fontWeight: FontWeight.w700,
+            maxLines: 2,
+            maxWidth: maxWidth,
+            foreground: Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeJoin = StrokeJoin.round
+              ..strokeWidth = outlineWidth
+              ..color = const Color(0xE607111F),
+          );
+
+    final contentHeight = englishParagraph.height +
+        (chineseParagraph == null ? 0 : lineGap + chineseParagraph.height);
+    final bottomPadding = math.max(30.0, bounds.height * 0.045);
+    var y = math.max(
+      bounds.top + 12,
+      bounds.bottom - bottomPadding - contentHeight,
+    );
+
+    _drawOutlinedSubtitleParagraph(
+      canvas,
+      fill: englishParagraph,
+      outline: englishOutline,
+      offset: Offset(
+        bounds.left + (bounds.width - englishParagraph.width) / 2,
+        y,
+      ),
+    );
+    y += englishParagraph.height + lineGap;
+    if (chineseParagraph != null && chineseOutline != null) {
+      _drawOutlinedSubtitleParagraph(
+        canvas,
+        fill: chineseParagraph,
+        outline: chineseOutline,
+        offset: Offset(
+          bounds.left + (bounds.width - chineseParagraph.width) / 2,
+          y,
+        ),
+      );
+    }
+  }
+
+  static void _drawOutlinedSubtitleParagraph(
+    Canvas canvas, {
+    required ui.Paragraph fill,
+    required ui.Paragraph outline,
+    required Offset offset,
+  }) {
+    canvas.drawParagraph(outline, offset);
+    canvas.drawParagraph(outline, offset + const Offset(0, 2));
+    canvas.drawParagraph(fill, offset);
+  }
+
+  static ui.Paragraph _subtitleParagraph(
+    String text, {
+    required double fontSize,
+    required FontWeight fontWeight,
+    required int maxLines,
+    required double maxWidth,
+    Paint? foreground,
+  }) {
+    final builder = ui.ParagraphBuilder(
+      ui.ParagraphStyle(
+        textAlign: TextAlign.center,
+        maxLines: maxLines,
+        ellipsis: '...',
+      ),
+    )..pushStyle(ui.TextStyle(
+        color: foreground == null ? const Color(0xFFFFFFFF) : null,
+        foreground: foreground,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        height: 1.18,
+      ));
+    builder.addText(text);
+    final paragraph = builder.build()
+      ..layout(ui.ParagraphConstraints(width: maxWidth));
+    return paragraph;
   }
 
   static void _drawContainImage(
@@ -1928,9 +2310,27 @@ class RecordingExportService {
     required int currentPageIndex,
     required RecordingPageTransition transition,
   }) {
-    if (transition == RecordingPageTransition.none) {
-      return null;
+    for (final window in _transitionWindows(timeline, transition)) {
+      if (timeMs < window.startMs || timeMs > window.endMs) {
+        continue;
+      }
+      return _PageTransition(
+        fromPageIndex: window.fromPageIndex,
+        toPageIndex: window.toPageIndex,
+        progress: (timeMs - window.startMs) / (window.endMs - window.startMs),
+      );
     }
+    return null;
+  }
+
+  static List<_TransitionWindow> _transitionWindows(
+    _RecordingTimeline timeline,
+    RecordingPageTransition transition,
+  ) {
+    if (transition == RecordingPageTransition.none) {
+      return const <_TransitionWindow>[];
+    }
+    final windows = <_TransitionWindow>[];
     for (var i = 1; i < timeline.segments.length; i += 1) {
       final previous = timeline.segments[i - 1];
       final next = timeline.segments[i];
@@ -1946,120 +2346,23 @@ class RecordingExportService {
         transitionMs - before,
         math.max(0, next.sentenceEndMs - next.sentenceStartMs) ~/ 2,
       );
-      final start = changeMs - before;
-      final end = changeMs + after;
-      if (end <= start || timeMs < start || timeMs > end) {
+      final start = (changeMs - before)
+          .clamp(0, math.max(0, timeline.durationMs))
+          .toInt();
+      final end = (changeMs + after)
+          .clamp(start, math.max(start, timeline.durationMs))
+          .toInt();
+      if (end <= start) {
         continue;
       }
-      return _PageTransition(
+      windows.add(_TransitionWindow(
+        startMs: start,
+        endMs: end,
         fromPageIndex: previous.item.pageIndex,
         toPageIndex: next.item.pageIndex,
-        progress: (timeMs - start) / (end - start),
-      );
-    }
-    return null;
-  }
-
-  static Future<void> _runFfmpegEncode({
-    required String ffmpegPath,
-    required String encoderName,
-    required RecordingExportRequest request,
-    required Directory frameDirectory,
-    required String audioListPath,
-    required String outputPath,
-    required List<int> keyFrameTimes,
-    required int frameCount,
-    required RecordingCancelToken cancelToken,
-    void Function(RecordingExportProgress progress)? onProgress,
-  }) async {
-    final bitrate = _bitrateProfile(request.resolution, request.codec);
-    final args = <String>[
-      '-y',
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-nostats',
-      '-progress',
-      'pipe:1',
-      '-framerate',
-      request.fps.toString(),
-      '-i',
-      path_lib.join(frameDirectory.path, 'frame_%06d.bmp'),
-      '-f',
-      'concat',
-      '-safe',
-      '0',
-      '-i',
-      audioListPath,
-      '-map',
-      '0:v:0',
-      '-map',
-      '1:a:0',
-      '-c:v',
-      encoderName,
-      ..._encoderQualityArgs(
-        encoderName: encoderName,
-        codec: request.codec,
-        bitrate: bitrate,
-      ),
-      '-g',
-      (request.fps * 5).toString(),
-      '-keyint_min',
-      request.fps.toString(),
-      if (keyFrameTimes.isNotEmpty) ...[
-        '-force_key_frames',
-        keyFrameTimes.map((ms) => (ms / 1000).toStringAsFixed(3)).join(','),
-      ],
-      '-pix_fmt',
-      'yuv420p',
-      '-c:a',
-      'copy',
-      '-shortest',
-      '-movflags',
-      '+faststart',
-      outputPath,
-    ];
-
-    final process = await Process.start(
-      ffmpegPath,
-      args,
-      runInShell: false,
-    );
-    cancelToken.onCancel(() {
-      process.kill(ProcessSignal.sigterm);
-    });
-
-    final stderrBuffer = StringBuffer();
-    final stderrDone = process.stderr
-        .transform(utf8.decoder)
-        .listen(stderrBuffer.write)
-        .asFuture<void>();
-    final stdoutDone = process.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen((line) {
-      final frame = _parseProgressFrame(line);
-      if (frame == null) {
-        return;
-      }
-      onProgress?.call(RecordingExportProgress(
-        articleId: request.articleId,
-        phase: 'encoding',
-        progress: 0.78 + 0.2 * (frame / math.max(1, frameCount)),
-        completedFrames: math.min(frame, frameCount),
-        totalFrames: frameCount,
-        message: '正在编码 MP4',
       ));
-    }).asFuture<void>();
-    final exitCode = await process.exitCode;
-    await Future.wait([stderrDone, stdoutDone]);
-    cancelToken.throwIfCancelled();
-    if (exitCode != 0) {
-      final error = stderrBuffer.toString().trim();
-      throw RecordingExportException(
-        error.isEmpty ? 'FFmpeg 编码失败（exit=$exitCode）' : error,
-      );
     }
+    return windows;
   }
 
   static Future<void> _runFfmpegEncodeStillSegments({
@@ -2165,7 +2468,11 @@ class RecordingExportService {
     if (exitCode != 0) {
       final error = stderrBuffer.toString().trim();
       throw RecordingExportException(
-        error.isEmpty ? 'FFmpeg 编码失败（exit=$exitCode）' : error,
+        _friendlyFfmpegEncodeError(
+          error.isEmpty ? 'FFmpeg 编码失败（exit=$exitCode）' : error,
+          encoderName: encoderName,
+          codec: request.codec,
+        ),
       );
     }
   }
@@ -2223,20 +2530,148 @@ class RecordingExportService {
         'FFmpeg 编码器探测失败：${error.isEmpty ? '未知错误' : error}',
       );
     }
-    final encoder = _selectEncoder(codec, probe.stdout);
-    if (encoder == null) {
+    final candidates = _selectEncoderCandidates(codec, probe.stdout);
+    if (candidates.isEmpty) {
       return _ResolvedEncoder.unavailable(
         codec == RecordingCodec.h265
             ? '当前 FFmpeg 不支持 H.265/HEVC 编码'
             : '当前 FFmpeg 不支持 H.264 编码',
       );
     }
-    return _ResolvedEncoder(
-      available: true,
-      ffmpegExecutable: executable,
-      encoderName: encoder,
-      reason: '',
-      softwareFallback: encoder == 'libx264' || encoder == 'libx265',
+    final rejected = <String>[];
+    for (final encoder in candidates) {
+      final unusableReason = await _probeEncoderUsability(
+        executable: executable,
+        codec: codec,
+        encoderName: encoder,
+      );
+      if (unusableReason != null) {
+        rejected.add('$encoder：$unusableReason');
+        continue;
+      }
+      return _ResolvedEncoder(
+        available: true,
+        ffmpegExecutable: executable,
+        encoderName: encoder,
+        reason: '',
+        softwareFallback: encoder == 'libx264' || encoder == 'libx265',
+      );
+    }
+    return _ResolvedEncoder.unavailable(
+      '${codec == RecordingCodec.h265 ? 'H.265/HEVC' : 'H.264'} 编码器不可用：'
+      '${rejected.join('；')}',
+    );
+  }
+
+  static Future<String?> _probeEncoderUsability({
+    required String executable,
+    required RecordingCodec codec,
+    required String encoderName,
+  }) async {
+    final result = await _runProcess(
+      executable,
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'color=c=black:s=64x64:r=1:d=0.1',
+        '-frames:v',
+        '1',
+        '-an',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:v',
+        encoderName,
+        ..._probeEncoderArgs(encoderName, codec),
+        '-f',
+        'null',
+        '-',
+      ],
+      timeout: const Duration(seconds: 10),
+    );
+    if (result.exitCode == 0) {
+      return null;
+    }
+    final error =
+        result.stderr.trim().isEmpty ? result.stdout.trim() : result.stderr;
+    return _friendlyFfmpegEncodeError(
+      error.trim().isEmpty ? 'FFmpeg 编码器探测失败' : error.trim(),
+      encoderName: encoderName,
+      codec: codec,
+    );
+  }
+
+  static List<String> _probeEncoderArgs(
+    String encoderName,
+    RecordingCodec codec,
+  ) {
+    if (encoderName == 'libx264' || encoderName == 'libx265') {
+      return const ['-preset', 'ultrafast'];
+    }
+    return const <String>[];
+  }
+
+  static String _friendlyFfmpegEncodeError(
+    String rawError, {
+    required String encoderName,
+    required RecordingCodec codec,
+  }) {
+    final codecLabel = codec == RecordingCodec.h265 ? 'H.265/HEVC' : 'H.264';
+    final trimmed = rawError.trim();
+    final firstLine = trimmed
+        .split(RegExp(r'[\r\n]+'))
+        .firstWhere((line) => line.trim().isNotEmpty, orElse: () => '')
+        .trim();
+    final lower = trimmed.toLowerCase();
+    if (lower.contains('no capable devices found') &&
+        encoderName.contains('nvenc')) {
+      return '$codecLabel 硬件编码失败：编码器 $encoderName 找不到可用的 NVIDIA NVENC 设备。'
+          '当前电脑或显卡驱动不支持该硬件编码，请改选 H.264，或安装/启用支持 $codecLabel 的显卡驱动后重试。';
+    }
+    if (lower.contains('unknown encoder')) {
+      return '$codecLabel 编码失败：当前 ffmpeg.exe 不支持编码器 $encoderName，'
+          '请重新发布程序或更换包含该编码器的 ffmpeg.exe。';
+    }
+    if (lower.contains('error while opening encoder')) {
+      return '$codecLabel 编码失败：编码器 $encoderName 无法启动。'
+          '${firstLine.isEmpty ? '' : 'FFmpeg 提示：$firstLine'}';
+    }
+    return trimmed.isEmpty ? '$codecLabel 编码失败：FFmpeg 没有返回错误详情。' : trimmed;
+  }
+
+  static Future<void> _cleanupFailedExport({
+    required String videoPath,
+    required String subtitlePath,
+  }) async {
+    await _deleteFileIfExists(videoPath);
+    await _deleteFileIfExists(subtitlePath);
+  }
+
+  static Future<void> _deleteFileIfExists(String filePath) async {
+    final normalized = filePath.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    try {
+      final file = File(normalized);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      // Failed export cleanup is best effort; the original export error wins.
+    }
+  }
+
+  static List<String> _selectEncoderCandidates(
+    RecordingCodec codec,
+    String encodersOutput,
+  ) {
+    return RecordingExportUtils.selectEncoderCandidates(
+      codec == RecordingCodec.h265 ? 'h265' : 'h264',
+      encodersOutput,
     );
   }
 
@@ -2255,13 +2690,6 @@ class RecordingExportService {
     } catch (_) {
       return null;
     }
-  }
-
-  static String? _selectEncoder(RecordingCodec codec, String encodersOutput) {
-    return RecordingExportUtils.selectEncoder(
-      codec == RecordingCodec.h265 ? 'h265' : 'h264',
-      encodersOutput,
-    );
   }
 
   static Future<_ProcessResultText> _runProcess(
@@ -2387,6 +2815,12 @@ class RecordingExportService {
   }
 
   @visibleForTesting
+  static Map<String, dynamic> normalizeSettingsForTest(
+    Map<String, String> settings,
+  ) =>
+      _normalizeSettings(settings);
+
+  @visibleForTesting
   static int estimateMp3DurationMsForTest(Uint8List bytes) =>
       RecordingExportUtils.estimateMp3DurationMs(bytes);
 
@@ -2415,6 +2849,93 @@ class RecordingExportService {
       durationMs: segments.isEmpty ? 0 : segments.last.sentenceEndMs,
       pageChangeTimesMs: const [],
     ));
+  }
+
+  @visibleForTesting
+  static List<Map<String, Object?>> songTimelineRowsForTest(
+    SongSubtitleTimeline timeline,
+  ) {
+    final items = [
+      for (final cue in timeline.cues)
+        _RecordingSentenceItem(
+          index: cue.lineIndex,
+          english: cue.english,
+          chinese: cue.chinese,
+          pageIndex: math.max(0, cue.lineIndex),
+        ),
+    ];
+    final built = _buildSongTimeline(_PreparedSongRecordingAssets(
+      article: Article(
+        id: timeline.articleId,
+        title: '',
+        content: '',
+        sentences: const [],
+        createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+      ),
+      series: null,
+      pages: const [],
+      pageImageBytes: const {},
+      items: items,
+      timeline: timeline,
+    ));
+    return [
+      for (final segment in built.segments)
+        {
+          'index': segment.item.index,
+          'english': segment.item.english,
+          'chinese': segment.item.chinese,
+          'pageIndex': segment.item.pageIndex,
+          'startMs': segment.sentenceStartMs,
+          'endMs': segment.sentenceEndMs,
+        },
+    ];
+  }
+
+  @visibleForTesting
+  static List<Map<String, Object?>> hybridRenderPartsForTest({
+    required List<Map<String, Object?>> segments,
+    required String transition,
+  }) {
+    final timelineSegments = <_RecordingTimelineSegment>[];
+    var durationMs = 0;
+    for (var i = 0; i < segments.length; i += 1) {
+      final segment = segments[i];
+      final startMs = ((segment['startMs'] ?? 0) as num).toInt();
+      final endMs = ((segment['endMs'] ?? startMs) as num).toInt();
+      final pageIndex = ((segment['pageIndex'] ?? 0) as num).toInt();
+      durationMs = math.max(durationMs, endMs);
+      timelineSegments.add(_RecordingTimelineSegment(
+        item: _RecordingSentenceItem(
+          index: i,
+          english: 'line $i',
+          chinese: '',
+          pageIndex: pageIndex,
+        ),
+        sentenceStartMs: startMs,
+        englishStartMs: startMs,
+        englishEndMs: endMs,
+        chineseStartMs: startMs,
+        chineseEndMs: endMs,
+        sentenceEndMs: endMs,
+      ));
+    }
+    final parts = _hybridRenderParts(
+      timeline: _RecordingTimeline(
+        segments: timelineSegments,
+        durationMs: durationMs,
+        pageChangeTimesMs: const [],
+      ),
+      transition: RecordingPageTransition.parse(transition),
+    );
+    return [
+      for (final part in parts)
+        {
+          'startMs': part.startMs,
+          'endMs': part.endMs,
+          'durationMs': part.durationMs,
+          'isTransition': part.isTransition,
+        },
+    ];
   }
 
   @visibleForTesting
@@ -2707,6 +3228,62 @@ class _PageTransition {
   final int fromPageIndex;
   final int toPageIndex;
   final double progress;
+}
+
+class _TransitionWindow {
+  const _TransitionWindow({
+    required this.startMs,
+    required this.endMs,
+    required this.fromPageIndex,
+    required this.toPageIndex,
+  });
+
+  final int startMs;
+  final int endMs;
+  final int fromPageIndex;
+  final int toPageIndex;
+}
+
+class _HybridRenderPart {
+  const _HybridRenderPart._({
+    required this.startMs,
+    required this.endMs,
+    required this.isTransition,
+  });
+
+  const _HybridRenderPart.static({
+    required int startMs,
+    required int endMs,
+  }) : this._(
+          startMs: startMs,
+          endMs: endMs,
+          isTransition: false,
+        );
+
+  const _HybridRenderPart.transition({
+    required int startMs,
+    required int endMs,
+  }) : this._(
+          startMs: startMs,
+          endMs: endMs,
+          isTransition: true,
+        );
+
+  final int startMs;
+  final int endMs;
+  final bool isTransition;
+
+  int get durationMs => math.max(0, endMs - startMs);
+}
+
+class _RenderedVideoPart {
+  const _RenderedVideoPart({
+    required this.path,
+    required this.durationMs,
+  });
+
+  final String path;
+  final double durationMs;
 }
 
 class _BitrateProfile {

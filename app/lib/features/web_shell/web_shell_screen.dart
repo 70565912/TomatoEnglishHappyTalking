@@ -144,6 +144,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'article.suggestTitle': _handleArticleSuggestTitle,
         'article.create': _handleArticleCreate,
         'article.rename': _handleArticleRename,
+        'article.fullText': _handleArticleFullText,
         'article.delete': _handleArticleDelete,
         'series.list': _handleSeriesList,
         'series.suggestDescription': _handleSeriesSuggestDescription,
@@ -783,6 +784,28 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       ),
       'articles': payload['articles'],
       'series': payload['series'],
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleArticleFullText(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final rawArticle = await DatabaseService.getArticleById(articleId);
+    if (rawArticle == null) {
+      throw FormatException('文章不存在（id=$articleId）');
+    }
+
+    final article = await _articleWithCurrentSentences(rawArticle);
+    final articleJson = await _articleJsonWithStory(
+      article,
+      averageScore: await DatabaseService.getAverageScore(articleId),
+    );
+    final seriesTitle = articleJson['seriesTitle']?.toString().trim() ?? '';
+    return {
+      'article': articleJson,
+      'bookTitle': seriesTitle.isNotEmpty ? seriesTitle : article.title,
+      'items': await _listeningItemsForArticle(article),
     };
   }
 
@@ -1548,7 +1571,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       creditsRemaining: _sunoCreditsRemaining,
       downloadComplete: _currentSunoDownloadsComplete(),
       detectedSongUrls: _mergeSunoSongUrls([_sunoDetectedSongUrls]),
-      versions: _songVersionsForPayload(articleId, _sunoVersions),
+      versions: _songVersionsForPayload(
+        articleId,
+        _sunoVersions,
+        requireDefault: false,
+      ),
     );
   }
 
@@ -1678,7 +1705,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final latestGroup = groups.first;
     final rawVersions =
         groups.expand((group) => group.versions).toList(growable: false);
-    final versions = _songVersionsForPayload(articleId, rawVersions);
+    final versions = _songVersionsForPayload(
+      articleId,
+      rawVersions,
+      requireDefault: false,
+    );
     final detectedSongUrls = _mergeSunoSongUrls(
       groups.map((group) => group.detectedSongUrls),
     );
@@ -1758,20 +1789,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               : await ApiCacheService.migrateLegacyCacheFileIfNeeded(
                   version.timelinePath!,
                 );
-          final hasTimeline = timelinePath != null &&
-              timelinePath.trim().isNotEmpty &&
-              await File(timelinePath).exists();
+          final timelineStatus = await _songTimelineStatusForPath(timelinePath);
+          final hasTimeline = timelineStatus != 'missing';
+          final timelineReady = timelineStatus == 'ready';
           versions.add(
             version.copyWith(
               audioPath: audioPath,
               lyricsHash: version.lyricsHash ?? lyricsHash,
               source: AppConfig.songProviderBailianFunMusic,
               timelinePath: hasTimeline ? timelinePath : null,
-              timelineStatus:
-                  hasTimeline ? _versionTimelineStatus(version) : 'missing',
+              timelineStatus: timelineStatus,
               timelineConfidence:
-                  hasTimeline ? version.timelineConfidence : null,
-              timelineError: hasTimeline ? version.timelineError : null,
+                  timelineReady ? version.timelineConfidence : null,
+              timelineError: timelineReady
+                  ? version.timelineError
+                  : timelineStatus == 'stale'
+                      ? SongSubtitleTimelineService.staleTimelineMessage
+                      : null,
             ),
           );
         }
@@ -1804,8 +1838,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (versions.isEmpty) {
       return null;
     }
-    final payloadVersions =
-        _songVersionsForPayload(articleId, _dedupeSongVersions(versions));
+    final payloadVersions = _songVersionsForPayload(
+      articleId,
+      _dedupeSongVersions(versions),
+      requireDefault: false,
+    );
     final selected =
         _defaultSongVersion(payloadVersions) ?? payloadVersions.first;
     return ArticleSongState(
@@ -1825,7 +1862,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   Future<ArticleSongState?> _cachedExternalSongState(Article article) {
-    return ExternalSongImportService.loadState(article);
+    return ExternalSongImportService.loadState(
+      article,
+      requireDefault: false,
+    );
   }
 
   Future<List<ArticleSongVersion>> _sunoVersionsFromMetadata(
@@ -1850,9 +1890,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               : await ApiCacheService.migrateLegacyCacheFileIfNeeded(
                   version.timelinePath!,
                 );
-          final hasTimeline = timelinePath != null &&
-              timelinePath.trim().isNotEmpty &&
-              await File(timelinePath).exists();
+          final timelineStatus = await _songTimelineStatusForPath(timelinePath);
+          final hasTimeline = timelineStatus != 'missing';
+          final timelineReady = timelineStatus == 'ready';
           versions.add(
             ArticleSongVersion(
               id: version.id,
@@ -1866,11 +1906,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               lyricsHash: version.lyricsHash ?? fallbackLyricsHash,
               source: version.source,
               timelinePath: hasTimeline ? timelinePath : null,
-              timelineStatus:
-                  hasTimeline ? _versionTimelineStatus(version) : 'missing',
+              timelineStatus: timelineStatus,
               timelineConfidence:
-                  hasTimeline ? version.timelineConfidence : null,
-              timelineError: hasTimeline ? version.timelineError : null,
+                  timelineReady ? version.timelineConfidence : null,
+              timelineError: timelineReady
+                  ? version.timelineError
+                  : timelineStatus == 'stale'
+                      ? SongSubtitleTimelineService.staleTimelineMessage
+                      : null,
               isDefault: version.isDefault,
             ),
           );
@@ -1917,8 +1960,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         final versions = _songVersionsForPayload(articleId, combinedVersions);
         final selected = _defaultSongVersion(versions) ?? versions.first;
         state = state.copyWith(
-          audioPath: state.audioPath ?? selected.audioPath,
-          durationMs: state.durationMs ?? selected.durationMs,
+          audioPath: selected.audioPath,
+          durationMs: selected.durationMs,
+          songUrl: selected.songUrl ?? state.songUrl,
           versions: versions,
         );
       }
@@ -2602,6 +2646,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (articleId == null) {
       throw const FormatException('听力任务尚未打开');
     }
+    final returnSource = _normalizeSongProvider(
+      _payloadString(message.payload, 'source', fallback: ''),
+    );
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ExternalSongImportService.allowedExtensions,
@@ -2611,7 +2658,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (result == null || result.files.isEmpty) {
       final payload = await _songStatePayload(
         articleId,
-        sourceOverride: ExternalSongImportService.source,
+        sourceOverride: returnSource,
       );
       payload['importCancelled'] = true;
       payload['manualActionMessage'] = '已取消导入本地音乐';
@@ -2630,7 +2677,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
     final currentPayload = await _songStatePayload(
       articleId,
-      sourceOverride: ExternalSongImportService.source,
+      sourceOverride: returnSource,
     );
     final currentVersions = ((currentPayload['versions'] as List?) ?? const [])
         .map(ArticleSongVersion.fromJson)
@@ -2652,12 +2699,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _syncActiveSunoVersions(articleId, updatedVersions);
     await _pushSongState(
       articleId,
-      sourceOverride: ExternalSongImportService.source,
+      sourceOverride: returnSource,
     );
     return _songStatePayload(
       articleId,
       statusOverride: 'ready',
-      sourceOverride: ExternalSongImportService.source,
+      sourceOverride: returnSource,
     );
   }
 
@@ -3059,6 +3106,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       article: article,
       versions: currentVersions,
       source: updated.source,
+      requireDefault: _songSourceShouldRequireDefault(
+        updated.source,
+        currentVersions,
+      ),
     );
   }
 
@@ -3066,12 +3117,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required Article article,
     required List<ArticleSongVersion> versions,
     required String source,
+    bool requireDefault = true,
   }) async {
     final normalizedSource = _normalizeSongSource(source);
-    final scopedVersions = versions
-        .where((version) =>
-            _normalizeSongSource(version.source) == normalizedSource)
-        .toList(growable: false);
+    final scopedVersions = _ensureSingleDefaultSongVersion(
+      versions
+          .where((version) =>
+              _normalizeSongSource(version.source) == normalizedSource)
+          .toList(growable: false),
+      requireDefault: requireDefault,
+    );
     if (normalizedSource == AppConfig.songProviderBailianFunMusic) {
       await _saveBailianMusicMetadataForVersions(
         article: article,
@@ -3084,6 +3139,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       await ExternalSongImportService.saveVersions(
         article: article,
         versions: scopedVersions,
+        requireDefault: requireDefault,
       );
       return;
     }
@@ -3107,6 +3163,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         article: article,
         versions: versions,
         source: source,
+        requireDefault: _songSourceShouldRequireDefault(source, versions),
       );
     }
   }
@@ -3917,6 +3974,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'songUrlCount': (result['songUrls'] as List?)?.length ?? 0,
             'candidateSongUrlCount':
                 (result['candidateSongUrls'] as List?)?.length ?? 0,
+            'libraryCandidateSongUrlCount':
+                _sunoLibraryCandidateSongUrls(result).length,
             'currentPageExpectedScore': result['currentPageExpectedScore'],
             'currentPageLyricsExactMatch':
                 result['currentPageLyricsExactMatch'],
@@ -3926,17 +3985,39 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         final currentUrl = (await controller.getUrl())?.toString() ?? '';
         final currentPageKind = _sunoPageKind(currentUrl);
         final knownSongUrl = _canonicalSunoSongUrl(_sunoSongUrl) ?? '';
+        final currentPageLyricsExactMatch =
+            result['currentPageLyricsExactMatch'] == true;
+        final currentUrlMatchesKnown =
+            knownSongUrl.isNotEmpty && currentUrl.startsWith(knownSongUrl);
         if (_sunoExistingDownloadOnly &&
             knownSongUrl.isNotEmpty &&
-            currentPageKind != 'library') {
+            currentPageKind != 'library' &&
+            currentUrlMatchesKnown &&
+            currentPageLyricsExactMatch) {
           songUrl = knownSongUrl;
         } else if (songUrl.isEmpty &&
             knownSongUrl.isNotEmpty &&
-            currentPageKind != 'library') {
+            currentPageKind != 'library' &&
+            currentUrlMatchesKnown &&
+            currentPageLyricsExactMatch) {
           songUrl = knownSongUrl;
         }
-        final currentPageLyricsExactMatch =
-            result['currentPageLyricsExactMatch'] == true;
+        final libraryCandidateSongUrls = _sunoLibraryCandidateSongUrls(result);
+        if (_sunoExistingDownloadOnly &&
+            currentPageKind == 'library' &&
+            libraryCandidateSongUrls.isNotEmpty) {
+          final candidateUrl = libraryCandidateSongUrls.first;
+          _sunoPendingDownloadSongUrl = candidateUrl;
+          _sunoSongUrl = candidateUrl;
+          await controller.loadUrl(
+            urlRequest: URLRequest(url: WebUri(candidateUrl)),
+          );
+          await _setSunoStatus(
+            'downloading',
+            '正在打开 Suno 候选歌曲详情页核对歌词后下载...',
+          );
+          return;
+        }
         if (_sunoExistingDownloadOnly && songUrl.isEmpty) {
           final pendingCandidate =
               _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl) ?? '';
@@ -3982,6 +4063,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               rawCandidateSongUrls.isNotEmpty &&
               candidateSongUrls.isEmpty &&
               _sunoVersions.isNotEmpty) {
+            // Suno Library rows hydrate lazily. Do not mark an article complete
+            // just because the first visible row is an already-downloaded song:
+            // same lyrics with a different style is still another valid version.
+            if (!_isSunoPageSettled(currentUrl)) {
+              await _setSunoStatus(
+                'downloading',
+                '正在等待 Suno 歌曲列表加载完成，继续检查同歌词的其它风格版本...',
+              );
+              return;
+            }
             await _saveSunoMetadata();
             await _setSunoStatus('complete', null);
             _sunoAutomationTimer?.cancel();
@@ -4930,6 +5021,86 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     return downloadedCount;
   }
+
+  List<String> _sunoLibraryCandidateSongUrls(Map<String, dynamic> result) {
+    final rawCandidates = result['candidateSongs'];
+    if (rawCandidates is! List) {
+      return const <String>[];
+    }
+    final candidates = rawCandidates.whereType<Map>().toList(growable: false);
+    if (candidates.isEmpty) {
+      return const <String>[];
+    }
+    final known = _mergeSunoSongUrls([
+      _sunoDetectedSongUrls,
+      _sunoDownloadedSongUrls,
+      _sunoVersions.map((version) => version.songUrl),
+    ]).toSet();
+    final knownTitles = <String>{};
+    for (final candidate in candidates) {
+      final href = _canonicalSunoSongUrl(candidate['href']) ?? '';
+      if (!known.contains(href)) {
+        continue;
+      }
+      final title = _sunoCandidateTitle(candidate);
+      if (title.isNotEmpty) {
+        knownTitles.add(title);
+      }
+    }
+    final matches = <({String url, int score, bool sameTitle, int index})>[];
+    final seen = <String>{};
+    for (var index = 0; index < candidates.length; index += 1) {
+      final candidate = candidates[index];
+      final href = _canonicalSunoSongUrl(candidate['href']) ?? '';
+      if (href.isEmpty ||
+          known.contains(href) ||
+          _sunoDownloadedSongUrls.contains(href) ||
+          _hasSunoVersionForSongUrl(href) ||
+          _sunoRejectedCandidateSongUrls.contains(href) ||
+          !seen.add(href)) {
+        continue;
+      }
+      final title = _sunoCandidateTitle(candidate);
+      final score = (candidate['expectedScore'] as num?)?.toInt() ?? 0;
+      final sameTitle = title.isNotEmpty && knownTitles.contains(title);
+      // A Suno Library row does not expose full lyrics. Treat Library matching
+      // as a broad recall step only: same lyrics, even with a different style,
+      // belongs to this article, and the detail page must verify the lyrics
+      // before any audio is saved.
+      if (score > 0 || sameTitle) {
+        matches.add((
+          url: href,
+          score: score,
+          sameTitle: sameTitle,
+          index: index,
+        ));
+      }
+    }
+    matches.sort((left, right) {
+      if (left.score != right.score) {
+        return right.score.compareTo(left.score);
+      }
+      if (left.sameTitle != right.sameTitle) {
+        return left.sameTitle ? -1 : 1;
+      }
+      return left.index.compareTo(right.index);
+    });
+    return matches.map((match) => match.url).toList(growable: false);
+  }
+
+  String _sunoCandidateTitle(Map candidate) =>
+      _sunoNormalizeCandidateText(candidate['title'])
+          .replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+
+  String _sunoNormalizeCandidateText(Object? value) => (value ?? '')
+      .toString()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\u2018\u2019]'), "'")
+      .replaceAll(RegExp(r'[\u201c\u201d]'), '"')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
 
   String? _matchingSunoMediaUrl(String? mediaUrl, String songUrl) {
     final normalized = (mediaUrl ?? '').trim();
@@ -8120,6 +8291,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'pageTransition',
         fallback: 'none',
       ),
+      subtitleMode: _payloadString(
+        message.payload,
+        'subtitleMode',
+        fallback: 'srt',
+      ),
     );
     unawaited(_pushEvent('recording.settings.state', payload));
     return payload;
@@ -8504,9 +8680,26 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final player = AudioPlayer();
     _songPlayer = player;
     try {
-      final timeline = (timelinePath ?? '').trim().isEmpty
-          ? null
-          : await SongSubtitleTimelineService.readTimeline(timelinePath!);
+      SongSubtitleTimeline? timeline;
+      final normalizedTimelinePath = (timelinePath ?? '').trim();
+      if (normalizedTimelinePath.isNotEmpty) {
+        try {
+          timeline = await SongSubtitleTimelineService.readCurrentTimeline(
+            normalizedTimelinePath,
+          );
+        } catch (error) {
+          TomatoLogger.warn(
+            category: 'listening',
+            event: 'song.play.timeline_unavailable',
+            articleId: articleId,
+            error: error,
+            data: {
+              'versionId': versionId,
+              'timelinePath': normalizedTimelinePath,
+            },
+          );
+        }
+      }
       await player.setFilePath(path).timeout(const Duration(seconds: 10));
       await player.seek(Duration.zero).timeout(const Duration(seconds: 3));
       await player.setVolume(1.0);
@@ -8562,7 +8755,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           unawaited(_disposeSongPlayer());
         }
       });
-      if (timeline != null) {
+      final currentTimeline = timeline;
+      if (currentTimeline != null) {
         DateTime lastPush = DateTime.fromMillisecondsSinceEpoch(0);
         positionSubscription = player.positionStream.listen((position) {
           if (!_isActiveSongPlayback(token)) {
@@ -8575,7 +8769,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           }
           lastPush = now;
           final positionMs = position.inMilliseconds;
-          final cue = _songCueAt(timeline, positionMs);
+          final cue = SongSubtitleTimelineService.cueAtPosition(
+            currentTimeline,
+            positionMs,
+          );
           if (cue != null && cue.lineIndex != lastLoggedCueLineIndex) {
             lastLoggedCueLineIndex = cue.lineIndex;
             TomatoLogger.info(
@@ -8596,7 +8793,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'versionId': versionId,
             'positionMs': positionMs,
             'durationMs':
-                player.duration?.inMilliseconds ?? timeline.durationMs,
+                player.duration?.inMilliseconds ?? currentTimeline.durationMs,
             'cue': cue?.toJson(),
           }));
         });
@@ -8640,21 +8837,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       );
       rethrow;
     }
-  }
-
-  SongSubtitleCue? _songCueAt(SongSubtitleTimeline timeline, int positionMs) {
-    for (final cue in timeline.cues) {
-      if (positionMs >= cue.startMs && positionMs < cue.endMs) {
-        return cue;
-      }
-    }
-    if (timeline.cues.isEmpty) {
-      return null;
-    }
-    if (positionMs < timeline.cues.first.startMs) {
-      return null;
-    }
-    return timeline.cues.last;
   }
 
   Future<void> _playVoicePreview(
@@ -9452,6 +9634,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'pageTransition',
       fallback: settings['pageTransition']?.toString() ?? 'none',
     ).trim();
+    final subtitleModeText = _payloadString(
+      payload,
+      'subtitleMode',
+      fallback: settings['subtitleMode']?.toString() ?? 'srt',
+    ).trim();
     final fps = _payloadOptionalInt(payload, 'fps') ??
         (settings['fps'] is num
             ? (settings['fps'] as num).toInt()
@@ -9465,6 +9652,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           : RecordingCodec.h264,
       resolution: RecordingResolution.parse(resolutionText),
       pageTransition: RecordingPageTransition.parse(transitionText),
+      subtitleMode: RecordingSubtitleMode.parse(subtitleModeText),
       fps: fps <= 0 ? RecordingExportService.defaultFps : fps,
       subtitleTranslations: subtitleTranslations,
     );
@@ -9484,8 +9672,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       versionId: _payloadString(payload, 'versionId').trim(),
     );
     final timelinePath = (version.timelinePath ?? '').trim();
-    if (_versionTimelineStatus(version) != 'ready' || timelinePath.isEmpty) {
+    final timelineStatus = _versionTimelineStatus(version);
+    if (timelineStatus == 'stale') {
+      throw const FormatException(
+        SongSubtitleTimelineService.staleTimelineMessage,
+      );
+    }
+    if (timelineStatus != 'ready' || timelinePath.isEmpty) {
       throw const FormatException('请先生成这首歌的字幕时间线');
+    }
+    if (!await SongSubtitleTimelineService.timelineFileIsCurrent(
+      timelinePath,
+    )) {
+      throw const FormatException(
+        SongSubtitleTimelineService.staleTimelineMessage,
+      );
     }
     final codecText = _payloadString(
       payload,
@@ -9502,6 +9703,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'pageTransition',
       fallback: settings['pageTransition']?.toString() ?? 'none',
     ).trim();
+    final subtitleModeText = _payloadString(
+      payload,
+      'subtitleMode',
+      fallback: settings['subtitleMode']?.toString() ?? 'srt',
+    ).trim();
     final fps = _payloadOptionalInt(payload, 'fps') ??
         (settings['fps'] is num
             ? (settings['fps'] as num).toInt()
@@ -9515,6 +9721,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           : RecordingCodec.h264,
       resolution: RecordingResolution.parse(resolutionText),
       pageTransition: RecordingPageTransition.parse(transitionText),
+      subtitleMode: RecordingSubtitleMode.parse(subtitleModeText),
       fps: fps <= 0 ? RecordingExportService.defaultFps : fps,
     );
   }
@@ -10646,9 +10853,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return versions.first;
   }
 
-  List<ArticleSongVersion> _ensureSingleDefaultSongVersion(
-    List<ArticleSongVersion> versions,
+  bool _songSourceShouldRequireDefault(
+    String source,
+    Iterable<ArticleSongVersion> versions,
   ) {
+    final normalizedSource = _normalizeSongSource(source);
+    for (final version in versions) {
+      if (version.isDefault) {
+        return _normalizeSongSource(version.source) == normalizedSource;
+      }
+    }
+    return true;
+  }
+
+  List<ArticleSongVersion> _ensureSingleDefaultSongVersion(
+    List<ArticleSongVersion> versions, {
+    bool requireDefault = true,
+  }) {
     if (versions.isEmpty) {
       return const <ArticleSongVersion>[];
     }
@@ -10664,7 +10885,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         normalized.add(version);
       }
     }
-    if (!defaultSeen) {
+    if (!defaultSeen && requireDefault) {
       normalized[0] = normalized[0].copyWith(isDefault: true);
     }
     return normalized;
@@ -10715,12 +10936,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return (version.timelinePath ?? '').trim().isNotEmpty ? 'ready' : 'missing';
   }
 
+  Future<String> _songTimelineStatusForPath(String? timelinePath) async {
+    final normalized = (timelinePath ?? '').trim();
+    if (normalized.isEmpty) {
+      return 'missing';
+    }
+    if (!await File(normalized).exists()) {
+      return 'missing';
+    }
+    return await SongSubtitleTimelineService.timelineFileIsCurrent(normalized)
+        ? 'ready'
+        : 'stale';
+  }
+
   List<ArticleSongVersion> _songVersionsForPayload(
     int articleId,
-    List<ArticleSongVersion> versions,
-  ) {
+    List<ArticleSongVersion> versions, {
+    bool requireDefault = true,
+  }) {
     final payloadVersions = _ensureSingleDefaultSongVersion(
       _dedupeSongVersions(versions),
+      requireDefault: requireDefault,
     ).map((version) {
       final key = _songTimelineKey(articleId, version.id);
       if (_songTimelineTasks.containsKey(key)) {

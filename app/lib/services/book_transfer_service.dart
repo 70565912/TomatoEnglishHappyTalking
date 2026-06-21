@@ -357,9 +357,11 @@ class BookTransferService {
     final externalSongs = reader.readJsonList('data/external_songs.json');
 
     final runtimeRoot = await DatabaseService.runtimeDataRoot;
-    final importRoot = Directory(path_lib.join(
-      runtimeRoot,
+    final importBaseDir = await ApiCacheService.cacheDirectory(
       'book-transfer-assets',
+    );
+    final importRoot = Directory(path_lib.join(
+      importBaseDir.path,
       'import_${DateTime.now().millisecondsSinceEpoch}',
     ));
     final warnings = <String>[
@@ -950,7 +952,19 @@ class BookTransferService {
 
   static String _safeAssetFileName(String value) {
     final cleaned = _safeFileName(value);
-    return cleaned.isEmpty ? 'asset.bin' : cleaned;
+    if (cleaned.isEmpty) {
+      return 'asset.bin';
+    }
+    final extension = path_lib.extension(cleaned);
+    if (extension.isEmpty || cleaned.length <= 80) {
+      return cleaned;
+    }
+    final baseName = path_lib.basenameWithoutExtension(cleaned).trim();
+    final maxBaseLength = 80 - extension.length;
+    final safeBase = baseName.length > maxBaseLength
+        ? baseName.substring(0, maxBaseLength).trim()
+        : baseName;
+    return '$safeBase$extension';
   }
 
   static bool _isArchiveAssetRef(String value) {

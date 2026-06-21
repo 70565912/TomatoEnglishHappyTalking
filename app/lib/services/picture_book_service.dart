@@ -290,6 +290,29 @@ class PictureBookService {
     return plan;
   }
 
+  static Future<ChapterPicturePlan?> _cachedChapterPlanForArticle({
+    required Article article,
+    required StoryChapter chapter,
+    required StorySeries series,
+  }) async {
+    final relevantCharacters = _relevantBookCharactersForArticle(
+      article,
+      series.characters,
+    );
+    final contentHash = await _chapterContentHashFor(
+      articleTitle: article.title,
+      articleContent: article.content,
+      sentences: article.sentences,
+      bookDescription: series.description,
+      relevantCharacters: relevantCharacters,
+    );
+    return _chapterPlanFromSummary(
+      chapter.summaryJson,
+      contentHash: contentHash,
+      sentenceCount: article.sentences.length,
+    );
+  }
+
   static Future<Map<String, dynamic>> promptReviewPayload({
     required Article article,
     required StoryChapter chapter,
@@ -383,12 +406,35 @@ class PictureBookService {
       throw const TextGenerationException('文本提交处理失败：书籍信息不存在，请重试。');
     }
 
-    final plan = await ensureChapterPlanForArticle(
+    final referencePage = await _nearestReferencePage(
+      articleId: articleId,
+      targetPageIndex: pageIndex,
+    );
+    if (referencePage == null) {
+      return promptReviewPayload(
+        article: article,
+        chapter: currentChapter,
+        regenerate: true,
+      );
+    }
+
+    final existingPages = await DatabaseService.getPictureBookPages(articleId);
+    PictureBookPage? targetPage;
+    for (final page in existingPages) {
+      if (page.pageIndex == pageIndex) {
+        targetPage = page;
+        break;
+      }
+    }
+
+    final plan = await _cachedChapterPlanForArticle(
       article: article,
       chapter: currentChapter,
       series: series,
     );
-    final segments = _segmentArticle(article, plan);
+    final segments = plan == null
+        ? const <_PicturePageSegment>[]
+        : _segmentArticle(article, plan);
     _PicturePageSegment? targetSegment;
     for (final segment in segments) {
       if (segment.pageIndex == pageIndex) {
@@ -396,15 +442,12 @@ class PictureBookService {
         break;
       }
     }
-    if (targetSegment == null) {
-      throw FormatException('第 ${pageIndex + 1} 页不在当前章节分镜内。');
-    }
-
-    final referencePage = await _nearestReferencePage(
-      articleId: articleId,
-      targetPageIndex: pageIndex,
+    targetSegment ??= _segmentFromExistingPage(
+      article: article,
+      page: targetPage,
+      pageCount: existingPages.length,
     );
-    if (referencePage == null) {
+    if (targetSegment == null) {
       return promptReviewPayload(
         article: article,
         chapter: currentChapter,
@@ -425,14 +468,22 @@ class PictureBookService {
       article,
       bookCharacters,
     );
-    final newCharacters = _sanitizeBookCharacters(plan.newCharacters);
+    final newCharacters = _sanitizeBookCharacters(
+      plan?.newCharacters ?? _newCharactersFromPagePrompt(targetPage),
+    );
     final finalRelevantCharacters = _mergeBookCharacters(
       relevantCharacters,
       newCharacters,
     );
+    final reviewChapterDescription = _singlePageChapterDescription(
+      article: article,
+      chapter: currentChapter,
+      plan: plan,
+      targetPage: targetPage,
+    );
     final singlePrompt = _composeSinglePagePrompt(
       series: reviewSeries,
-      chapterDescription: plan.chapterDescription,
+      chapterDescription: reviewChapterDescription,
       segment: targetSegment,
       relevantCharacters: finalRelevantCharacters,
     );
@@ -448,7 +499,7 @@ class PictureBookService {
       bookCharacters: bookCharacters,
       relevantCharacters: relevantCharacters,
       newCharacters: newCharacters,
-      chapterDescription: plan.chapterDescription,
+      chapterDescription: reviewChapterDescription,
       groupPrompt: singlePrompt,
       createdAt: DateTime.now(),
       mode: 'singlePage',
@@ -1936,6 +1987,125 @@ class PictureBookService {
     return const <String, dynamic>{};
   }
 
+  static Map<String, dynamic> _pagePromptMap(PictureBookPage? page) {
+    if (page == null) {
+      return const <String, dynamic>{};
+    }
+    return _decodeJson(page.promptJson, const <String, dynamic>{});
+  }
+
+  static String _pageSceneDescription(PictureBookPage? page) {
+    final prompt = _pagePromptMap(page);
+    final scene = _mapValue(prompt['scene']);
+    for (final value in [
+      scene['sceneDescription'],
+      prompt['sceneDescription'],
+      prompt['summary'],
+    ]) {
+      final sanitized = _sanitizeForImagePrompt(value?.toString() ?? '');
+      if (sanitized.isNotEmpty) {
+        return sanitized;
+      }
+    }
+    return '';
+  }
+
+  static List<BookCharacter> _newCharactersFromPagePrompt(
+    PictureBookPage? page,
+  ) {
+    final prompt = _pagePromptMap(page);
+    return _sanitizeBookCharacters(_bookCharactersFromJson(
+      prompt['newCharacters'],
+    ));
+  }
+
+  static String _singlePageChapterDescription({
+    required Article article,
+    required StoryChapter chapter,
+    required ChapterPicturePlan? plan,
+    required PictureBookPage? targetPage,
+  }) {
+    final planDescription = _sanitizeForImagePrompt(
+      plan?.chapterDescription ?? '',
+    );
+    if (planDescription.isNotEmpty) {
+      return planDescription;
+    }
+
+    final pagePrompt = _pagePromptMap(targetPage);
+    final pageDescription = _sanitizeForImagePrompt(
+      pagePrompt['chapterDescription']?.toString() ?? '',
+    );
+    if (pageDescription.isNotEmpty) {
+      return pageDescription;
+    }
+
+    final chapterSummary = _decodeJson(
+      chapter.summaryJson,
+      const <String, dynamic>{},
+    );
+    for (final value in [
+      chapterSummary['chapterDescription'],
+      chapterSummary['summary'],
+      chapter.chapterTitle,
+      _fallbackChapterSummary(article.content),
+    ]) {
+      final sanitized = _sanitizeForImagePrompt(value?.toString() ?? '');
+      if (sanitized.isNotEmpty) {
+        return sanitized;
+      }
+    }
+    return _sanitizeForImagePrompt(article.title);
+  }
+
+  static _PicturePageSegment? _segmentFromExistingPage({
+    required Article article,
+    required PictureBookPage? page,
+    required int pageCount,
+  }) {
+    if (page == null) {
+      return null;
+    }
+
+    final sentences = article.sentences
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
+    final maxSentenceIndex = math.max(0, sentences.length - 1);
+    final start = sentences.isEmpty
+        ? math.max(0, page.sentenceStartIndex)
+        : page.sentenceStartIndex.clamp(0, maxSentenceIndex).toInt();
+    final end = sentences.isEmpty
+        ? math.max(start, page.sentenceEndIndex)
+        : page.sentenceEndIndex.clamp(start, maxSentenceIndex).toInt();
+    final pageText = page.paragraphText.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final text = pageText.isNotEmpty
+        ? pageText
+        : sentences.isEmpty
+            ? ''
+            : sentences.sublist(start, end + 1).join(' ');
+    if (text.trim().isEmpty) {
+      return null;
+    }
+
+    var summary = _pageSceneDescription(page);
+    if (summary.isEmpty && sentences.isNotEmpty) {
+      summary = _sceneDescriptionForRange(sentences, start, end);
+    }
+    if (summary.isEmpty) {
+      summary = _promptExcerpt(text, maxWords: 28, maxChars: 180);
+    }
+
+    return _PicturePageSegment(
+      pageIndex: page.pageIndex,
+      pageCount: math.max(1, pageCount),
+      sentenceStartIndex: start,
+      sentenceEndIndex: end,
+      text: _normalizeFullChapterStoryForPrompt(text),
+      summary: summary,
+    );
+  }
+
   static List<PictureBookScene> _normalizeSceneCoverage(
     List<PictureBookScene> scenes,
     int sentenceCount,
@@ -2162,10 +2332,34 @@ class PictureBookService {
       baseChapter.summaryJson,
       const <String, dynamic>{},
     );
-    final scenes = _pictureBookScenesFromJson(
+    var scenes = _pictureBookScenesFromJson(
       rawSummary['scenes'],
       sentenceCount: article.sentences.length,
     );
+    if (scenes.isEmpty && articleId != null) {
+      final existingPages = await DatabaseService.getPictureBookPages(
+        articleId,
+      );
+      final pageSegments = [
+        for (final page in existingPages)
+          if (_segmentFromExistingPage(
+            article: article,
+            page: page,
+            pageCount: existingPages.length,
+          )
+              case final segment?)
+            segment,
+      ]..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+      scenes = [
+        for (final pageSegment in pageSegments)
+          PictureBookScene(
+            pageIndex: pageSegment.pageIndex,
+            sentenceStartIndex: pageSegment.sentenceStartIndex,
+            sentenceEndIndex: pageSegment.sentenceEndIndex,
+            sceneDescription: pageSegment.summary,
+          ),
+      ];
+    }
     final mergedScenes = <PictureBookScene>[];
     var replaced = false;
     for (final scene in scenes) {

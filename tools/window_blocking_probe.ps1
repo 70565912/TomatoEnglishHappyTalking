@@ -1,5 +1,5 @@
 param(
-  [string]$ExePath = "H:\TomatoEnglishHappyTalking\app\build\windows\x64\runner\Debug\tomato_english_happy_talking.exe",
+  [string]$ExePath = (Join-Path (Split-Path -Parent $PSScriptRoot) "release\windows\tomato_english_happy_talking\tomato_english_happy_talking.exe"),
   [int]$StartupWaitSeconds = 5,
   [int]$AfterMinimizeWaitSeconds = 2,
   [ValidateSet("Api", "ClickTitleBar")]

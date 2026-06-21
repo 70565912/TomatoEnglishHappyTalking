@@ -83,6 +83,29 @@ void main() {
     expect(decoded?.isDefault, isTrue);
   });
 
+  test('copyWith can clear stale timeline fields explicitly', () {
+    const version = ArticleSongVersion(
+      id: 'suno-v1',
+      audioPath: r'F:\songs\suno-v1.mp3',
+      timelinePath: r'F:\songs\old.timeline.json',
+      timelineStatus: 'ready',
+      timelineConfidence: 0.91,
+      timelineError: 'old error',
+    );
+
+    final cleared = version.copyWith(
+      timelinePath: null,
+      timelineStatus: 'missing',
+      timelineConfidence: null,
+      timelineError: null,
+    );
+
+    expect(cleared.timelinePath, isNull);
+    expect(cleared.timelineStatus, 'missing');
+    expect(cleared.timelineConfidence, isNull);
+    expect(cleared.timelineError, isNull);
+  });
+
   test('builds lyrics-based Suno cache groups', () {
     final legacy = SunoCachedSongGroupBuilder(
       lyricsHash: 'lyrics-a',

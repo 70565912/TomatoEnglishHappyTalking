@@ -339,25 +339,16 @@ function Assert-PathInsideDirectory {
     }
 }
 
-function New-WindowsReleasePackageBackup {
+function New-WindowsRuntimeBackupDirectory {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$PackageDir,
         [Parameter(Mandatory = $true)]
         [string]$BackupRoot
     )
 
-    if (-not (Test-Path $PackageDir)) {
-        return $null
-    }
-
     New-Item -ItemType Directory -Path $BackupRoot -Force | Out-Null
     $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
     $suffix = [System.Guid]::NewGuid().ToString("N").Substring(0, 8)
-    $backupDir = Join-Path $BackupRoot ("tomato_english_happy_talking-$timestamp-$suffix")
-
-    Copy-Item -LiteralPath $PackageDir -Destination $backupDir -Recurse -Force
-    return $backupDir
+    return Join-Path $BackupRoot ("runtime-data-$timestamp-$suffix")
 }
 
 function Get-WindowsRuntimeDirectories {
@@ -368,6 +359,8 @@ function Get-WindowsRuntimeDirectories {
         "recordings",
         "recording-export",
         "picture_book",
+        "book-transfer-assets",
+        "song-assets",
         "suno-music",
         "runtime",
         "user_data",
@@ -377,6 +370,7 @@ function Get-WindowsRuntimeDirectories {
         "data\tomato_api_cache",
         "data\recordings",
         "data\picture_book",
+        "data\song-assets",
         "data\suno-music",
         "data\user_data",
         "data\databases"
@@ -600,6 +594,44 @@ function Clear-WindowsReleaseProgramFiles {
     return $removedItems
 }
 
+function Copy-WindowsProgramArtifacts {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$SourceDir,
+        [Parameter(Mandatory = $true)]
+        [string]$DestinationDir,
+        [Parameter(Mandatory = $false)]
+        [string]$RootSourceDir = $SourceDir
+    )
+
+    New-Item -ItemType Directory -Path $DestinationDir -Force | Out-Null
+
+    foreach ($item in @(Get-ChildItem -LiteralPath $SourceDir -Force)) {
+        $relativePath = Get-WindowsRelativePath -Path $item.FullName -BaseDir $RootSourceDir
+
+        if ($item.PSIsContainer) {
+            if (Test-IsPreservedWindowsRuntimeDirectory -RelativePath $relativePath) {
+                continue
+            }
+
+            $destinationPath = Join-Path $DestinationDir $item.Name
+            if (Test-HasPreservedWindowsRuntimeDescendants -RelativePath $relativePath) {
+                Copy-WindowsProgramArtifacts -SourceDir $item.FullName -DestinationDir $destinationPath -RootSourceDir $RootSourceDir
+                continue
+            }
+
+            Copy-Item -LiteralPath $item.FullName -Destination $destinationPath -Recurse -Force
+            continue
+        }
+
+        if (Test-IsPreservedWindowsRuntimeFile -RelativePath $relativePath) {
+            continue
+        }
+
+        Copy-Item -LiteralPath $item.FullName -Destination (Join-Path $DestinationDir $item.Name) -Force
+    }
+}
+
 function Assert-WindowsReleasePackageNotRunning {
     param(
         [Parameter(Mandatory = $true)]
@@ -679,7 +711,7 @@ function Restore-WindowsRuntimeData {
         if (Test-Path $destinationPath) {
             Remove-Item -LiteralPath $destinationPath -Recurse -Force
         }
-        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Recurse -Force
+        Move-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
         $restoredItems += $relativePath
     }
 
@@ -693,7 +725,7 @@ function Restore-WindowsRuntimeData {
 
         $destinationPath = Join-Path $PackageDir $relativePath
         Assert-PathInsideDirectory -Path $destinationPath -ParentPath $PackageDir
-        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+        Move-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
         $restoredItems += $relativePath
     }
 
@@ -702,11 +734,79 @@ function Restore-WindowsRuntimeData {
     } | ForEach-Object {
         $destinationPath = Join-Path $PackageDir $_.Name
         Assert-PathInsideDirectory -Path $destinationPath -ParentPath $PackageDir
-        Copy-Item -LiteralPath $_.FullName -Destination $destinationPath -Force
+        Move-Item -LiteralPath $_.FullName -Destination $destinationPath -Force
         $restoredItems += $_.Name
     }
 
     return $restoredItems
+}
+
+function Move-WindowsRuntimeDataToBackup {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageDir,
+        [Parameter(Mandatory = $true)]
+        [string]$BackupRoot
+    )
+
+    if (-not (Test-Path $PackageDir)) {
+        return $null
+    }
+
+    $backupDir = New-WindowsRuntimeBackupDirectory -BackupRoot $BackupRoot
+    $movedItems = @()
+
+    foreach ($relativePath in @(Get-WindowsRuntimeDirectories)) {
+        $sourcePath = Join-Path $PackageDir $relativePath
+        if (-not (Test-Path $sourcePath)) {
+            continue
+        }
+
+        $destinationPath = Join-Path $backupDir $relativePath
+        Assert-PathInsideDirectory -Path $sourcePath -ParentPath $PackageDir
+        Assert-PathInsideDirectory -Path $destinationPath -ParentPath $backupDir
+        $destinationParent = Split-Path -Parent $destinationPath
+        New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        Move-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+        $movedItems += $relativePath
+    }
+
+    foreach ($relativePath in @(Get-WindowsRuntimeFiles)) {
+        $sourcePath = Join-Path $PackageDir $relativePath
+        if (-not (Test-Path $sourcePath)) {
+            continue
+        }
+
+        $destinationPath = Join-Path $backupDir $relativePath
+        Assert-PathInsideDirectory -Path $sourcePath -ParentPath $PackageDir
+        Assert-PathInsideDirectory -Path $destinationPath -ParentPath $backupDir
+        $destinationParent = Split-Path -Parent $destinationPath
+        New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+        Move-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+        $movedItems += $relativePath
+    }
+
+    Get-ChildItem -LiteralPath $PackageDir -File -Force | Where-Object {
+        $_.Name -match '\.(db|sqlite|sqlite3)(-wal|-shm)?$'
+    } | ForEach-Object {
+        $destinationPath = Join-Path $backupDir $_.Name
+        Assert-PathInsideDirectory -Path $_.FullName -ParentPath $PackageDir
+        Assert-PathInsideDirectory -Path $destinationPath -ParentPath $backupDir
+        Move-Item -LiteralPath $_.FullName -Destination $destinationPath -Force
+        $movedItems += $_.Name
+    }
+
+    if ($movedItems.Count -eq 0) {
+        if (Test-Path $backupDir) {
+            Remove-Item -LiteralPath $backupDir -Recurse -Force
+        }
+        return $null
+    }
+
+    [PSCustomObject]@{
+        Path = $backupDir
+        Items = $movedItems
+    }
 }
 
 function Publish-WindowsPackageArtifacts {
@@ -725,7 +825,7 @@ function Publish-WindowsPackageArtifacts {
     $packageDir = Join-Path $releaseWindowsDir "tomato_english_happy_talking"
     $legacyPackageDir = Join-Path $releaseWindowsDir "english_love_reading"
     $runtimeBackupRoot = Join-Path $releaseWindowsDir ".runtime_backups"
-    $packageBackupDir = $null
+    $runtimeBackup = $null
 
     if (Test-Path $legacyPackageDir) {
         Assert-PathInsideDirectory -Path $legacyPackageDir -ParentPath $releaseWindowsDir
@@ -735,23 +835,34 @@ function Publish-WindowsPackageArtifacts {
     Assert-WindowsReleasePackageNotRunning -PackageDir $packageDir -ProcessName "tomato_english_happy_talking"
     if (Test-Path $packageDir) {
         Assert-PathInsideDirectory -Path $packageDir -ParentPath $releaseWindowsDir
-        $packageBackupDir = New-WindowsReleasePackageBackup -PackageDir $packageDir -BackupRoot $runtimeBackupRoot
-        if ($null -ne $packageBackupDir) {
-            Write-Host "已备份发布目录: $packageBackupDir" -ForegroundColor Yellow
+        $runtimeBackup = Move-WindowsRuntimeDataToBackup -PackageDir $packageDir -BackupRoot $runtimeBackupRoot
+        if ($null -ne $runtimeBackup) {
+            Write-Host "已移出发布目录运行数据: $($runtimeBackup.Path)" -ForegroundColor Yellow
         }
     }
 
-    New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
-    $removedItems = @(Clear-WindowsReleaseProgramFiles -PackageDir $packageDir)
-    if ($removedItems.Count -gt 0) {
-        Write-Host "Cleaned old program artifacts: $($removedItems.Count)" -ForegroundColor Yellow
-    }
-    Copy-Item -Path (Join-Path $BuildOutputDir "*") -Destination $packageDir -Recurse -Force
-    Copy-WindowsFfmpegRuntime -PackageDir $packageDir
-    Ensure-WindowsRuntimeDirectories -PackageDir $packageDir
+    try {
+        New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+        $removedItems = @(Clear-WindowsReleaseProgramFiles -PackageDir $packageDir)
+        if ($removedItems.Count -gt 0) {
+            Write-Host "Cleaned old program artifacts: $($removedItems.Count)" -ForegroundColor Yellow
+        }
+        Copy-WindowsProgramArtifacts -SourceDir $BuildOutputDir -DestinationDir $packageDir
+        Copy-WindowsFfmpegRuntime -PackageDir $packageDir
+        Ensure-WindowsRuntimeDirectories -PackageDir $packageDir
 
-    if ($null -ne $packageBackupDir -and (Test-Path $packageBackupDir)) {
-        Write-Host "已保留发布目录运行数据，完整备份保留在: $packageBackupDir" -ForegroundColor DarkGray
+        if ($null -ne $runtimeBackup -and (Test-Path $runtimeBackup.Path)) {
+            $restoredItems = @(Restore-WindowsRuntimeData -BackupDir $runtimeBackup.Path -PackageDir $packageDir)
+            Write-Host "已恢复发布目录运行数据: $($restoredItems.Count)" -ForegroundColor Green
+            if (-not (Get-ChildItem -LiteralPath $runtimeBackup.Path -Force -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+                Remove-Item -LiteralPath $runtimeBackup.Path -Recurse -Force
+            }
+        }
+    } catch {
+        if ($null -ne $runtimeBackup -and (Test-Path $runtimeBackup.Path)) {
+            Restore-WindowsRuntimeData -BackupDir $runtimeBackup.Path -PackageDir $packageDir | Out-Null
+        }
+        throw
     }
 
     Write-Host "Windows $BuildConfiguration 程序目录已更新: $packageDir" -ForegroundColor Green
@@ -804,8 +915,7 @@ Push-Location (Join-Path $workspaceRoot "app")
 
 try {
     Write-Host "=== 检查 Flutter 环境 ===" -ForegroundColor Cyan
-    & $flutterExe --version
-    Assert-LastExitCode -CommandName "flutter --version"
+    Write-Host "Flutter SDK: $flutterExe" -ForegroundColor DarkGray
     Invoke-WebUiBuild
     Clear-StaleWindowsBuildCache -AppRoot (Get-Location).Path -ExpectedBinaryName "tomato_english_happy_talking"
 

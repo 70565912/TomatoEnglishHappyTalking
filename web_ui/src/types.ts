@@ -190,6 +190,12 @@ export interface ListeningOpenPayload {
   items: ListeningItem[];
 }
 
+export interface ArticleFullTextPayload {
+  article: Article;
+  bookTitle?: string;
+  items: ListeningItem[];
+}
+
 export interface ListeningPlaybackPayload {
   articleId: number;
   index: number;
@@ -295,11 +301,13 @@ export interface ListeningFullscreenReadyPayload {
 export type RecordingCodec = 'h264' | 'h265';
 export type RecordingResolution = '2560x1440' | '1920x1080' | '1280x720';
 export type RecordingPageTransition = 'none' | 'crossFade' | 'panZoomFade' | 'slide';
+export type RecordingSubtitleMode = 'srt' | 'burnedIn' | 'both';
 
 export interface RecordingSettings {
   codec: RecordingCodec;
   resolution: RecordingResolution;
   pageTransition: RecordingPageTransition;
+  subtitleMode: RecordingSubtitleMode;
   outputDirectory: string;
   ffmpegPath?: string;
   fps: number;
@@ -314,6 +322,7 @@ export interface ListeningRecordingReadyPayload {
   codec: RecordingCodec | string;
   resolution: RecordingResolution | string;
   pageTransition: RecordingPageTransition | string;
+  subtitleMode?: RecordingSubtitleMode | string;
   outputDirectory: string;
   requiredEnglish: number;
   readyEnglish: number;
