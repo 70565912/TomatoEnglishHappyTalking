@@ -1,5 +1,21 @@
 # 修改日志
 
+## 2026-06-22
+
+- 歌曲和听力视频导出支持区分 `srt` / `subtitled` 产物；选择“两版视频 + SRT”时会同时输出无内置字幕视频、同名 SRT 和内置字幕视频，并在完成报告中分开展示。
+- 导出文件名增加 `listening` / `song` / `srt` / `subtitled` / `song-audio` 标记，保留旧版导出文件扫描兼容；同一批 `both` 产物共享冲突后缀，便于成对识别。
+- 歌曲版本增加“导出音频文件”入口，可把当前本地歌曲音频复制到程序目录 `recording-export/`，不依赖歌曲字幕时间线。
+- 歌曲字幕时间线升级到 `alignmentVersion=10`，补强局部 ASR 匹配、首尾/中间推断行的可读时长分配，并新增 E03 真实 ASR fixture 回归。
+- 新增歌曲 ASR 诊断快照流程：真实 ASR 词级结果写入程序目录 `diagnostics/`，可从快照重建 timeline 复现对齐问题；Windows 发布脚本保留 `diagnostics/` 运行数据目录。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\song_subtitle_timeline_service_test.dart test\tts_memory_cache_service_test.dart --reporter expanded -j 1`
+- `npm --prefix web_ui test`
+- `D:\DevTools\flutter\bin\flutter.bat analyze`
+- `npm --prefix web_ui run build`
+- `git diff --check`
+
 ## 2026-06-16
 
 - 云平台选择升级为平台级分流：选择阿里云百炼时，文本、绘本图片、TTS、ASR 走 DashScope/百炼能力；选择火山引擎时，文本、绘本图片、TTS、ASR 走火山方舟/火山语音能力，不在失败时自动回退到另一平台。

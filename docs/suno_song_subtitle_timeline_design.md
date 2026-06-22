@@ -5,10 +5,14 @@
 ## 当前落地状态（2026-06）
 
 - `SongSubtitleTimelineService` 已负责生成和缓存 `song-subtitle-timelines/*.json`，缓存 key 包含 `audioHash`、`lyricsHash`、BigASR 请求参数和 `alignmentVersion`。
+- 当前 `alignmentVersion=10`；旧版本 timeline 会被视为过期，歌曲版视频导出前需要重新生成。
 - `StreamingAsrService.recognizeWithTimeline` 使用 BigASR `show_utterances=true` 获取词级时间；ASR 结果只作为时间锚点，前端展示文本仍来自原歌词。
 - 听力页歌曲弹窗中，每个本地歌曲版本可触发“生成歌曲字幕”；生成完成后版本 payload 会带 `timelinePath`、`timelineStatus`、`timelineConfidence`。
 - 歌曲播放时 native 通过 `listening.song.position` 推送当前 cue，Web UI 用 cue 更新绘本字幕和当前句索引。
 - 歌曲版视频通过 `listening.songRecordVideo` 导出，复用歌曲音频、字幕时间轴和绘本页，未生成 `timelinePath` 时录制按钮保持不可用。
+- 歌曲版视频的字幕模式与听力视频一致：无内置字幕视频 + SRT、内置字幕视频、两版视频 + SRT。完成结果用 `videoVariants` 区分 `srt` 和 `subtitled` 两类产物。
+- 歌曲版本可通过 `listening.songExportAudio` 单独复制音频到程序目录 `recording-export/`，不依赖 timeline。
+- 诊断命令 `diagnostics.songAsrSnapshot` 会把一次真实 ASR 词级结果保存到程序目录 `diagnostics/`；`diagnostics.songTimelineFromAsrSnapshot` 可从该快照重建 timeline，用于复现和回归对齐问题。
 - Suno 下载音频和 metadata 默认保存到程序目录 `suno-music/`；旧 `.tmp` / 系统临时目录资产会迁移到持久目录，避免重新发布或系统清理后丢失。
 
 ## 目标
@@ -93,6 +97,7 @@ ASR words -> 每个发音片段的大致时间
 `method` 建议值：
 
 - `matched`：本行有足够 ASR 锚点，时间直接来自识别结果。
+- `partial`：本行只有局部 ASR 锚点，但缺失的前后歌词可按匹配词位置和歌词长度补齐。
 - `interpolated`：本行没有足够锚点，但前后行可匹配，按词数/音节权重在中间区间推断。
 - `estimated`：只有单侧锚点，按附近平均歌唱速度推断。
 - `fallback`：整体识别或对齐质量不足，只能按总时长和行权重平均分配。
@@ -105,9 +110,22 @@ ASR words -> 每个发音片段的大致时间
 4. 调用 BigASR，开启 `show_utterances: true`，读取 `utterances[].words[].start_time/end_time`。
 5. 对原歌词和 ASR 词流做归一化与模糊发音匹配。
 6. 根据匹配锚点生成逐行 cue。
-7. 对未匹配行按前后锚点和歌唱速度插值。
-8. 后处理所有 cue，让字幕时间单调递增、首尾相接、无负时长。
-9. 保存 `song_lyrics_timeline.json`，并在播放歌曲时随 `just_audio` position 更新当前字幕。
+7. 对只有局部匹配的行标记为 `partial`，按缺失 token 数补齐行尾或行首时间。
+8. 对未匹配行按前后锚点和歌唱速度插值；如果推断行被前后锚点挤得过短，按歌词权重重新分配局部窗口，保证字幕可读。
+9. 后处理所有 cue，让字幕时间单调递增、首尾相接、无负时长。
+10. 保存 `song_lyrics_timeline.json`，并在播放歌曲时随 `just_audio` position 更新当前字幕。
+
+## 诊断快照流程
+
+诊断快照用于保存一次真实 ASR 调用的词级结果，方便在不重复调用云服务的情况下复现对齐算法：
+
+1. Web UI 或 QA 工具调用 `diagnostics.songAsrSnapshot`，payload 包含 `articleId` 和歌曲 `versionId`。
+2. Native 按当前 ASR provider 判断是否可直接提交原音频；不支持原格式时转换为 `wav 16kHz mono` 后调用 `StreamingAsrService.recognizeWithTimeline`。
+3. 结果写入 `<program-dir>/diagnostics/song-asr-article-<id>-<version>-<timestamp>.json`，其中包含 `audioHash`、提交格式、词级时间、ASR 原始结构和估算时长。
+4. 调用 `diagnostics.songTimelineFromAsrSnapshot` 并传入 `asrSnapshotPath` 后，程序读取快照的 `words` 或 `asr.utterances[].words`，用当前歌词重建 timeline。
+5. 快照导入生成的 timeline 仍写入正式 `song-subtitle-timelines/` 缓存，并更新当前歌曲版本的 `timelinePath`、`timelineStatus` 和 `timelineConfidence`。
+
+注意：诊断快照只提供时间锚点。即使快照里的 ASR 文本与歌词不一致，也不能把 ASR 文本写回文章、歌词、字幕正文或翻译。
 
 ## ASR 请求建议
 
@@ -284,6 +302,27 @@ interface ListeningSongPositionPayload {
 }
 ```
 
+诊断命令草案：
+
+```ts
+interface SongAsrSnapshotRequest {
+  articleId: number;
+  versionId: string;
+}
+
+interface SongAsrSnapshotResult {
+  outputPath: string;
+  outputDirectory: string;
+  payload: Record<string, unknown>;
+}
+
+interface SongTimelineFromAsrSnapshotRequest {
+  articleId: number;
+  versionId: string;
+  asrSnapshotPath: string;
+}
+```
+
 ## 缓存与成本
 
 BigASR 调用会产生费用，必须缓存成功结果。
@@ -362,6 +401,9 @@ Suno metadata 按当前歌词的 `lyricsHash` / `contentHash` 恢复缓存组；
 - timeline 命中缓存后二次播放不再调用 BigASR。
 - 歌曲播放时字幕使用原歌词，不使用 ASR 文本。
 - 有哼唱段时字幕不断档。
+- 局部匹配行可标记 `partial`，并按缺失歌词长度补齐可读时长。
+- 首尾或中间插值行不能被相邻 ASR 锚点挤压到不可读时长。
 - 前后行匹配、中间行未匹配时，中间行能按时间长度和行权重插值。
 - 可导出 SRT，时间单调递增，无重叠、无负时长。
+- 可用 `diagnostics.songAsrSnapshot` 保存真实 ASR 结果，并用 `diagnostics.songTimelineFromAsrSnapshot` 在本地复现同一首歌的字幕对齐。
 - 低置信情况有日志和 UI 提示，不静默伪装为精确同步。

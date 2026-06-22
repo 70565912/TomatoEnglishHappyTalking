@@ -206,6 +206,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'listening.songDeleteVersion': _handleListeningSongDeleteVersion,
         'listening.songStop': _handleListeningSongStop,
         'listening.songRecordVideo': _handleListeningSongRecordVideo,
+        'listening.songExportAudio': _handleListeningSongExportAudio,
         'suno.debugInspect': _handleSunoDebugInspect,
         'suno.debugFill': _handleSunoDebugFill,
         'suno.debugRows': _handleSunoDebugRows,
@@ -230,6 +231,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'diagnostics.logsRecent': _handleDiagnosticsLogsRecent,
         'diagnostics.logsExport': _handleDiagnosticsLogsExport,
         'diagnostics.clientLog': _handleDiagnosticsClientLog,
+        'diagnostics.songAsrSnapshot': _handleDiagnosticsSongAsrSnapshot,
+        'diagnostics.songTimelineFromAsrSnapshot':
+            _handleDiagnosticsSongTimelineFromAsrSnapshot,
         'recording.settings.load': _handleRecordingSettingsLoad,
         'recording.settings.save': _handleRecordingSettingsSave,
         'settings.previewVoice': _handleSettingsPreviewVoice,
@@ -2813,6 +2817,80 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
   }
 
+  Future<Map<String, dynamic>> _handleListeningSongExportAudio(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final version = await _selectedSongVersion(
+      articleId: articleId,
+      versionId: _payloadString(message.payload, 'versionId').trim(),
+    );
+    final result = await RecordingExportService.exportSongAudio(
+      articleId: articleId,
+      version: version,
+    );
+    return result.toJson();
+  }
+
+  Future<Map<String, dynamic>> _handleDiagnosticsSongAsrSnapshot(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final version = await _selectedSongVersion(
+      articleId: articleId,
+      versionId: _payloadString(message.payload, 'versionId').trim(),
+    );
+    final result = await SongSubtitleTimelineService.submitAsrDiagnostics(
+      articleId: articleId,
+      versionId: version.id,
+      audioPath: version.audioPath,
+      source: version.source,
+    );
+    return result.toJson();
+  }
+
+  Future<Map<String, dynamic>> _handleDiagnosticsSongTimelineFromAsrSnapshot(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final snapshotPath =
+        _payloadString(message.payload, 'asrSnapshotPath').trim();
+    if (snapshotPath.isEmpty) {
+      throw const FormatException('请提供 ASR 诊断结果文件路径');
+    }
+    final article = await _songArticle(articleId);
+    final version = await _selectedSongVersion(
+      articleId: articleId,
+      versionId: _payloadString(message.payload, 'versionId').trim(),
+    );
+    final updated = await _generateTimelineForVersionFromAsrSnapshot(
+      article: article,
+      version: version,
+      asrSnapshotPath: snapshotPath,
+    );
+    await _pushSongState(articleId);
+    return {
+      'articleId': articleId,
+      'versionId': updated.id,
+      'timelinePath': updated.timelinePath,
+      'timelineStatus': updated.timelineStatus,
+      'timelineConfidence': updated.timelineConfidence,
+      'state': await _songStatePayload(articleId),
+    };
+  }
+
   Future<Map<String, dynamic>> _handleListeningSongPlay(
     BridgeMessage message,
   ) async {
@@ -3054,6 +3132,70 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       audioPath: version.audioPath,
       lyricLines: lyricLines,
       translations: translations,
+      source: version.source,
+    );
+    final updated = ArticleSongVersion(
+      id: version.id,
+      audioPath: version.audioPath,
+      title: version.title,
+      songUrl: version.songUrl,
+      durationMs: version.durationMs ?? result.timeline.durationMs,
+      createdAt: version.createdAt,
+      stylePrompt: version.stylePrompt,
+      styleKey: version.styleKey,
+      lyricsHash: result.lyricsHash,
+      submittedLyrics: timelineLyrics,
+      source: version.source,
+      timelinePath: result.timelinePath,
+      timelineStatus: 'ready',
+      timelineConfidence: result.timeline.confidence,
+      timelineError: null,
+      isDefault: version.isDefault,
+    );
+    await _persistUpdatedSongVersion(article, updated);
+    return updated;
+  }
+
+  Future<ArticleSongVersion> _generateTimelineForVersionFromAsrSnapshot({
+    required Article article,
+    required ArticleSongVersion version,
+    required String asrSnapshotPath,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      throw const FormatException('文章尚未保存，不能生成歌曲字幕');
+    }
+    final articleLyrics = _articleSongLyrics(article);
+    final submittedLyrics = (version.submittedLyrics ?? '').trim();
+    final timelineLyrics =
+        submittedLyrics.isNotEmpty ? submittedLyrics : articleLyrics;
+    final usesArticleLyrics = submittedLyrics.isEmpty ||
+        submittedLyrics.replaceAll('\r\n', '\n').trim() ==
+            articleLyrics.replaceAll('\r\n', '\n').trim();
+    final lyricLines = timelineLyrics
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList(growable: false);
+    final translations = <int, String>{};
+    if (usesArticleLyrics) {
+      for (var i = 0; i < lyricLines.length; i += 1) {
+        final translation = await DatabaseService.getArticleSentenceTranslation(
+          articleId,
+          i,
+          lyricLines[i],
+        );
+        if (translation != null && translation.trim().isNotEmpty) {
+          translations[i] = translation.trim();
+        }
+      }
+    }
+    final result = await SongSubtitleTimelineService.generateFromAsrSnapshot(
+      articleId: articleId,
+      audioPath: version.audioPath,
+      lyricLines: lyricLines,
+      translations: translations,
+      asrSnapshotPath: asrSnapshotPath,
       source: version.source,
     );
     final updated = ArticleSongVersion(

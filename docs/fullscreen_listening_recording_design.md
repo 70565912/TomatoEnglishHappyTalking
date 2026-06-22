@@ -14,9 +14,11 @@
 - 视频编码支持 `H.264` / `H.265(HEVC)`，用户在点击“录制视频”后的录制设置框中选择。
 - 编码使用 VBR 动态码率、高质量参数；优先硬件编码，软件兜底。
 - 音频直接复用已有 MP3 缓存，不做实时录音/重编码。
-- 同步生成 `.srt` 字幕文件；中文来自导入或保存时生成的逐句译文，只作为字幕文本，不生成中文音频。
+- 字幕导出支持三种模式：无内置字幕视频 + `.srt`、内置字幕视频、两版视频 + `.srt`。
+- 中文来自导入或保存时生成的逐句译文，只作为字幕文本，不生成中文音频。
 - 性能不足时允许丢帧；有丢帧时录制结束弹出报告，正常时只提示录制完成。
 - 固定保存到程序运行目录下的 `recording-export` 文件夹。
+- 歌曲版本支持单独导出原始音频文件到 `recording-export`，不要求先生成视频或字幕时间线。
 
 ## 推荐架构
 
@@ -61,6 +63,7 @@
 - 视频编码：`H.264` / `H.265(HEVC)`，默认 `H.264`。
 - 导出分辨率：`2560x1440` / `1920x1080` / `1280x720`，默认 `1920x1080`。
 - 绘本页转场：默认 `none`，可选 `crossFade`、`panZoomFade`、`slide`，后续可增加 `pageCurl`。
+- 字幕：`srt` 为无内置字幕视频 + SRT，`burnedIn` 为内置字幕视频，`both` 同时输出两版视频 + SRT。
 - 保存文件夹：固定为程序运行目录下的 `recording-export`，不提供设置项。
 - FFmpeg 路径：固定为程序运行目录下的 `ffmpeg.exe`，不提供设置项。
 - 质量档位：默认“高质量”，v1 可先不暴露细档，只内部固定参数。
@@ -104,6 +107,8 @@ Native 只保存编码、分辨率、转场三个偏好；输出目录和 FFmpeg
 - `recording.settings.save`
 - `listening.recordingReady`
 - `listening.recordVideo`
+- `listening.songRecordVideo`
+- `listening.songExportAudio`
 - `listening.cancelRecording`
 
 建议新增 native event：
@@ -141,7 +146,24 @@ interface ListeningRecordVideoResult {
   codec: 'h264' | 'h265';
   resolution: '2560x1440' | '1920x1080' | '1280x720';
   pageTransition: 'none' | 'crossFade' | 'panZoomFade' | 'slide';
+  videoVariants?: Array<{
+    kind: 'srt' | 'subtitled' | string;
+    videoPath: string;
+    subtitlePath?: string | null;
+  }>;
   warnings: string[];
+}
+```
+
+歌曲音频单独导出完成 payload：
+
+```ts
+interface ListeningSongAudioExportResult {
+  articleId: number;
+  versionId: string;
+  sourcePath: string;
+  outputPath: string;
+  outputDirectory: string;
 }
 ```
 
@@ -150,6 +172,8 @@ UI 行为：
 - `droppedFrameCount === 0 && warnings.isEmpty`：toast “录制完成”。
 - 有丢帧或 warning：弹出报告，展示丢帧数、编码器、输出路径和建议。
 - error：弹出错误，保留“重新录制”按钮。
+- 当返回 `videoVariants` 时，完成报告分别展示“无内置字幕视频”“字幕”和“内置字幕视频”，避免把两版视频混成一个路径。
+- 歌曲音频导出成功后只提示“音频已导出到 recording-export”，不改变歌曲播放状态。
 
 ## 录制流水线
 
@@ -292,9 +316,16 @@ v1 路线：
 文件名：
 
 ```text
-<series-title> - <article-title> - YYYYMMDD-HHMMSS.mp4
-<series-title> - <article-title> - YYYYMMDD-HHMMSS.srt
+<series-title> - <article-title> - listening - srt - YYYYMMDD-HHMMSS.mp4
+<series-title> - <article-title> - listening - srt - YYYYMMDD-HHMMSS.srt
+<series-title> - <article-title> - listening - subtitled - YYYYMMDD-HHMMSS.mp4
+<series-title> - <article-title> - song - srt - YYYYMMDD-HHMMSS.mp4
+<series-title> - <article-title> - song - srt - YYYYMMDD-HHMMSS.srt
+<series-title> - <article-title> - song - subtitled - YYYYMMDD-HHMMSS.mp4
+<series-title> - <article-title> - song-audio - YYYYMMDD-HHMMSS.<source-extension>
 ```
+
+`subtitleMode=both` 会为 `srt` 和 `subtitled` 两个视频共享同一个冲突后缀，例如同一时间戳遇到重名时两者都追加 `-2`，便于成对识别。旧版不带 `listening/song/srt/subtitled` 标记的历史文件仍可被扫描为已导出视频。
 
 需要做 Windows 文件名清理：
 
@@ -344,6 +375,7 @@ v1 路线：
 - 用 FFmpeg concat/copy 复用 MP3 音频轨。
 - 生成 SRT。
 - 输出完成/错误报告。
+- 歌曲版本操作区提供“导出音频文件”，将当前版本音频复制到 `recording-export` 并保留源扩展名。
 
 验收：
 

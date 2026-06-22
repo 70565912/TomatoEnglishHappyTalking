@@ -965,10 +965,23 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'listening.songRecordVideo') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
     const subtitleMode = String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode);
+    const srtVideoPath = 'C:\\Tomato\\recording-export\\mock-song-srt.mp4';
+    const srtPath = 'C:\\Tomato\\recording-export\\mock-song-srt.srt';
+    const subtitledVideoPath = 'C:\\Tomato\\recording-export\\mock-song-subtitled.mp4';
+    const videoVariants =
+      subtitleMode === 'both'
+        ? [
+            { kind: 'srt', videoPath: srtVideoPath, subtitlePath: srtPath },
+            { kind: 'subtitled', videoPath: subtitledVideoPath, subtitlePath: '' },
+          ]
+        : subtitleMode === 'burnedIn'
+          ? [{ kind: 'subtitled', videoPath: subtitledVideoPath, subtitlePath: '' }]
+          : [{ kind: 'srt', videoPath: srtVideoPath, subtitlePath: srtPath }];
     const result = {
       articleId,
-      videoPath: 'C:\\Tomato\\recording-export\\mock-song.mp4',
-      subtitlePath: subtitleMode === 'burnedIn' ? '' : 'C:\\Tomato\\recording-export\\mock-song.srt',
+      videoPath: subtitleMode === 'srt' ? srtVideoPath : subtitledVideoPath,
+      subtitlePath: subtitleMode === 'burnedIn' ? '' : srtPath,
+      videoVariants,
       durationMs: 32000,
       frameCount: 800,
       droppedFrameCount: 0,
@@ -982,6 +995,17 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       emitNativeEvent({ type: 'listening.recording.completed', payload: result });
     }, 80);
     return result;
+  }
+  if (type === 'listening.songExportAudio') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const versionId = String(payload.versionId ?? 'mock-suno-1');
+    return {
+      articleId,
+      versionId,
+      sourcePath: 'C:\\Tomato\\suno-music\\mock-song.mp3',
+      outputPath: 'C:\\Tomato\\recording-export\\mock-song-audio.mp3',
+      outputDirectory: 'C:\\Tomato\\recording-export',
+    };
   }
   if (type === 'listening.songStop') {
     return { stopped: true };
@@ -1029,9 +1053,22 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'listening.recordVideo') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
-    const videoPath = `${mockRecordingSettings.outputDirectory}\\Space Snacks ${mockRecordingVideos.length + 1}.mp4`;
     const subtitleMode = String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode);
-    const subtitlePath = subtitleMode === 'burnedIn' ? '' : videoPath.replace(/\.mp4$/i, '.srt');
+    const base = `${mockRecordingSettings.outputDirectory}\\Space Snacks ${mockRecordingVideos.length + 1}`;
+    const srtVideoPath = `${base} - srt.mp4`;
+    const srtPath = `${base} - srt.srt`;
+    const subtitledVideoPath = `${base} - subtitled.mp4`;
+    const videoVariants =
+      subtitleMode === 'both'
+        ? [
+            { kind: 'srt', videoPath: srtVideoPath, subtitlePath: srtPath },
+            { kind: 'subtitled', videoPath: subtitledVideoPath, subtitlePath: '' },
+          ]
+        : subtitleMode === 'burnedIn'
+          ? [{ kind: 'subtitled', videoPath: subtitledVideoPath, subtitlePath: '' }]
+          : [{ kind: 'srt', videoPath: srtVideoPath, subtitlePath: srtPath }];
+    const videoPath = subtitleMode === 'srt' ? srtVideoPath : subtitledVideoPath;
+    const subtitlePath = subtitleMode === 'burnedIn' ? '' : srtPath;
     window.setTimeout(() => {
       emitNativeEvent({
         type: 'listening.recording.progress',
@@ -1049,6 +1086,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       articleId,
       videoPath,
       subtitlePath,
+      videoVariants,
       durationMs: 4200,
       frameCount: 105,
       droppedFrameCount: 0,

@@ -1,0 +1,47 @@
+{
+  "sourceSnapshot": "e03_song_asr_full_20260622_233253.json",
+  "runtimeSnapshot": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\diagnostics\\song-asr-article-48-suno_48_1781965573729_1-20260622-233253.json",
+  "articleId": 48,
+  "versionId": "suno_48_1781965573729_1",
+  "notes": [
+    "E03 line 49/50 must stay matched when ASR contains full word timings.",
+    "E03 final line must become partial when ASR stops at lamps and misses hanging from the roof."
+  ],
+  "line49_50_words": [
+    {"text": "she", "startMs": 176150, "endMs": 176390},
+    {"text": "jumped", "startMs": 176510, "endMs": 176790},
+    {"text": "up", "startMs": 176790, "endMs": 177030},
+    {"text": "onto", "startMs": 177150, "endMs": 177550},
+    {"text": "her", "startMs": 177550, "endMs": 177710},
+    {"text": "feet", "startMs": 177750, "endMs": 178110},
+    {"text": "in", "startMs": 178230, "endMs": 178550},
+    {"text": "a", "startMs": 178550, "endMs": 178750},
+    {"text": "moment", "startMs": 178790, "endMs": 179150},
+    {"text": "she", "startMs": 180640, "endMs": 180920},
+    {"text": "looked", "startMs": 180960, "endMs": 181240},
+    {"text": "up", "startMs": 181240, "endMs": 181520},
+    {"text": "but", "startMs": 181800, "endMs": 182120},
+    {"text": "it", "startMs": 182120, "endMs": 182280},
+    {"text": "was", "startMs": 182280, "endMs": 182480},
+    {"text": "all", "startMs": 182480, "endMs": 182760},
+    {"text": "dark", "startMs": 182840, "endMs": 183160},
+    {"text": "overhead", "startMs": 183280, "endMs": 183840},
+    {"text": "before", "startMs": 184280, "endMs": 184680},
+    {"text": "her", "startMs": 184680, "endMs": 184960},
+    {"text": "was", "startMs": 185040, "endMs": 185280},
+    {"text": "another", "startMs": 185320, "endMs": 185640},
+    {"text": "long", "startMs": 185720, "endMs": 186040},
+    {"text": "passage", "startMs": 186240, "endMs": 186680}
+  ],
+  "final_line_words": [
+    {"text": "which", "startMs": 224130, "endMs": 224410},
+    {"text": "was", "startMs": 224410, "endMs": 224610},
+    {"text": "lit", "startMs": 224730, "endMs": 224890},
+    {"text": "up", "startMs": 224970, "endMs": 225210},
+    {"text": "by", "startMs": 225290, "endMs": 225610},
+    {"text": "a", "startMs": 225610, "endMs": 225850},
+    {"text": "row", "startMs": 225970, "endMs": 226210},
+    {"text": "of", "startMs": 226450, "endMs": 226850},
+    {"text": "lamps", "startMs": 227050, "endMs": 227410}
+  ]
+}

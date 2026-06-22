@@ -10,6 +10,7 @@ import 'package:path/path.dart' as path_lib;
 
 import '../core/config/app_config.dart';
 import '../data/models/article_model.dart';
+import '../data/models/article_song_model.dart';
 import '../data/models/picture_book_model.dart';
 import 'database_service.dart';
 import 'recording_export_utils.dart';
@@ -207,6 +208,7 @@ class RecordingExportResult {
     required this.resolution,
     required this.pageTransition,
     required this.warnings,
+    this.videoVariants = const [],
   });
 
   final int articleId;
@@ -220,6 +222,7 @@ class RecordingExportResult {
   final RecordingResolution resolution;
   final RecordingPageTransition pageTransition;
   final List<String> warnings;
+  final List<RecordingExportVideoVariant> videoVariants;
 
   Map<String, dynamic> toJson() => {
         'articleId': articleId,
@@ -233,6 +236,51 @@ class RecordingExportResult {
         'resolution': resolution.id,
         'pageTransition': pageTransition.name,
         'warnings': warnings,
+        if (videoVariants.isNotEmpty)
+          'videoVariants':
+              videoVariants.map((variant) => variant.toJson()).toList(),
+      };
+}
+
+class RecordingExportVideoVariant {
+  const RecordingExportVideoVariant({
+    required this.kind,
+    required this.videoPath,
+    this.subtitlePath = '',
+  });
+
+  final String kind;
+  final String videoPath;
+  final String subtitlePath;
+
+  Map<String, dynamic> toJson() => {
+        'kind': kind,
+        'videoPath': videoPath,
+        'subtitlePath': subtitlePath,
+      };
+}
+
+class SongAudioExportResult {
+  const SongAudioExportResult({
+    required this.articleId,
+    required this.versionId,
+    required this.sourcePath,
+    required this.outputPath,
+    required this.outputDirectory,
+  });
+
+  final int articleId;
+  final String versionId;
+  final String sourcePath;
+  final String outputPath;
+  final String outputDirectory;
+
+  Map<String, dynamic> toJson() => {
+        'articleId': articleId,
+        'versionId': versionId,
+        'sourcePath': sourcePath,
+        'outputPath': outputPath,
+        'outputDirectory': outputDirectory,
       };
 }
 
@@ -394,6 +442,68 @@ class RecordingExportException implements Exception {
 
   @override
   String toString() => message;
+}
+
+enum _RecordingVideoSubtitleVariant {
+  srt('srt'),
+  subtitled('subtitled');
+
+  const _RecordingVideoSubtitleVariant(this.fileMarker);
+
+  final String fileMarker;
+
+  RecordingSubtitleMode get renderMode => switch (this) {
+        _RecordingVideoSubtitleVariant.srt => RecordingSubtitleMode.srt,
+        _RecordingVideoSubtitleVariant.subtitled =>
+          RecordingSubtitleMode.burnedIn,
+      };
+}
+
+class _RecordingVideoOutputVariant {
+  const _RecordingVideoOutputVariant({
+    required this.kind,
+    required this.videoPath,
+    this.subtitlePath = '',
+  });
+
+  final _RecordingVideoSubtitleVariant kind;
+  final String videoPath;
+  final String subtitlePath;
+}
+
+class _RecordingVideoOutputPlan {
+  const _RecordingVideoOutputPlan({
+    required this.primary,
+    required this.variants,
+    required this.subtitlePath,
+  });
+
+  final _RecordingVideoOutputVariant primary;
+  final List<_RecordingVideoOutputVariant> variants;
+  final String subtitlePath;
+
+  List<String> get videoPaths =>
+      variants.map((variant) => variant.videoPath).toList(growable: false);
+
+  List<RecordingExportVideoVariant> toResultVariants() => variants
+      .map((variant) => RecordingExportVideoVariant(
+            kind: variant.kind.fileMarker,
+            videoPath: variant.videoPath,
+            subtitlePath: variant.subtitlePath,
+          ))
+      .toList(growable: false);
+}
+
+class _ExportedVideoFileNameInfo {
+  const _ExportedVideoFileNameInfo({
+    required this.stamp,
+    this.exportKind,
+    this.subtitleKind,
+  });
+
+  final String stamp;
+  final String? exportKind;
+  final String? subtitleKind;
 }
 
 class RecordingExportService {
@@ -643,16 +753,13 @@ class RecordingExportService {
 
     final outputDirectory = Directory(defaultOutputDirectory());
     await outputDirectory.create(recursive: true);
-    final baseName = await _availableOutputBaseName(
+    final outputPlan = await _resolveVideoOutputPlan(
       directory: outputDirectory,
       article: assets.article,
       series: assets.series,
+      exportKind: 'listening',
+      subtitleMode: request.subtitleMode,
     );
-    final videoPath = path_lib.join(outputDirectory.path, '$baseName.mp4');
-    final subtitleOutputPath =
-        path_lib.join(outputDirectory.path, '$baseName.srt');
-    final subtitlePath =
-        request.subtitleMode.writesSrt ? subtitleOutputPath : '';
     final frameCount = (timeline.durationMs / (1000 / request.fps))
         .ceil()
         .clamp(1, 1 << 31)
@@ -663,8 +770,8 @@ class RecordingExportService {
 
     try {
       token.throwIfCancelled();
-      if (request.subtitleMode.writesSrt) {
-        await File(subtitleOutputPath).writeAsString(
+      if (outputPlan.subtitlePath.isNotEmpty) {
+        await File(outputPlan.subtitlePath).writeAsString(
           _srtForTimeline(timeline),
           encoding: utf8,
         );
@@ -686,66 +793,19 @@ class RecordingExportService {
         encoding: utf8,
       );
 
-      if (request.pageTransition == RecordingPageTransition.none) {
-        final videoListPath = await _renderStillSegments(
-          request: request,
-          assets: assets,
-          timeline: timeline,
-          frameCount: frameCount,
-          outputDirectory: tempDir,
-          cancelToken: token,
-          onProgress: onProgress,
-        );
-
-        onProgress?.call(RecordingExportProgress(
-          articleId: request.articleId,
-          phase: 'encoding',
-          progress: 0.35,
-          completedFrames: 0,
-          totalFrames: frameCount,
-          message: '正在编码 MP4',
-        ));
-
-        await _runFfmpegEncodeStillSegments(
+      for (final variant in outputPlan.variants) {
+        await _renderAndEncodeRecordingVideo(
           ffmpegPath: encoder.ffmpegExecutable,
           encoderName: encoder.encoderName,
-          request: request,
-          videoListPath: videoListPath,
-          audioListPath: audioListPath,
-          outputPath: videoPath,
-          keyFrameTimes: timeline.pageChangeTimesMs,
-          frameCount: frameCount,
-          cancelToken: token,
-          onProgress: onProgress,
-        );
-      } else {
-        final videoListPath = await _renderHybridSegments(
-          request: request,
+          request: _recordingRequestWithSubtitleMode(
+            request,
+            variant.kind.renderMode,
+          ),
           assets: assets,
           timeline: timeline,
-          frameCount: frameCount,
-          outputDirectory: tempDir,
-          cancelToken: token,
-          onProgress: onProgress,
-        );
-
-        onProgress?.call(RecordingExportProgress(
-          articleId: request.articleId,
-          phase: 'encoding',
-          progress: 0.35,
-          completedFrames: 0,
-          totalFrames: frameCount,
-          message: '正在编码 MP4',
-        ));
-
-        await _runFfmpegEncodeStillSegments(
-          ffmpegPath: encoder.ffmpegExecutable,
-          encoderName: encoder.encoderName,
-          request: request,
-          videoListPath: videoListPath,
           audioListPath: audioListPath,
-          outputPath: videoPath,
-          keyFrameTimes: timeline.pageChangeTimesMs,
+          outputPath: variant.videoPath,
+          outputDirectory: tempDir,
           frameCount: frameCount,
           cancelToken: token,
           onProgress: onProgress,
@@ -766,8 +826,8 @@ class RecordingExportService {
       ];
       final result = RecordingExportResult(
         articleId: request.articleId,
-        videoPath: videoPath,
-        subtitlePath: subtitlePath,
+        videoPath: outputPlan.primary.videoPath,
+        subtitlePath: outputPlan.subtitlePath,
         durationMs: timeline.durationMs,
         frameCount: frameCount,
         droppedFrameCount: 0,
@@ -776,16 +836,17 @@ class RecordingExportService {
         resolution: request.resolution,
         pageTransition: request.pageTransition,
         warnings: warnings,
+        videoVariants: outputPlan.toResultVariants(),
       );
-      await _registerVideoVersion(
+      await _registerVideoVersions(
         result,
         source: 'listening',
       );
       return result;
     } catch (_) {
-      await _cleanupFailedExport(
-        videoPath: videoPath,
-        subtitlePath: subtitleOutputPath,
+      await _cleanupFailedExportPaths(
+        videoPaths: outputPlan.videoPaths,
+        subtitlePaths: [outputPlan.subtitlePath],
       );
       rethrow;
     } finally {
@@ -862,16 +923,13 @@ class RecordingExportService {
 
     final outputDirectory = Directory(defaultOutputDirectory());
     await outputDirectory.create(recursive: true);
-    final baseName = await _availableOutputBaseName(
+    final outputPlan = await _resolveVideoOutputPlan(
       directory: outputDirectory,
       article: assets.article,
       series: assets.series,
+      exportKind: 'song',
+      subtitleMode: request.subtitleMode,
     );
-    final videoPath = path_lib.join(outputDirectory.path, '$baseName.mp4');
-    final subtitleOutputPath =
-        path_lib.join(outputDirectory.path, '$baseName.srt');
-    final subtitlePath =
-        request.subtitleMode.writesSrt ? subtitleOutputPath : '';
     final frameCount = (timeline.durationMs / (1000 / request.fps))
         .ceil()
         .clamp(1, 1 << 31)
@@ -882,8 +940,8 @@ class RecordingExportService {
 
     try {
       token.throwIfCancelled();
-      if (request.subtitleMode.writesSrt) {
-        await File(subtitleOutputPath).writeAsString(
+      if (outputPlan.subtitlePath.isNotEmpty) {
+        await File(outputPlan.subtitlePath).writeAsString(
           SongSubtitleTimelineService.srtForTimeline(assets.timeline),
           encoding: utf8,
         );
@@ -903,71 +961,29 @@ class RecordingExportService {
         encoding: utf8,
       );
 
-      if (request.pageTransition == RecordingPageTransition.none) {
-        final videoListPath = await _renderStillSegments(
-          request: RecordingExportRequest(
-            articleId: request.articleId,
-            mode: 'english',
-            codec: request.codec,
-            resolution: request.resolution,
-            pageTransition: request.pageTransition,
-            subtitleMode: request.subtitleMode,
-            fps: request.fps,
-          ),
-          assets: assets.toRecordingAssets(),
-          timeline: timeline,
-          frameCount: frameCount,
-          outputDirectory: tempDir,
-          cancelToken: token,
-          onProgress: onProgress,
-        );
-        await _runFfmpegEncodeStillSegments(
+      final recordingRequest = RecordingExportRequest(
+        articleId: request.articleId,
+        mode: 'english',
+        codec: request.codec,
+        resolution: request.resolution,
+        pageTransition: request.pageTransition,
+        subtitleMode: request.subtitleMode,
+        fps: request.fps,
+      );
+      final recordingAssets = assets.toRecordingAssets();
+      for (final variant in outputPlan.variants) {
+        await _renderAndEncodeRecordingVideo(
           ffmpegPath: encoder.ffmpegExecutable,
           encoderName: encoder.encoderName,
-          request: RecordingExportRequest(
-            articleId: request.articleId,
-            mode: 'english',
-            codec: request.codec,
-            resolution: request.resolution,
-            pageTransition: request.pageTransition,
-            subtitleMode: request.subtitleMode,
-            fps: request.fps,
+          request: _recordingRequestWithSubtitleMode(
+            recordingRequest,
+            variant.kind.renderMode,
           ),
-          videoListPath: videoListPath,
-          audioListPath: audioListPath,
-          outputPath: videoPath,
-          keyFrameTimes: timeline.pageChangeTimesMs,
-          frameCount: frameCount,
-          cancelToken: token,
-          onProgress: onProgress,
-        );
-      } else {
-        final recordingRequest = RecordingExportRequest(
-          articleId: request.articleId,
-          mode: 'english',
-          codec: request.codec,
-          resolution: request.resolution,
-          pageTransition: request.pageTransition,
-          subtitleMode: request.subtitleMode,
-          fps: request.fps,
-        );
-        final videoListPath = await _renderHybridSegments(
-          request: recordingRequest,
-          assets: assets.toRecordingAssets(),
+          assets: recordingAssets,
           timeline: timeline,
-          frameCount: frameCount,
-          outputDirectory: tempDir,
-          cancelToken: token,
-          onProgress: onProgress,
-        );
-        await _runFfmpegEncodeStillSegments(
-          ffmpegPath: encoder.ffmpegExecutable,
-          encoderName: encoder.encoderName,
-          request: recordingRequest,
-          videoListPath: videoListPath,
           audioListPath: audioListPath,
-          outputPath: videoPath,
-          keyFrameTimes: timeline.pageChangeTimesMs,
+          outputPath: variant.videoPath,
+          outputDirectory: tempDir,
           frameCount: frameCount,
           cancelToken: token,
           onProgress: onProgress,
@@ -989,8 +1005,8 @@ class RecordingExportService {
       ];
       final result = RecordingExportResult(
         articleId: request.articleId,
-        videoPath: videoPath,
-        subtitlePath: subtitlePath,
+        videoPath: outputPlan.primary.videoPath,
+        subtitlePath: outputPlan.subtitlePath,
         durationMs: timeline.durationMs,
         frameCount: frameCount,
         droppedFrameCount: 0,
@@ -999,16 +1015,17 @@ class RecordingExportService {
         resolution: request.resolution,
         pageTransition: request.pageTransition,
         warnings: warnings,
+        videoVariants: outputPlan.toResultVariants(),
       );
-      await _registerVideoVersion(
+      await _registerVideoVersions(
         result,
         source: 'song',
       );
       return result;
     } catch (_) {
-      await _cleanupFailedExport(
-        videoPath: videoPath,
-        subtitlePath: subtitleOutputPath,
+      await _cleanupFailedExportPaths(
+        videoPaths: outputPlan.videoPaths,
+        subtitlePaths: [outputPlan.subtitlePath],
       );
       rethrow;
     } finally {
@@ -1018,6 +1035,202 @@ class RecordingExportService {
         // Temporary frame cleanup is best effort.
       }
     }
+  }
+
+  static RecordingExportRequest _recordingRequestWithSubtitleMode(
+    RecordingExportRequest request,
+    RecordingSubtitleMode subtitleMode,
+  ) =>
+      RecordingExportRequest(
+        articleId: request.articleId,
+        mode: request.mode,
+        codec: request.codec,
+        resolution: request.resolution,
+        pageTransition: request.pageTransition,
+        subtitleMode: subtitleMode,
+        fps: request.fps,
+        subtitleTranslations: request.subtitleTranslations,
+      );
+
+  static Future<_RecordingVideoOutputPlan> _resolveVideoOutputPlan({
+    required Directory directory,
+    required Article article,
+    required StorySeries? series,
+    required String exportKind,
+    required RecordingSubtitleMode subtitleMode,
+    DateTime? now,
+  }) async {
+    final variants = _subtitleVariantsForMode(subtitleMode);
+    final baseNames = await _availableVideoOutputBaseNames(
+      directory: directory,
+      article: article,
+      series: series,
+      exportKind: exportKind,
+      variants: variants,
+      now: now,
+    );
+    final outputVariants = <_RecordingVideoOutputVariant>[];
+    for (final variant in variants) {
+      final baseName = baseNames[variant]!;
+      final subtitlePath = variant == _RecordingVideoSubtitleVariant.srt
+          ? path_lib.join(directory.path, '$baseName.srt')
+          : '';
+      outputVariants.add(_RecordingVideoOutputVariant(
+        kind: variant,
+        videoPath: path_lib.join(directory.path, '$baseName.mp4'),
+        subtitlePath: subtitlePath,
+      ));
+    }
+    final primary = outputVariants.firstWhere(
+      (variant) => variant.kind == _RecordingVideoSubtitleVariant.subtitled,
+      orElse: () => outputVariants.first,
+    );
+    final subtitlePath = outputVariants
+        .where((variant) => variant.kind == _RecordingVideoSubtitleVariant.srt)
+        .map((variant) => variant.subtitlePath)
+        .firstWhere((path) => path.isNotEmpty, orElse: () => '');
+    return _RecordingVideoOutputPlan(
+      primary: primary,
+      variants: outputVariants,
+      subtitlePath: subtitlePath,
+    );
+  }
+
+  static List<_RecordingVideoSubtitleVariant> _subtitleVariantsForMode(
+    RecordingSubtitleMode mode,
+  ) =>
+      switch (mode) {
+        RecordingSubtitleMode.srt => const [
+            _RecordingVideoSubtitleVariant.srt,
+          ],
+        RecordingSubtitleMode.burnedIn => const [
+            _RecordingVideoSubtitleVariant.subtitled,
+          ],
+        RecordingSubtitleMode.both => const [
+            _RecordingVideoSubtitleVariant.srt,
+            _RecordingVideoSubtitleVariant.subtitled,
+          ],
+      };
+
+  static Future<void> _renderAndEncodeRecordingVideo({
+    required String ffmpegPath,
+    required String encoderName,
+    required RecordingExportRequest request,
+    required _PreparedRecordingAssets assets,
+    required _RecordingTimeline timeline,
+    required String audioListPath,
+    required String outputPath,
+    required Directory outputDirectory,
+    required int frameCount,
+    required RecordingCancelToken cancelToken,
+    void Function(RecordingExportProgress progress)? onProgress,
+  }) async {
+    final videoListPath = request.pageTransition == RecordingPageTransition.none
+        ? await _renderStillSegments(
+            request: request,
+            assets: assets,
+            timeline: timeline,
+            frameCount: frameCount,
+            outputDirectory: outputDirectory,
+            cancelToken: cancelToken,
+            onProgress: onProgress,
+          )
+        : await _renderHybridSegments(
+            request: request,
+            assets: assets,
+            timeline: timeline,
+            frameCount: frameCount,
+            outputDirectory: outputDirectory,
+            cancelToken: cancelToken,
+            onProgress: onProgress,
+          );
+
+    onProgress?.call(RecordingExportProgress(
+      articleId: request.articleId,
+      phase: 'encoding',
+      progress: 0.35,
+      completedFrames: 0,
+      totalFrames: frameCount,
+      message: '正在编码 MP4',
+    ));
+
+    await _runFfmpegEncodeStillSegments(
+      ffmpegPath: ffmpegPath,
+      encoderName: encoderName,
+      request: request,
+      videoListPath: videoListPath,
+      audioListPath: audioListPath,
+      outputPath: outputPath,
+      keyFrameTimes: timeline.pageChangeTimesMs,
+      frameCount: frameCount,
+      cancelToken: cancelToken,
+      onProgress: onProgress,
+    );
+  }
+
+  static Future<SongAudioExportResult> exportSongAudio({
+    required int articleId,
+    required ArticleSongVersion version,
+  }) async {
+    final article = await DatabaseService.getArticleById(articleId);
+    if (article == null) {
+      throw RecordingExportException('文章不存在（id=$articleId）');
+    }
+    final series = await _storySeriesForArticle(articleId);
+    return _exportSongAudio(
+      articleId: articleId,
+      article: article,
+      series: series,
+      version: version,
+      outputDirectory: Directory(defaultOutputDirectory()),
+    );
+  }
+
+  static Future<SongAudioExportResult> _exportSongAudio({
+    required int articleId,
+    required Article article,
+    required StorySeries? series,
+    required ArticleSongVersion version,
+    required Directory outputDirectory,
+    DateTime? now,
+  }) async {
+    final sourcePath = version.audioPath.trim();
+    if (sourcePath.isEmpty) {
+      throw const RecordingExportException('歌曲音频文件路径为空');
+    }
+    final sourceFile = File(sourcePath);
+    if (!await sourceFile.exists()) {
+      throw RecordingExportException('歌曲音频文件不存在：$sourcePath');
+    }
+
+    await outputDirectory.create(recursive: true);
+    final extension = _audioOutputExtension(sourcePath);
+    final baseName = await _availableOutputBaseName(
+      directory: outputDirectory,
+      article: article,
+      series: series,
+      exportKind: 'song-audio',
+      now: now,
+      extensionsToCheck: [extension],
+    );
+    final outputPath =
+        path_lib.join(outputDirectory.path, '$baseName$extension');
+    await sourceFile.copy(outputPath);
+    return SongAudioExportResult(
+      articleId: articleId,
+      versionId: version.id,
+      sourcePath: sourceFile.path,
+      outputPath: outputPath,
+      outputDirectory: outputDirectory.path,
+    );
+  }
+
+  static Future<StorySeries?> _storySeriesForArticle(int articleId) async {
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    if (chapter == null) {
+      return null;
+    }
+    return DatabaseService.getStorySeriesById(chapter.seriesId);
   }
 
   static Map<String, dynamic> _normalizeSettings(Map<String, String> settings) {
@@ -1057,18 +1270,40 @@ class RecordingExportService {
   static String defaultOutputDirectory() =>
       path_lib.join(programDirectory(), 'recording-export');
 
-  static Future<void> _registerVideoVersion(
+  static Future<void> _registerVideoVersions(
     RecordingExportResult result, {
     required String source,
   }) async {
-    final version = await _videoVersionFromResult(result, source: source);
     final allVersions = await _readVideoIndex();
+    final hasExistingDefault = allVersions.any(
+      (item) => item.articleId == result.articleId && item.isDefault,
+    );
+    final variants = result.videoVariants.isEmpty
+        ? [
+            RecordingExportVideoVariant(
+              kind: result.subtitlePath.trim().isEmpty ? 'subtitled' : 'srt',
+              videoPath: result.videoPath,
+              subtitlePath: result.subtitlePath,
+            ),
+          ]
+        : result.videoVariants;
+    final versions = <RecordingVideoVersion>[];
+    for (final variant in variants) {
+      final version = await _videoVersionFromVariant(
+        result,
+        variant: variant,
+        source: source,
+        isDefault: !hasExistingDefault && variant.videoPath == result.videoPath,
+      );
+      versions.add(version);
+    }
+    final versionIds = versions.map((version) => version.id).toSet();
     final articleVersions = await _normalizeArticleVideoVersions(
       <RecordingVideoVersion>[
         ...allVersions
             .where((item) => item.articleId == result.articleId)
-            .where((item) => item.id != version.id),
-        version,
+            .where((item) => !versionIds.contains(item.id)),
+        ...versions,
       ],
     );
     await _writeVideoIndex(_replaceArticleVideoVersions(
@@ -1078,28 +1313,30 @@ class RecordingExportService {
     ));
   }
 
-  static Future<RecordingVideoVersion> _videoVersionFromResult(
+  static Future<RecordingVideoVersion> _videoVersionFromVariant(
     RecordingExportResult result, {
+    required RecordingExportVideoVariant variant,
     required String source,
+    required bool isDefault,
   }) async {
     FileStat? stat;
     try {
-      stat = await File(result.videoPath).stat();
+      stat = await File(variant.videoPath).stat();
     } catch (_) {
       stat = null;
     }
-    final createdAt = _createdAtFromVideoPath(result.videoPath) ??
+    final createdAt = _createdAtFromVideoPath(variant.videoPath) ??
         stat?.modified ??
         DateTime.now();
     return RecordingVideoVersion(
-      id: _videoIdForPath(result.videoPath),
+      id: _videoIdForPath(variant.videoPath),
       articleId: result.articleId,
-      videoPath: result.videoPath,
-      subtitlePath: result.subtitlePath,
+      videoPath: variant.videoPath,
+      subtitlePath: variant.subtitlePath,
       createdAt: createdAt.toIso8601String(),
       source: source,
-      title: path_lib.basenameWithoutExtension(result.videoPath),
-      isDefault: false,
+      title: path_lib.basenameWithoutExtension(variant.videoPath),
+      isDefault: isDefault,
       durationMs: result.durationMs,
       frameCount: result.frameCount,
       droppedFrameCount: result.droppedFrameCount,
@@ -1251,10 +1488,6 @@ class RecordingExportService {
     if (prefix.isEmpty) {
       return const <RecordingVideoVersion>[];
     }
-    final pattern = RegExp(
-      '^${RegExp.escape(prefix)} - (\\d{8}-\\d{6})(?:-\\d+)?\\.mp4\$',
-      caseSensitive: false,
-    );
     final versions = <RecordingVideoVersion>[];
     try {
       await for (final entity in directory.list(followLinks: false)) {
@@ -1263,8 +1496,11 @@ class RecordingExportService {
           continue;
         }
         final fileName = path_lib.basename(entity.path);
-        final match = pattern.firstMatch(fileName);
-        if (match == null) {
+        final parsed = _parseExportedVideoFileName(
+          prefix: prefix,
+          fileName: fileName,
+        );
+        if (parsed == null) {
           continue;
         }
         final stat = await entity.stat();
@@ -1275,15 +1511,20 @@ class RecordingExportService {
           );
           continue;
         }
-        final createdAt = _dateTimeFromStamp(match.group(1)) ?? stat.modified;
-        final subtitlePath = path_lib.setExtension(entity.path, '.srt');
+        final createdAt = _dateTimeFromStamp(parsed.stamp) ?? stat.modified;
+        final subtitlePath = parsed.subtitleKind == 'subtitled'
+            ? ''
+            : path_lib.setExtension(entity.path, '.srt');
         versions.add(RecordingVideoVersion(
           id: _videoIdForPath(entity.path),
           articleId: articleId,
           videoPath: entity.path,
-          subtitlePath: await File(subtitlePath).exists() ? subtitlePath : '',
+          subtitlePath:
+              subtitlePath.isNotEmpty && await File(subtitlePath).exists()
+                  ? subtitlePath
+                  : '',
           createdAt: createdAt.toIso8601String(),
-          source: 'scanned',
+          source: parsed.exportKind ?? 'scanned',
           title: path_lib.basenameWithoutExtension(entity.path),
           isDefault: false,
           sizeBytes: stat.size,
@@ -1317,6 +1558,28 @@ class RecordingExportService {
         if (seriesTitle.trim().isNotEmpty) seriesTitle,
         articleTitle,
       ].join(' - '));
+
+  static _ExportedVideoFileNameInfo? _parseExportedVideoFileName({
+    required String prefix,
+    required String fileName,
+  }) {
+    final pattern = RegExp(
+      '^${RegExp.escape(prefix)} - '
+      '(?:(listening|song) - )?'
+      '(?:(srt|subtitled) - )?'
+      '(\\d{8}-\\d{6})(?:-\\d+)?\\.mp4\$',
+      caseSensitive: false,
+    );
+    final match = pattern.firstMatch(fileName);
+    if (match == null) {
+      return null;
+    }
+    return _ExportedVideoFileNameInfo(
+      exportKind: match.group(1)?.toLowerCase(),
+      subtitleKind: match.group(2)?.toLowerCase(),
+      stamp: match.group(3) ?? '',
+    );
+  }
 
   static Future<_PreparedRecordingAssets> _prepareAssets(
     RecordingExportRequest request, {
@@ -3019,6 +3282,15 @@ class RecordingExportService {
     await _deleteFileIfExists(subtitlePath);
   }
 
+  static Future<void> _cleanupFailedExportPaths({
+    required Iterable<String> videoPaths,
+    required Iterable<String> subtitlePaths,
+  }) async {
+    for (final path in {...videoPaths, ...subtitlePaths}) {
+      await _deleteFileIfExists(path);
+    }
+  }
+
   static Future<void> _deleteFileIfExists(String filePath) async {
     final normalized = filePath.trim();
     if (normalized.isEmpty) {
@@ -3100,27 +3372,86 @@ class RecordingExportService {
     required Directory directory,
     required Article article,
     required StorySeries? series,
+    required String exportKind,
+    DateTime? now,
+    List<String> extensionsToCheck = const ['.mp4', '.srt'],
   }) async {
-    final now = DateTime.now();
     final safeBase = _outputBaseName(
       seriesTitle: series?.title ?? '',
       articleTitle: article.title,
-      now: now,
+      exportKind: exportKind,
+      subtitleKind: '',
+      now: now ?? DateTime.now(),
     );
+    final extensions = extensionsToCheck
+        .map(_normalizeOutputExtension)
+        .where((extension) => extension.isNotEmpty)
+        .toList(growable: false);
     var candidate = safeBase;
     var suffix = 2;
-    while (await File(path_lib.join(directory.path, '$candidate.mp4'))
-            .exists() ||
-        await File(path_lib.join(directory.path, '$candidate.srt')).exists()) {
+    while (await _outputCandidateExists(
+      directory: directory,
+      baseName: candidate,
+      extensions: extensions,
+    )) {
       candidate = '$safeBase-$suffix';
       suffix += 1;
     }
     return candidate;
   }
 
+  static Future<Map<_RecordingVideoSubtitleVariant, String>>
+      _availableVideoOutputBaseNames({
+    required Directory directory,
+    required Article article,
+    required StorySeries? series,
+    required String exportKind,
+    required List<_RecordingVideoSubtitleVariant> variants,
+    DateTime? now,
+  }) async {
+    final timestamp = now ?? DateTime.now();
+    final safeBases = <_RecordingVideoSubtitleVariant, String>{
+      for (final variant in variants)
+        variant: _outputBaseName(
+          seriesTitle: series?.title ?? '',
+          articleTitle: article.title,
+          exportKind: exportKind,
+          subtitleKind: variant.fileMarker,
+          now: timestamp,
+        ),
+    };
+    var suffix = 0;
+    while (true) {
+      final candidates = <_RecordingVideoSubtitleVariant, String>{
+        for (final entry in safeBases.entries)
+          entry.key: suffix == 0 ? entry.value : '${entry.value}-$suffix',
+      };
+      var exists = false;
+      for (final entry in candidates.entries) {
+        final extensions = entry.key == _RecordingVideoSubtitleVariant.srt
+            ? const ['.mp4', '.srt']
+            : const ['.mp4'];
+        exists = await _outputCandidateExists(
+          directory: directory,
+          baseName: entry.value,
+          extensions: extensions,
+        );
+        if (exists) {
+          break;
+        }
+      }
+      if (!exists) {
+        return candidates;
+      }
+      suffix = suffix == 0 ? 2 : suffix + 1;
+    }
+  }
+
   static String _outputBaseName({
     required String seriesTitle,
     required String articleTitle,
+    required String exportKind,
+    String subtitleKind = '',
     required DateTime now,
   }) {
     final stamp =
@@ -3128,9 +3459,38 @@ class RecordingExportService {
     final raw = [
       if (seriesTitle.trim().isNotEmpty) seriesTitle,
       articleTitle,
+      exportKind,
+      if (subtitleKind.trim().isNotEmpty) subtitleKind,
       stamp,
     ].join(' - ');
     return _sanitizeFileName(raw);
+  }
+
+  static Future<bool> _outputCandidateExists({
+    required Directory directory,
+    required String baseName,
+    required List<String> extensions,
+  }) async {
+    for (final extension in extensions) {
+      if (await File(path_lib.join(directory.path, '$baseName$extension'))
+          .exists()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static String _normalizeOutputExtension(String extension) {
+    final trimmed = extension.trim();
+    if (trimmed.isEmpty) {
+      return '';
+    }
+    return trimmed.startsWith('.') ? trimmed : '.$trimmed';
+  }
+
+  static String _audioOutputExtension(String sourcePath) {
+    final extension = path_lib.extension(sourcePath).trim();
+    return extension.isEmpty ? '.mp3' : extension;
   }
 
   static String _two(int value) => value.toString().padLeft(2, '0');
@@ -3310,13 +3670,80 @@ class RecordingExportService {
   @visibleForTesting
   static String outputBaseNameForTest({
     required String articleTitle,
+    required String exportKind,
+    String subtitleKind = '',
     String seriesTitle = '',
     DateTime? now,
   }) =>
       _outputBaseName(
         seriesTitle: seriesTitle,
         articleTitle: articleTitle,
+        exportKind: exportKind,
+        subtitleKind: subtitleKind,
         now: now ?? DateTime(2026, 1, 2, 3, 4, 5),
+      );
+
+  @visibleForTesting
+  static Future<Map<String, Object?>> videoOutputPlanForTest({
+    required Directory directory,
+    required Article article,
+    StorySeries? series,
+    required String exportKind,
+    required RecordingSubtitleMode subtitleMode,
+    DateTime? now,
+  }) async {
+    final plan = await _resolveVideoOutputPlan(
+      directory: directory,
+      article: article,
+      series: series,
+      exportKind: exportKind,
+      subtitleMode: subtitleMode,
+      now: now,
+    );
+    return {
+      'primaryVideoPath': plan.primary.videoPath,
+      'subtitlePath': plan.subtitlePath,
+      'variants': [
+        for (final variant in plan.toResultVariants()) variant.toJson(),
+      ],
+    };
+  }
+
+  @visibleForTesting
+  static Map<String, String?>? exportedVideoFileNameInfoForTest({
+    required String prefix,
+    required String fileName,
+  }) {
+    final parsed = _parseExportedVideoFileName(
+      prefix: prefix,
+      fileName: fileName,
+    );
+    if (parsed == null) {
+      return null;
+    }
+    return {
+      'exportKind': parsed.exportKind,
+      'subtitleKind': parsed.subtitleKind,
+      'stamp': parsed.stamp,
+    };
+  }
+
+  @visibleForTesting
+  static Future<SongAudioExportResult> exportSongAudioForTest({
+    required int articleId,
+    required Article article,
+    required ArticleSongVersion version,
+    required Directory outputDirectory,
+    StorySeries? series,
+    DateTime? now,
+  }) =>
+      _exportSongAudio(
+        articleId: articleId,
+        article: article,
+        series: series,
+        version: version,
+        outputDirectory: outputDirectory,
+        now: now,
       );
 
   @visibleForTesting

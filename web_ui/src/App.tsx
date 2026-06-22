@@ -21,6 +21,7 @@ import type {
   ListeningRecordingResultPayload,
   ListeningResumePayload,
   ListeningSentenceUpdatePayload,
+  ListeningSongAudioExportPayload,
   ListeningSongPositionPayload,
   ListeningSongStatePayload,
   ListeningTranslationsPayload,
@@ -3111,6 +3112,21 @@ function SongCreationPanel({
     }
   };
 
+  const exportSongAudioFromCreation = async (versionId: string) => {
+    setBusy(true);
+    try {
+      await sendNative<ListeningSongAudioExportPayload>('listening.songExportAudio', {
+        articleId: article.id,
+        versionId,
+      });
+      onNotice('音频已导出到 recording-export');
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '音频导出失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openSongRecordingDialog = (versionId: string) => {
     if (!recordingSettings) {
       onNotice('录制设置尚未加载，请稍后重试');
@@ -3355,6 +3371,15 @@ function SongCreationPanel({
                       onClick={() => openSongRecordingDialog(version.id)}
                     >
                       <Icon name="recordVideo" /> 导出歌曲视频
+                    </button>
+                    <button
+                      className="ghost-action small"
+                      type="button"
+                      disabled={busy || !version.audioPath?.trim()}
+                      title="导出音频文件"
+                      onClick={() => void exportSongAudioFromCreation(version.id)}
+                    >
+                      <Icon name="download" /> 导出音频文件
                     </button>
                   </div>
                 );
@@ -5240,6 +5265,18 @@ function ListeningPage({
     }
   };
 
+  const exportSongAudio = async (versionId: string) => {
+    try {
+      await sendNative<ListeningSongAudioExportPayload>('listening.songExportAudio', {
+        articleId,
+        versionId,
+      });
+      onNotice('音频已导出到 recording-export');
+    } catch (exportError) {
+      onNotice(exportError instanceof Error ? exportError.message : '音频导出失败');
+    }
+  };
+
   const stopSong = async () => {
     try {
       await sendNative('listening.songStop');
@@ -5885,6 +5922,7 @@ function ListeningPage({
           onSetDefaultVersion={(versionId) => void setDefaultSongVersion(versionId)}
           onGenerateTimeline={(versionId) => void generateSongTimeline(versionId)}
           onRecordSongVideo={(versionId) => void recordSongVideo(versionId)}
+          onExportSongAudio={(versionId) => void exportSongAudio(versionId)}
           onStopSong={() => void stopSong()}
         />
       )}
@@ -5911,6 +5949,12 @@ function ListeningPage({
         <RecordingProgressOverlay
           progress={recordingProgress}
           onCancel={cancelRecording}
+        />
+      )}
+      {recordingResult && (
+        <RecordingResultCard
+          result={recordingResult}
+          onClose={() => setRecordingResult(null)}
         />
       )}
     </section>
@@ -6001,6 +6045,7 @@ function SongDialog({
   onSetDefaultVersion,
   onGenerateTimeline,
   onRecordSongVideo,
+  onExportSongAudio,
   onStopSong,
 }: {
   state: SongDialogState;
@@ -6023,6 +6068,7 @@ function SongDialog({
   onSetDefaultVersion: (versionId: string) => void;
   onGenerateTimeline: (versionId: string) => void;
   onRecordSongVideo: (versionId: string) => void;
+  onExportSongAudio: (versionId: string) => void;
   onStopSong: () => void;
 }) {
   const busy = state.suggesting || state.submitting;
@@ -6133,6 +6179,15 @@ function SongDialog({
                               title={timelineReady ? '录制歌曲视频' : timelineBlockedTitle}
                             >
                               <Icon name="recordVideo" /> 录制歌曲视频
+                            </button>
+                            <button
+                              className="ghost-action small"
+                              type="button"
+                              onClick={() => onExportSongAudio(version.id)}
+                              disabled={busy || songGenerating || recordingBusy || !version.audioPath?.trim()}
+                              title="导出音频文件"
+                            >
+                              <Icon name="download" /> 导出音频文件
                             </button>
                           </div>
                         );
@@ -7671,6 +7726,9 @@ function RecordingResultCard({
   onClose: () => void;
 }) {
   const hasWarnings = result.droppedFrameCount > 0 || result.warnings.length > 0;
+  const variants = result.videoVariants ?? [];
+  const srtVariant = variants.find((variant) => variant.kind === 'srt');
+  const subtitledVariant = variants.find((variant) => variant.kind === 'subtitled');
   return (
     <div className={`recording-result-card ${hasWarnings ? 'warning' : ''}`} role="status">
       <div>
@@ -7688,8 +7746,20 @@ function RecordingResultCard({
         </ul>
       )}
       <p>
-        <span>视频：{result.videoPath}</span>
-        {result.subtitlePath.trim() && <span>字幕：{result.subtitlePath}</span>}
+        {variants.length > 0 ? (
+          <>
+            {srtVariant && <span>无内置字幕视频：{srtVariant.videoPath}</span>}
+            {(srtVariant?.subtitlePath ?? result.subtitlePath).trim() && (
+              <span>字幕：{(srtVariant?.subtitlePath ?? result.subtitlePath).trim()}</span>
+            )}
+            {subtitledVariant && <span>内置字幕视频：{subtitledVariant.videoPath}</span>}
+          </>
+        ) : (
+          <>
+            <span>视频：{result.videoPath}</span>
+            {result.subtitlePath.trim() && <span>字幕：{result.subtitlePath}</span>}
+          </>
+        )}
       </p>
       <button className="ghost-action small" type="button" onClick={onClose}>
         知道了
@@ -7787,9 +7857,9 @@ const recordingTransitionOptions: SelectOption[] = [
 ];
 
 const recordingSubtitleModeOptions: SelectOption[] = [
-  { value: 'srt', label: '仅生成 SRT' },
-  { value: 'burnedIn', label: '烧录到视频' },
-  { value: 'both', label: '视频内字幕 + SRT' },
+  { value: 'srt', label: '无内置字幕视频 + SRT' },
+  { value: 'burnedIn', label: '内置字幕视频' },
+  { value: 'both', label: '两版视频 + SRT' },
 ];
 
 function RecordingChoiceField({

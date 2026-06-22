@@ -1,9 +1,13 @@
 // ignore_for_file: experimental_member_use
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:tomato_english_happy_talking/data/models/article_model.dart';
+import 'package:tomato_english_happy_talking/data/models/article_song_model.dart';
+import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/recording_export_service.dart';
 import 'package:tomato_english_happy_talking/services/recording_export_utils.dart';
 import 'package:tomato_english_happy_talking/services/song_subtitle_timeline_service.dart';
@@ -114,16 +118,193 @@ void main() {
     expect(srt, isNot(contains('<b>')));
   });
 
-  test('recording output basename omits playback mode suffix', () {
-    final baseName = RecordingExportService.outputBaseNameForTest(
+  test('recording output basename distinguishes listening and song exports',
+      () {
+    final listeningBaseName = RecordingExportService.outputBaseNameForTest(
       seriesTitle: 'Space Story Series',
       articleTitle: 'Space Snacks',
+      exportKind: 'listening',
+      subtitleKind: 'srt',
+      now: DateTime(2026, 6, 12, 9, 8, 7),
+    );
+    final songBaseName = RecordingExportService.outputBaseNameForTest(
+      seriesTitle: 'Space Story Series',
+      articleTitle: 'Space Snacks',
+      exportKind: 'song',
+      subtitleKind: 'subtitled',
       now: DateTime(2026, 6, 12, 9, 8, 7),
     );
 
-    expect(baseName, 'Space Story Series - Space Snacks - 20260612-090807');
-    expect(baseName, isNot(contains('english')));
-    expect(baseName, isNot(contains('bilingual')));
+    expect(
+      listeningBaseName,
+      'Space Story Series - Space Snacks - listening - srt - 20260612-090807',
+    );
+    expect(
+      songBaseName,
+      'Space Story Series - Space Snacks - song - subtitled - 20260612-090807',
+    );
+    expect(listeningBaseName, isNot(contains('bilingual')));
+    expect(songBaseName, isNot(contains('bilingual')));
+  });
+
+  test('both subtitle video output plan shares collision suffix', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'tomato_video_output_plan_test_',
+    );
+    addTearDown(() async {
+      if (await temp.exists()) {
+        await temp.delete(recursive: true);
+      }
+    });
+
+    final now = DateTime(2026, 6, 12, 9, 8, 7);
+    final collision = File(
+      '${temp.path}${Platform.pathSeparator}'
+      'Space Story Series - Space Snacks - listening - subtitled - '
+      '20260612-090807.mp4',
+    );
+    await collision.writeAsBytes([1]);
+
+    final plan = await RecordingExportService.videoOutputPlanForTest(
+      directory: temp,
+      article: Article(
+        id: 42,
+        title: 'Space Snacks',
+        content: '',
+        sentences: const [],
+        createdAt: now,
+      ),
+      series: StorySeries(
+        id: 7,
+        title: 'Space Story Series',
+        createdAt: now,
+        updatedAt: now,
+      ),
+      exportKind: 'listening',
+      subtitleMode: RecordingSubtitleMode.both,
+      now: now,
+    );
+
+    final variants = (plan['variants']! as List).cast<Map<String, dynamic>>();
+    expect(
+      plan['primaryVideoPath'],
+      endsWith(
+        'Space Story Series - Space Snacks - listening - subtitled - '
+        '20260612-090807-2.mp4',
+      ),
+    );
+    expect(
+      plan['subtitlePath'],
+      endsWith(
+        'Space Story Series - Space Snacks - listening - srt - '
+        '20260612-090807-2.srt',
+      ),
+    );
+    expect(variants, hasLength(2));
+    expect(variants.first, containsPair('kind', 'srt'));
+    expect(
+      variants.first['videoPath'],
+      endsWith(
+        'Space Story Series - Space Snacks - listening - srt - '
+        '20260612-090807-2.mp4',
+      ),
+    );
+    expect(variants.last, containsPair('kind', 'subtitled'));
+    expect(variants.last['subtitlePath'], '');
+  });
+
+  test('recording video filename scanner accepts old and subtitle variants',
+      () {
+    const prefix = 'Space Story Series - Space Snacks';
+
+    expect(
+      RecordingExportService.exportedVideoFileNameInfoForTest(
+        prefix: prefix,
+        fileName: 'Space Story Series - Space Snacks - 20260612-090807.mp4',
+      ),
+      containsPair('stamp', '20260612-090807'),
+    );
+    expect(
+      RecordingExportService.exportedVideoFileNameInfoForTest(
+        prefix: prefix,
+        fileName:
+            'Space Story Series - Space Snacks - listening - 20260612-090807.mp4',
+      ),
+      containsPair('exportKind', 'listening'),
+    );
+    expect(
+      RecordingExportService.exportedVideoFileNameInfoForTest(
+        prefix: prefix,
+        fileName:
+            'Space Story Series - Space Snacks - song - subtitled - 20260612-090807-2.mp4',
+      ),
+      allOf(
+        containsPair('exportKind', 'song'),
+        containsPair('subtitleKind', 'subtitled'),
+        containsPair('stamp', '20260612-090807'),
+      ),
+    );
+  });
+
+  test('song audio export copies bytes and preserves extension with collision',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'tomato_song_audio_export_test_',
+    );
+    addTearDown(() async {
+      if (await temp.exists()) {
+        await temp.delete(recursive: true);
+      }
+    });
+
+    final sourceBytes = Uint8List.fromList([1, 2, 3, 4, 5, 6]);
+    final sourceFile = File('${temp.path}${Platform.pathSeparator}source.flac');
+    await sourceFile.writeAsBytes(sourceBytes);
+    final outputDirectory =
+        Directory('${temp.path}${Platform.pathSeparator}recording-export');
+    await outputDirectory.create(recursive: true);
+    final collision = File(
+      '${outputDirectory.path}${Platform.pathSeparator}'
+      'Space Story Series - Space Snacks - song-audio - 20260612-090807.flac',
+    );
+    await collision.writeAsBytes([9]);
+
+    final now = DateTime(2026, 6, 12, 9, 8, 7);
+    final result = await RecordingExportService.exportSongAudioForTest(
+      articleId: 42,
+      article: Article(
+        id: 42,
+        title: 'Space Snacks',
+        content: '',
+        sentences: const [],
+        createdAt: now,
+      ),
+      series: StorySeries(
+        id: 7,
+        title: 'Space Story Series',
+        createdAt: now,
+        updatedAt: now,
+      ),
+      version: ArticleSongVersion(
+        id: 'song-v1',
+        audioPath: sourceFile.path,
+      ),
+      outputDirectory: outputDirectory,
+      now: now,
+    );
+
+    expect(result.articleId, 42);
+    expect(result.versionId, 'song-v1');
+    expect(result.sourcePath, sourceFile.path);
+    expect(result.outputDirectory, outputDirectory.path);
+    expect(
+      result.outputPath,
+      endsWith(
+        'Space Story Series - Space Snacks - song-audio - '
+        '20260612-090807-2.flac',
+      ),
+    );
+    expect(await File(result.outputPath).readAsBytes(), sourceBytes);
   });
 
   test('recording subtitle mode normalizes settings and output behavior', () {

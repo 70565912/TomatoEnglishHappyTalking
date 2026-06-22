@@ -4035,7 +4035,7 @@ select:disabled {
 
 .song-version-actions {
   display: grid;
-  grid-template-columns: auto minmax(0, 260px) auto auto auto;
+  grid-template-columns: auto minmax(0, 320px) auto auto auto auto;
   gap: 8px;
   align-items: center;
   justify-content: center;

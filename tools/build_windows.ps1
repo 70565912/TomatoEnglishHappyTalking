@@ -382,6 +382,7 @@ function Get-WindowsRuntimeDirectories {
         ".dart_tool",
         "tomato_api_cache",
         "downloads",
+        "diagnostics",
         "recordings",
         "recording-export",
         "picture_book",

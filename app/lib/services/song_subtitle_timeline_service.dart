@@ -149,9 +149,27 @@ class SongSubtitleTimelineGenerationResult {
   final bool fromCache;
 }
 
+class SongAsrDiagnosticResult {
+  const SongAsrDiagnosticResult({
+    required this.outputPath,
+    required this.outputDirectory,
+    required this.payload,
+  });
+
+  final String outputPath;
+  final String outputDirectory;
+  final Map<String, dynamic> payload;
+
+  Map<String, dynamic> toJson() => {
+        'outputPath': outputPath,
+        'outputDirectory': outputDirectory,
+        'payload': payload,
+      };
+}
+
 class SongSubtitleTimelineService {
   static const purpose = 'suno_song_subtitle_timeline_v1';
-  static const alignmentVersion = 7;
+  static const alignmentVersion = 10;
   static const staleTimelineMessage = '歌曲字幕时间线版本过旧，请重新生成歌曲字幕';
   static const _matchedLineLeadInMs = 180;
   static const _matchedLineTailMs = 320;
@@ -273,6 +291,176 @@ class SongSubtitleTimelineService {
     );
   }
 
+  static Future<SongSubtitleTimelineGenerationResult> generateFromAsrSnapshot({
+    required int articleId,
+    required String audioPath,
+    required List<String> lyricLines,
+    required Map<int, String> translations,
+    required String asrSnapshotPath,
+    String source = 'suno',
+  }) async {
+    final audioFile = File(audioPath);
+    if (!await audioFile.exists()) {
+      throw SongSubtitleTimelineException('歌曲音频文件不存在：$audioPath');
+    }
+    final snapshotFile = File(asrSnapshotPath);
+    if (!await snapshotFile.exists()) {
+      throw SongSubtitleTimelineException('ASR 诊断结果文件不存在：$asrSnapshotPath');
+    }
+    final lines = _cleanLines(lyricLines);
+    if (lines.isEmpty) {
+      throw const SongSubtitleTimelineException('没有可用于生成字幕的英文歌词');
+    }
+
+    final audioBytes = await audioFile.readAsBytes();
+    if (audioBytes.isEmpty) {
+      throw const SongSubtitleTimelineException('歌曲音频文件为空');
+    }
+    final snapshotText = await snapshotFile.readAsString();
+    final snapshotJson = jsonDecode(snapshotText);
+    final snapshotWords = _wordsFromAsrSnapshot(snapshotJson);
+    if (snapshotWords.isEmpty) {
+      throw const SongSubtitleTimelineException('ASR 诊断结果没有词级时间，无法生成字幕');
+    }
+
+    final audioHash = await ApiCacheService.hashBytes(audioBytes);
+    final lyricsText = lines.join('\n');
+    final lyricsHash = await ApiCacheService.hashUtf8(lyricsText);
+    final snapshotHash = await ApiCacheService.hashUtf8(snapshotText);
+    final snapshotDurationMs = _durationFromAsrSnapshot(snapshotJson);
+    final durationMs = [
+      snapshotDurationMs,
+      snapshotWords.last.endMs,
+      RecordingExportUtils.estimateMp3DurationMs(audioBytes),
+      1000,
+    ].reduce(math.max);
+    final request = {
+      'service': 'asr_snapshot_import',
+      'provider': 'diagnostic',
+      'purpose': purpose,
+      'audioHash': audioHash,
+      'lyricsHash': lyricsHash,
+      'asrSnapshotHash': snapshotHash,
+      'language': 'en-US',
+      'alignmentVersion': alignmentVersion,
+    };
+    final cacheKey = await ApiCacheService.keyForJson(
+        'suno_song_subtitle_timeline', request);
+    final timeline = buildTimeline(
+      articleId: articleId,
+      audioHash: audioHash,
+      lyricsHash: lyricsHash,
+      durationMs: durationMs,
+      source: source,
+      lyricLines: lines,
+      translations: translations,
+      words: snapshotWords,
+    );
+    validateTimelineCompleteness(timeline, lines.length);
+    final path = await ApiCacheService.putFileBytes(
+      cacheKey: cacheKey,
+      kind: 'song_subtitle_timeline',
+      purpose: purpose,
+      request: request,
+      bytes: utf8.encode(
+        const JsonEncoder.withIndent('  ').convert(timeline.toJson()),
+      ),
+      subdirectory: 'song-subtitle-timelines',
+      extension: 'json',
+      contentType: 'application/json',
+      articleId: articleId,
+    );
+    return SongSubtitleTimelineGenerationResult(
+      timeline: timeline,
+      timelinePath: path,
+      cacheKey: cacheKey,
+      lyricsHash: lyricsHash,
+      fromCache: false,
+    );
+  }
+
+  static Future<SongAsrDiagnosticResult> submitAsrDiagnostics({
+    required int articleId,
+    required String audioPath,
+    required String versionId,
+    String source = 'suno',
+  }) async {
+    final audioFile = File(audioPath);
+    if (!await audioFile.exists()) {
+      throw SongSubtitleTimelineException('歌曲音频文件不存在：$audioPath');
+    }
+    final audioBytes = await audioFile.readAsBytes();
+    if (audioBytes.isEmpty) {
+      throw const SongSubtitleTimelineException('歌曲音频文件为空');
+    }
+
+    final asrProvider = await AppConfig.aiProvider;
+    final originalMimeType = _audioMimeTypeForPath(audioPath);
+    final originalFormat = _audioFormatFromMimeType(originalMimeType);
+    final useOriginalAudio = _providerSupportsOriginalAudio(
+      provider: asrProvider,
+      audioFormat: originalFormat,
+    );
+    final asrMimeType = useOriginalAudio ? originalMimeType : 'audio/wav';
+    final asrFormat = useOriginalAudio ? originalFormat : 'wav';
+    final asrBytes =
+        useOriginalAudio ? audioBytes : await _wav16kMonoBytes(audioPath);
+    final submittedAt = DateTime.now();
+    final asr = await StreamingAsrService.recognizeWithTimeline(
+      audioBytes: asrBytes,
+      audioMimeType: asrMimeType,
+    );
+    final estimatedDuration = _estimateDurationMs(
+      audioBytes: audioBytes,
+      asr: asr,
+    );
+    final words = asr.words;
+    final payload = {
+      'articleId': articleId,
+      'versionId': versionId,
+      'source': source,
+      'audioPath': audioPath,
+      'audioHash': await ApiCacheService.hashBytes(audioBytes),
+      'audioBytes': audioBytes.length,
+      'asrProvider': asrProvider,
+      'originalAudioMimeType': originalMimeType,
+      'submittedAudioMimeType': asrMimeType,
+      'submittedAudioFormat': asrFormat,
+      if (!useOriginalAudio) 'sampleRate': 16000,
+      'submittedAt': submittedAt.toIso8601String(),
+      'estimatedDurationMs': estimatedDuration,
+      'asrDurationMs': asr.durationMs,
+      'wordCount': words.length,
+      if (words.isNotEmpty) ...{
+        'firstWord': words.first.toJson(),
+        'lastWord': words.last.toJson(),
+      },
+      'words': words.map((word) => word.toJson()).toList(growable: false),
+      'asr': asr.toJson(),
+    };
+
+    final directory = Directory(path_lib.join(
+      RecordingExportService.programDirectory(),
+      'diagnostics',
+    ));
+    await directory.create(recursive: true);
+    final timestamp = _diagnosticTimestamp(submittedAt);
+    final safeVersionId = _safeDiagnosticName(versionId);
+    final outputPath = path_lib.join(
+      directory.path,
+      'song-asr-article-$articleId-$safeVersionId-$timestamp.json',
+    );
+    await File(outputPath).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(payload),
+      encoding: utf8,
+    );
+    return SongAsrDiagnosticResult(
+      outputPath: outputPath,
+      outputDirectory: directory.path,
+      payload: payload,
+    );
+  }
+
   static Future<SongSubtitleTimeline> readTimeline(String path) async {
     final file = File(path);
     if (!await file.exists()) {
@@ -303,6 +491,115 @@ class SongSubtitleTimelineService {
 
   static bool isCurrentTimeline(SongSubtitleTimeline timeline) =>
       timeline.alignmentVersion == alignmentVersion;
+
+  static String _diagnosticTimestamp(DateTime value) {
+    String two(int number) => number.toString().padLeft(2, '0');
+    return '${value.year}${two(value.month)}${two(value.day)}-'
+        '${two(value.hour)}${two(value.minute)}${two(value.second)}';
+  }
+
+  static String _safeDiagnosticName(String value) {
+    final sanitized = value
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    return sanitized.isEmpty ? 'default' : sanitized;
+  }
+
+  static List<AsrWordTiming> _wordsFromAsrSnapshot(Object? raw) {
+    final words = <AsrWordTiming>[];
+    if (raw is! Map) {
+      return words;
+    }
+    final topLevelWords = raw['words'];
+    if (topLevelWords is List) {
+      for (final item in topLevelWords) {
+        final word = _wordFromAsrSnapshotItem(item);
+        if (word != null) {
+          words.add(word);
+        }
+      }
+    }
+    if (words.isNotEmpty) {
+      return words;
+    }
+
+    final asr = raw['asr'];
+    final utterances = asr is Map ? asr['utterances'] : null;
+    if (utterances is! List) {
+      return words;
+    }
+    for (final utterance in utterances) {
+      if (utterance is! Map) {
+        continue;
+      }
+      final utteranceWords = utterance['words'];
+      if (utteranceWords is! List) {
+        continue;
+      }
+      for (final item in utteranceWords) {
+        final word = _wordFromAsrSnapshotItem(item);
+        if (word != null) {
+          words.add(word);
+        }
+      }
+    }
+    return words;
+  }
+
+  static AsrWordTiming? _wordFromAsrSnapshotItem(Object? raw) {
+    if (raw is! Map) {
+      return null;
+    }
+    final text = _cleanRecognizedWord(raw['text']);
+    final startMs = _snapshotInt(raw['startMs'] ?? raw['start_time']);
+    final endMs = _snapshotInt(raw['endMs'] ?? raw['end_time']);
+    if (text.isEmpty || startMs == null || endMs == null || endMs <= startMs) {
+      return null;
+    }
+    final rawConfidence = raw['confidence'] ?? raw['score'];
+    final confidence = rawConfidence is num
+        ? rawConfidence > 1
+            ? rawConfidence.toDouble() / 100
+            : rawConfidence.toDouble()
+        : null;
+    return AsrWordTiming(
+      text: text,
+      startMs: startMs,
+      endMs: endMs,
+      confidence: confidence,
+    );
+  }
+
+  static int _durationFromAsrSnapshot(Object? raw) {
+    if (raw is! Map) {
+      return 0;
+    }
+    final topLevel = _snapshotInt(raw['estimatedDurationMs']) ??
+        _snapshotInt(raw['asrDurationMs']) ??
+        _snapshotInt(raw['durationMs']);
+    if (topLevel != null && topLevel > 0) {
+      return topLevel;
+    }
+    final asr = raw['asr'];
+    if (asr is Map) {
+      final asrDuration = _snapshotInt(asr['durationMs']);
+      if (asrDuration != null && asrDuration > 0) {
+        return asrDuration;
+      }
+    }
+    return 0;
+  }
+
+  static int? _snapshotInt(Object? raw) {
+    if (raw is num) {
+      return raw.round();
+    }
+    if (raw is String) {
+      return int.tryParse(raw.trim());
+    }
+    return null;
+  }
 
   static String srtForTimeline(SongSubtitleTimeline timeline) {
     return RecordingExportUtils.srtForCues(
@@ -417,6 +714,16 @@ class SongSubtitleTimelineService {
         searchStart = math.min(normalizedWords.length, match.lastWordIndex + 1);
       }
     }
+    _rescueMissingLineMatches(
+      matches: matches,
+      lineTokens: lineTokens,
+      words: normalizedWords,
+    );
+    _refineWeakLineMatches(
+      matches: matches,
+      lineTokens: lineTokens,
+      words: normalizedWords,
+    );
 
     final draft = <SongSubtitleCue?>[
       for (var i = 0; i < lines.length; i += 1)
@@ -426,11 +733,17 @@ class SongSubtitleTimelineService {
                 lineIndex: i,
                 startMs:
                     math.max(0, matches[i]!.startMs - _matchedLineLeadInMs),
-                endMs: matches[i]!.endMs,
+                endMs: _endMsForLineMatch(
+                  match: matches[i]!,
+                  lineIndex: i,
+                  matches: matches,
+                  words: normalizedWords,
+                  durationMs: safeDuration,
+                ),
                 english: lines[i],
                 chinese: translations[i]?.trim() ?? '',
                 confidence: matches[i]!.confidence,
-                method: 'matched',
+                method: matches[i]!.hasMissingBoundary ? 'partial' : 'matched',
               ),
     ];
 
@@ -439,6 +752,14 @@ class SongSubtitleTimelineService {
       lines: lines,
       translations: translations,
       weights: weights,
+      durationMs: safeDuration,
+    );
+    _redistributeSqueezedInferredSpans(
+      draft: draft,
+      weights: weights,
+      tokenCounts: [
+        for (final tokens in lineTokens) math.max(1, tokens.length),
+      ],
       durationMs: safeDuration,
     );
 
@@ -453,10 +774,12 @@ class SongSubtitleTimelineService {
       rawCues,
       durationMs: safeDuration,
     );
-    final matchedCount = cues.where((cue) => cue.method == 'matched').length;
+    final matchedCount = cues.where(_cueHasAsrAnchor).length;
+    final partialCount = cues.where((cue) => cue.method == 'partial').length;
     final warnings = <String>[
       if (normalizedWords.isEmpty) 'ASR 未返回可用词级时间，已使用 fallback',
       if (matchedCount < cues.length) '部分歌词行使用插值或估算时间',
+      if (partialCount > 0) '部分歌词行仅局部匹配 ASR，已按歌词长度补齐时间',
       if (matchedCount == 0) '没有歌词行与 ASR 结果可靠匹配',
       if (tailWarning != null) tailWarning,
     ];
@@ -695,17 +1018,24 @@ class SongSubtitleTimelineService {
     required List<String> tokens,
     required List<_TimedToken> words,
     required int searchStart,
+    int? searchEndExclusive,
   }) {
-    if (tokens.isEmpty || words.isEmpty || searchStart >= words.length) {
+    final searchEnd =
+        math.min(searchEndExclusive ?? words.length, words.length);
+    if (tokens.isEmpty ||
+        words.isEmpty ||
+        searchStart >= words.length ||
+        searchStart >= searchEnd) {
       return null;
     }
     _LineMatch? best;
-    for (var start = searchStart; start < words.length; start += 1) {
+    for (var start = searchStart; start < searchEnd; start += 1) {
       final match = _lineMatchAtStart(
         tokens: tokens,
         words: words,
         start: start,
         searchStart: searchStart,
+        searchEndExclusive: searchEnd,
       );
       if (match == null) {
         continue;
@@ -725,16 +1055,20 @@ class SongSubtitleTimelineService {
     required List<_TimedToken> words,
     required int start,
     required int searchStart,
+    required int searchEndExclusive,
   }) {
     var cursor = start;
     var score = 0.0;
     var matched = 0;
     int? first;
     int? last;
-    for (final token in tokens) {
+    int? firstMatchedTokenIndex;
+    int? lastMatchedTokenIndex;
+    for (var tokenIndex = 0; tokenIndex < tokens.length; tokenIndex += 1) {
+      final token = tokens[tokenIndex];
       var bestWordIndex = -1;
       var bestScore = 0.0;
-      final lookahead = math.min(words.length, cursor + 8);
+      final lookahead = math.min(searchEndExclusive, cursor + 8);
       for (var wordIndex = cursor; wordIndex < lookahead; wordIndex += 1) {
         final candidateScore =
             _tokenSimilarity(token, words[wordIndex].normalized);
@@ -746,6 +1080,8 @@ class SongSubtitleTimelineService {
       if (bestWordIndex >= 0 && bestScore >= 0.54) {
         first ??= bestWordIndex;
         last = bestWordIndex;
+        firstMatchedTokenIndex ??= tokenIndex;
+        lastMatchedTokenIndex = tokenIndex;
         matched += 1;
         score += bestScore;
         cursor = bestWordIndex + 1;
@@ -769,7 +1105,150 @@ class SongSubtitleTimelineService {
       confidence: confidence,
       matchedTokenCount: matched,
       tokenCount: tokens.length,
+      firstMatchedTokenIndex: firstMatchedTokenIndex ?? 0,
+      lastMatchedTokenIndex: lastMatchedTokenIndex ?? tokens.length - 1,
     );
+  }
+
+  static void _rescueMissingLineMatches({
+    required List<_LineMatch?> matches,
+    required List<List<String>> lineTokens,
+    required List<_TimedToken> words,
+  }) {
+    if (words.isEmpty) {
+      return;
+    }
+    for (var lineIndex = 0; lineIndex < matches.length; lineIndex += 1) {
+      if (matches[lineIndex] != null || lineTokens[lineIndex].isEmpty) {
+        continue;
+      }
+      final previous = _previousLineMatch(matches, lineIndex);
+      final next = _nextLineMatch(matches, lineIndex);
+      final searchStart = previous == null
+          ? 0
+          : previous.isWeakBoundary
+              ? math.max(0, previous.firstWordIndex + 1)
+              : math.max(0, previous.lastWordIndex + 1 - 6);
+      final searchEnd = math.max(
+        searchStart + 1,
+        next == null ? words.length : next.firstWordIndex,
+      );
+      final match = _bestLineMatch(
+        tokens: lineTokens[lineIndex],
+        words: words,
+        searchStart: searchStart,
+        searchEndExclusive: searchEnd,
+      );
+      if (match == null) {
+        continue;
+      }
+      final threshold = math.max(
+        0.36,
+        _lineConfidenceThreshold(lineIndex, lineTokens[lineIndex]) - 0.04,
+      );
+      if (match.confidence >= threshold && match.coverage >= 0.58) {
+        matches[lineIndex] = match;
+      }
+    }
+  }
+
+  static void _refineWeakLineMatches({
+    required List<_LineMatch?> matches,
+    required List<List<String>> lineTokens,
+    required List<_TimedToken> words,
+  }) {
+    if (words.isEmpty) {
+      return;
+    }
+    for (var lineIndex = 0; lineIndex < matches.length; lineIndex += 1) {
+      final current = matches[lineIndex];
+      if (current == null ||
+          (!current.hasMissingBoundary && !current.isWeakBoundary)) {
+        continue;
+      }
+      final previous = _previousLineMatch(matches, lineIndex);
+      final next = _nextLineMatch(matches, lineIndex);
+      final searchStart = previous == null ? 0 : previous.lastWordIndex + 1;
+      final searchEnd = next == null ? words.length : next.firstWordIndex;
+      if (searchStart >= searchEnd) {
+        continue;
+      }
+      final candidate = _bestLineMatch(
+        tokens: lineTokens[lineIndex],
+        words: words,
+        searchStart: searchStart,
+        searchEndExclusive: searchEnd,
+      );
+      if (candidate == null) {
+        continue;
+      }
+      final threshold =
+          _lineConfidenceThreshold(lineIndex, lineTokens[lineIndex]);
+      final improvesCoverage =
+          candidate.missingBoundaryCount < current.missingBoundaryCount ||
+              candidate.coverage > current.coverage + 0.12;
+      final improvesConfidence =
+          candidate.confidence > current.confidence + 0.04;
+      if (candidate.confidence >= threshold &&
+          (improvesCoverage || improvesConfidence)) {
+        matches[lineIndex] = candidate;
+      }
+    }
+  }
+
+  static _LineMatch? _previousLineMatch(
+    List<_LineMatch?> matches,
+    int lineIndex,
+  ) {
+    for (var index = lineIndex - 1; index >= 0; index -= 1) {
+      final match = matches[index];
+      if (match != null) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  static _LineMatch? _nextLineMatch(
+    List<_LineMatch?> matches,
+    int lineIndex,
+  ) {
+    for (var index = lineIndex + 1; index < matches.length; index += 1) {
+      final match = matches[index];
+      if (match != null) {
+        return match;
+      }
+    }
+    return null;
+  }
+
+  static int _endMsForLineMatch({
+    required _LineMatch match,
+    required int lineIndex,
+    required List<_LineMatch?> matches,
+    required List<_TimedToken> words,
+    required int durationMs,
+  }) {
+    if (match.missingSuffixTokenCount <= 0) {
+      return match.endMs;
+    }
+    final recognizedDuration = math.max(1, match.endMs - match.startMs);
+    final localMsPerToken =
+        recognizedDuration / math.max(1, match.matchedTokenCount);
+    final next = _nextLineMatch(matches, lineIndex);
+    final isTrailingLine = next == null || lineIndex >= matches.length - 1;
+    final suffixFactor = isTrailingLine ? 2.2 : 1.25;
+    final suffixExtension =
+        (match.missingSuffixTokenCount * localMsPerToken * suffixFactor)
+            .round();
+    var endMs = match.endMs + suffixExtension + _matchedLineTailMs;
+    if (next != null && next.startMs > match.startMs) {
+      endMs =
+          math.min(endMs, math.max(match.endMs + 1, next.startMs - _cueGapMs));
+    } else {
+      endMs = math.min(endMs, durationMs);
+    }
+    return math.max(match.endMs + 1, endMs);
   }
 
   static double _tokenSimilarity(String a, String b) {
@@ -955,6 +1434,288 @@ class SongSubtitleTimelineService {
     }
   }
 
+  static void _redistributeSqueezedInferredSpans({
+    required List<SongSubtitleCue?> draft,
+    required List<double> weights,
+    required List<int> tokenCounts,
+    required int durationMs,
+  }) {
+    final medianMsPerWord = _medianMatchedMsPerWord(
+      draft: draft,
+      tokenCounts: tokenCounts,
+    );
+    final firstMatched = _firstMatchedCueIndex(draft);
+    final lastMatched = _lastMatchedCueIndex(draft);
+    if (firstMatched == null || lastMatched == null) {
+      return;
+    }
+
+    final hasSqueezedLeading = firstMatched > 0 &&
+        _inferredRunIsSqueezed(
+          draft: draft,
+          weights: weights,
+          tokenCounts: tokenCounts,
+          startLine: 0,
+          endLine: firstMatched - 1,
+          medianMsPerWord: medianMsPerWord,
+        );
+    final hasSqueezedTrailing = lastMatched < draft.length - 1 &&
+        _inferredRunIsSqueezed(
+          draft: draft,
+          weights: weights,
+          tokenCounts: tokenCounts,
+          startLine: lastMatched + 1,
+          endLine: draft.length - 1,
+          medianMsPerWord: medianMsPerWord,
+        );
+
+    if (firstMatched == lastMatched) {
+      if (hasSqueezedLeading && hasSqueezedTrailing) {
+        _redistributeCueWindowByWeight(
+          draft: draft,
+          weights: weights,
+          startLine: 0,
+          endLine: draft.length - 1,
+          startMs: 0,
+          endMs: durationMs,
+        );
+      } else if (hasSqueezedLeading) {
+        _redistributeCueWindowByWeight(
+          draft: draft,
+          weights: weights,
+          startLine: 0,
+          endLine: firstMatched,
+          startMs: 0,
+          endMs: draft[firstMatched]!.endMs,
+        );
+      } else if (hasSqueezedTrailing) {
+        _redistributeCueWindowByWeight(
+          draft: draft,
+          weights: weights,
+          startLine: lastMatched,
+          endLine: draft.length - 1,
+          startMs: draft[lastMatched]!.startMs,
+          endMs: durationMs,
+        );
+      }
+      return;
+    }
+
+    // Inferred lyrics can be squeezed at the beginning, middle, or end. When
+    // that happens, the nearest matched boundary is usually the unreliable
+    // piece: first matched start too early, previous matched end too late, or
+    // last matched end too late. Subtitles may be a little long, but they must
+    // not be too short to read, so each local window is fully split by lyric
+    // weight without reserving leftover silence.
+    if (hasSqueezedLeading) {
+      _redistributeCueWindowByWeight(
+        draft: draft,
+        weights: weights,
+        startLine: 0,
+        endLine: firstMatched,
+        startMs: 0,
+        endMs: draft[firstMatched]!.endMs,
+      );
+    }
+
+    var index = firstMatched + 1;
+    while (index < lastMatched) {
+      final cue = draft[index];
+      if (cue == null || _cueHasAsrAnchor(cue)) {
+        index += 1;
+        continue;
+      }
+      final runStart = index;
+      var runEnd = index;
+      while (runEnd + 1 < draft.length &&
+          draft[runEnd + 1] != null &&
+          !_cueHasAsrAnchor(draft[runEnd + 1]!)) {
+        runEnd += 1;
+      }
+      final leftIndex = runStart - 1;
+      final rightIndex = runEnd + 1;
+      final left = draft[leftIndex];
+      final right = draft[rightIndex];
+      if (left == null || right == null || !_cueHasAsrAnchor(left)) {
+        index = runEnd + 1;
+        continue;
+      }
+      if (!_cueHasAsrAnchor(right) || right.startMs <= left.startMs) {
+        index = runEnd + 1;
+        continue;
+      }
+
+      if (!_inferredRunIsSqueezed(
+        draft: draft,
+        weights: weights,
+        tokenCounts: tokenCounts,
+        startLine: runStart,
+        endLine: runEnd,
+        medianMsPerWord: medianMsPerWord,
+      )) {
+        index = runEnd + 1;
+        continue;
+      }
+
+      _redistributeCueWindowByWeight(
+        draft: draft,
+        weights: weights,
+        startLine: leftIndex,
+        endLine: runEnd,
+        startMs: left.startMs,
+        endMs: right.startMs,
+      );
+      index = runEnd + 1;
+    }
+
+    if (hasSqueezedTrailing) {
+      _redistributeCueWindowByWeight(
+        draft: draft,
+        weights: weights,
+        startLine: lastMatched,
+        endLine: draft.length - 1,
+        startMs: draft[lastMatched]!.startMs,
+        endMs: durationMs,
+      );
+    }
+  }
+
+  static bool _inferredRunIsSqueezed({
+    required List<SongSubtitleCue?> draft,
+    required List<double> weights,
+    required List<int> tokenCounts,
+    required int startLine,
+    required int endLine,
+    required double medianMsPerWord,
+  }) {
+    if (startLine > endLine) {
+      return false;
+    }
+    for (var i = startLine; i <= endLine; i += 1) {
+      final cue = draft[i];
+      if (cue == null || _cueHasAsrAnchor(cue)) {
+        continue;
+      }
+      final duration = cue.endMs - cue.startMs;
+      final readableDuration = _inferredReadableDurationMs(
+        tokenCount: tokenCounts[i],
+        weight: weights[i],
+        medianMsPerWord: medianMsPerWord,
+      );
+      if (duration < readableDuration * 0.72 || duration < 900) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static void _redistributeCueWindowByWeight({
+    required List<SongSubtitleCue?> draft,
+    required List<double> weights,
+    required int startLine,
+    required int endLine,
+    required int startMs,
+    required int endMs,
+  }) {
+    if (startLine > endLine || endMs <= startMs) {
+      return;
+    }
+    final totalWeight = weights
+        .sublist(startLine, endLine + 1)
+        .fold<double>(0, (sum, weight) => sum + math.max(1, weight));
+    final windowMs = endMs - startMs;
+    var cursor = startMs.toDouble();
+    for (var index = startLine; index <= endLine; index += 1) {
+      final cue = draft[index];
+      if (cue == null) {
+        continue;
+      }
+      final next = index == endLine
+          ? endMs.toDouble()
+          : cursor +
+              windowMs * math.max(1, weights[index]) / math.max(1, totalWeight);
+      draft[index] = _copyCue(
+        cue,
+        startMs: cursor.round(),
+        endMs: math.max(cursor.round() + 1, next.round()),
+      );
+      cursor = next;
+    }
+  }
+
+  static double _medianMatchedMsPerWord({
+    required List<SongSubtitleCue?> draft,
+    required List<int> tokenCounts,
+  }) {
+    final rates = <double>[];
+    for (var i = 0; i < draft.length; i += 1) {
+      final cue = draft[i];
+      if (cue == null || !_cueHasAsrAnchor(cue)) {
+        continue;
+      }
+      final duration = cue.endMs - cue.startMs;
+      if (duration <= 0) {
+        continue;
+      }
+      rates.add(duration / math.max(1, tokenCounts[i]));
+    }
+    if (rates.isEmpty) {
+      return 320;
+    }
+    rates.sort();
+    return rates[rates.length ~/ 2].clamp(220.0, 520.0);
+  }
+
+  static int? _firstMatchedCueIndex(List<SongSubtitleCue?> draft) {
+    for (var i = 0; i < draft.length; i += 1) {
+      if (_cueHasAsrAnchor(draft[i])) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  static int? _lastMatchedCueIndex(List<SongSubtitleCue?> draft) {
+    for (var i = draft.length - 1; i >= 0; i -= 1) {
+      if (_cueHasAsrAnchor(draft[i])) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  static int _inferredReadableDurationMs({
+    required int tokenCount,
+    required double weight,
+    required double medianMsPerWord,
+  }) {
+    final byWords = math.max(1, tokenCount) * medianMsPerWord * 0.65;
+    final byWeight = math.max(1, weight) * 130;
+    final floor = tokenCount <= 2
+        ? 650
+        : tokenCount <= 5
+            ? 950
+            : 1200;
+    return math
+        .min(3800, math.max(floor.toDouble(), math.max(byWords, byWeight)))
+        .round();
+  }
+
+  static SongSubtitleCue _copyCue(
+    SongSubtitleCue cue, {
+    int? startMs,
+    int? endMs,
+  }) =>
+      SongSubtitleCue(
+        lineIndex: cue.lineIndex,
+        startMs: startMs ?? cue.startMs,
+        endMs: endMs ?? cue.endMs,
+        english: cue.english,
+        chinese: cue.chinese,
+        confidence: cue.confidence,
+        method: cue.method,
+      );
+
   static String? _collapseImplausibleTrailingEstimates({
     required List<SongSubtitleCue?> draft,
     required List<double> weights,
@@ -963,7 +1724,7 @@ class SongSubtitleTimelineService {
     var lastMatched = -1;
     for (var i = draft.length - 1; i >= 0; i -= 1) {
       final cue = draft[i];
-      if (cue != null && cue.method == 'matched') {
+      if (_cueHasAsrAnchor(cue)) {
         lastMatched = i;
         break;
       }
@@ -976,7 +1737,7 @@ class SongSubtitleTimelineService {
     for (var i = lastMatched + 1; i < draft.length; i += 1) {
       final cue = draft[i];
       if (cue != null) {
-        if (cue.method == 'matched') {
+        if (_cueHasAsrAnchor(cue)) {
           return null;
         }
         tailCues.add(cue);
@@ -995,7 +1756,7 @@ class SongSubtitleTimelineService {
     final matchedRates = <double>[];
     for (var i = 0; i <= lastMatched; i += 1) {
       final cue = draft[i];
-      if (cue == null || cue.method != 'matched') {
+      if (cue == null || !_cueHasAsrAnchor(cue)) {
         continue;
       }
       final duration = math.max(1, cue.endMs - cue.startMs);
@@ -1013,6 +1774,7 @@ class SongSubtitleTimelineService {
     for (var i = lastMatched + 1; i < draft.length; i += 1) {
       draft[i] = null;
     }
+    draft[lastMatched] = _copyCue(anchor, endMs: durationMs);
     return '尾部 ${tailCues.length} 行歌词缺少可靠人声匹配，已延长最后匹配字幕到歌曲结束';
   }
 
@@ -1050,10 +1812,10 @@ class SongSubtitleTimelineService {
     for (var i = 0; i < cues.length; i += 1) {
       final start = starts[i];
       final cue = cues[i];
-      final preciseBounds = cue.method == 'matched';
+      final preciseBounds = _cueHasAsrAnchor(cue);
       final nextStart = i == cues.length - 1 ? durationMs : starts[i + 1];
       final preferredEnd =
-          preciseBounds ? cue.endMs + _matchedLineTailMs : cue.endMs;
+          cue.method == 'matched' ? cue.endMs + _matchedLineTailMs : cue.endMs;
       var end = math.max(start + minCueMs, preferredEnd);
       if (i < cues.length - 1) {
         final maxEndBeforeNext =
@@ -1078,6 +1840,9 @@ class SongSubtitleTimelineService {
     }
     return normalized;
   }
+
+  static bool _cueHasAsrAnchor(SongSubtitleCue? cue) =>
+      cue != null && (cue.method == 'matched' || cue.method == 'partial');
 }
 
 class _TimedToken {
@@ -1113,6 +1878,8 @@ class _LineMatch {
     required this.confidence,
     required this.matchedTokenCount,
     required this.tokenCount,
+    required this.firstMatchedTokenIndex,
+    required this.lastMatchedTokenIndex,
   });
 
   final int firstWordIndex;
@@ -1122,7 +1889,22 @@ class _LineMatch {
   final double confidence;
   final int matchedTokenCount;
   final int tokenCount;
+  final int firstMatchedTokenIndex;
+  final int lastMatchedTokenIndex;
 
   double get coverage =>
       tokenCount <= 0 ? 0 : matchedTokenCount / math.max(1, tokenCount);
+
+  int get missingPrefixTokenCount => math.max(0, firstMatchedTokenIndex);
+
+  int get missingSuffixTokenCount =>
+      math.max(0, tokenCount - lastMatchedTokenIndex - 1);
+
+  bool get hasMissingBoundary =>
+      missingPrefixTokenCount >= 2 || missingSuffixTokenCount >= 2;
+
+  int get missingBoundaryCount =>
+      missingPrefixTokenCount + missingSuffixTokenCount;
+
+  bool get isWeakBoundary => confidence < 0.78 || coverage < 0.86;
 }

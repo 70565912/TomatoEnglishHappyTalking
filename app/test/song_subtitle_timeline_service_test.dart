@@ -6,6 +6,95 @@ import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/services/song_subtitle_timeline_service.dart';
 import 'package:tomato_english_happy_talking/services/streaming_asr_service.dart';
 
+List<AsrWordTiming> _e03FixtureWords(String key) {
+  final fixture = jsonDecode(
+    File('test/fixtures/e03_song_asr_regression_words.json').readAsStringSync(),
+  ) as Map<String, dynamic>;
+  return _asrWordsFromRows(fixture[key] as List<dynamic>);
+}
+
+List<AsrWordTiming> _e03FullAsrWords() {
+  final fixture = jsonDecode(
+    File('test/fixtures/e03_song_asr_full_20260622_233253.json')
+        .readAsStringSync(),
+  ) as Map<String, dynamic>;
+  return _asrWordsFromRows(fixture['words'] as List<dynamic>);
+}
+
+List<AsrWordTiming> _asrWordsFromRows(List<dynamic> rows) {
+  return rows.map((entry) {
+    final row = entry as Map<String, dynamic>;
+    return AsrWordTiming(
+      text: row['text'] as String,
+      startMs: row['startMs'] as int,
+      endMs: row['endMs'] as int,
+    );
+  }).toList();
+}
+
+const _e03LyricLines = [
+  'Down, down, down.',
+  'Would the fall never come to an end?',
+  '"I wonder how many miles I\'ve fallen by this time?" she said aloud.',
+  '"I must be getting somewhere near the center of the earth. Let me see:',
+  'that would be four thousand miles down, I think—"',
+  '(for, you see, Alice had learned several things of this sort in her lessons in the schoolroom,',
+  'and though this was not a very good opportunity for showing off her knowledge,',
+  'as there was no one to listen to her,',
+  'still it was good practice to say it over) "—',
+  'yes, that\'s about the right distance—',
+  'but then I wonder what Latitude or Longitude I\'ve got to?"',
+  '(Alice had not the slightest idea what Latitude was,',
+  'or Longitude either, but she thought they were nice grand words to say.)',
+  'Presently she began again.',
+  '"I wonder if I shall fall right through the earth! How funny it\'ll seem to come',
+  'out among the people that walk with their heads downward! The Antipathies,',
+  'I think" (she was rather glad there was no one listening this time, as it didn\'t',
+  'sound at all the right word),',
+  '"but I shall have to ask them what the name of the country is, you know.',
+  'Please, ma\'am, is this New Zealand or Australia?"',
+  '(and she tried to courtsey as she spoke—',
+  'fancy courtseying as you\'re falling through the air!',
+  'Do you think you could manage it?)',
+  '"And what an ignorant little girl she\'ll think me for asking! No, it\'ll never do to ask:',
+  'perhaps I shall see it written up somewhere."',
+  'Down, down, down.',
+  'There was nothing else to do,',
+  'so Alice soon began talking again.',
+  '"Dinah\'ll miss me very much to-night, I should think!"',
+  '(Dinah was the cat.)',
+  '"I hope they\'ll remember her saucer of milk at tea-time. Dinah, my dear! I wish you',
+  'were down here with me! There are no mice in the air,',
+  'I\'m afraid, but you might catch a bat,',
+  'and that\'s very like a mouse you know. But do cats eat bats, I wonder?"',
+  'And here Alice began to get rather sleepy,',
+  'and went on saying to herself, in a dreamy sort of way,',
+  '"Do cats eat bats? Do cats eat bats?" and sometimes,',
+  '"Do bats eat cats?" for, you see,',
+  'as she couldn\'t answer either question, it didn\'t much matter which way she put it.',
+  'She felt that she was dozing off,',
+  'and had just begun to dream that she was walking hand in hand with Dinah,',
+  'and was saying to her very earnestly,',
+  '"Now, Dinah, tell me the truth:',
+  'did you ever eat a bat?" when suddenly, thump! thump! down she came upon a heap',
+  'of sticks and dry leaves,',
+  'and the fall was over.',
+  'Alice was not a bit hurt,',
+  'and she jumped up on to her feet in a moment:',
+  'she looked up, but it was all dark overhead;',
+  'before her was another long passage,',
+  'and the White Rabbit was still in sight, hurrying down it.',
+  'There was not a moment to be lost:',
+  'away went Alice like the wind,',
+  'and was just in time to hear it say,',
+  'as it turned a corner.',
+  '"Oh, my ears and whiskers, how late it\'s getting!"',
+  'She was close behind it when she turned the corner,',
+  'but the Rabbit was no longer to be seen:',
+  'she found herself in a long, low hall,',
+  'which was lit up by a row of lamps hanging from the roof.',
+];
+
 void main() {
   test('cueAtPosition returns null during subtitle gaps', () {
     const timeline = SongSubtitleTimeline(
@@ -135,6 +224,184 @@ void main() {
     expect(timeline.cues[2].method, 'matched');
     expect(timeline.cues[1].startMs, greaterThan(timeline.cues[0].endMs));
     expect(timeline.cues[1].endMs, timeline.cues[2].startMs);
+  });
+
+  test('keeps squeezed inferred lyric lines readable', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 93,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 15000,
+      source: 'suno',
+      lyricLines: const [
+        'Alice was not a bit hurt,',
+        'and she jumped up on to her feet in a moment:',
+        'she looked up, but it was all dark overhead;',
+        'before her was another long passage,',
+      ],
+      translations: const {},
+      words: const [
+        AsrWordTiming(text: 'Alice', startMs: 1000, endMs: 1300),
+        AsrWordTiming(text: 'was', startMs: 1300, endMs: 1500),
+        AsrWordTiming(text: 'not', startMs: 1500, endMs: 1700),
+        AsrWordTiming(text: 'a', startMs: 1700, endMs: 1820),
+        AsrWordTiming(text: 'bit', startMs: 1820, endMs: 2050),
+        AsrWordTiming(text: 'hurt', startMs: 2050, endMs: 2500),
+        AsrWordTiming(text: 'and', startMs: 3000, endMs: 3300),
+        AsrWordTiming(text: 'she', startMs: 3300, endMs: 3600),
+        AsrWordTiming(text: 'jumped', startMs: 3600, endMs: 4050),
+        AsrWordTiming(text: 'up', startMs: 4050, endMs: 4300),
+        AsrWordTiming(text: 'her', startMs: 9000, endMs: 9300),
+        AsrWordTiming(text: 'feet', startMs: 9300, endMs: 9700),
+        AsrWordTiming(text: 'moment', startMs: 11800, endMs: 12100),
+        AsrWordTiming(text: 'before', startMs: 12400, endMs: 12800),
+        AsrWordTiming(text: 'her', startMs: 12800, endMs: 13050),
+        AsrWordTiming(text: 'was', startMs: 13050, endMs: 13280),
+        AsrWordTiming(text: 'another', startMs: 13280, endMs: 13700),
+        AsrWordTiming(text: 'long', startMs: 13700, endMs: 14000),
+        AsrWordTiming(text: 'passage', startMs: 14000, endMs: 14500),
+      ],
+    );
+
+    final squeezed = timeline.cues[2];
+    expect(squeezed.method, 'interpolated');
+    expect(squeezed.english, 'she looked up, but it was all dark overhead;');
+    expect(squeezed.endMs - squeezed.startMs, greaterThanOrEqualTo(1800));
+    expect(squeezed.startMs - timeline.cues[1].endMs, lessThanOrEqualTo(100));
+    expect(squeezed.endMs, timeline.cues[3].startMs);
+  });
+
+  test('redistributes squeezed inferred lyrics at the beginning and end', () {
+    final leading = SongSubtitleTimelineService.buildTimeline(
+      articleId: 94,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 4000,
+      source: 'suno',
+      lyricLines: const [
+        'Silent opening words arrive.',
+        'Alice follows the bright song.',
+      ],
+      translations: const {},
+      words: const [
+        AsrWordTiming(text: 'Alice', startMs: 200, endMs: 500),
+        AsrWordTiming(text: 'follows', startMs: 500, endMs: 900),
+        AsrWordTiming(text: 'bright', startMs: 900, endMs: 1300),
+        AsrWordTiming(text: 'song', startMs: 1300, endMs: 1700),
+      ],
+    );
+
+    expect(leading.cues[0].method, 'estimated');
+    expect(leading.cues[0].endMs - leading.cues[0].startMs,
+        greaterThanOrEqualTo(850));
+    expect(leading.cues[0].endMs, leading.cues[1].startMs);
+
+    final trailing = SongSubtitleTimelineService.buildTimeline(
+      articleId: 95,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 4000,
+      source: 'suno',
+      lyricLines: const [
+        'Alice follows the bright song.',
+        'Silent ending words arrive.',
+      ],
+      translations: const {},
+      words: const [
+        AsrWordTiming(text: 'Alice', startMs: 1000, endMs: 1300),
+        AsrWordTiming(text: 'follows', startMs: 1300, endMs: 1600),
+        AsrWordTiming(text: 'bright', startMs: 1600, endMs: 2000),
+        AsrWordTiming(text: 'song', startMs: 3700, endMs: 3900),
+      ],
+    );
+
+    expect(trailing.cues[1].method, 'estimated');
+    expect(trailing.cues[1].endMs - trailing.cues[1].startMs,
+        greaterThanOrEqualTo(850));
+    expect(trailing.cues[1].endMs, trailing.durationMs);
+  });
+
+  test('keeps E03 line 49 and 50 matched from saved ASR words', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 96,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 200000,
+      source: 'suno',
+      lyricLines: const [
+        'and she jumped up on to her feet in a moment:',
+        'she looked up, but it was all dark overhead;',
+        'before her was another long passage,',
+      ],
+      translations: const {},
+      words: _e03FixtureWords('line49_50_words'),
+    );
+
+    expect(timeline.cues, hasLength(3));
+    expect(timeline.cues[1].method, 'matched');
+    expect(timeline.cues[1].startMs, lessThanOrEqualTo(180640));
+    expect(timeline.cues[1].endMs - timeline.cues[1].startMs,
+        greaterThanOrEqualTo(3000));
+    expect(timeline.cues[2].method, 'matched');
+    expect(timeline.cues[2].startMs, lessThan(timeline.cues[2].endMs));
+  });
+
+  test('extends partially recognized E03 final lyric without using full outro',
+      () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 97,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 238056,
+      source: 'suno',
+      lyricLines: const [
+        'which was lit up by a row of lamps hanging from the roof.',
+      ],
+      translations: const {},
+      words: _e03FixtureWords('final_line_words'),
+    );
+
+    final cue = timeline.cues.single;
+    expect(cue.method, 'partial');
+    expect(cue.endMs, greaterThanOrEqualTo(230500));
+    expect(cue.endMs, lessThan(232000));
+    expect(cue.endMs, lessThan(timeline.durationMs - 1000));
+    expect(
+      timeline.warnings,
+      contains('部分歌词行仅局部匹配 ASR，已按歌词长度补齐时间'),
+    );
+  });
+
+  test('builds E03 full song timeline from the real ASR fixture', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 48,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 238056,
+      source: 'suno',
+      lyricLines: _e03LyricLines,
+      translations: const {},
+      words: _e03FullAsrWords(),
+    );
+
+    final line49 = timeline.cues[48];
+    final line50 = timeline.cues[49];
+    final finalLine = timeline.cues.last;
+
+    expect(timeline.cues, hasLength(_e03LyricLines.length));
+    expect(timeline.confidence, greaterThan(0.9));
+    expect(line49.english, 'she looked up, but it was all dark overhead;');
+    expect(line49.method, 'matched');
+    expect(line49.endMs - line49.startMs, greaterThanOrEqualTo(3000));
+    expect(line50.english, 'before her was another long passage,');
+    expect(line50.method, 'matched');
+    expect(line50.endMs - line50.startMs, greaterThanOrEqualTo(2500));
+    expect(finalLine.method, 'partial');
+    expect(finalLine.endMs, inInclusiveRange(230500, 232000));
+    expect(
+      timeline.warnings,
+      contains('部分歌词行仅局部匹配 ASR，已按歌词长度补齐时间'),
+    );
   });
 
   test('keeps original lyrics for mismatched interpolated song subtitles', () {

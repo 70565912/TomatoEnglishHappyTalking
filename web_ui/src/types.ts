@@ -277,6 +277,14 @@ export interface ListeningSongPositionPayload {
   cue?: ListeningSongCuePayload | null;
 }
 
+export interface ListeningSongAudioExportPayload {
+  articleId: number;
+  versionId: string;
+  sourcePath: string;
+  outputPath: string;
+  outputDirectory: string;
+}
+
 export interface ListeningSentenceUpdatePayload {
   article?: Article;
   item: ListeningItem;
@@ -344,6 +352,11 @@ export interface ListeningRecordingResultPayload {
   articleId: number;
   videoPath: string;
   subtitlePath: string;
+  videoVariants?: Array<{
+    kind: 'srt' | 'subtitled' | string;
+    videoPath: string;
+    subtitlePath?: string | null;
+  }>;
   durationMs: number;
   frameCount: number;
   droppedFrameCount: number;

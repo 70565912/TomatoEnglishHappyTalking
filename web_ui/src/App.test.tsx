@@ -2522,7 +2522,7 @@ describe('App', () => {
     fireEvent.click(exportButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
     chooseRecordingOption(dialog, '转场', '卷边翻页');
-    chooseRecordingOption(dialog, '字幕', '视频内字幕 + SRT');
+    chooseRecordingOption(dialog, '字幕', '两版视频 + SRT');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
     await waitFor(() => {
@@ -2540,6 +2540,39 @@ describe('App', () => {
         subtitleMode: 'both',
       });
     });
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'listening.recording.completed',
+        payload: {
+          articleId: 1,
+          videoPath: 'F:\\Tomato\\recording-export\\listening-subtitled.mp4',
+          subtitlePath: 'F:\\Tomato\\recording-export\\listening-srt.srt',
+          videoVariants: [
+            {
+              kind: 'srt',
+              videoPath: 'F:\\Tomato\\recording-export\\listening-srt.mp4',
+              subtitlePath: 'F:\\Tomato\\recording-export\\listening-srt.srt',
+            },
+            {
+              kind: 'subtitled',
+              videoPath: 'F:\\Tomato\\recording-export\\listening-subtitled.mp4',
+              subtitlePath: '',
+            },
+          ],
+          durationMs: 3200,
+          frameCount: 80,
+          droppedFrameCount: 0,
+          encoderName: 'ffmpeg',
+          codec: 'h264',
+          resolution: '1920x1080',
+          pageTransition: 'pageCurl',
+          warnings: [],
+        },
+      });
+    });
+    expect(await screen.findByText('无内置字幕视频：F:\\Tomato\\recording-export\\listening-srt.mp4')).toBeInTheDocument();
+    expect(screen.getByText('字幕：F:\\Tomato\\recording-export\\listening-srt.srt')).toBeInTheDocument();
+    expect(screen.getByText('内置字幕视频：F:\\Tomato\\recording-export\\listening-subtitled.mp4')).toBeInTheDocument();
   });
 
   it('keeps subtitle editing on listening rows but not on the picture subtitle overlay', async () => {
@@ -3080,7 +3113,7 @@ describe('App', () => {
     fireEvent.click(exportButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
     chooseRecordingOption(dialog, '转场', '卷边翻页');
-    chooseRecordingOption(dialog, '字幕', '视频内字幕 + SRT');
+    chooseRecordingOption(dialog, '字幕', '两版视频 + SRT');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
     await waitFor(() => {
@@ -4699,6 +4732,7 @@ describe('App', () => {
       averageScore: 86,
     };
     const importPayloads: Array<Record<string, unknown>> = [];
+    const audioExportPayloads: Array<Record<string, unknown>> = [];
     const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
       id: String(id),
       ok: true,
@@ -4745,6 +4779,16 @@ describe('App', () => {
             ],
           });
         }
+        if (type === 'listening.songExportAudio') {
+          audioExportPayloads.push(payload);
+          return ok(message.id, type, {
+            articleId: article.id,
+            versionId: 'external-1',
+            sourcePath: 'external-song.mp3',
+            outputPath: 'F:\\Tomato\\recording-export\\external-song.mp3',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+          });
+        }
         return ok(message.id, type, {});
       }),
     };
@@ -4766,7 +4810,20 @@ describe('App', () => {
       actionLabels.findIndex((label) => label.includes('导入本地音乐')),
     );
     expect(screen.getByRole('button', { name: '生成歌曲字幕' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '导出歌曲视频' })).toBeDisabled();
+    const videoButton = screen.getByRole('button', { name: '导出歌曲视频' });
+    const audioButton = screen.getByRole('button', { name: '导出音频文件' });
+    expect(videoButton).toBeDisabled();
+    expect(audioButton).not.toBeDisabled();
+    const versionActionLabels = Array.from(
+      videoButton.closest('.song-version-actions')?.querySelectorAll('button') ?? [],
+    ).map((button) => button.textContent ?? '');
+    expect(versionActionLabels.findIndex((label) => label.includes('导出音频文件'))).toBeGreaterThan(
+      versionActionLabels.findIndex((label) => label.includes('导出歌曲视频')),
+    );
+
+    fireEvent.click(audioButton);
+    await waitFor(() => expect(audioExportPayloads[0]).toMatchObject({ articleId: 1, versionId: 'external-1' }));
+    expect(await screen.findByText('音频已导出到 recording-export')).toBeInTheDocument();
   });
 
   it('submits Suno song generation with explicit login guidance', async () => {
@@ -5235,6 +5292,7 @@ describe('App', () => {
     const recordButton = screen.getByRole('button', { name: '导出歌曲视频' });
     expect(recordButton).toBeDisabled();
     expect(recordButton).toHaveAttribute('title', '歌曲字幕时间线版本过旧，请重新生成字幕');
+    expect(screen.getByRole('button', { name: '导出音频文件' })).not.toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: '删除歌曲：旧字幕版本' }));
 
@@ -5726,7 +5784,7 @@ describe('App', () => {
     expect(enabledRecordButton).not.toBeDisabled();
     fireEvent.click(enabledRecordButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
-    chooseRecordingOption(dialog, '字幕', '烧录到视频');
+    chooseRecordingOption(dialog, '字幕', '内置字幕视频');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
     await waitFor(() => expect(recordPayloads[0]).toMatchObject({
