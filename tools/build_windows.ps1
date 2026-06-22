@@ -70,7 +70,33 @@ function Assert-LastExitCode {
     }
 }
 
+function Initialize-FlutterToolEnvironment {
+    $env:FLUTTER_SUPPRESS_ANALYTICS = "true"
+
+    $cacheLockPath = Join-Path $flutterRoot "bin\cache\lockfile"
+    try {
+        $lockParent = Split-Path -Parent $cacheLockPath
+        New-Item -ItemType Directory -Path $lockParent -Force | Out-Null
+        $lockProbe = [System.IO.File]::Open(
+            $cacheLockPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::ReadWrite
+        )
+        $lockProbe.Dispose()
+    } catch {
+        throw @"
+Flutter SDK cache is not writable from this process:
+  $cacheLockPath
+
+Run this build outside the sandbox or with approved escalation. Otherwise the
+Flutter tool can hang at the Windows build step until the outer command times out.
+"@
+    }
+}
+
 Initialize-FlutterGitTrust
+Initialize-FlutterToolEnvironment
 
 function Get-FlutterDartDefineArgs {
     param(

@@ -43,14 +43,17 @@ Tomato English Happy Talking 是一个基于 Flutter 的单机独立英语学习
 - 听力模式主按钮文案改为“开始播放”，并从当前选中句开始播放（默认第 1 句，用户切换后按所选句起播）。
 - Windows 构建脚本增强了 `-DartDefine` 兼容性：支持数组输入和逗号分隔键值，避免联调时 define 参数被整体吞并。
 - Windows 构建脚本会用 `package-lock.json` hash 判断 Web UI 依赖是否已就绪，依赖未变化时跳过重复 npm install；如果本地 `node_modules` 被占用导致构建失败，会复制 `web_ui/` 到临时目录构建，再同步 `app/assets/web/` 产物。
+- Windows 构建脚本会在启动时关闭 Flutter analytics 并检查 Flutter SDK cache lockfile 是否可写；在 Codex 受限沙箱内会快速报错，避免卡在 Windows Release 构建阶段直到外层命令超时。
 - 新增统一诊断日志系统：启动、bridge、QA、WebView、Suno、TTS、ASR、聊天、跟读、听力、录制和绘本链路会写入发布运行目录 `logs/`，QA 接口支持 recent / SSE stream / export。
 - 听力页新增全屏播放录制导出：支持 H.264 / H.265、2560x1440 / 1920x1080 / 1280x720、绘本页转场、进度回传、取消录制和同名 SRT 字幕，音频直接复用已缓存 MP3。
+- 录制视频设置弹窗中的编码、分辨率、转场和字幕选项改为 Web UI 内部菜单，避免 WebView2 原生下拉菜单在 Windows 桌面闪烁和延迟弹出；绘本录制转场新增“卷边翻页”。
 - 歌曲生成入口支持阿里云百聆（Fun-Music）、Suno 网页自动化和本地歌曲版本库，MiniMax API、mock 和测试入口已清理。
 - 听力歌曲弹窗拆为“播放 / 生成”页签：已下载歌曲按本地版本播放；阿里云百聆（Fun-Music）会先把过长或散文化章节压缩成适合提交的 `submittedLyrics`，再生成音频；Suno 仍按当前歌词记录检测到的完整歌曲链接并只下载缺失 `songUrl`。
 - Suno 歌曲归属以“同一篇文章歌词”为准，同歌词的不同风格版本都算这篇文章的歌曲；下载检测可以在 Library 宽召回候选，但保存音频前必须打开候选详情页核对歌词匹配，不能用风格、标题或旧 `songUrl` 直接判定完成。
 - 创作中心支持导入本地外部音频作为歌曲版本，导入文件会复制到运行数据目录并按音频内容去重；旧时间线版本会显示为需重新生成，避免拿过期字幕录制歌曲视频。
 - 本地歌曲版本新增默认播放标记，Web UI 可把指定歌曲版本设为默认，Native 播放时优先选择默认版本。
 - 歌曲字幕时间轴优先使用歌曲版本记录的 `submittedLyrics`，BigASR / Qwen-ASR 只提供时间锚点；如果 `submittedLyrics` 与文章原歌词不同，则不复用文章逐句中文翻译，避免字幕和音频不一致。歌曲视频录制必须先生成当前版本的字幕时间线。
+- 歌曲字幕时间线升级到 v7，按当前设计固定使用 `submittedLyrics` 作为字幕正文，不再用 ASR-only 识别片段替换歌词或额外插入重复唱段字幕。
 - Suno 下载音频和 metadata 会迁移到程序运行目录 `suno-music/`；阿里云百聆（Fun-Music）成功音频写入 `ApiCacheService` 的 `music/` 缓存目录，并在 metadata 中记录 `submittedLyrics` / `lyricsCompressed`。Windows 发布脚本会保留运行数据，避免重新发布丢失歌曲资产。
 - 设置页云服务配置重排为“凭据 / 平台地址 / 模型与语音”分区，Key 清除按钮并入对应输入行；TTS 声音角色按当前云平台切换，阿里云显示 CosyVoice voice，火山显示 Doubao speaker。
 - 听力播放和录制统一为英文音频：中文翻译在文章保存时生成或复用导入译文，用作字幕显示，不再为听力播放临时合成中文 TTS；全屏 readiness 只预热当前和下一句英文音频、当前和下一张绘本图。

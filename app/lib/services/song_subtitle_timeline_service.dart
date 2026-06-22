@@ -151,13 +151,11 @@ class SongSubtitleTimelineGenerationResult {
 
 class SongSubtitleTimelineService {
   static const purpose = 'suno_song_subtitle_timeline_v1';
-  static const alignmentVersion = 6;
+  static const alignmentVersion = 7;
   static const staleTimelineMessage = '歌曲字幕时间线版本过旧，请重新生成歌曲字幕';
   static const _matchedLineLeadInMs = 180;
   static const _matchedLineTailMs = 320;
   static const _cueGapMs = 80;
-  static const _recognizedTextMismatchThreshold = 0.74;
-  static const _recognizedTextMinAverageConfidence = 0.62;
 
   const SongSubtitleTimelineService._();
 
@@ -405,12 +403,6 @@ class SongSubtitleTimelineService {
       for (var i = 0; i < lines.length; i += 1)
         _singingWeight(lineTokens[i], lines[i]),
     ];
-    final lineOccurrences = _collectLineOccurrences(
-      lineTokens: lineTokens,
-      words: normalizedWords,
-    );
-    final repeatedOccurrenceCount = _lineOccurrenceRepeatCount(lineOccurrences);
-
     final matches = List<_LineMatch?>.filled(lines.length, null);
     var searchStart = 0;
     for (var i = 0; i < lines.length; i += 1) {
@@ -425,16 +417,6 @@ class SongSubtitleTimelineService {
         searchStart = math.min(normalizedWords.length, match.lastWordIndex + 1);
       }
     }
-
-    final matchedLineIndexes = {
-      for (var i = 0; i < matches.length; i += 1)
-        if (matches[i] != null) i,
-    };
-    final occurrenceLineIndexes = {
-      for (final occurrence in lineOccurrences) occurrence.lineIndex,
-    };
-    final useRepeatedOccurrences = repeatedOccurrenceCount > 0 &&
-        occurrenceLineIndexes.length >= matchedLineIndexes.length;
 
     final draft = <SongSubtitleCue?>[
       for (var i = 0; i < lines.length; i += 1)
@@ -452,59 +434,29 @@ class SongSubtitleTimelineService {
               ),
     ];
 
-    final List<SongSubtitleCue> rawCues;
-    String? tailWarning;
-    if (useRepeatedOccurrences) {
-      rawCues = _buildCuesFromLineOccurrences(
-        occurrences: lineOccurrences,
-        lines: lines,
-        lineTokens: lineTokens,
-        translations: translations,
-        weights: weights,
-        words: normalizedWords,
-        durationMs: safeDuration,
-      );
-    } else {
-      _fillMissingCues(
-        draft: draft,
-        lines: lines,
-        translations: translations,
-        weights: weights,
-        durationMs: safeDuration,
-      );
+    _fillMissingCues(
+      draft: draft,
+      lines: lines,
+      translations: translations,
+      weights: weights,
+      durationMs: safeDuration,
+    );
 
-      tailWarning = _collapseImplausibleTrailingEstimates(
-        draft: draft,
-        weights: weights,
-        durationMs: safeDuration,
-      );
-      rawCues = draft.whereType<SongSubtitleCue>().toList(growable: false);
-    }
+    final tailWarning = _collapseImplausibleTrailingEstimates(
+      draft: draft,
+      weights: weights,
+      durationMs: safeDuration,
+    );
+    final rawCues = draft.whereType<SongSubtitleCue>().toList(growable: false);
 
-    final normalizedCues = _normalizeCueBounds(
+    final cues = _normalizeCueBounds(
       rawCues,
       durationMs: safeDuration,
     );
-    final recognizedReplacement = _applyRecognizedTextForMismatchedCues(
-      cues: normalizedCues,
-      words: normalizedWords,
-      lineTokens: lineTokens,
-    );
-    final cues = recognizedReplacement.replacedCount > 0
-        ? _normalizeCueBounds(
-            recognizedReplacement.cues,
-            durationMs: safeDuration,
-          )
-        : recognizedReplacement.cues;
     final matchedCount = cues.where((cue) => cue.method == 'matched').length;
-    final recognizedCueCount =
-        cues.where((cue) => cue.method == 'recognized').length;
     final warnings = <String>[
       if (normalizedWords.isEmpty) 'ASR 未返回可用词级时间，已使用 fallback',
       if (matchedCount < cues.length) '部分歌词行使用插值或估算时间',
-      if (recognizedReplacement.replacedCount > 0 || recognizedCueCount > 0)
-        '部分字幕文字已按 ASR 识别内容替换',
-      if (useRepeatedOccurrences) 'ASR 检测到重复唱段，已为重复歌词生成额外字幕',
       if (matchedCount == 0) '没有歌词行与 ASR 结果可靠匹配',
       if (tailWarning != null) tailWarning,
     ];
@@ -820,343 +772,6 @@ class SongSubtitleTimelineService {
     );
   }
 
-  static List<_LineOccurrence> _collectLineOccurrences({
-    required List<List<String>> lineTokens,
-    required List<_TimedToken> words,
-  }) {
-    if (lineTokens.isEmpty || words.isEmpty) {
-      return const [];
-    }
-    final occurrences = <_LineOccurrence>[];
-    var cursor = 0;
-    var expectedLine = 0;
-    var guard = 0;
-    while (cursor < words.length && guard < words.length * 2) {
-      guard += 1;
-      final candidates = <_LineOccurrence>[];
-      for (var lineIndex = 0; lineIndex < lineTokens.length; lineIndex += 1) {
-        final tokens = lineTokens[lineIndex];
-        if (tokens.isEmpty) {
-          continue;
-        }
-        final match = _firstReliableLineMatch(
-          tokens: tokens,
-          words: words,
-          searchStart: cursor,
-          threshold: _lineOccurrenceThreshold(lineIndex, tokens),
-        );
-        if (match == null) {
-          continue;
-        }
-        candidates.add(_LineOccurrence(lineIndex: lineIndex, match: match));
-      }
-      if (candidates.isEmpty) {
-        break;
-      }
-
-      final earliestWord = candidates
-          .map((candidate) => candidate.match.firstWordIndex)
-          .reduce(math.min);
-      final nearEarliest = candidates
-          .where(
-              (candidate) => candidate.match.firstWordIndex <= earliestWord + 2)
-          .toList(growable: false);
-      nearEarliest.sort((a, b) {
-        final scoreCompare = _lineOccurrenceScore(
-          b,
-          expectedLine: expectedLine,
-          lineCount: lineTokens.length,
-        ).compareTo(_lineOccurrenceScore(
-          a,
-          expectedLine: expectedLine,
-          lineCount: lineTokens.length,
-        ));
-        if (scoreCompare != 0) {
-          return scoreCompare;
-        }
-        return a.lineIndex.compareTo(b.lineIndex);
-      });
-      final selected = nearEarliest.first;
-      occurrences.add(selected);
-      cursor = math.max(cursor + 1, selected.match.lastWordIndex + 1);
-      expectedLine = selected.lineIndex + 1;
-      if (expectedLine >= lineTokens.length) {
-        expectedLine = 0;
-      }
-    }
-    return occurrences;
-  }
-
-  static _LineMatch? _firstReliableLineMatch({
-    required List<String> tokens,
-    required List<_TimedToken> words,
-    required int searchStart,
-    required double threshold,
-  }) {
-    if (tokens.isEmpty || words.isEmpty || searchStart >= words.length) {
-      return null;
-    }
-    final coverageThreshold = _lineOccurrenceCoverageThreshold(tokens);
-    for (var start = searchStart; start < words.length; start += 1) {
-      final match = _lineMatchAtStart(
-        tokens: tokens,
-        words: words,
-        start: start,
-        searchStart: searchStart,
-      );
-      if (match == null) {
-        continue;
-      }
-      if (match.confidence >= threshold &&
-          match.coverage >= coverageThreshold) {
-        return match;
-      }
-    }
-    return null;
-  }
-
-  static double _lineOccurrenceThreshold(int index, List<String> tokens) {
-    final base = _lineConfidenceThreshold(index, tokens);
-    if (tokens.length <= 1) {
-      return math.max(base, 0.72);
-    }
-    if (tokens.length <= 3) {
-      return math.max(base, 0.62);
-    }
-    if (tokens.length <= 6) {
-      return math.max(base, 0.52);
-    }
-    return math.max(base, 0.48);
-  }
-
-  static double _lineOccurrenceCoverageThreshold(List<String> tokens) {
-    if (tokens.length <= 2) {
-      return 1.0;
-    }
-    if (tokens.length <= 4) {
-      return 0.7;
-    }
-    return 0.45;
-  }
-
-  static double _lineOccurrenceScore(
-    _LineOccurrence occurrence, {
-    required int expectedLine,
-    required int lineCount,
-  }) {
-    final lineDistance =
-        _forwardLineDistance(expectedLine, occurrence.lineIndex, lineCount);
-    final linePenalty = math.min(0.14, lineDistance * 0.018);
-    final coverageBonus = math.min(0.08, occurrence.match.coverage * 0.08);
-    return occurrence.match.confidence + coverageBonus - linePenalty;
-  }
-
-  static int _forwardLineDistance(int from, int to, int count) {
-    if (count <= 0) {
-      return 0;
-    }
-    final normalizedFrom = from % count;
-    final normalizedTo = to % count;
-    if (normalizedTo >= normalizedFrom) {
-      return normalizedTo - normalizedFrom;
-    }
-    return count - normalizedFrom + normalizedTo;
-  }
-
-  static int _lineOccurrenceRepeatCount(List<_LineOccurrence> occurrences) {
-    final seen = <int>{};
-    var repeats = 0;
-    for (final occurrence in occurrences) {
-      if (!seen.add(occurrence.lineIndex)) {
-        repeats += 1;
-      }
-    }
-    return repeats;
-  }
-
-  static List<SongSubtitleCue> _buildCuesFromLineOccurrences({
-    required List<_LineOccurrence> occurrences,
-    required List<String> lines,
-    required List<List<String>> lineTokens,
-    required Map<int, String> translations,
-    required List<double> weights,
-    required List<_TimedToken> words,
-    required int durationMs,
-  }) {
-    if (occurrences.isEmpty) {
-      return const [];
-    }
-    final cues = <SongSubtitleCue>[];
-    final coveredLineIndexes = <int>{};
-
-    void appendEstimatedRange({
-      required int startLine,
-      required int endLine,
-      required int startMs,
-      required int endMs,
-      required String method,
-      required double confidence,
-    }) {
-      if (startLine > endLine) {
-        return;
-      }
-      final draft = List<SongSubtitleCue?>.filled(lines.length, null);
-      _assignRange(
-        draft: draft,
-        lines: lines,
-        translations: translations,
-        weights: weights,
-        startLine: startLine,
-        endLine: endLine,
-        startMs: startMs,
-        endMs: endMs,
-        method: method,
-        confidence: confidence,
-      );
-      for (var i = startLine; i <= endLine; i += 1) {
-        final cue = draft[i];
-        if (cue != null) {
-          coveredLineIndexes.add(i);
-          cues.add(cue);
-        }
-      }
-    }
-
-    bool appendRecognizedWordRange({
-      required int firstWordIndex,
-      required int lastWordIndex,
-    }) {
-      if (firstWordIndex < 0 ||
-          lastWordIndex < firstWordIndex ||
-          firstWordIndex >= words.length) {
-        return false;
-      }
-      final safeLast = math.min(lastWordIndex, words.length - 1);
-      final segment = words.sublist(firstWordIndex, safeLast + 1);
-      final text = _recognizedTextFromWords(segment);
-      final duration =
-          segment.isEmpty ? 0 : segment.last.endMs - segment.first.startMs;
-      if (text.isEmpty ||
-          segment.length < 2 ||
-          duration < 500 ||
-          !_hasReliableRecognizedConfidence(segment)) {
-        return false;
-      }
-      cues.add(SongSubtitleCue(
-        lineIndex: -1,
-        startMs: math.max(0, segment.first.startMs - _matchedLineLeadInMs),
-        endMs: segment.last.endMs,
-        english: text,
-        chinese: '',
-        confidence: _recognizedCueConfidence(segment, fallback: 0.72),
-        method: 'recognized',
-      ));
-      return true;
-    }
-
-    final first = occurrences.first;
-    if (first.lineIndex > 0) {
-      appendEstimatedRange(
-        startLine: 0,
-        endLine: first.lineIndex - 1,
-        startMs: 0,
-        endMs: first.match.startMs,
-        method: 'estimated',
-        confidence: 0.48,
-      );
-    }
-
-    for (var i = 0; i < occurrences.length; i += 1) {
-      final occurrence = occurrences[i];
-      if (i > 0) {
-        final previous = occurrences[i - 1];
-        final insertedRecognizedGap = appendRecognizedWordRange(
-          firstWordIndex: previous.match.lastWordIndex + 1,
-          lastWordIndex: occurrence.match.firstWordIndex - 1,
-        );
-        if (!insertedRecognizedGap &&
-            occurrence.lineIndex > previous.lineIndex + 1) {
-          appendEstimatedRange(
-            startLine: previous.lineIndex + 1,
-            endLine: occurrence.lineIndex - 1,
-            startMs: previous.match.endMs,
-            endMs: occurrence.match.startMs,
-            method: 'interpolated',
-            confidence: 0.68,
-          );
-        }
-      }
-      coveredLineIndexes.add(occurrence.lineIndex);
-      final recognizedTokens = words
-          .sublist(
-            occurrence.match.firstWordIndex,
-            occurrence.match.lastWordIndex + 1,
-          )
-          .toList(growable: false);
-      final recognizedText = _recognizedTextFromWords(recognizedTokens);
-      final originalTokens =
-          occurrence.lineIndex >= 0 && occurrence.lineIndex < lineTokens.length
-              ? lineTokens[occurrence.lineIndex]
-              : const <String>[];
-      final recognizedNormalized = recognizedTokens
-          .map((word) => word.normalized)
-          .where((word) => word.isNotEmpty)
-          .toList(growable: false);
-      final similarity = _orderedTokenSimilarity(
-        originalTokens,
-        recognizedNormalized,
-      );
-      final shouldUseRecognizedText = recognizedText.isNotEmpty &&
-          _hasReliableRecognizedConfidence(recognizedTokens) &&
-          similarity < _recognizedTextMismatchThreshold;
-      cues.add(SongSubtitleCue(
-        lineIndex: occurrence.lineIndex,
-        startMs: math.max(
-          0,
-          occurrence.match.startMs - _matchedLineLeadInMs,
-        ),
-        endMs: occurrence.match.endMs,
-        english: shouldUseRecognizedText
-            ? recognizedText
-            : lines[occurrence.lineIndex],
-        chinese: shouldUseRecognizedText
-            ? ''
-            : translations[occurrence.lineIndex]?.trim() ?? '',
-        confidence: shouldUseRecognizedText
-            ? _recognizedCueConfidence(
-                recognizedTokens,
-                fallback: occurrence.match.confidence,
-              )
-            : occurrence.match.confidence,
-        method: shouldUseRecognizedText ? 'recognized' : 'matched',
-      ));
-    }
-
-    final last = occurrences.last;
-    final insertedTrailingRecognized = appendRecognizedWordRange(
-      firstWordIndex: last.match.lastWordIndex + 1,
-      lastWordIndex: words.length - 1,
-    );
-    if (last.lineIndex < lines.length - 1) {
-      final missingAfter = [
-        for (var i = last.lineIndex + 1; i < lines.length; i += 1)
-          if (!coveredLineIndexes.contains(i)) i,
-      ];
-      if (missingAfter.isNotEmpty && !insertedTrailingRecognized) {
-        appendEstimatedRange(
-          startLine: missingAfter.first,
-          endLine: lines.length - 1,
-          startMs: last.match.endMs,
-          endMs: durationMs,
-          method: 'estimated',
-          confidence: 0.48,
-        );
-      }
-    }
-
-    return cues;
-  }
-
   static double _tokenSimilarity(String a, String b) {
     if (a.isEmpty || b.isEmpty) {
       return 0;
@@ -1401,171 +1016,6 @@ class SongSubtitleTimelineService {
     return '尾部 ${tailCues.length} 行歌词缺少可靠人声匹配，已延长最后匹配字幕到歌曲结束';
   }
 
-  static _RecognizedCueReplacement _applyRecognizedTextForMismatchedCues({
-    required List<SongSubtitleCue> cues,
-    required List<_TimedToken> words,
-    required List<List<String>> lineTokens,
-  }) {
-    if (cues.isEmpty || words.isEmpty) {
-      return _RecognizedCueReplacement(cues: cues, replacedCount: 0);
-    }
-
-    var replacedCount = 0;
-    final replaced = <SongSubtitleCue>[];
-    for (final cue in cues) {
-      final originalTokens =
-          cue.lineIndex >= 0 && cue.lineIndex < lineTokens.length
-              ? lineTokens[cue.lineIndex]
-              : const <String>[];
-      final recognizedTokens = _wordsForCue(cue, words);
-      final recognizedText = _recognizedTextFromWords(recognizedTokens);
-      if (_shouldUseRecognizedText(
-        cue: cue,
-        originalTokens: originalTokens,
-        recognizedTokens: recognizedTokens,
-        recognizedText: recognizedText,
-      )) {
-        replacedCount += 1;
-        replaced.add(
-          SongSubtitleCue(
-            lineIndex: cue.lineIndex,
-            startMs: math.max(
-              0,
-              recognizedTokens.first.startMs - _matchedLineLeadInMs,
-            ),
-            endMs: recognizedTokens.last.endMs,
-            english: recognizedText,
-            chinese: '',
-            confidence: cue.confidence,
-            method: 'recognized',
-          ),
-        );
-      } else {
-        replaced.add(cue);
-      }
-    }
-    return _RecognizedCueReplacement(
-      cues: replaced,
-      replacedCount: replacedCount,
-    );
-  }
-
-  static List<_TimedToken> _wordsForCue(
-    SongSubtitleCue cue,
-    List<_TimedToken> words,
-  ) =>
-      words
-          .where((word) => word.endMs > cue.startMs && word.startMs < cue.endMs)
-          .toList(growable: false);
-
-  static bool _shouldUseRecognizedText({
-    required SongSubtitleCue cue,
-    required List<String> originalTokens,
-    required List<_TimedToken> recognizedTokens,
-    required String recognizedText,
-  }) {
-    if (recognizedText.trim().isEmpty || recognizedTokens.isEmpty) {
-      return false;
-    }
-    final recognizedNormalized = recognizedTokens
-        .map((word) => word.normalized)
-        .where((word) => word.isNotEmpty)
-        .toList(growable: false);
-    if (recognizedNormalized.isEmpty) {
-      return false;
-    }
-    if (!_hasReliableRecognizedConfidence(recognizedTokens)) {
-      return false;
-    }
-    final minWords = originalTokens.length <= 3 ? 1 : 2;
-    if (recognizedNormalized.length < minWords) {
-      return false;
-    }
-    final similarity = _orderedTokenSimilarity(
-      originalTokens,
-      recognizedNormalized,
-    );
-    if (cue.method == 'matched') {
-      return false;
-    }
-    return similarity < _recognizedTextMismatchThreshold;
-  }
-
-  static bool _hasReliableRecognizedConfidence(List<_TimedToken> words) {
-    final average = _averageKnownConfidence(words);
-    return average == null || average >= _recognizedTextMinAverageConfidence;
-  }
-
-  static double _recognizedCueConfidence(
-    List<_TimedToken> words, {
-    required double fallback,
-  }) {
-    final average = _averageKnownConfidence(words);
-    if (average == null) {
-      return fallback.clamp(0.0, 1.0);
-    }
-    return average.clamp(0.0, 1.0);
-  }
-
-  static double? _averageKnownConfidence(List<_TimedToken> words) {
-    final values = [
-      for (final word in words)
-        if (word.confidence != null)
-          word.confidence!.clamp(0.0, 1.0).toDouble(),
-    ];
-    if (values.isEmpty) {
-      return null;
-    }
-    return values.fold<double>(0, (sum, value) => sum + value) / values.length;
-  }
-
-  static double _orderedTokenSimilarity(
-    List<String> expected,
-    List<String> actual,
-  ) {
-    if (expected.isEmpty || actual.isEmpty) {
-      return 0;
-    }
-    var cursor = 0;
-    var score = 0.0;
-    for (final token in expected) {
-      var bestIndex = -1;
-      var bestScore = 0.0;
-      for (var i = cursor; i < actual.length; i += 1) {
-        final candidate = _tokenSimilarity(token, actual[i]);
-        if (candidate > bestScore) {
-          bestScore = candidate;
-          bestIndex = i;
-        }
-      }
-      if (bestIndex >= 0 && bestScore >= 0.54) {
-        score += bestScore;
-        cursor = bestIndex + 1;
-      }
-    }
-    return (score / math.max(expected.length, actual.length)).clamp(0.0, 1.0);
-  }
-
-  static String _recognizedTextFromWords(List<_TimedToken> words) {
-    final parts = words
-        .map((word) => word.text.trim())
-        .where((word) => word.isNotEmpty)
-        .toList(growable: false);
-    if (parts.isEmpty) {
-      return '';
-    }
-    var text = parts.join(' ').replaceAll(RegExp(r'\s+'), ' ').trim();
-    text = text.replaceAllMapped(
-      RegExp(r'\s+([,.;:!?])'),
-      (match) => match.group(1) ?? '',
-    );
-    if (text.isEmpty) {
-      return '';
-    }
-    final first = text.substring(0, 1);
-    return '${first.toUpperCase()}${text.substring(1)}';
-  }
-
   static String _cleanRecognizedWord(Object? value) =>
       value?.toString().replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
 
@@ -1600,8 +1050,7 @@ class SongSubtitleTimelineService {
     for (var i = 0; i < cues.length; i += 1) {
       final start = starts[i];
       final cue = cues[i];
-      final preciseBounds =
-          cue.method == 'matched' || cue.method == 'recognized';
+      final preciseBounds = cue.method == 'matched';
       final nextStart = i == cues.length - 1 ? durationMs : starts[i + 1];
       final preferredEnd =
           preciseBounds ? cue.endMs + _matchedLineTailMs : cue.endMs;
@@ -1655,16 +1104,6 @@ class _TimedToken {
   final double? confidence;
 }
 
-class _RecognizedCueReplacement {
-  const _RecognizedCueReplacement({
-    required this.cues,
-    required this.replacedCount,
-  });
-
-  final List<SongSubtitleCue> cues;
-  final int replacedCount;
-}
-
 class _LineMatch {
   const _LineMatch({
     required this.firstWordIndex,
@@ -1686,14 +1125,4 @@ class _LineMatch {
 
   double get coverage =>
       tokenCount <= 0 ? 0 : matchedTokenCount / math.max(1, tokenCount);
-}
-
-class _LineOccurrence {
-  const _LineOccurrence({
-    required this.lineIndex,
-    required this.match,
-  });
-
-  final int lineIndex;
-  final _LineMatch match;
 }

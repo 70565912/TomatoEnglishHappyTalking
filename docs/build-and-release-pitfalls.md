@@ -413,6 +413,7 @@ npm --prefix web_ui run build
 
 - Flutter wrapper 需要读写 `D:\DevTools\flutter\bin\cache\lockfile`。
 - 在受限沙箱里 SDK cache 目录不可写，或者上一次异常中断留下了陈旧 lockfile。
+- 即使用 `FLUTTER_ALREADY_LOCKED=true` 绕过 SDK cache lock，Flutter 仍可能写用户目录中的 Dart/Flutter telemetry session；因此不要把单个环境变量当作长期解决方案。
 
 处理：
 
@@ -450,7 +451,8 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 - `D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe --version` 能正常输出。
 - `flutter.bat --version` 能正常输出 Flutter 版本。
 - `tools/build_windows.ps1 -Release` 能进入 Web UI 构建和 Windows build 阶段。
-- 新版 `tools/build_windows.ps1` 会先检查 `D:\DevTools\flutter\bin\cache\lockfile` 是否可写；如果在 Codex 受限沙箱内直接运行，应快速报出 Flutter cache lockfile 不可写，而不是静默卡在 Flutter build。
+- 新版 `tools/build_windows.ps1` 会先关闭 Flutter analytics 并检查 `D:\DevTools\flutter\bin\cache\lockfile` 是否可写；如果在 Codex 受限沙箱内直接运行，应快速报出 Flutter cache lockfile 不可写，而不是静默卡在 Flutter build。
+- 如果同一命令在沙箱外能完成、在沙箱内快速报 cache lockfile 不可写，则修复目标已经达到；后续发布构建应固定走沙箱外授权路径。
 
 注意：
 

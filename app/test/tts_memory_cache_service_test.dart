@@ -133,16 +133,16 @@ void main() {
     expect(RecordingSubtitleMode.parse('burnedIn').burnsIn, isTrue);
     expect(RecordingSubtitleMode.parse('both').writesSrt, isTrue);
     expect(RecordingSubtitleMode.parse('both').burnsIn, isTrue);
+    expect(RecordingPageTransition.parse('pageCurl').name, 'pageCurl');
 
-    expect(
-      RecordingExportService.normalizeSettingsForTest({
-        'codec': 'h265',
-        'resolution': '2560x1440',
-        'pageTransition': 'slide',
-        'subtitleMode': 'both',
-      }),
-      containsPair('subtitleMode', 'both'),
-    );
+    final pageCurlSettings = RecordingExportService.normalizeSettingsForTest({
+      'codec': 'h265',
+      'resolution': '2560x1440',
+      'pageTransition': 'pageCurl',
+      'subtitleMode': 'both',
+    });
+    expect(pageCurlSettings, containsPair('pageTransition', 'pageCurl'));
+    expect(pageCurlSettings, containsPair('subtitleMode', 'both'));
     expect(
       RecordingExportService.normalizeSettingsForTest({
         'codec': 'unknown',
@@ -242,6 +242,18 @@ void main() {
         .where((part) => part['isTransition'] == true)
         .fold<int>(0, (sum, part) => sum + (part['durationMs'] as int));
     expect(transitionMs, RecordingExportService.transitionMs);
+
+    final pageCurlParts = RecordingExportService.hybridRenderPartsForTest(
+      transition: 'pageCurl',
+      segments: const [
+        {'startMs': 0, 'endMs': 1000, 'pageIndex': 0},
+        {'startMs': 1000, 'endMs': 2000, 'pageIndex': 1},
+      ],
+    );
+    expect(
+      pageCurlParts.where((part) => part['isTransition'] == true).length,
+      2,
+    );
   });
 
   test('recording export utility estimates mp3 duration from frames', () {

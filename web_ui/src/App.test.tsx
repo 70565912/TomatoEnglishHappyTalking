@@ -14,6 +14,11 @@ async function clickSelectedCreationAction(name: string | RegExp) {
   fireEvent.click(within(actions).getByRole('button', { name }));
 }
 
+function chooseRecordingOption(dialog: HTMLElement, label: string, option: string) {
+  fireEvent.click(within(dialog).getByRole('button', { name: new RegExp(label) }));
+  fireEvent.click(within(dialog).getByRole('option', { name: option }));
+}
+
 function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
   const scenes = [
     {
@@ -2507,28 +2512,31 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /复制全文/ }));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalledTimes(1));
     const copiedText = String(clipboard.writeText.mock.calls[0]?.[0] ?? '');
-    expect(copiedText).toContain('书名：Space Book');
-    expect(copiedText).toContain('章节：Space Snacks');
-    expect(copiedText).toContain('1. Tom finds a bright snack box.');
+    expect(copiedText.split('\n').slice(0, 2)).toEqual(['Space Book', 'Space Snacks']);
+    expect(copiedText).not.toContain('书名：');
+    expect(copiedText).not.toContain('章节：');
+    expect(copiedText).not.toContain('1. Tom finds a bright snack box.');
+    expect(copiedText).toContain('Tom finds a bright snack box.');
     expect(copiedText).toContain('汤姆发现了一个明亮的零食盒。');
 
     fireEvent.click(exportButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
-    fireEvent.change(within(dialog).getByLabelText('字幕'), { target: { value: 'both' } });
+    chooseRecordingOption(dialog, '转场', '卷边翻页');
+    chooseRecordingOption(dialog, '字幕', '视频内字幕 + SRT');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
     await waitFor(() => {
       expect(calls.find((call) => call.type === 'recording.settings.save')?.payload).toMatchObject({
         codec: 'h264',
         resolution: '1920x1080',
-        pageTransition: 'none',
+        pageTransition: 'pageCurl',
         subtitleMode: 'both',
       });
       expect(calls.find((call) => call.type === 'listening.recordVideo')?.payload).toMatchObject({
         articleId: 1,
         codec: 'h264',
         resolution: '1920x1080',
-        pageTransition: 'none',
+        pageTransition: 'pageCurl',
         subtitleMode: 'both',
       });
     });
@@ -3071,7 +3079,8 @@ describe('App', () => {
     await waitFor(() => expect(exportButton).not.toBeDisabled());
     fireEvent.click(exportButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
-    fireEvent.change(within(dialog).getByLabelText('字幕'), { target: { value: 'both' } });
+    chooseRecordingOption(dialog, '转场', '卷边翻页');
+    chooseRecordingOption(dialog, '字幕', '视频内字幕 + SRT');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
     await waitFor(() => {
@@ -3086,7 +3095,7 @@ describe('App', () => {
       expect(calls.find((call) => call.type === 'recording.settings.save')?.payload).toMatchObject({
         codec: 'h264',
         resolution: '1920x1080',
-        pageTransition: 'crossFade',
+        pageTransition: 'pageCurl',
         subtitleMode: 'both',
       });
       const recordCall = calls.find((call) => call.type === 'listening.recordVideo');
@@ -3094,7 +3103,7 @@ describe('App', () => {
         articleId: 1,
         codec: 'h264',
         resolution: '1920x1080',
-        pageTransition: 'crossFade',
+        pageTransition: 'pageCurl',
         subtitleMode: 'both',
       });
     });
@@ -3345,8 +3354,10 @@ describe('App', () => {
       expect(clipboard.writeText).toHaveBeenCalledTimes(1);
     });
     const copiedText = String(clipboard.writeText.mock.calls[0]?.[0] ?? '');
-    expect(copiedText).toContain('书名：Thumbnail Book');
-    expect(copiedText).toContain('章节：Thumbnail Chapter');
+    expect(copiedText.split('\n').slice(0, 2)).toEqual(['Thumbnail Book', 'Thumbnail Chapter']);
+    expect(copiedText).not.toContain('书名：');
+    expect(copiedText).not.toContain('章节：');
+    expect(copiedText).not.toContain('2. He shares it with his team.');
     expect(copiedText).toContain('He shares it with his team.');
   });
 
@@ -5715,7 +5726,7 @@ describe('App', () => {
     expect(enabledRecordButton).not.toBeDisabled();
     fireEvent.click(enabledRecordButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
-    fireEvent.change(within(dialog).getByLabelText('字幕'), { target: { value: 'burnedIn' } });
+    chooseRecordingOption(dialog, '字幕', '烧录到视频');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
     await waitFor(() => expect(recordPayloads[0]).toMatchObject({

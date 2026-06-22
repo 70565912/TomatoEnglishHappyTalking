@@ -3359,21 +3359,117 @@ select:disabled {
   gap: 10px;
 }
 
-.recording-dialog-grid label {
+.recording-choice-field {
+  position: relative;
   display: grid;
   gap: 6px;
   min-width: 0;
 }
 
-.recording-dialog-grid label span {
+.recording-choice-field > span {
   color: var(--soft-ink);
   font-size: 12px;
   font-weight: 1000;
 }
 
-.recording-dialog-grid select {
+.recording-choice-trigger {
   width: 100%;
   min-width: 0;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recording-choice-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recording-choice-trigger svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--soft-ink);
+  transform: rotate(90deg);
+  transition: transform 140ms ease;
+}
+
+.recording-choice-field.open .recording-choice-trigger {
+  border-color: rgba(255, 107, 53, 0.5);
+  background: white;
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.12);
+}
+
+.recording-choice-field.open .recording-choice-trigger svg {
+  transform: rotate(270deg);
+}
+
+.recording-choice-trigger:focus-visible {
+  outline: 3px solid rgba(255, 107, 53, 0.28);
+  outline-offset: 2px;
+}
+
+.recording-choice-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.recording-choice-list {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid rgba(255, 107, 53, 0.2);
+  border-radius: 8px;
+  background: white;
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.18);
+}
+
+.recording-choice-list button {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recording-choice-list button:hover,
+.recording-choice-list button:focus-visible {
+  background: #fff3e8;
+  outline: none;
+}
+
+.recording-choice-list button.selected {
+  background: var(--tomato);
+  color: white;
 }
 
 .listening-row.active {

@@ -300,7 +300,7 @@ export interface ListeningFullscreenReadyPayload {
 
 export type RecordingCodec = 'h264' | 'h265';
 export type RecordingResolution = '2560x1440' | '1920x1080' | '1280x720';
-export type RecordingPageTransition = 'none' | 'crossFade' | 'panZoomFade' | 'slide';
+export type RecordingPageTransition = 'none' | 'crossFade' | 'panZoomFade' | 'slide' | 'pageCurl';
 export type RecordingSubtitleMode = 'srt' | 'burnedIn' | 'both';
 
 export interface RecordingSettings {

@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { onNativeEvent, sendNative } from './bridge';
@@ -3815,16 +3815,18 @@ function chapterDescriptionForArticle(article: Article): string {
 function formatArticleFullText(payload: ArticleFullTextPayload): string {
   const bookTitle = payload.bookTitle?.trim() || payload.article.seriesTitle?.trim() || payload.article.title.trim();
   const chapterTitle = payload.article.title.trim();
-  const lines: string[] = [`书名：${bookTitle}`];
+  const lines: string[] = [bookTitle];
   if (chapterTitle && chapterTitle !== bookTitle) {
-    lines.push(`章节：${chapterTitle}`);
+    lines.push(chapterTitle);
   }
   lines.push('');
   payload.items.forEach((item) => {
     const english = item.english.trim();
     const chinese = item.chinese.trim();
     if (!english && !chinese) return;
-    lines.push(`${item.index + 1}. ${english}`);
+    if (english) {
+      lines.push(english);
+    }
     if (chinese) {
       lines.push(chinese);
     }
@@ -7722,58 +7724,34 @@ function RecordingSettingsDialog({
           <small>文件将保存到程序目录的 recording-export 文件夹。</small>
         </header>
         <div className="recording-dialog-grid">
-          <label>
-            <span>编码</span>
-            <select
-              value={settings.codec}
-              disabled={saving}
-              onChange={(event) => onChange({ codec: event.target.value as RecordingSettings['codec'] })}
-            >
-              <option value="h264">H.264</option>
-              <option value="h265">H.265 / HEVC</option>
-            </select>
-          </label>
-          <label>
-            <span>分辨率</span>
-            <select
-              value={settings.resolution}
-              disabled={saving}
-              onChange={(event) => onChange({ resolution: event.target.value as RecordingSettings['resolution'] })}
-            >
-              <option value="2560x1440">2560x1440</option>
-              <option value="1920x1080">1920x1080</option>
-              <option value="1280x720">1280x720</option>
-            </select>
-          </label>
-          <label>
-            <span>转场</span>
-            <select
-              value={settings.pageTransition}
-              disabled={saving}
-              onChange={(event) =>
-                onChange({ pageTransition: event.target.value as RecordingSettings['pageTransition'] })
-              }
-            >
-              <option value="none">不用转场</option>
-              <option value="crossFade">淡入淡出</option>
-              <option value="panZoomFade">轻微推拉淡入</option>
-              <option value="slide">滑动翻页</option>
-            </select>
-          </label>
-          <label>
-            <span>字幕</span>
-            <select
-              value={settings.subtitleMode}
-              disabled={saving}
-              onChange={(event) =>
-                onChange({ subtitleMode: event.target.value as RecordingSettings['subtitleMode'] })
-              }
-            >
-              <option value="srt">仅生成 SRT</option>
-              <option value="burnedIn">烧录到视频</option>
-              <option value="both">视频内字幕 + SRT</option>
-            </select>
-          </label>
+          <RecordingChoiceField
+            label="编码"
+            value={settings.codec}
+            options={recordingCodecOptions}
+            disabled={saving}
+            onChange={(value) => onChange({ codec: value as RecordingSettings['codec'] })}
+          />
+          <RecordingChoiceField
+            label="分辨率"
+            value={settings.resolution}
+            options={recordingResolutionOptions}
+            disabled={saving}
+            onChange={(value) => onChange({ resolution: value as RecordingSettings['resolution'] })}
+          />
+          <RecordingChoiceField
+            label="转场"
+            value={settings.pageTransition}
+            options={recordingTransitionOptions}
+            disabled={saving}
+            onChange={(value) => onChange({ pageTransition: value as RecordingSettings['pageTransition'] })}
+          />
+          <RecordingChoiceField
+            label="字幕"
+            value={settings.subtitleMode}
+            options={recordingSubtitleModeOptions}
+            disabled={saving}
+            onChange={(value) => onChange({ subtitleMode: value as RecordingSettings['subtitleMode'] })}
+          />
         </div>
         <footer className="edit-dialog-actions">
           <button className="ghost-action" type="button" disabled={saving} onClick={onCancel}>
@@ -7786,6 +7764,116 @@ function RecordingSettingsDialog({
       </section>
     </div>,
     document.body,
+  );
+}
+
+const recordingCodecOptions: SelectOption[] = [
+  { value: 'h264', label: 'H.264' },
+  { value: 'h265', label: 'H.265 / HEVC' },
+];
+
+const recordingResolutionOptions: SelectOption[] = [
+  { value: '2560x1440', label: '2560x1440' },
+  { value: '1920x1080', label: '1920x1080' },
+  { value: '1280x720', label: '1280x720' },
+];
+
+const recordingTransitionOptions: SelectOption[] = [
+  { value: 'none', label: '不用转场' },
+  { value: 'crossFade', label: '淡入淡出' },
+  { value: 'panZoomFade', label: '轻微推拉淡入' },
+  { value: 'slide', label: '滑动翻页' },
+  { value: 'pageCurl', label: '卷边翻页' },
+];
+
+const recordingSubtitleModeOptions: SelectOption[] = [
+  { value: 'srt', label: '仅生成 SRT' },
+  { value: 'burnedIn', label: '烧录到视频' },
+  { value: 'both', label: '视频内字幕 + SRT' },
+];
+
+function RecordingChoiceField({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: SelectOption[];
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const fieldRef = useRef<HTMLDivElement | null>(null);
+  const id = useId();
+  const labelId = `${id}-label`;
+  const valueId = `${id}-value`;
+  const listboxId = `${id}-listbox`;
+  const selectedOption = options.find((option) => option.value === value) ?? options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (!fieldRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (disabled) {
+      setOpen(false);
+    }
+  }, [disabled]);
+
+  return (
+    <div
+      ref={fieldRef}
+      className={`recording-choice-field ${open ? 'open' : ''}`}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          setOpen(false);
+        }
+      }}
+    >
+      <span id={labelId}>{label}</span>
+      <button
+        className="recording-choice-trigger"
+        type="button"
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-labelledby={`${labelId} ${valueId}`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span id={valueId}>{selectedOption?.label ?? value}</span>
+        <Icon name="chevron" />
+      </button>
+      {open && (
+        <div className="recording-choice-list" id={listboxId} role="listbox" aria-labelledby={labelId}>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              className={option.value === value ? 'selected' : ''}
+              type="button"
+              role="option"
+              aria-selected={option.value === value}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -9913,7 +10001,8 @@ function normalizeRecordingSettings(settings: RecordingSettings): RecordingSetti
   const pageTransition =
     settings.pageTransition === 'crossFade' ||
     settings.pageTransition === 'panZoomFade' ||
-    settings.pageTransition === 'slide'
+    settings.pageTransition === 'slide' ||
+    settings.pageTransition === 'pageCurl'
       ? settings.pageTransition
       : 'none';
   const subtitleMode =

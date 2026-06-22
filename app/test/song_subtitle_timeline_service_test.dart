@@ -137,7 +137,7 @@ void main() {
     expect(timeline.cues[1].endMs, timeline.cues[2].startMs);
   });
 
-  test('uses recognized words for mismatched interpolated song subtitles', () {
+  test('keeps original lyrics for mismatched interpolated song subtitles', () {
     final timeline = SongSubtitleTimelineService.buildTimeline(
       articleId: 90,
       audioHash: 'audio',
@@ -170,15 +170,15 @@ void main() {
       ],
     );
 
-    expect(timeline.cues[1].method, 'recognized');
-    expect(timeline.cues[1].english, 'The singer adds a new refrain');
-    expect(timeline.cues[1].chinese, isEmpty);
-    expect(timeline.cues[1].startMs, 3420);
-    expect(timeline.cues[1].endMs, 6020);
-    expect(timeline.warnings, contains('部分字幕文字已按 ASR 识别内容替换'));
+    expect(timeline.cues[1].method, 'interpolated');
+    expect(timeline.cues[1].english, 'Completely different article sentence.');
+    expect(timeline.cues[1].chinese, '这句中文不应复用。');
+    expect(timeline.cues[1].startMs, greaterThan(timeline.cues[0].endMs));
+    expect(timeline.cues[1].endMs, timeline.cues[2].startMs);
+    expect(timeline.warnings, isNot(contains('部分字幕文字已按 ASR 识别内容替换')));
   });
 
-  test('adds ASR-only cues between repeated sung lyric anchors', () {
+  test('does not add ASR-only cues between repeated sung lyric anchors', () {
     final timeline = SongSubtitleTimelineService.buildTimeline(
       articleId: 91,
       audioHash: 'audio',
@@ -221,13 +221,16 @@ void main() {
       ],
     );
 
-    expect(timeline.cues.map((cue) => cue.lineIndex), [0, 1, -1, 1, 2]);
-    expect(timeline.cues[2].method, 'recognized');
-    expect(timeline.cues[2].english, 'Repeat the chorus one more time');
-    expect(timeline.cues[2].chinese, isEmpty);
+    expect(timeline.cues.map((cue) => cue.lineIndex), [0, 1, 2]);
+    expect(timeline.cues.every((cue) => cue.method == 'matched'), isTrue);
+    expect(timeline.cues.map((cue) => cue.english), [
+      'Silver boats drift softly.',
+      'Golden afternoon shines bright.',
+      'Homeward bells are ringing.',
+    ]);
     expect(
       timeline.warnings,
-      contains('ASR 检测到重复唱段，已为重复歌词生成额外字幕'),
+      isNot(contains('ASR 检测到重复唱段，已为重复歌词生成额外字幕')),
     );
     expect(
       () => SongSubtitleTimelineService.validateTimelineCompleteness(
@@ -238,7 +241,7 @@ void main() {
     );
   });
 
-  test('ignores low confidence ASR-only repeated lyric gaps', () {
+  test('ignores ASR-only repeated lyric gaps', () {
     final timeline = SongSubtitleTimelineService.buildTimeline(
       articleId: 92,
       audioHash: 'audio',
@@ -293,7 +296,7 @@ void main() {
       ],
     );
 
-    expect(timeline.cues.map((cue) => cue.lineIndex), [0, 1, 1, 2]);
+    expect(timeline.cues.map((cue) => cue.lineIndex), [0, 1, 2]);
     expect(
         timeline.cues.any((cue) => cue.english == 'Garbled uncertain lyrics'),
         isFalse);

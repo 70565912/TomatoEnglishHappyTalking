@@ -43,7 +43,8 @@ enum RecordingPageTransition {
   none,
   crossFade,
   panZoomFade,
-  slide;
+  slide,
+  pageCurl;
 
   static RecordingPageTransition parse(String value) {
     final normalized = value.trim();
@@ -2239,6 +2240,14 @@ class RecordingExportService {
   }) {
     final clamped = progress.clamp(0, 1).toDouble();
     switch (transition) {
+      case RecordingPageTransition.pageCurl:
+        _drawPageCurlTransition(
+          canvas: canvas,
+          bounds: bounds,
+          fromImage: fromImage,
+          toImage: toImage,
+          progress: clamped,
+        );
       case RecordingPageTransition.slide:
         if (fromImage != null) {
           _drawContainImage(
@@ -2298,11 +2307,371 @@ class RecordingExportService {
     }
   }
 
+  static void _drawPageCurlTransition({
+    required Canvas canvas,
+    required Rect bounds,
+    required ui.Image? fromImage,
+    required ui.Image? toImage,
+    required double progress,
+  }) {
+    final raw = progress.clamp(0, 1).toDouble();
+    if (raw <= 0.015) {
+      if (fromImage != null) {
+        _drawContainImage(canvas, fromImage, bounds, Paint());
+      } else if (toImage != null) {
+        _drawContainImage(canvas, toImage, bounds, Paint());
+      }
+      return;
+    }
+    if (raw >= 0.985) {
+      if (toImage != null) {
+        _drawContainImage(canvas, toImage, bounds, Paint());
+      } else if (fromImage != null) {
+        _drawContainImage(canvas, fromImage, bounds, Paint());
+      }
+      return;
+    }
+
+    if (fromImage == null) {
+      if (toImage != null) {
+        _drawContainImage(canvas, toImage, bounds, Paint());
+      } else {
+        canvas.drawRect(bounds, Paint()..color = const Color(0xFFF8F8F4));
+      }
+      return;
+    }
+
+    final pageWidth = bounds.width;
+    final pageHeight = bounds.height;
+    final halfPageWidth = pageWidth * 0.5;
+    final spineX = bounds.center.dx;
+    final turn = _smoothStep(raw);
+    final arc = math.sin(math.pi * turn);
+
+    _drawContainImage(canvas, fromImage, bounds, Paint());
+
+    if (toImage != null) {
+      final sheetWidth =
+          halfPageWidth * (0.055 + 0.945 * math.sin(turn * math.pi / 2));
+      final rightEdgeProgress = _smoothStep(((raw - 0.16) / 0.84).clamp(0, 1));
+      final rightEdge = _lerp(
+        bounds.right + halfPageWidth * 0.018,
+        spineX,
+        rightEdgeProgress,
+      );
+      final leftEdge = rightEdge - sheetWidth;
+      final slant = halfPageWidth * 0.20 * arc;
+      final lift = pageHeight * 0.050 * arc * (1 - turn * 0.35);
+
+      final topLeft = Offset(
+        leftEdge + slant * 0.62,
+        bounds.top - pageHeight * 0.014 * arc,
+      );
+      final topRight = Offset(
+        rightEdge + slant * 0.22,
+        bounds.top + pageHeight * 0.018 * arc,
+      );
+      final bottomLeft = Offset(
+        leftEdge - slant * 0.48,
+        bounds.bottom - lift,
+      );
+      final bottomRight = Offset(
+        rightEdge - slant * 0.28,
+        bounds.bottom - pageHeight * 0.010 * arc,
+      );
+
+      final rightRevealPath = Path()
+        ..moveTo(topRight.dx, topRight.dy)
+        ..lineTo(bounds.right, bounds.top)
+        ..lineTo(bounds.right, bounds.bottom)
+        ..lineTo(bottomRight.dx, bottomRight.dy)
+        ..close();
+      canvas.save();
+      canvas.clipPath(rightRevealPath, doAntiAlias: true);
+      _drawRightHalfAsFlatPage(
+        canvas: canvas,
+        image: toImage,
+        bounds: bounds,
+        opacity: 1,
+      );
+      canvas.restore();
+
+      _drawBookSpineHint(canvas, bounds, strength: 0.18 + 0.28 * turn);
+
+      final sheetPath = Path()
+        ..moveTo(topLeft.dx, topLeft.dy)
+        ..lineTo(topRight.dx, topRight.dy)
+        ..lineTo(bottomRight.dx, bottomRight.dy)
+        ..lineTo(bottomLeft.dx, bottomLeft.dy)
+        ..close();
+
+      canvas.drawShadow(
+        sheetPath,
+        const Color(0xAA000000),
+        math.max(5, pageWidth * 0.006),
+        true,
+      );
+
+      canvas.save();
+      canvas.clipPath(sheetPath, doAntiAlias: true);
+      canvas.drawRect(
+          sheetPath.getBounds(), Paint()..color = const Color(0xFFFDFDFB));
+      _drawImageSliceIntoQuad(
+        canvas: canvas,
+        image: toImage,
+        source: Rect.fromLTRB(
+          0,
+          0,
+          toImage.width * 0.5,
+          toImage.height.toDouble(),
+        ),
+        topLeft: topLeft,
+        topRight: topRight,
+        bottomLeft: bottomLeft,
+        clipPath: sheetPath,
+      );
+      _drawPageCurlBackShading(
+        canvas: canvas,
+        sheetBounds: sheetPath.getBounds(),
+        creaseTop: topRight,
+        creaseBottom: bottomRight,
+        progress: turn,
+      );
+      canvas.restore();
+
+      _drawPageCurlCrease(
+        canvas: canvas,
+        creaseTop: topRight,
+        creaseBottom: bottomRight,
+        outerTop: topLeft,
+        outerBottom: bottomLeft,
+        progress: turn,
+      );
+      return;
+    }
+
+    _drawBookSpineHint(canvas, bounds, strength: 0.25 * turn);
+  }
+
+  static void _drawImageSliceIntoQuad({
+    required Canvas canvas,
+    required ui.Image image,
+    required Rect source,
+    required Offset topLeft,
+    required Offset topRight,
+    required Offset bottomLeft,
+    required Path clipPath,
+  }) {
+    if (source.width <= 1 || source.height <= 1) {
+      return;
+    }
+    final xAxis = (topRight - topLeft) / source.width;
+    final yAxis = (bottomLeft - topLeft) / source.height;
+    canvas.save();
+    canvas.clipPath(clipPath, doAntiAlias: true);
+    canvas.transform(Float64List.fromList([
+      xAxis.dx,
+      xAxis.dy,
+      0,
+      0,
+      yAxis.dx,
+      yAxis.dy,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      topLeft.dx,
+      topLeft.dy,
+      0,
+      1,
+    ]));
+    canvas.drawImageRect(
+      image,
+      source,
+      Rect.fromLTWH(0, 0, source.width, source.height),
+      Paint()..filterQuality = FilterQuality.medium,
+    );
+    canvas.restore();
+  }
+
+  static void _drawPageCurlBackShading({
+    required Canvas canvas,
+    required Rect sheetBounds,
+    required Offset creaseTop,
+    required Offset creaseBottom,
+    required double progress,
+  }) {
+    if (sheetBounds.width <= 1 || sheetBounds.height <= 1) {
+      return;
+    }
+    final shadowStrength =
+        (0.16 + 0.22 * math.sin(math.pi * progress)).clamp(0, 0.42).toDouble();
+    canvas.drawRect(
+      sheetBounds,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          sheetBounds.centerLeft,
+          sheetBounds.centerRight,
+          [
+            const Color(0x22FFFFFF),
+            const Color.fromRGBO(255, 255, 255, 0.18),
+            Color.fromRGBO(0, 0, 0, shadowStrength),
+            const Color(0x18FFFFFF),
+          ],
+          const [0.0, 0.46, 0.86, 1.0],
+        ),
+    );
+    canvas.drawLine(
+      creaseTop,
+      creaseBottom,
+      Paint()
+        ..color = Color.fromRGBO(0, 0, 0, 0.16 + shadowStrength * 0.35)
+        ..strokeWidth = math.max(2.0, sheetBounds.width * 0.006),
+    );
+  }
+
+  static void _drawPageCurlCrease({
+    required Canvas canvas,
+    required Offset creaseTop,
+    required Offset creaseBottom,
+    required Offset outerTop,
+    required Offset outerBottom,
+    required double progress,
+  }) {
+    final creaseWidth =
+        math.max(2.0, (creaseBottom - creaseTop).distance * 0.002);
+    canvas.drawLine(
+      creaseTop,
+      creaseBottom,
+      Paint()
+        ..color = const Color(0xAA242424)
+        ..strokeWidth = creaseWidth,
+    );
+    canvas.drawLine(
+      outerTop,
+      outerBottom,
+      Paint()
+        ..color = const Color(0xDDFFFFFF)
+        ..strokeWidth = math.max(1.6, creaseWidth * 0.85),
+    );
+    final lipProgress =
+        (1 - _smoothStep((progress / 0.36).clamp(0, 1))).clamp(0, 1).toDouble();
+    if (lipProgress <= 0.02) {
+      return;
+    }
+    final lipLength = math.max(16.0, (outerBottom - creaseBottom).distance);
+    final lipPath = Path()
+      ..moveTo(creaseBottom.dx, creaseBottom.dy)
+      ..quadraticBezierTo(
+        _lerp(creaseBottom.dx, outerBottom.dx, 0.45),
+        creaseBottom.dy - lipLength * 0.18,
+        outerBottom.dx,
+        outerBottom.dy,
+      )
+      ..lineTo(
+        outerBottom.dx + lipLength * 0.08 * lipProgress,
+        outerBottom.dy - lipLength * 0.18 * lipProgress,
+      )
+      ..quadraticBezierTo(
+        _lerp(creaseBottom.dx, outerBottom.dx, 0.66),
+        creaseBottom.dy - lipLength * 0.30 * lipProgress,
+        creaseBottom.dx,
+        creaseBottom.dy,
+      )
+      ..close();
+    canvas.drawPath(
+      lipPath,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          creaseBottom,
+          outerBottom,
+          const [
+            Color(0xFFFFFFFF),
+            Color(0xFFE8E8E4),
+            Color(0xFFBDBDB8),
+          ],
+          const [0.0, 0.55, 1.0],
+        ),
+    );
+  }
+
+  static void _drawRightHalfAsFlatPage({
+    required Canvas canvas,
+    required ui.Image image,
+    required Rect bounds,
+    required double opacity,
+  }) {
+    final dst = Rect.fromLTRB(
+      bounds.center.dx,
+      bounds.top,
+      bounds.right,
+      bounds.bottom,
+    );
+    if (dst.width <= 1 || dst.height <= 1) {
+      return;
+    }
+    final src = Rect.fromLTRB(
+      image.width * 0.5,
+      0,
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+    canvas.drawImageRect(
+      image,
+      src,
+      dst,
+      _opacityPaint(opacity),
+    );
+  }
+
+  static void _drawBookSpineHint(
+    Canvas canvas,
+    Rect bounds, {
+    required double strength,
+  }) {
+    if (strength <= 0) {
+      return;
+    }
+    final alpha = (strength.clamp(0, 1) * 255).round();
+    final spineWidth = math.max(10.0, bounds.width * 0.035);
+    final spineRect = Rect.fromCenter(
+      center: Offset(bounds.center.dx, bounds.center.dy),
+      width: spineWidth,
+      height: bounds.height,
+    );
+    canvas.drawRect(
+      spineRect,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          spineRect.centerLeft,
+          spineRect.centerRight,
+          [
+            const Color.fromARGB(0, 0, 0, 0),
+            Color.fromARGB((alpha * 0.38).round(), 0, 0, 0),
+            Color.fromARGB((alpha * 0.16).round(), 255, 255, 255),
+            Color.fromARGB((alpha * 0.34).round(), 0, 0, 0),
+            const Color.fromARGB(0, 0, 0, 0),
+          ],
+          const [0.0, 0.35, 0.50, 0.65, 1.0],
+        ),
+    );
+  }
+
   static Paint _opacityPaint(double opacity) => Paint()
     ..colorFilter = ui.ColorFilter.mode(
       Color.fromRGBO(255, 255, 255, opacity.clamp(0, 1).toDouble()),
       BlendMode.modulate,
     );
+
+  static double _smoothStep(double value) {
+    final t = value.clamp(0, 1).toDouble();
+    return t * t * (3 - 2 * t);
+  }
+
+  static double _lerp(double start, double end, double progress) =>
+      start + (end - start) * progress;
 
   static _PageTransition? _transitionAt({
     required _RecordingTimeline timeline,
