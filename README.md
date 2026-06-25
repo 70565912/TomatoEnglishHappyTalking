@@ -1,7 +1,9 @@
 # Tomato English Happy Talking
 
-作者  ：兔子先生
+作者  ：兔子先生 / Ryan Chen
 Email :  70565912@qq.com
+
+本项目已按 Apache License 2.0 开源，详见 [LICENSE](LICENSE)。项目名称、图标、第三方云服务、API Key、用户生成内容和第三方依赖/素材仍分别受其自身权利与服务条款约束。
 
 Tomato English Happy Talking 是一个基于 Flutter 的单机独立英语学习 App，不依赖后台服务运行，支持 Windows EXE 和 Android APK 双平台。
 原本这个APP我是想使用AI接口自己制作绘本视频，替换制作效果差强人意的英语趣配音AI创作中心。因此给我家番茄小朋友设计制作了这款番茄英语听力口语训练工具。
