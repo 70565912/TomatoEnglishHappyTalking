@@ -417,6 +417,7 @@ Manifest 与入口约束：
 - Windows 发布目录：`release\windows\tomato_english_happy_talking`
 - Android 发布 APK：`release\android\tomato_english_happy_talking-android-release.apk`
 - Web UI 打包产物：`app\assets\web\`
+- Windows 发布目录同时是本机运行数据目录，可能包含数据库、日志、诊断、导出媒体、缓存和 `security/`。对外分发 zip 不要直接压缩该目录，必须先做干净 staging，只保留程序文件、Flutter assets、FFmpeg 及依赖，排除运行数据和账号/key/settings 文件。
 
 修改约束：
 
@@ -492,6 +493,7 @@ cd f:\TomatoEnglishHappyTalking
 - 桌面运行目录和数据固定跟随发布目录：Windows Debug 和 Release 可以是两套构建产物，但脚本会把最终运行的程序文件同步到 `release\windows\tomato_english_happy_talking\`；数据库、`tomato_api_cache/`、绘本图片、TTS、录音、`ffmpeg.exe` 和依赖 DLL 都应从这里读取，不要让 Debug 从 `app\build\windows\...\Debug` 直接启动或写入第二套数据。
 - `tools/build_windows.ps1` 不得清空用户运行数据；如果需要清理发布目录，只能清理程序构建产物，必须保留数据库、`tomato_api_cache/`、录音、绘本图片和配置密钥文件。
 - `D:\DevTools\flutter\bin\flutter.bat analyze`、`flutter.bat --version`、`flutter test` 以及项目 Flutter 构建脚本在当前 Codex 沙箱内已确认会卡住 SDK cache lockfile；代理会话不要先试沙箱内命令，直接用已授权沙箱外 PowerShell 执行，并设置明确超时。
+- Android Release 冷构建可能接近或超过 15 分钟，尤其是 R8/minify、资源压缩、mapping 和 `rive_native` Android artifact 初始化。自动化外层 timeout 至少预留 25-30 分钟；如果 `app/build/app/outputs/flutter-apk/app-release.apk` 与 `outputs/mapping/release/mapping.txt` 已更新但 `release/android/` 仍旧，先查 Gradle daemon 日志是否已 `Success`，再重新运行脚本或按脚本目标同步产物。
 
 只有在怀疑脚本本身有问题时，才退回到底层 `flutter build`、`flutter run`、`gradlew`、`adb` 或 `emulator` 命令定位。
 

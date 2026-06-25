@@ -965,9 +965,9 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'listening.songRecordVideo') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
     const subtitleMode = String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode);
-    const srtVideoPath = 'C:\\Tomato\\recording-export\\mock-song-srt.mp4';
-    const srtPath = 'C:\\Tomato\\recording-export\\mock-song-srt.srt';
-    const subtitledVideoPath = 'C:\\Tomato\\recording-export\\mock-song-subtitled.mp4';
+    const srtVideoPath = 'C:\\Tomato\\recording-export\\srt\\mock-song-srt.mp4';
+    const srtPath = 'C:\\Tomato\\recording-export\\srt\\mock-song-srt.srt';
+    const subtitledVideoPath = 'C:\\Tomato\\recording-export\\subtitled\\mock-song-subtitled.mp4';
     const videoVariants =
       subtitleMode === 'both'
         ? [
@@ -1003,8 +1003,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       articleId,
       versionId,
       sourcePath: 'C:\\Tomato\\suno-music\\mock-song.mp3',
-      outputPath: 'C:\\Tomato\\recording-export\\mock-song-audio.mp3',
-      outputDirectory: 'C:\\Tomato\\recording-export',
+      outputPath: 'C:\\Tomato\\recording-export\\mp3\\mock-song-audio.mp3',
+      outputDirectory: 'C:\\Tomato\\recording-export\\mp3',
     };
   }
   if (type === 'listening.songStop') {
@@ -1054,10 +1054,10 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'listening.recordVideo') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
     const subtitleMode = String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode);
-    const base = `${mockRecordingSettings.outputDirectory}\\Space Snacks ${mockRecordingVideos.length + 1}`;
-    const srtVideoPath = `${base} - srt.mp4`;
-    const srtPath = `${base} - srt.srt`;
-    const subtitledVideoPath = `${base} - subtitled.mp4`;
+    const base = `Space Snacks ${mockRecordingVideos.length + 1}`;
+    const srtVideoPath = `${mockRecordingSettings.outputDirectory}\\srt\\${base} - srt.mp4`;
+    const srtPath = `${mockRecordingSettings.outputDirectory}\\srt\\${base} - srt.srt`;
+    const subtitledVideoPath = `${mockRecordingSettings.outputDirectory}\\subtitled\\${base} - subtitled.mp4`;
     const videoVariants =
       subtitleMode === 'both'
         ? [

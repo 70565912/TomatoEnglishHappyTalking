@@ -660,6 +660,45 @@ describe('suno automation simulator', () => {
     expect(decision.missing).toContain('styleMagic');
   });
 
+  it('clicks Personalize style prompt instead of View saved style prompts', () => {
+    const decision = simulateSunoCreateFill({
+      currentUrl: 'https://suno.com/create',
+      lyrics: '"I am sure I am not Ada," she said.',
+      controls: [
+        { label: 'Advanced', selected: true },
+        {
+          label: 'View saved style prompts',
+          context: 'Styles 0/1000',
+        },
+        {
+          label: 'Personalize style prompt to match your taste',
+          context: 'Styles 0/1000',
+          className: 'hxc-btn-variant-standard bg-accent-blue text-white',
+        },
+        {
+          label: 'Refresh recommended styles',
+          context: 'Styles recommended styles',
+        },
+      ],
+      fields: [
+        {
+          label: 'Lyrics',
+          value: '"I am sure I am not Ada," she said.',
+          context: 'Lyrics 35/5000',
+          rect: { height: 120 },
+        },
+        {
+          label: 'Styles',
+          context: 'Styles 0/1000',
+          rect: { height: 88 },
+        },
+      ],
+      allowMagicClick: true,
+    });
+    expect(decision.action).toBe('clickStyleMagic');
+    expect(decision.magicControl?.label).toBe('Personalize style prompt to match your taste');
+  });
+
   it('expands collapsed Styles before reporting the style field missing', () => {
     const decision = simulateSunoCreateFill({
       currentUrl: 'https://suno.com/create',

@@ -205,6 +205,8 @@ cd f:\TomatoEnglishHappyTalking
 .\tools\build_android.ps1
 ```
 
+Android 首次或冷缓存 Release 构建可能需要下载 / 初始化 Flutter 插件原生产物并执行 R8、资源压缩和 mapping 生成。自动化环境不要把外层超时设在 15 分钟这种贴边值，建议至少预留 25-30 分钟；如果 `app/build/app/outputs/flutter-apk/app-release.apk` 已更新但脚本未复制到 `release/android/`，先按日志确认 Gradle 是否已返回成功，再重新运行脚本或同步产物。
+
 启动模拟器并运行 Android Debug：
 
 ```powershell
@@ -272,6 +274,8 @@ cd f:\TomatoEnglishHappyTalking
 - Windows 发布目录：`release/windows/tomato_english_happy_talking/`
 - Android 构建输出：`app/build/app/outputs/flutter-apk/app-release.apk`
 - Android 发布目录：`release/android/tomato_english_happy_talking-android-release.apk`
+
+Windows 发布目录是本机运行目录，可能包含数据库、日志、缓存、诊断、录音、导出视频、歌曲音频和 `security/` 等本机运行数据。对外分发 Windows zip 时不要直接压缩该目录；应先复制出干净 staging，只保留 EXE、DLL、Flutter `data/flutter_assets`、`ffmpeg.exe` 及其依赖，排除 `logs/`、`diagnostics/`、`recording-export/`、`suno-music/`、`tomato_api_cache/`、数据库、`settings.json` 和旧 key 文件。
 
 ## 云服务
 

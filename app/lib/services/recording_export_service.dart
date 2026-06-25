@@ -690,17 +690,10 @@ class RecordingExportService {
       reasons.add(encoder.reason);
     }
     final directory = Directory(defaultOutputDirectory());
-    try {
-      await directory.create(recursive: true);
-      final probe = File(path_lib.join(
-        directory.path,
-        '.tomato_recording_write_probe',
-      ));
-      await probe.writeAsString('ok');
-      await probe.delete();
-    } catch (error) {
-      reasons.add('输出目录不可写：$error');
-    }
+    await _probeWritableDirectories(
+      _videoOutputDirectoriesForMode(directory, request.subtitleMode),
+      reasons,
+    );
 
     return RecordingReadiness(
       ready: reasons.isEmpty,
@@ -760,6 +753,7 @@ class RecordingExportService {
       exportKind: 'listening',
       subtitleMode: request.subtitleMode,
     );
+    await _ensureVideoOutputPlanDirectories(outputPlan);
     final frameCount = (timeline.durationMs / (1000 / request.fps))
         .ceil()
         .clamp(1, 1 << 31)
@@ -868,17 +862,10 @@ class RecordingExportService {
       reasons.add(encoder.reason);
     }
     final directory = Directory(defaultOutputDirectory());
-    try {
-      await directory.create(recursive: true);
-      final probe = File(path_lib.join(
-        directory.path,
-        '.tomato_recording_write_probe',
-      ));
-      await probe.writeAsString('ok');
-      await probe.delete();
-    } catch (error) {
-      reasons.add('输出目录不可写：$error');
-    }
+    await _probeWritableDirectories(
+      _videoOutputDirectoriesForMode(directory, request.subtitleMode),
+      reasons,
+    );
     return RecordingReadiness(
       ready: reasons.isEmpty,
       reasons: reasons,
@@ -930,6 +917,7 @@ class RecordingExportService {
       exportKind: 'song',
       subtitleMode: request.subtitleMode,
     );
+    await _ensureVideoOutputPlanDirectories(outputPlan);
     final frameCount = (timeline.durationMs / (1000 / request.fps))
         .ceil()
         .clamp(1, 1 << 31)
@@ -1062,7 +1050,7 @@ class RecordingExportService {
   }) async {
     final variants = _subtitleVariantsForMode(subtitleMode);
     final baseNames = await _availableVideoOutputBaseNames(
-      directory: directory,
+      rootDirectory: directory,
       article: article,
       series: series,
       exportKind: exportKind,
@@ -1072,12 +1060,16 @@ class RecordingExportService {
     final outputVariants = <_RecordingVideoOutputVariant>[];
     for (final variant in variants) {
       final baseName = baseNames[variant]!;
+      final outputDirectory = _videoOutputDirectoryForVariant(
+        directory,
+        variant,
+      );
       final subtitlePath = variant == _RecordingVideoSubtitleVariant.srt
-          ? path_lib.join(directory.path, '$baseName.srt')
+          ? path_lib.join(outputDirectory.path, '$baseName.srt')
           : '';
       outputVariants.add(_RecordingVideoOutputVariant(
         kind: variant,
-        videoPath: path_lib.join(directory.path, '$baseName.mp4'),
+        videoPath: path_lib.join(outputDirectory.path, '$baseName.mp4'),
         subtitlePath: subtitlePath,
       ));
     }
@@ -1182,7 +1174,7 @@ class RecordingExportService {
       article: article,
       series: series,
       version: version,
-      outputDirectory: Directory(defaultOutputDirectory()),
+      outputRootDirectory: Directory(defaultOutputDirectory()),
     );
   }
 
@@ -1191,7 +1183,7 @@ class RecordingExportService {
     required Article article,
     required StorySeries? series,
     required ArticleSongVersion version,
-    required Directory outputDirectory,
+    required Directory outputRootDirectory,
     DateTime? now,
   }) async {
     final sourcePath = version.audioPath.trim();
@@ -1203,6 +1195,7 @@ class RecordingExportService {
       throw RecordingExportException('歌曲音频文件不存在：$sourcePath');
     }
 
+    final outputDirectory = _mp3OutputDirectoryFor(outputRootDirectory);
     await outputDirectory.create(recursive: true);
     final extension = _audioOutputExtension(sourcePath);
     final baseName = await _availableOutputBaseName(
@@ -1269,6 +1262,80 @@ class RecordingExportService {
 
   static String defaultOutputDirectory() =>
       path_lib.join(programDirectory(), 'recording-export');
+
+  static String srtOutputDirectory() =>
+      path_lib.join(defaultOutputDirectory(), 'srt');
+
+  static String subtitledOutputDirectory() =>
+      path_lib.join(defaultOutputDirectory(), 'subtitled');
+
+  static String mp3OutputDirectory() =>
+      path_lib.join(defaultOutputDirectory(), 'mp3');
+
+  static Directory _srtOutputDirectoryFor(Directory rootDirectory) =>
+      Directory(path_lib.join(rootDirectory.path, 'srt'));
+
+  static Directory _subtitledOutputDirectoryFor(Directory rootDirectory) =>
+      Directory(path_lib.join(rootDirectory.path, 'subtitled'));
+
+  static Directory _mp3OutputDirectoryFor(Directory rootDirectory) =>
+      Directory(path_lib.join(rootDirectory.path, 'mp3'));
+
+  static Directory _videoOutputDirectoryForVariant(
+    Directory rootDirectory,
+    _RecordingVideoSubtitleVariant variant,
+  ) =>
+      switch (variant) {
+        _RecordingVideoSubtitleVariant.srt =>
+          _srtOutputDirectoryFor(rootDirectory),
+        _RecordingVideoSubtitleVariant.subtitled =>
+          _subtitledOutputDirectoryFor(rootDirectory),
+      };
+
+  static List<Directory> _videoOutputDirectoriesForMode(
+    Directory rootDirectory,
+    RecordingSubtitleMode mode,
+  ) {
+    final paths = {
+      for (final variant in _subtitleVariantsForMode(mode))
+        _videoOutputDirectoryForVariant(rootDirectory, variant).path,
+    };
+    return paths.map(Directory.new).toList(growable: false);
+  }
+
+  static Future<void> _probeWritableDirectories(
+    Iterable<Directory> directories,
+    List<String> reasons,
+  ) async {
+    for (final directory in directories) {
+      try {
+        await directory.create(recursive: true);
+        final probe = File(path_lib.join(
+          directory.path,
+          '.tomato_recording_write_probe',
+        ));
+        await probe.writeAsString('ok');
+        await probe.delete();
+      } catch (error) {
+        reasons.add('输出目录不可写：${directory.path}：$error');
+      }
+    }
+  }
+
+  static Future<void> _ensureVideoOutputPlanDirectories(
+    _RecordingVideoOutputPlan plan,
+  ) async {
+    final directories = <String>{
+      for (final variant in plan.variants)
+        File(variant.videoPath).parent.absolute.path,
+      for (final variant in plan.variants)
+        if (variant.subtitlePath.trim().isNotEmpty)
+          File(variant.subtitlePath).parent.absolute.path,
+    };
+    for (final directory in directories) {
+      await Directory(directory).create(recursive: true);
+    }
+  }
 
   static Future<void> _registerVideoVersions(
     RecordingExportResult result, {
@@ -1470,6 +1537,26 @@ class RecordingExportService {
   }
 
   static Future<List<RecordingVideoVersion>> _scanArticleVideos({
+    required Directory directory,
+    required int articleId,
+  }) async {
+    final versions = <RecordingVideoVersion>[];
+    for (final target in _videoScanDirectories(directory)) {
+      versions.addAll(await _scanArticleVideosInDirectory(
+        directory: target,
+        articleId: articleId,
+      ));
+    }
+    return versions;
+  }
+
+  static List<Directory> _videoScanDirectories(Directory rootDirectory) => [
+        rootDirectory,
+        _srtOutputDirectoryFor(rootDirectory),
+        _subtitledOutputDirectoryFor(rootDirectory),
+      ];
+
+  static Future<List<RecordingVideoVersion>> _scanArticleVideosInDirectory({
     required Directory directory,
     required int articleId,
   }) async {
@@ -3402,7 +3489,7 @@ class RecordingExportService {
 
   static Future<Map<_RecordingVideoSubtitleVariant, String>>
       _availableVideoOutputBaseNames({
-    required Directory directory,
+    required Directory rootDirectory,
     required Article article,
     required StorySeries? series,
     required String exportKind,
@@ -3428,6 +3515,10 @@ class RecordingExportService {
       };
       var exists = false;
       for (final entry in candidates.entries) {
+        final directory = _videoOutputDirectoryForVariant(
+          rootDirectory,
+          entry.key,
+        );
         final extensions = entry.key == _RecordingVideoSubtitleVariant.srt
             ? const ['.mp4', '.srt']
             : const ['.mp4'];
@@ -3729,6 +3820,39 @@ class RecordingExportService {
   }
 
   @visibleForTesting
+  static Future<List<Map<String, String?>>> scanExportedVideoFilesForTest({
+    required Directory rootDirectory,
+    required String prefix,
+  }) async {
+    final results = <Map<String, String?>>[];
+    for (final directory in _videoScanDirectories(rootDirectory)) {
+      if (!await directory.exists()) {
+        continue;
+      }
+      await for (final entity in directory.list(followLinks: false)) {
+        if (entity is! File ||
+            path_lib.extension(entity.path).toLowerCase() != '.mp4') {
+          continue;
+        }
+        final parsed = _parseExportedVideoFileName(
+          prefix: prefix,
+          fileName: path_lib.basename(entity.path),
+        );
+        if (parsed == null) {
+          continue;
+        }
+        results.add({
+          'path': entity.path,
+          'exportKind': parsed.exportKind,
+          'subtitleKind': parsed.subtitleKind,
+          'stamp': parsed.stamp,
+        });
+      }
+    }
+    return results;
+  }
+
+  @visibleForTesting
   static Future<SongAudioExportResult> exportSongAudioForTest({
     required int articleId,
     required Article article,
@@ -3742,7 +3866,7 @@ class RecordingExportService {
         article: article,
         series: series,
         version: version,
-        outputDirectory: outputDirectory,
+        outputRootDirectory: outputDirectory,
         now: now,
       );
 

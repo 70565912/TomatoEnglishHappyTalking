@@ -2,6 +2,92 @@
 
 本文记录本项目构建、发布和资源打包中已经踩过的坑。遇到类似问题时，先按这里排查，避免重复试错。
 
+## Windows 对外 zip 不能直接压发布运行目录
+
+症状：
+
+- `release/windows/tomato_english_happy_talking/` 里既有 EXE / DLL / Flutter assets，也有 `logs/`、`diagnostics/`、`recording-export/`、`suno-music/`、`tomato_api_cache/`、数据库或 `security/`。
+- 需要给外部机器分发 Windows 版，但用户明确要求不能包含生成产物、账号信息或本机运行数据。
+
+原因：
+
+- Windows Debug / Release 都复用 `release/windows/tomato_english_happy_talking/` 作为本机运行目录。
+- `tools/build_windows.ps1` 会保护并恢复运行数据，避免本机重新发布后丢失数据库、缓存、歌曲和导出文件。
+- 因此该目录适合本机运行和联调，不适合直接压缩成对外发布包。
+
+处理：
+
+- 先运行 `.\tools\build_windows.ps1 -Release`，确保程序文件、Flutter assets、`ffmpeg.exe` 和依赖 DLL 已同步到发布目录。
+- 再复制出干净 staging，只保留程序运行必需文件：
+  - `tomato_english_happy_talking.exe`
+  - 运行所需 DLL
+  - `native_assets.json`
+  - `data/flutter_assets`、`data/icudtl.dat`、AOT 产物等 Flutter 程序数据
+  - `ffmpeg.exe` 及同目录 FFmpeg DLL
+- 必须排除：
+  - `.dart_tool/`
+  - `logs/`
+  - `diagnostics/`
+  - `recording-export/`
+  - `recordings/`
+  - `suno-music/`
+  - `tomato_api_cache/`
+  - `picture_book/`
+  - `song-assets/`
+  - `user_data/`
+  - `security/`
+  - `data/downloads`、`data/tomato_api_cache`、`data/recordings`、`data/picture_book`、`data/song-assets`、`data/suno-music`、`data/user_data`、`data/databases`
+  - 根目录 `*.db`、`*.sqlite`、`*.sqlite3`、`settings.json`、`AccessKey.txt`、`speech-api-key.txt`
+
+验证：
+
+```powershell
+# zip 条目中不应出现上述 runtime / secret 路径。
+# 文本类文件中也不应出现 sk-、AKIA、Bearer token、Authorization 等真实密钥形态。
+```
+
+## Android Release 构建外层超时但 APK 已生成
+
+症状：
+
+- `.\tools\build_android.ps1` 在 Codex / 自动化命令外层 900 秒左右超时。
+- 命令没有正常打印“发布目录已更新”，`release/android/` 仍是旧 APK。
+- 但 `app/build/app/outputs/flutter-apk/app-release.apk` 和 `app/build/app/outputs/mapping/release/mapping.txt` 的时间戳已经更新。
+
+原因：
+
+- Android Release 首次或冷缓存构建可能接近或超过 15 分钟。
+- 本项目会经历 Web UI build、Flutter Android build、R8/minify、资源压缩、mapping 生成；`rive_native` 首次 Android 构建还可能下载并初始化原生产物。
+- 如果外层超时刚好卡在 Gradle build 成功返回前后，父 PowerShell 可能被杀掉，导致脚本没来得及把新 APK / mapping 复制到 `release/android/`。
+
+排查：
+
+```powershell
+Get-Process | Where-Object { $_.ProcessName -match 'java|gradle|dart|flutter' }
+
+Get-Item app\build\app\outputs\flutter-apk\app-release.apk,
+  app\build\app\outputs\mapping\release\mapping.txt,
+  release\android\tomato_english_happy_talking-android-release.apk |
+  Select-Object FullName,Length,LastWriteTime
+
+Get-ChildItem $env:USERPROFILE\.gradle\daemon -Recurse -Filter *.log |
+  Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1
+```
+
+看 Gradle daemon 日志里的关键信号：
+
+- `Starting build in new daemon`
+- `The daemon has finished executing the build`
+- `ReturnResult ... Success`
+
+处理：
+
+- 自动化环境把 Android Release 外层 timeout 设为至少 25-30 分钟。
+- 如果 APK 和 mapping 已经生成，但 `release/android/` 未更新，优先用更长 timeout 重新运行 `.\tools\build_android.ps1`。
+- 临时救场时，可以按脚本目标把 `app-release.apk` 复制到 `release/android/tomato_english_happy_talking-android-release.apk`，把 `mapping.txt` 复制到 `release/android/mapping.txt`，再生成 SHA256 并执行 `apksigner verify --verbose`。
+- 结束后可执行 `app/android/gradlew.bat --stop` 停掉 Gradle daemon。
+
 ## Windows Release 显示破图
 
 症状：

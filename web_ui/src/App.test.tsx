@@ -2521,6 +2521,9 @@ describe('App', () => {
 
     fireEvent.click(exportButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
+    expect(
+      within(dialog).getByText('文件将保存到程序目录 recording-export 的分类子目录。'),
+    ).toBeInTheDocument();
     chooseRecordingOption(dialog, '转场', '卷边翻页');
     chooseRecordingOption(dialog, '字幕', '两版视频 + SRT');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
@@ -2545,17 +2548,17 @@ describe('App', () => {
         type: 'listening.recording.completed',
         payload: {
           articleId: 1,
-          videoPath: 'F:\\Tomato\\recording-export\\listening-subtitled.mp4',
-          subtitlePath: 'F:\\Tomato\\recording-export\\listening-srt.srt',
+          videoPath: 'F:\\Tomato\\recording-export\\subtitled\\listening-subtitled.mp4',
+          subtitlePath: 'F:\\Tomato\\recording-export\\srt\\listening-srt.srt',
           videoVariants: [
             {
               kind: 'srt',
-              videoPath: 'F:\\Tomato\\recording-export\\listening-srt.mp4',
-              subtitlePath: 'F:\\Tomato\\recording-export\\listening-srt.srt',
+              videoPath: 'F:\\Tomato\\recording-export\\srt\\listening-srt.mp4',
+              subtitlePath: 'F:\\Tomato\\recording-export\\srt\\listening-srt.srt',
             },
             {
               kind: 'subtitled',
-              videoPath: 'F:\\Tomato\\recording-export\\listening-subtitled.mp4',
+              videoPath: 'F:\\Tomato\\recording-export\\subtitled\\listening-subtitled.mp4',
               subtitlePath: '',
             },
           ],
@@ -2570,9 +2573,9 @@ describe('App', () => {
         },
       });
     });
-    expect(await screen.findByText('无内置字幕视频：F:\\Tomato\\recording-export\\listening-srt.mp4')).toBeInTheDocument();
-    expect(screen.getByText('字幕：F:\\Tomato\\recording-export\\listening-srt.srt')).toBeInTheDocument();
-    expect(screen.getByText('内置字幕视频：F:\\Tomato\\recording-export\\listening-subtitled.mp4')).toBeInTheDocument();
+    expect(await screen.findByText('无内置字幕视频：F:\\Tomato\\recording-export\\srt\\listening-srt.mp4')).toBeInTheDocument();
+    expect(screen.getByText('字幕：F:\\Tomato\\recording-export\\srt\\listening-srt.srt')).toBeInTheDocument();
+    expect(screen.getByText('内置字幕视频：F:\\Tomato\\recording-export\\subtitled\\listening-subtitled.mp4')).toBeInTheDocument();
   });
 
   it('keeps subtitle editing on listening rows but not on the picture subtitle overlay', async () => {
@@ -4785,8 +4788,8 @@ describe('App', () => {
             articleId: article.id,
             versionId: 'external-1',
             sourcePath: 'external-song.mp3',
-            outputPath: 'F:\\Tomato\\recording-export\\external-song.mp3',
-            outputDirectory: 'F:\\Tomato\\recording-export',
+            outputPath: 'F:\\Tomato\\recording-export\\mp3\\external-song.mp3',
+            outputDirectory: 'F:\\Tomato\\recording-export\\mp3',
           });
         }
         return ok(message.id, type, {});
@@ -4823,7 +4826,7 @@ describe('App', () => {
 
     fireEvent.click(audioButton);
     await waitFor(() => expect(audioExportPayloads[0]).toMatchObject({ articleId: 1, versionId: 'external-1' }));
-    expect(await screen.findByText('音频已导出到 recording-export')).toBeInTheDocument();
+    expect(await screen.findByText('音频已导出到 recording-export/mp3')).toBeInTheDocument();
   });
 
   it('submits Suno song generation with explicit login guidance', async () => {

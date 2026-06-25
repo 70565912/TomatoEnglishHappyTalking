@@ -1,5 +1,24 @@
 # 修改日志
 
+## 2026-06-25
+
+- 录制导出目录按类型分类：无内置字幕视频和 SRT 写入 `recording-export/srt/`，内置字幕视频写入 `recording-export/subtitled/`，歌曲音频导出写入 `recording-export/mp3/`；录制前按当前字幕模式检查对应子目录可写。
+- 视频库扫描同时覆盖旧根目录文件和新的 `srt/`、`subtitled/` 子目录；`mp3/` 只作为音频导出目录，不参与视频库扫描。
+- Web UI 与 mock payload 同步展示分类导出路径，歌曲音频导出提示改为 `recording-export/mp3`。
+- Suno Create / 下载自动化加强候选判断：保存本次 Create 后继续回 Library 扫描后续候选，遇到不匹配详情页时按是否已有新版本决定停止或继续，避免把旧歌或错歌保存到当前文章；Styles 魔法棒定位排除 `View saved style prompts`。
+- 发布文档补充 Windows 干净 zip 打包规则：对外包不能直接压缩本机发布运行目录，必须排除日志、诊断、缓存、数据库、导出媒体、`security/`、旧 key/settings 等运行数据。
+- 发布文档补充 Android Release 外层 15 分钟超时排查：本次实测 Gradle 在 APK 生成后成功返回，但外层命令超时中断发布目录复制；后续自动化应预留 25-30 分钟。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\tts_memory_cache_service_test.dart --reporter expanded -j 1`
+- `npm --prefix web_ui test`
+- `D:\DevTools\flutter\bin\flutter.bat analyze`
+- `npm --prefix web_ui run build`
+- `.\tools\build_windows.ps1 -Release`
+- `.\tools\build_android.ps1` 生成 `app-release.apk` 和 `mapping.txt`；外层超时后已按脚本目标同步到 `release/android/` 并执行 APK 签名和内容审计。
+- Windows 干净 zip 审计：包内无 runtime/cache/log/security/db/key/settings 路径，文本类文件未发现常见密钥形态。
+
 ## 2026-06-22
 
 - 歌曲和听力视频导出支持区分 `srt` / `subtitled` 产物；选择“两版视频 + SRT”时会同时输出无内置字幕视频、同名 SRT 和内置字幕视频，并在完成报告中分开展示。

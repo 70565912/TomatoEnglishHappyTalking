@@ -147,10 +147,10 @@ export function looksLikeSunoGeneratedStyle(value: string): boolean {
 function isRejectedStyleMagicControl(control: SunoControlFixture): boolean {
   const label = normalize(control.label || control.text);
   const context = normalize(control.context);
-  if (/refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|instrumental|extend|cover|\bpersona\b|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|歌词|创建|下载|删除|上传|登录/i.test(label)) {
+  if (/view saved style prompts?|saved style prompts?|refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|instrumental|extend|cover|\bpersona\b|查看已保存|已保存风格|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|歌词|创建|下载|删除|上传|登录/i.test(label)) {
     return true;
   }
-  return /refresh recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|刷新推荐|添加风格|保存提示|撤销|清空/i.test(`${label} ${context}`);
+  return /view saved style prompts?|saved style prompts?|refresh recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|查看已保存|已保存风格|刷新推荐|添加风格|保存提示|撤销|清空/i.test(`${label} ${context}`);
 }
 
 export function selectSunoCreateFields(fields: SunoCreateFieldFixture[]): SunoCreateFieldSelection {

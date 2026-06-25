@@ -158,8 +158,12 @@ void main() {
     });
 
     final now = DateTime(2026, 6, 12, 9, 8, 7);
+    final subtitledDirectory = Directory(
+      '${temp.path}${Platform.pathSeparator}subtitled',
+    );
+    await subtitledDirectory.create(recursive: true);
     final collision = File(
-      '${temp.path}${Platform.pathSeparator}'
+      '${subtitledDirectory.path}${Platform.pathSeparator}'
       'Space Story Series - Space Snacks - listening - subtitled - '
       '20260612-090807.mp4',
     );
@@ -189,6 +193,7 @@ void main() {
     expect(
       plan['primaryVideoPath'],
       endsWith(
+        '${Platform.pathSeparator}subtitled${Platform.pathSeparator}'
         'Space Story Series - Space Snacks - listening - subtitled - '
         '20260612-090807-2.mp4',
       ),
@@ -196,6 +201,7 @@ void main() {
     expect(
       plan['subtitlePath'],
       endsWith(
+        '${Platform.pathSeparator}srt${Platform.pathSeparator}'
         'Space Story Series - Space Snacks - listening - srt - '
         '20260612-090807-2.srt',
       ),
@@ -205,6 +211,7 @@ void main() {
     expect(
       variants.first['videoPath'],
       endsWith(
+        '${Platform.pathSeparator}srt${Platform.pathSeparator}'
         'Space Story Series - Space Snacks - listening - srt - '
         '20260612-090807-2.mp4',
       ),
@@ -246,6 +253,67 @@ void main() {
     );
   });
 
+  test('recording video scanner includes legacy root and categorized folders',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'tomato_recording_scan_test_',
+    );
+    addTearDown(() async {
+      if (await temp.exists()) {
+        await temp.delete(recursive: true);
+      }
+    });
+
+    const prefix = 'Space Story Series - Space Snacks';
+    final srtDirectory = Directory(
+      '${temp.path}${Platform.pathSeparator}srt',
+    );
+    final subtitledDirectory = Directory(
+      '${temp.path}${Platform.pathSeparator}subtitled',
+    );
+    await srtDirectory.create(recursive: true);
+    await subtitledDirectory.create(recursive: true);
+    final legacyRoot = File(
+      '${temp.path}${Platform.pathSeparator}'
+      '$prefix - listening - 20260612-090807.mp4',
+    );
+    final srtVideo = File(
+      '${srtDirectory.path}${Platform.pathSeparator}'
+      '$prefix - song - srt - 20260612-090808.mp4',
+    );
+    final subtitledVideo = File(
+      '${subtitledDirectory.path}${Platform.pathSeparator}'
+      '$prefix - song - subtitled - 20260612-090808.mp4',
+    );
+    await legacyRoot.writeAsBytes([1]);
+    await srtVideo.writeAsBytes([1]);
+    await subtitledVideo.writeAsBytes([1]);
+
+    final scanned = await RecordingExportService.scanExportedVideoFilesForTest(
+      rootDirectory: temp,
+      prefix: prefix,
+    );
+    final scannedPaths = scanned.map((item) => item['path']).toSet();
+
+    expect(scannedPaths, contains(legacyRoot.path));
+    expect(scannedPaths, contains(srtVideo.path));
+    expect(scannedPaths, contains(subtitledVideo.path));
+    expect(
+      scanned,
+      contains(allOf(
+        containsPair('exportKind', 'song'),
+        containsPair('subtitleKind', 'srt'),
+      )),
+    );
+    expect(
+      scanned,
+      contains(allOf(
+        containsPair('exportKind', 'song'),
+        containsPair('subtitleKind', 'subtitled'),
+      )),
+    );
+  });
+
   test('song audio export copies bytes and preserves extension with collision',
       () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -263,8 +331,12 @@ void main() {
     final outputDirectory =
         Directory('${temp.path}${Platform.pathSeparator}recording-export');
     await outputDirectory.create(recursive: true);
+    final mp3Directory = Directory(
+      '${outputDirectory.path}${Platform.pathSeparator}mp3',
+    );
+    await mp3Directory.create(recursive: true);
     final collision = File(
-      '${outputDirectory.path}${Platform.pathSeparator}'
+      '${mp3Directory.path}${Platform.pathSeparator}'
       'Space Story Series - Space Snacks - song-audio - 20260612-090807.flac',
     );
     await collision.writeAsBytes([9]);
@@ -296,10 +368,11 @@ void main() {
     expect(result.articleId, 42);
     expect(result.versionId, 'song-v1');
     expect(result.sourcePath, sourceFile.path);
-    expect(result.outputDirectory, outputDirectory.path);
+    expect(result.outputDirectory, mp3Directory.path);
     expect(
       result.outputPath,
       endsWith(
+        '${Platform.pathSeparator}mp3${Platform.pathSeparator}'
         'Space Story Series - Space Snacks - song-audio - '
         '20260612-090807-2.flac',
       ),

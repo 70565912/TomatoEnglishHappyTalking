@@ -3119,7 +3119,7 @@ function SongCreationPanel({
         articleId: article.id,
         versionId,
       });
-      onNotice('音频已导出到 recording-export');
+      onNotice('音频已导出到 recording-export/mp3');
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '音频导出失败');
     } finally {
@@ -5271,7 +5271,7 @@ function ListeningPage({
         articleId,
         versionId,
       });
-      onNotice('音频已导出到 recording-export');
+      onNotice('音频已导出到 recording-export/mp3');
     } catch (exportError) {
       onNotice(exportError instanceof Error ? exportError.message : '音频导出失败');
     }
@@ -7791,7 +7791,7 @@ function RecordingSettingsDialog({
       >
         <header className="edit-dialog-heading">
           <b>录制视频设置</b>
-          <small>文件将保存到程序目录的 recording-export 文件夹。</small>
+          <small>文件将保存到程序目录 recording-export 的分类子目录。</small>
         </header>
         <div className="recording-dialog-grid">
           <RecordingChoiceField

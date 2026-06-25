@@ -17,8 +17,8 @@
 - 字幕导出支持三种模式：无内置字幕视频 + `.srt`、内置字幕视频、两版视频 + `.srt`。
 - 中文来自导入或保存时生成的逐句译文，只作为字幕文本，不生成中文音频。
 - 性能不足时允许丢帧；有丢帧时录制结束弹出报告，正常时只提示录制完成。
-- 固定保存到程序运行目录下的 `recording-export` 文件夹。
-- 歌曲版本支持单独导出原始音频文件到 `recording-export`，不要求先生成视频或字幕时间线。
+- 固定保存到程序运行目录下的 `recording-export` 文件夹，并按产物类型拆到 `srt/`、`subtitled/`、`mp3/` 子目录。
+- 歌曲版本支持单独导出原始音频文件到 `recording-export/mp3`，不要求先生成视频或字幕时间线。
 
 ## 推荐架构
 
@@ -64,7 +64,7 @@
 - 导出分辨率：`2560x1440` / `1920x1080` / `1280x720`，默认 `1920x1080`。
 - 绘本页转场：默认 `none`，可选 `crossFade`、`panZoomFade`、`slide`，后续可增加 `pageCurl`。
 - 字幕：`srt` 为无内置字幕视频 + SRT，`burnedIn` 为内置字幕视频，`both` 同时输出两版视频 + SRT。
-- 保存文件夹：固定为程序运行目录下的 `recording-export`，不提供设置项。
+- 保存文件夹：固定为程序运行目录下的 `recording-export`，其中无内置字幕视频和 SRT 写入 `srt/`，内置字幕视频写入 `subtitled/`，歌曲音频写入 `mp3/`，不提供设置项。
 - FFmpeg 路径：固定为程序运行目录下的 `ffmpeg.exe`，不提供设置项。
 - 质量档位：默认“高质量”，v1 可先不暴露细档，只内部固定参数。
 - 硬件编码：默认自动，内部优先 `NVENC -> QuickSync -> AMF -> software`。
@@ -94,7 +94,7 @@ Native 只保存编码、分辨率、转场三个偏好；输出目录和 FFmpeg
 - 全屏播放 readiness 已通过。
 - 当前窗口所需英文 TTS 在内存或磁盘缓存可定位。
 - 绘本页 ready 且覆盖全部句子；交互播放只预取当前和下一张，离线录制仍会检查导出所需图片文件。
-- 程序目录下的 `recording-export` 可创建并可写。
+- 当前选择的输出子目录可创建并可写：`srt` 模式检查 `recording-export/srt`，`burnedIn` 检查 `recording-export/subtitled`，`both` 同时检查两者。
 - 程序目录下的 `ffmpeg.exe` 可用，且目标 H.264/H.265 编码器可用。
 
 如果任一条件不满足，显示明确原因，不开始录制。
@@ -173,7 +173,7 @@ UI 行为：
 - 有丢帧或 warning：弹出报告，展示丢帧数、编码器、输出路径和建议。
 - error：弹出错误，保留“重新录制”按钮。
 - 当返回 `videoVariants` 时，完成报告分别展示“无内置字幕视频”“字幕”和“内置字幕视频”，避免把两版视频混成一个路径。
-- 歌曲音频导出成功后只提示“音频已导出到 recording-export”，不改变歌曲播放状态。
+- 歌曲音频导出成功后只提示“音频已导出到 recording-export/mp3”，不改变歌曲播放状态。
 
 ## 录制流水线
 
@@ -301,7 +301,7 @@ v1 路线：
 - 英文在第一行，中文在第二行。
 - 中文为空时只写英文。
 - 文本中的换行、HTML 标记、连续空白统一清理。
-- 文件名与 MP4 同名：`<series-title> - <article-title> - YYYYMMDD-HHMMSS.srt`。
+- SRT 文件与对应无内置字幕 MP4 同名，并放在 `recording-export/srt/` 子目录。
 
 如果未来要更精细，可拆成英文和中文两个独立 cue，但 v1 保持一条双语 cue，播放器兼容性最好。
 
@@ -311,21 +311,24 @@ v1 路线：
 
 ```text
 <program-dir>\recording-export
+<program-dir>\recording-export\srt
+<program-dir>\recording-export\subtitled
+<program-dir>\recording-export\mp3
 ```
 
 文件名：
 
 ```text
-<series-title> - <article-title> - listening - srt - YYYYMMDD-HHMMSS.mp4
-<series-title> - <article-title> - listening - srt - YYYYMMDD-HHMMSS.srt
-<series-title> - <article-title> - listening - subtitled - YYYYMMDD-HHMMSS.mp4
-<series-title> - <article-title> - song - srt - YYYYMMDD-HHMMSS.mp4
-<series-title> - <article-title> - song - srt - YYYYMMDD-HHMMSS.srt
-<series-title> - <article-title> - song - subtitled - YYYYMMDD-HHMMSS.mp4
-<series-title> - <article-title> - song-audio - YYYYMMDD-HHMMSS.<source-extension>
+srt\<series-title> - <article-title> - listening - srt - YYYYMMDD-HHMMSS.mp4
+srt\<series-title> - <article-title> - listening - srt - YYYYMMDD-HHMMSS.srt
+subtitled\<series-title> - <article-title> - listening - subtitled - YYYYMMDD-HHMMSS.mp4
+srt\<series-title> - <article-title> - song - srt - YYYYMMDD-HHMMSS.mp4
+srt\<series-title> - <article-title> - song - srt - YYYYMMDD-HHMMSS.srt
+subtitled\<series-title> - <article-title> - song - subtitled - YYYYMMDD-HHMMSS.mp4
+mp3\<series-title> - <article-title> - song-audio - YYYYMMDD-HHMMSS.<source-extension>
 ```
 
-`subtitleMode=both` 会为 `srt` 和 `subtitled` 两个视频共享同一个冲突后缀，例如同一时间戳遇到重名时两者都追加 `-2`，便于成对识别。旧版不带 `listening/song/srt/subtitled` 标记的历史文件仍可被扫描为已导出视频。
+`subtitleMode=both` 会为 `srt` 和 `subtitled` 两个视频共享同一个冲突后缀，例如同一时间戳遇到重名时两者都追加 `-2`，便于成对识别。视频库扫描时会读取根目录旧文件以及 `srt/`、`subtitled/` 子目录；`mp3/` 只保存歌曲音频，不进入视频库。
 
 需要做 Windows 文件名清理：
 
@@ -337,7 +340,7 @@ v1 路线：
 
 录制开始前失败：
 
-- 输出目录不可写。
+- 当前模式需要的输出子目录不可写。
 - 编码器不可用。
 - MP3 缓存缺失。
 - 绘本页未 ready 或有 error。
@@ -375,7 +378,7 @@ v1 路线：
 - 用 FFmpeg concat/copy 复用 MP3 音频轨。
 - 生成 SRT。
 - 输出完成/错误报告。
-- 歌曲版本操作区提供“导出音频文件”，将当前版本音频复制到 `recording-export` 并保留源扩展名。
+- 歌曲版本操作区提供“导出音频文件”，将当前版本音频复制到 `recording-export/mp3` 并保留源扩展名。
 
 验收：
 

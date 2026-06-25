@@ -112,6 +112,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   bool _sunoCompletedStandby = false;
   bool _sunoCompletedStandbyFilled = false;
   bool _sunoAutomationBusy = false;
+  int _sunoCreateBaselineVersionCount = 0;
   RecordingCancelToken? _recordingCancelToken;
   int? _activeFollowArticleId;
   int? _activeListeningArticleId;
@@ -3663,6 +3664,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
     );
     _syncDownloadedSunoUrlsIntoDetected();
+    _sunoCreateBaselineVersionCount = _sunoVersions.length;
     _sunoCreateSubmitted = false;
     _sunoExistingDownloadOnly = false;
     _sunoCompletedStandby = completedStandby;
@@ -3752,6 +3754,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
     _rememberDownloadedSunoUrls();
     _syncDownloadedSunoUrlsIntoDetected();
+    _sunoCreateBaselineVersionCount = _sunoVersions.length;
     _sunoPendingDownloadSongUrl = songUrl.isEmpty ? null : songUrl;
     _sunoPendingDownloadTitle = article.title;
     _sunoExistingDownloadStartedAt = DateTime.now();
@@ -3818,6 +3821,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _sunoExistingDownloadMenuRetries = 0;
     _sunoLastLoadStopUrl = null;
     _sunoLastLoadStopAt = null;
+    _sunoCreateBaselineVersionCount = 0;
     _sunoDownloadInFlightKeys.clear();
     _sunoRejectedCandidateSongUrls.clear();
     _sunoTrustedSongUrls.clear();
@@ -4160,9 +4164,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           );
           return;
         }
-        if (_sunoExistingDownloadOnly && songUrl.isEmpty) {
+        if (songUrl.isEmpty) {
           final pendingCandidate =
               _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl) ?? '';
+          if (currentPageKind == 'song' &&
+              pendingCandidate.isNotEmpty &&
+              currentUrl.startsWith(pendingCandidate) &&
+              !_isSunoPageSettled(currentUrl)) {
+            await _setSunoStatus(
+              'downloading',
+              '正在等待 Suno 候选歌曲详情页加载完成后核对歌词...',
+            );
+            return;
+          }
           if (currentPageKind == 'song' &&
               pendingCandidate.isNotEmpty &&
               currentUrl.startsWith(pendingCandidate) &&
@@ -4170,13 +4184,28 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               !currentPageLyricsExactMatch) {
             _sunoRejectedCandidateSongUrls.add(pendingCandidate);
             _sunoPendingDownloadSongUrl = null;
-            await controller.loadUrl(
-              urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
-            );
-            await _setSunoStatus(
-              'downloading',
-              '这个 Suno 歌曲详情页歌词与当前文章不匹配，正在回到 Library 核对其它候选...',
-            );
+            if (_sunoExistingDownloadOnly) {
+              await controller.loadUrl(
+                urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
+              );
+              await _setSunoStatus(
+                'downloading',
+                '这个 Suno 歌曲详情页歌词与当前文章不匹配，正在回到 Library 核对其它候选...',
+              );
+            } else if (_hasNewSunoVersionsSinceCreate()) {
+              await _saveSunoMetadata();
+              await _setSunoStatus(
+                'complete',
+                '已下载本次 Create 生成的匹配歌曲；下一个候选详情页歌词不匹配，已停止继续扫描以避免保存旧歌。',
+              );
+              _sunoAutomationTimer?.cancel();
+            } else {
+              await _setSunoStatus(
+                'manualAction',
+                'Suno 候选歌曲详情页歌词与当前文章不匹配，已停止自动下载以避免保存错歌。',
+              );
+              _sunoAutomationTimer?.cancel();
+            }
             return;
           }
           final rawCandidateSongUrls = _mergeSunoSongUrls([
@@ -4189,7 +4218,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                   !_hasSunoVersionForSongUrl(value) &&
                   !_sunoRejectedCandidateSongUrls.contains(value))
               .toList();
-          if (candidateSongUrls.isNotEmpty && currentPageKind == 'library') {
+          final canOpenCandidate = currentPageKind == 'library' ||
+              (!_sunoExistingDownloadOnly && currentPageKind == 'create');
+          if (candidateSongUrls.isNotEmpty && canOpenCandidate) {
             final candidateUrl = candidateSongUrls.first;
             _sunoPendingDownloadSongUrl = candidateUrl;
             await controller.loadUrl(
@@ -4197,14 +4228,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             );
             await _setSunoStatus(
               'downloading',
-              '正在打开 Suno 歌曲详情页核对歌词后下载...',
+              '正在打开 Suno 候选歌曲详情页核对歌词后下载...',
             );
             return;
           }
-          if (currentPageKind == 'library' &&
+          if ((currentPageKind == 'library' || currentPageKind == 'create') &&
               rawCandidateSongUrls.isNotEmpty &&
               candidateSongUrls.isEmpty &&
-              _sunoVersions.isNotEmpty) {
+              (_sunoExistingDownloadOnly
+                  ? _sunoVersions.isNotEmpty
+                  : _hasNewSunoVersionsSinceCreate())) {
             // Suno Library rows hydrate lazily. Do not mark an article complete
             // just because the first visible row is an already-downloaded song:
             // same lyrics with a different style is still another valid version.
@@ -4215,6 +4248,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               );
               return;
             }
+            await _saveSunoMetadata();
+            await _setSunoStatus('complete', null);
+            _sunoAutomationTimer?.cancel();
+            return;
+          }
+          if (!_sunoExistingDownloadOnly &&
+              (currentPageKind == 'library' || currentPageKind == 'create') &&
+              rawCandidateSongUrls.isEmpty &&
+              _hasNewSunoVersionsSinceCreate() &&
+              _isSunoPageSettled(currentUrl)) {
             await _saveSunoMetadata();
             await _setSunoStatus('complete', null);
             _sunoAutomationTimer?.cancel();
@@ -4298,6 +4341,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                   !_hasSunoVersionForSongUrl(value))
               .toList();
           if (completedUrls.isEmpty && _sunoVersions.isNotEmpty) {
+            if (!_sunoExistingDownloadOnly &&
+                _hasNewSunoVersionsSinceCreate() &&
+                currentPageKind == 'song') {
+              _sunoPendingDownloadSongUrl = null;
+              await controller.loadUrl(
+                urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
+              );
+              await _setSunoStatus(
+                'downloading',
+                '这个候选歌曲已保存，正在回到 Library 扫描后续候选...',
+              );
+              return;
+            }
             if (_sunoExistingDownloadOnly &&
                 !_sunoExistingDownloadLibraryTried &&
                 currentPageKind != 'library') {
@@ -4348,6 +4404,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                     !_hasSunoVersionForSongUrl(value))
                 .toList();
             if (remainingUrls.isEmpty) {
+              if (!_sunoExistingDownloadOnly && currentPageKind == 'song') {
+                _sunoPendingDownloadSongUrl = null;
+                await controller.loadUrl(
+                  urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
+                );
+                await _setSunoStatus(
+                  'downloading',
+                  '已直接保存 $directMediaDownloaded 个匹配歌曲，正在回到 Library 扫描后续候选...',
+                );
+                return;
+              }
               if (_sunoExistingDownloadOnly && currentPageKind == 'song') {
                 _sunoPendingDownloadSongUrl = null;
                 await controller.loadUrl(
@@ -4564,6 +4631,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
       final result = await _evaluateSunoJson(controller, _sunoCreateScript);
       if (result['ok'] == true) {
+        _sunoCreateBaselineVersionCount = _sunoVersions.length;
         _sunoCreateSubmitted = true;
         _sunoCompletedStandby = false;
         _sunoCompletedStandbyFilled = false;
@@ -6653,6 +6721,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const bodyText = normalize(document.body?.innerText || '');
   const presenceText = (value) => normalize(value)
     .toLowerCase()
+    .replace(/([a-z0-9])[’'`´](?=[a-z0-9])/gi, '\$1')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
   const expectedLyricTokens = presenceText(expectedLyrics)
@@ -6690,10 +6759,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const isRejectedStyleMagicLabel = (label, context) => {
     const labelText = normalize(label);
     const text = normalize(String(label || '') + ' ' + String(context || ''));
-    if (/refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|more options|additional options|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|instrumental|extend|cover|\\bpersona\\b|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|更多选项|更多设置|歌词|创建|下载|删除|上传|登录/i.test(labelText)) {
+    if (/view saved style prompts?|saved style prompts?|refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|more options|additional options|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|instrumental|extend|cover|\\bpersona\\b|查看已保存|已保存风格|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|更多选项|更多设置|歌词|创建|下载|删除|上传|登录/i.test(labelText)) {
       return true;
     }
-    return /refresh recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|刷新推荐|添加风格|保存提示|撤销|清空/i.test(text);
+    return /view saved style prompts?|saved style prompts?|refresh recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|查看已保存|已保存风格|刷新推荐|添加风格|保存提示|撤销|清空/i.test(text);
   };
   const hasVisibleStyleMagic = (panel) => {
     const root = findStyleContainer(panel);
@@ -11207,6 +11276,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return songUrl != null && downloaded.contains(songUrl);
     });
   }
+
+  bool _hasNewSunoVersionsSinceCreate() =>
+      _sunoVersions.length > _sunoCreateBaselineVersionCount;
 
   String? _pendingSunoDownloadTarget(List<String> missingSongUrls) {
     final currentPending =
