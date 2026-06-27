@@ -2434,7 +2434,7 @@ function PictureBookCreationPanel({
             disabled={promptReviewLoading}
           >
             <Icon name={promptReviewLoading ? 'refresh' : 'wand'} />
-            {promptReviewLoading ? '准备中' : '重新生成组图'}
+            {promptReviewLoading ? '准备中' : '生成组图'}
           </button>
           <button
             className="ghost-action small"
@@ -2443,7 +2443,7 @@ function PictureBookCreationPanel({
             disabled={audioGenerating || audioStatusLoading}
           >
             <Icon name={audioGenerating ? 'refresh' : 'sound'} />
-            {audioGenerating ? '生成中' : '重新生成听力'}
+            {audioGenerating ? '生成中' : '生成听力'}
           </button>
           <button className="ghost-action small" type="button" onClick={loadState} disabled={loading}>
             <Icon name="refresh" /> 刷新状态

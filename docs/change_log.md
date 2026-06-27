@@ -2,7 +2,7 @@
 
 ## 2026-06-27
 
-- 创作中心绘本面板新增“重新生成听力”按钮，位于“重新生成组图”后同一行；面板显示章节听力材料生成状态，缺失时可显式提交远程语音合成，完整时需确认覆盖后才重新生成。
+- 创作中心绘本面板新增“生成听力”按钮，位于“生成组图”后同一行；面板显示章节听力材料生成状态，缺失时可显式提交远程语音合成，完整时需确认覆盖后才重新生成。
 - 新增 `listening.audioStatus` / `listening.audioGenerate` bridge 命令和 `listening.audioMaterial.progress` 事件；章节英文 TTS 统一作为 `listening_tts` 听力材料管理，`overwrite=false` 只补缺失，`overwrite=true` 清理当前文章 `listening_tts` 和旧 `follow_tts` 引用后全量重建。
 - 听力打开、跟读打开、听力播放、全屏播放、视频导出 readiness 和跟读原音播放改为只检查本地听力材料缓存；缺失时明确提示“需要先在创作中心生成听力材料”，不再后台静默提交 TTS。
 - 绘本提示词审核框重新打开时优先读取本地章节计划；如果 `story_chapters.summary_json` 缺失或不匹配，会尝试从旧 `picture_book_pages` prompt scene 恢复并写回；仍无法恢复时先打开可编辑的本地 fallback 审核框，不静默远程生成。

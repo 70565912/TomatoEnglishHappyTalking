@@ -1682,12 +1682,12 @@ describe('App', () => {
     const picturePanel = screen.getByText('绘本组图').closest('.creation-panel') as HTMLElement;
     const buttonRow = picturePanel.querySelector('.button-row.compact') as HTMLElement;
     const buttonLabels = within(buttonRow).getAllByRole('button').map((button) => button.textContent ?? '');
-    expect(buttonLabels.findIndex((label) => label.includes('重新生成组图')))
-      .toBeLessThan(buttonLabels.findIndex((label) => label.includes('重新生成听力')));
-    expect(buttonLabels.findIndex((label) => label.includes('重新生成听力')))
+    expect(buttonLabels.findIndex((label) => label.includes('生成组图')))
+      .toBeLessThan(buttonLabels.findIndex((label) => label.includes('生成听力')));
+    expect(buttonLabels.findIndex((label) => label.includes('生成听力')))
       .toBeLessThan(buttonLabels.findIndex((label) => label.includes('刷新状态')));
 
-    fireEvent.click(within(buttonRow).getByRole('button', { name: /重新生成听力/ }));
+    fireEvent.click(within(buttonRow).getByRole('button', { name: /生成听力/ }));
 
     expect(await screen.findByRole('dialog', { name: '正在生成听力材料' })).toBeInTheDocument();
     await act(async () => {
@@ -1795,7 +1795,7 @@ describe('App', () => {
     try {
       render(<App />);
       expect(await screen.findByText('2 / 2 已生成')).toBeInTheDocument();
-      fireEvent.click(await screen.findByRole('button', { name: /重新生成听力/ }));
+      fireEvent.click(await screen.findByRole('button', { name: /生成听力/ }));
 
       await waitFor(() => {
         expect(confirmSpy).toHaveBeenCalledWith('听力材料已经生成。是否覆盖原内容并重新提交远程语音合成？');
