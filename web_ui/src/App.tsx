@@ -51,6 +51,9 @@ const ARTICLE_CONTENT_MAX_CHARS = 8000;
 const PRELOAD_COMPLETE_VISIBLE_MS = 3000;
 const PRELOAD_IMAGE_DECODE_TIMEOUT_MS = 8000;
 const RECENT_SERIES_STORAGE_KEY = 'tomato.recentSeriesKey.v1';
+const CHAPTER_ORDER_STORAGE_KEY = 'tomato.chapterOrder.v1';
+
+type ChapterOrder = 'asc' | 'desc';
 
 type SelectOption = {
   value: string;
@@ -62,6 +65,26 @@ type BlockingOverlayConfig = {
   detail: string;
   timeoutSeconds: number;
 };
+
+function normalizeChapterOrder(value: unknown): ChapterOrder {
+  return value === 'desc' ? 'desc' : 'asc';
+}
+
+function readStoredChapterOrder(): ChapterOrder {
+  try {
+    return normalizeChapterOrder(window.localStorage.getItem(CHAPTER_ORDER_STORAGE_KEY));
+  } catch {
+    return 'asc';
+  }
+}
+
+function saveStoredChapterOrder(order: ChapterOrder) {
+  try {
+    window.localStorage.setItem(CHAPTER_ORDER_STORAGE_KEY, order);
+  } catch {
+    // localStorage can be unavailable in embedded test shells.
+  }
+}
 
 const ALIYUN_TEXT_MODEL_OPTIONS: SelectOption[] = [
   { value: 'qwen3.7-max', label: 'qwen3.7-max · 最高效果' },
@@ -438,6 +461,7 @@ function App() {
   const applyRecordingSettings = (payload: RecordingSettings) => {
     setRecordingSettings(normalizeRecordingSettings(payload));
   };
+  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>(readStoredChapterOrder);
   const [series, setSeries] = useState<StorySeries[]>([]);
   const [preloadStates, setPreloadStates] = useState<PreloadStateMap>({});
   const [recentSeriesKey, setRecentSeriesKey] = useState<string | null>(() => {
@@ -464,6 +488,12 @@ function App() {
     } catch {
       // localStorage can be unavailable in embedded test shells.
     }
+  };
+
+  const rememberChapterOrder = (order: ChapterOrder) => {
+    const normalized = normalizeChapterOrder(order);
+    setChapterOrder(normalized);
+    saveStoredChapterOrder(normalized);
   };
 
   const navigate = (path: string) => {
@@ -677,7 +707,9 @@ function App() {
             series={series}
             latestArticle={latestArticle}
             recentBookKey={recentSeriesKey}
+            chapterOrder={chapterOrder}
             onRecentBookKeyChange={rememberSeriesKey}
+            onChapterOrderChange={rememberChapterOrder}
             onNavigate={navigate}
             onOpenBook={(book) => {
               if (book.seriesId != null) {
@@ -713,8 +745,10 @@ function App() {
             seriesId={parsedRoute.seriesId}
             articles={articles}
             series={series}
+            chapterOrder={chapterOrder}
             onNavigate={navigate}
             onRecentBookKeyChange={rememberSeriesKey}
+            onChapterOrderChange={rememberChapterOrder}
             onUpdateSeries={updateSeries}
           />
         )}
@@ -726,6 +760,7 @@ function App() {
             mode={parsedRoute.mode}
             articles={articles}
             series={series}
+            chapterOrder={chapterOrder}
             pictureBookState={pictureBookState?.articleId === parsedRoute.articleId ? pictureBookState : null}
             onNavigate={navigate}
             onPictureBookLoaded={setPictureBookState}
@@ -770,6 +805,7 @@ function App() {
             series={series}
             initialSeriesId={parsedRoute.seriesId}
             initialArticleId={parsedRoute.articleId}
+            chapterOrder={chapterOrder}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={applyRecordingSettings}
             pictureBookRetryGate={pictureBookRetryGate}
@@ -779,6 +815,7 @@ function App() {
             onBlockingOverlayChange={setAppBlockingOverlay}
             onOpenPicturePromptReview={openPictureBookPromptReview}
             onOpenPicturePagePromptReview={openPictureBookPagePromptReview}
+            onChapterOrderChange={rememberChapterOrder}
             onArticlesUpdated={(payload) => {
               if (payload.articles) setArticles(payload.articles);
               if (payload.series) setSeries(payload.series);
@@ -824,9 +861,11 @@ function App() {
             articles={articles}
             series={series}
             initialSeriesId={parsedRoute.seriesId}
+            chapterOrder={chapterOrder}
             onNavigate={navigate}
             onNotice={setNotice}
             onRecentBookKeyChange={rememberSeriesKey}
+            onChapterOrderChange={rememberChapterOrder}
           />
         )}
 
@@ -907,7 +946,9 @@ function HomePage({
   series,
   latestArticle,
   recentBookKey,
+  chapterOrder,
   onRecentBookKeyChange,
+  onChapterOrderChange,
   onNavigate,
   onOpenBook,
   onUpdateSeries,
@@ -916,14 +957,15 @@ function HomePage({
   series: StorySeries[];
   latestArticle?: Article;
   recentBookKey: string | null;
+  chapterOrder: ChapterOrder;
   onRecentBookKeyChange: (key: string | null) => void;
+  onChapterOrderChange: (order: ChapterOrder) => void;
   onNavigate: (path: string) => void;
   onOpenBook: (book: BookGroup) => void;
   onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
 }) {
   const [selectedBookKey, setSelectedBookKey] = useState<string | null>(null);
   const [chapterPage, setChapterPage] = useState(0);
-  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const [bookEditDraft, setBookEditDraft] = useState<BookGroup | null>(null);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
@@ -1037,7 +1079,7 @@ function HomePage({
         }}
         onChapterPageChange={setChapterPage}
         onChapterOrderChange={(nextOrder) => {
-          setChapterOrder(nextOrder);
+          onChapterOrderChange(nextOrder);
           setChapterPage(0);
         }}
         onEditSeries={(book) => {
@@ -1123,18 +1165,21 @@ function BookDetailPage({
   seriesId,
   articles,
   series,
+  chapterOrder,
   onNavigate,
   onRecentBookKeyChange,
+  onChapterOrderChange,
   onUpdateSeries,
 }: {
   seriesId: number;
   articles: Article[];
   series: StorySeries[];
+  chapterOrder: ChapterOrder;
   onNavigate: (path: string) => void;
   onRecentBookKeyChange: (key: string | null) => void;
+  onChapterOrderChange: (order: ChapterOrder) => void;
   onUpdateSeries: (seriesId: number, title: string, description: string, characters: BookCharacter[]) => Promise<void>;
 }) {
-  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const [bookEditOpen, setBookEditOpen] = useState(false);
   const [bookEditTitle, setBookEditTitle] = useState('');
   const [bookEditDescription, setBookEditDescription] = useState('');
@@ -1225,7 +1270,7 @@ function BookDetailPage({
           <button
             className="ghost-action small"
             type="button"
-            onClick={() => setChapterOrder((current) => (current === 'asc' ? 'desc' : 'asc'))}
+            onClick={() => onChapterOrderChange(chapterOrder === 'asc' ? 'desc' : 'asc')}
           >
             <Icon name="swap" /> {chapterOrder === 'asc' ? '正序' : '倒序'}
           </button>
@@ -1307,6 +1352,7 @@ function BookPlayerPage({
   mode,
   articles,
   series,
+  chapterOrder,
   pictureBookState,
   onNavigate,
   onPictureBookLoaded,
@@ -1324,6 +1370,7 @@ function BookPlayerPage({
   mode: PlayerMode;
   articles: Article[];
   series: StorySeries[];
+  chapterOrder: ChapterOrder;
   pictureBookState: PictureBookState | null;
   onNavigate: (path: string) => void;
   onPictureBookLoaded: PictureBookStateSetter;
@@ -1340,7 +1387,10 @@ function BookPlayerPage({
     () => bookGroupsForArticles(articles, series).find((item) => item.seriesId === seriesId) ?? null,
     [articles, series, seriesId],
   );
-  const chapters = useMemo(() => sortBookChapters(book?.articles ?? [], 'asc'), [book?.articles]);
+  const chapters = useMemo(
+    () => sortBookChapters(book?.articles ?? [], chapterOrder),
+    [book?.articles, chapterOrder],
+  );
   const activeIndex = Math.max(0, chapters.findIndex((article) => article.id === startArticleId));
   const activeArticle = chapters[activeIndex] ?? chapters[0];
   const previousArticle = activeIndex > 0 ? chapters[activeIndex - 1] : null;
@@ -1681,23 +1731,26 @@ function PracticeCenterPage({
   articles,
   series,
   initialSeriesId,
+  chapterOrder,
   onNavigate,
   onNotice,
   onRecentBookKeyChange,
+  onChapterOrderChange,
 }: {
   articles: Article[];
   series: StorySeries[];
   initialSeriesId?: number;
+  chapterOrder: ChapterOrder;
   onNavigate: (path: string) => void;
   onNotice: (message: string) => void;
   onRecentBookKeyChange: (key: string | null) => void;
+  onChapterOrderChange: (order: ChapterOrder) => void;
 }) {
   const books = useMemo(() => bookGroupsForArticles(articles, series), [articles, series]);
   const routeBook = books.find((book) => book.seriesId === initialSeriesId) ?? null;
   const [selectedBookKey, setSelectedBookKey] = useState<string | null>(() => routeBook?.key ?? books[0]?.key ?? null);
   const syncedRouteBookKeyRef = useRef<string | null>(null);
   const [chapterPage, setChapterPage] = useState(0);
-  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
   const resolvedSelectedBookKey =
     selectedBookKey && books.some((book) => book.key === selectedBookKey)
@@ -1799,7 +1852,7 @@ function PracticeCenterPage({
         onChapterListCollapsedChange={setChapterListCollapsed}
         onChapterPageChange={setChapterPage}
         onChapterOrderChange={(nextOrder) => {
-          setChapterOrder(nextOrder);
+          onChapterOrderChange(nextOrder);
           setChapterPage(0);
           setChapterListCollapsed(false);
         }}
@@ -1850,6 +1903,7 @@ function CreationCenterPage({
   series,
   initialSeriesId,
   initialArticleId,
+  chapterOrder,
   recordingSettings,
   onRecordingSettingsLoaded,
   pictureBookRetryGate,
@@ -1859,6 +1913,7 @@ function CreationCenterPage({
   onBlockingOverlayChange,
   onOpenPicturePromptReview,
   onOpenPicturePagePromptReview,
+  onChapterOrderChange,
   onArticlesUpdated,
   onRename,
   onDelete,
@@ -1869,6 +1924,7 @@ function CreationCenterPage({
   series: StorySeries[];
   initialSeriesId?: number;
   initialArticleId?: number;
+  chapterOrder: ChapterOrder;
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   pictureBookRetryGate: PictureBookRetryGate;
@@ -1878,6 +1934,7 @@ function CreationCenterPage({
   onBlockingOverlayChange: (overlay: BlockingOverlayConfig | null) => void;
   onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPicturePagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
+  onChapterOrderChange: (order: ChapterOrder) => void;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
   onDelete: (articleId: number) => Promise<void>;
@@ -1891,7 +1948,6 @@ function CreationCenterPage({
   const [selectedBookKey, setSelectedBookKey] = useState<string | null>(() => routeBook?.key ?? books[0]?.key ?? null);
   const syncedRouteSelectionRef = useRef<string | null>(null);
   const [chapterPage, setChapterPage] = useState(0);
-  const [chapterOrder, setChapterOrder] = useState<ChapterOrder>('asc');
   const [selectedArticleId, setSelectedArticleId] = useState<number | null>(() => initialArticleId ?? null);
   const [activeTab, setActiveTab] = useState<'picture' | 'song' | 'video'>('picture');
   const [chapterListCollapsed, setChapterListCollapsed] = useState(false);
@@ -2084,7 +2140,7 @@ function CreationCenterPage({
         onChapterListCollapsedChange={setChapterListCollapsed}
         onChapterPageChange={setChapterPage}
         onChapterOrderChange={(nextOrder) => {
-          setChapterOrder(nextOrder);
+          onChapterOrderChange(nextOrder);
           setChapterPage(0);
           setChapterListCollapsed(false);
         }}
@@ -2308,6 +2364,7 @@ function PictureBookCreationPanel({
   const [audioStatusLoading, setAudioStatusLoading] = useState(true);
   const [audioGenerating, setAudioGenerating] = useState(false);
   const [audioProgress, setAudioProgress] = useState<ListeningAudioMaterialProgress | null>(null);
+  const [audioOverwriteConfirm, setAudioOverwriteConfirm] = useState<ListeningAudioMaterialStatus | null>(null);
 
   const loadState = () => {
     setLoading(true);
@@ -2379,21 +2436,10 @@ function PictureBookCreationPanel({
     }
   };
 
-  const generateListeningAudio = async () => {
-    if (audioGenerating) return;
-    const currentStatus = audioStatus ?? (await loadAudioStatus());
-    if (!currentStatus || currentStatus.total <= 0) {
-      onNotice('章节没有可生成的英文听力材料');
-      return;
-    }
-    const complete = currentStatus.ready >= currentStatus.total && currentStatus.missing.length === 0;
-    const overwrite = complete;
-    if (overwrite) {
-      const confirmed = window.confirm('听力材料已经生成。是否覆盖原内容并重新提交远程语音合成？');
-      if (!confirmed) {
-        return;
-      }
-    }
+  const startListeningAudioGeneration = async (
+    currentStatus: ListeningAudioMaterialStatus,
+    overwrite: boolean,
+  ) => {
     const requestTotal = overwrite ? currentStatus.total : currentStatus.missing.length;
     setAudioGenerating(true);
     setAudioProgress({
@@ -2420,6 +2466,21 @@ function PictureBookCreationPanel({
     } finally {
       setAudioGenerating(false);
     }
+  };
+
+  const generateListeningAudio = async () => {
+    if (audioGenerating) return;
+    const currentStatus = audioStatus ?? (await loadAudioStatus());
+    if (!currentStatus || currentStatus.total <= 0) {
+      onNotice('章节没有可生成的英文听力材料');
+      return;
+    }
+    const complete = currentStatus.ready >= currentStatus.total && currentStatus.missing.length === 0;
+    if (complete) {
+      setAudioOverwriteConfirm(currentStatus);
+      return;
+    }
+    await startListeningAudioGeneration(currentStatus, false);
   };
 
   return (
@@ -2459,6 +2520,18 @@ function PictureBookCreationPanel({
         <ResourceRow label="绘本图片" value={state ? `${state.pages.length} 页 · ${pictureBookStatusLabel(state.status)}` : '读取中'} />
         <ResourceRow label="听力材料" value={audioMaterialStatusLabel(audioStatus, audioStatusLoading)} />
       </div>
+      {audioOverwriteConfirm && (
+        <AudioMaterialOverwriteConfirmDialog
+          status={audioOverwriteConfirm}
+          busy={audioGenerating}
+          onCancel={() => setAudioOverwriteConfirm(null)}
+          onConfirm={() => {
+            const status = audioOverwriteConfirm;
+            setAudioOverwriteConfirm(null);
+            void startListeningAudioGeneration(status, true);
+          }}
+        />
+      )}
       {audioGenerating && <AudioMaterialProgressDialog progress={audioProgress} />}
       {loading && <LoadingPanel text="正在读取绘本状态" />}
       {!loading && !state && <p className="sentence-empty">还没有绘本状态。</p>}
@@ -3505,6 +3578,7 @@ function VideoCreationPanel({
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
   const [recordingReady, setRecordingReady] = useState<ListeningRecordingReadyPayload | null>(null);
+  const [recordingReadyLoading, setRecordingReadyLoading] = useState(false);
   const [videoLibrary, setVideoLibrary] = useState<RecordingVideoLibraryPayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
@@ -3514,7 +3588,8 @@ function VideoCreationPanel({
 
   const checkReady = () => {
     const selectedSettings = recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings);
-    setBusy(true);
+    setRecordingReady(null);
+    setRecordingReadyLoading(true);
     sendNative<ListeningRecordingReadyPayload>('listening.recordingReady', {
       articleId: article.id,
       codec: selectedSettings.codec,
@@ -3525,7 +3600,7 @@ function VideoCreationPanel({
     })
       .then(setRecordingReady)
       .catch((error) => onNotice(error instanceof Error ? error.message : '视频准备状态检查失败'))
-      .finally(() => setBusy(false));
+      .finally(() => setRecordingReadyLoading(false));
   };
 
   const loadVideoLibrary = async () => {
@@ -3571,11 +3646,11 @@ function VideoCreationPanel({
   };
 
   const openRecordingDialog = () => {
-    if (!recordingSettings) {
-      onNotice('录制设置尚未加载，请稍后重试');
+    if (recordingReady && !recordingReady.ready) {
+      onNotice(recordingReady.reasons?.[0] ?? '视频准备状态检查未通过');
       return;
     }
-    setRecordingDialogDraft(recordingSettings);
+    setRecordingDialogDraft(recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings));
   };
 
   const updateRecordingDialogDraft = (patch: Partial<RecordingSettings>) => {
@@ -3676,8 +3751,8 @@ function VideoCreationPanel({
           <button className="ghost-action small" type="button" onClick={() => void openVideoDirectory()} disabled={videoBusy}>
             <Icon name="folder" /> 打开保存目录
           </button>
-          <button className="ghost-action small" type="button" onClick={checkReady} disabled={busy}>
-            <Icon name="refresh" /> 检查准备状态
+          <button className="ghost-action small" type="button" onClick={checkReady} disabled={recordingReadyLoading}>
+            <Icon name="refresh" /> {recordingReadyLoading ? '检查中' : '检查准备状态'}
           </button>
         </div>
       </div>
@@ -3729,7 +3804,7 @@ function VideoCreationPanel({
         )}
       </div>
       <div className="button-row">
-        <button className="primary-action" type="button" disabled={busy || !recordingReady?.ready} onClick={openRecordingDialog}>
+        <button className="primary-action" type="button" disabled={exportingListeningVideo} onClick={openRecordingDialog}>
           <Icon name="recordVideo" /> 导出听力视频
         </button>
         <button className="ghost-action" type="button" disabled>
@@ -3795,6 +3870,40 @@ function audioMaterialStatusLabel(status: ListeningAudioMaterialStatus | null, l
   return `${status.ready} / ${status.total} 已生成${suffix}`;
 }
 
+function AudioMaterialOverwriteConfirmDialog({
+  status,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  status: ListeningAudioMaterialStatus;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="edit-dialog-backdrop" role="presentation">
+      <section className="edit-dialog confirm-dialog" role="dialog" aria-modal="true" aria-label="覆盖听力材料确认">
+        <div className="edit-dialog-heading">
+          <b>覆盖听力材料</b>
+          <small>远程语音合成将重新提交</small>
+        </div>
+        <p>
+          听力材料已经生成 {status.ready} / {status.total}。是否覆盖原内容并重新提交远程语音合成？
+        </p>
+        <div className="edit-dialog-actions">
+          <button className="ghost-action" type="button" onClick={onCancel} disabled={busy}>
+            取消
+          </button>
+          <button className="primary-action" type="button" onClick={onConfirm} disabled={busy}>
+            <Icon name={busy ? 'refresh' : 'sound'} /> 覆盖生成
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function AudioMaterialProgressDialog({ progress }: { progress: ListeningAudioMaterialProgress | null }) {
   const completed = progress?.completed ?? 0;
   const total = progress?.total ?? 0;
@@ -3816,8 +3925,6 @@ function AudioMaterialProgressDialog({ progress }: { progress: ListeningAudioMat
     </div>
   );
 }
-
-type ChapterOrder = 'asc' | 'desc';
 
 function promptRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)

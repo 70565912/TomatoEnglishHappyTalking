@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 import { splitSentences } from './sentenceSplitter';
-import type { BridgeResponse, ListeningSongStatePayload, StorySeries } from './types';
+import type { Article, BridgeResponse, ListeningSongStatePayload, StorySeries } from './types';
 
 async function clickSelectedCreationAction(name: string | RegExp) {
   await screen.findByText('章节列表');
@@ -43,6 +43,112 @@ function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
     scenes,
     createdAt: new Date().toISOString(),
   };
+}
+
+function expectElementBefore(first: HTMLElement, second: HTMLElement) {
+  expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+}
+
+function installChapterOrderBridge(articles: Article[], series: StorySeries[]) {
+  const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+    id: String(id),
+    ok: true,
+    type: `${type}.result`,
+    payload,
+  });
+
+  window.flutter_inappwebview = {
+    callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+      const type = String(message.type ?? '');
+      const payload = (message.payload ?? {}) as Record<string, unknown>;
+      if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+        return ok(message.id, type, { articles, series });
+      }
+      if (type === 'listening.open') {
+        const articleId = Number(payload.articleId ?? articles[0]?.id);
+        const article = articles.find((item) => item.id === articleId) ?? articles[0];
+        return ok(message.id, type, {
+          article,
+          items: [{ index: 0, english: article.sentences[0], chinese: '' }],
+        });
+      }
+      if (type === 'pictureBook.state') {
+        return ok(message.id, type, {
+          articleId: payload.articleId,
+          enabled: true,
+          status: 'ready',
+          pages: [],
+        });
+      }
+      if (type === 'listening.audioStatus') {
+        return ok(message.id, type, {
+          articleId: payload.articleId,
+          total: 1,
+          ready: 1,
+          missing: [],
+          status: 'ready',
+        });
+      }
+      if (type === 'recording.videoList') {
+        return ok(message.id, type, { articleId: payload.articleId, versions: [] });
+      }
+      return ok(message.id, type, {});
+    }),
+  };
+}
+
+function chapterOrderFixture() {
+  const now = new Date().toISOString();
+  const alphaArticle: Article = {
+    id: 1,
+    title: 'Z Last Alpha',
+    content: 'Alpha starts.',
+    sentences: ['Alpha starts.'],
+    sentenceCount: 1,
+    createdAt: '2026-06-10T10:00:00.000Z',
+    averageScore: 80,
+    seriesId: 1,
+    seriesTitle: 'Alpha Book',
+  };
+  const betaTwo: Article = {
+    id: 2,
+    title: 'E2 - Beta',
+    content: 'Beta two.',
+    sentences: ['Beta two.'],
+    sentenceCount: 1,
+    createdAt: now,
+    averageScore: 90,
+    seriesId: 2,
+    seriesTitle: 'Beta Book',
+  };
+  const betaTen: Article = {
+    ...betaTwo,
+    id: 3,
+    title: 'E10 - Beta',
+    content: 'Beta ten.',
+    sentences: ['Beta ten.'],
+    createdAt: '2026-06-09T10:00:00.000Z',
+  };
+  const series: StorySeries[] = [
+    {
+      id: 1,
+      title: 'Alpha Book',
+      description: '',
+      coverImagePath: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 2,
+      title: 'Beta Book',
+      description: '',
+      coverImagePath: null,
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+
+  return { articles: [alphaArticle, betaTen, betaTwo], betaTen, betaTwo, series };
 }
 
 describe('App', () => {
@@ -271,79 +377,96 @@ describe('App', () => {
   it('restores the recent book and sorts chapters by title', async () => {
     window.location.hash = '/';
     window.localStorage.setItem('tomato.recentSeriesKey.v1', 'series:2');
-    const now = new Date().toISOString();
-    const alphaArticle = {
-      id: 1,
-      title: 'Z Last Alpha',
-      content: 'Alpha starts.',
-      sentences: ['Alpha starts.'],
-      sentenceCount: 1,
-      createdAt: '2026-06-10T10:00:00.000Z',
-      averageScore: 80,
-      seriesId: 1,
-      seriesTitle: 'Alpha Book',
-    };
-    const betaTwo = {
-      id: 2,
-      title: 'E2 - Beta',
-      content: 'Beta two.',
-      sentences: ['Beta two.'],
-      sentenceCount: 1,
-      createdAt: now,
-      averageScore: 90,
-      seriesId: 2,
-      seriesTitle: 'Beta Book',
-    };
-    const betaTen = {
-      ...betaTwo,
-      id: 3,
-      title: 'E10 - Beta',
-      content: 'Beta ten.',
-      sentences: ['Beta ten.'],
-      createdAt: '2026-06-09T10:00:00.000Z',
-    };
-    const series = [
-      {
-        id: 1,
-        title: 'Alpha Book',
-        description: '',
-        coverImagePath: null,
-        createdAt: now,
-        updatedAt: now,
-      },
-      {
-        id: 2,
-        title: 'Beta Book',
-        description: '',
-        coverImagePath: null,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ];
-    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
-      id: String(id),
-      ok: true,
-      type: `${type}.result`,
-      payload,
-    });
-
-    window.flutter_inappwebview = {
-      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
-        const type = String(message.type ?? '');
-        if (type === 'app.ready' || type === 'article.list') {
-          return ok(message.id, type, { articles: [alphaArticle, betaTen, betaTwo], series });
-        }
-        return ok(message.id, type, {});
-      }),
-    };
+    const { articles, series } = chapterOrderFixture();
+    installChapterOrderBridge(articles, series);
 
     render(<App />);
 
     expect(await screen.findByLabelText('Beta Book 章节列表')).toBeInTheDocument();
     const betaTwoButton = screen.getByRole('button', { name: 'E2 - Beta' });
     const betaTenButton = screen.getByRole('button', { name: 'E10 - Beta' });
-    expect(betaTwoButton.compareDocumentPosition(betaTenButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expectElementBefore(betaTwoButton, betaTenButton);
+    expect(screen.getByRole('button', { name: /正序/ })).toBeInTheDocument();
+    expect(window.localStorage.getItem('tomato.chapterOrder.v1')).toBeNull();
     expect(window.localStorage.getItem('tomato.recentSeriesKey.v1')).toBe('series:2');
+  });
+
+  it('persists chapter order across library, centers, details, and player drawer', async () => {
+    const { articles, series } = chapterOrderFixture();
+    installChapterOrderBridge(articles, series);
+    window.localStorage.setItem('tomato.recentSeriesKey.v1', 'series:2');
+    window.location.hash = '/';
+    render(<App />);
+
+    expect(await screen.findByLabelText('Beta Book 章节列表')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /正序/ }));
+    expect(window.localStorage.getItem('tomato.chapterOrder.v1')).toBe('desc');
+    expectElementBefore(
+      screen.getByRole('button', { name: 'E10 - Beta' }),
+      screen.getByRole('button', { name: 'E2 - Beta' }),
+    );
+
+    cleanup();
+    window.location.hash = '/practice?seriesId=2';
+    installChapterOrderBridge(articles, series);
+    render(<App />);
+    expect((await screen.findAllByText('练习中心')).length).toBeGreaterThan(0);
+    expect(await screen.findByRole('button', { name: /倒序/ })).toBeInTheDocument();
+    expectElementBefore(
+      screen.getByRole('button', { name: 'E10 - Beta' }),
+      screen.getByRole('button', { name: 'E2 - Beta' }),
+    );
+
+    cleanup();
+    window.location.hash = '/books/2';
+    installChapterOrderBridge(articles, series);
+    render(<App />);
+    const detailList = await screen.findByLabelText('Beta Book 章节列表');
+    expect(within(detailList).getByRole('button', { name: /倒序/ })).toBeInTheDocument();
+    expectElementBefore(
+      within(detailList).getByText('E10 - Beta'),
+      within(detailList).getByText('E2 - Beta'),
+    );
+
+    cleanup();
+    window.location.hash = '/creation?seriesId=2';
+    installChapterOrderBridge(articles, series);
+    render(<App />);
+    expect((await screen.findAllByText('创作中心')).length).toBeGreaterThan(0);
+    expect(await screen.findByRole('button', { name: /倒序/ })).toBeInTheDocument();
+    expectElementBefore(
+      screen.getByRole('button', { name: 'E10 - Beta' }),
+      screen.getByRole('button', { name: 'E2 - Beta' }),
+    );
+
+    cleanup();
+    window.location.hash = '/books/2/player?articleId=3&mode=listening';
+    installChapterOrderBridge(articles, series);
+    render(<App />);
+    expect(await screen.findByText('E10 - Beta')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '章节' }));
+    const drawer = await screen.findByRole('dialog', { name: /章节列表/ });
+    expectElementBefore(
+      within(drawer).getByRole('button', { name: /E10 - Beta/ }),
+      within(drawer).getByRole('button', { name: /E2 - Beta/ }),
+    );
+  });
+
+  it('falls back to ascending chapter order for invalid stored values', async () => {
+    window.location.hash = '/';
+    window.localStorage.setItem('tomato.recentSeriesKey.v1', 'series:2');
+    window.localStorage.setItem('tomato.chapterOrder.v1', 'sideways');
+    const { articles, series } = chapterOrderFixture();
+    installChapterOrderBridge(articles, series);
+
+    render(<App />);
+
+    expect(await screen.findByLabelText('Beta Book 章节列表')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /正序/ })).toBeInTheDocument();
+    expectElementBefore(
+      screen.getByRole('button', { name: 'E2 - Beta' }),
+      screen.getByRole('button', { name: 'E10 - Beta' }),
+    );
   });
 
   it('opens the practice center at the requested book', async () => {
@@ -1720,7 +1843,7 @@ describe('App', () => {
 
   it('confirms before overwriting complete listening audio material', async () => {
     window.location.hash = '/creation?articleId=42&seriesId=9';
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const article = {
       id: 42,
       title: 'Draft Chapter',
@@ -1797,8 +1920,14 @@ describe('App', () => {
       expect(await screen.findByText('2 / 2 已生成')).toBeInTheDocument();
       fireEvent.click(await screen.findByRole('button', { name: /生成听力/ }));
 
+      const confirmDialog = await screen.findByRole('dialog', { name: '覆盖听力材料确认' });
+      expect(confirmDialog.closest('.edit-dialog-backdrop')).toBeTruthy();
+      expect(within(confirmDialog).getByText('听力材料已经生成 2 / 2。是否覆盖原内容并重新提交远程语音合成？')).toBeInTheDocument();
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(calls.some((call) => call.type === 'listening.audioGenerate')).toBe(false);
+
+      fireEvent.click(within(confirmDialog).getByRole('button', { name: /覆盖生成/ }));
       await waitFor(() => {
-        expect(confirmSpy).toHaveBeenCalledWith('听力材料已经生成。是否覆盖原内容并重新提交远程语音合成？');
         expect(calls.find((call) => call.type === 'listening.audioGenerate')?.payload).toMatchObject({
           articleId: article.id,
           overwrite: true,
@@ -3363,6 +3492,124 @@ describe('App', () => {
     expect(await within(videoList).findByText('2 个版本')).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '录制视频设置' })).not.toBeInTheDocument();
     confirmSpy.mockRestore();
+  });
+
+  it('keeps creation-center listening video export clickable while settings and readiness are loading', async () => {
+    window.location.hash = '/creation?articleId=7';
+    const article = {
+      id: 7,
+      title: 'Slow Readiness',
+      content: 'Tom waits for the video check.',
+      sentences: ['Tom waits for the video check.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 80,
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    let resolveSettings: (() => void) | null = null;
+    let resolveReady: (() => void) | null = null;
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                paragraphText: article.content,
+                imagePath: 'ready.png',
+                imageUri: 'data:image/png;base64,READY',
+                status: 'ready',
+              },
+            ],
+          });
+        }
+        if (type === 'recording.settings.load') {
+          return new Promise<BridgeResponse>((resolve) => {
+            resolveSettings = () =>
+              resolve(
+                ok(message.id, type, {
+                  codec: 'h264',
+                  resolution: '1920x1080',
+                  pageTransition: 'crossFade',
+                  subtitleMode: 'srt',
+                  outputDirectory: 'F:\\Tomato\\recording-export',
+                  fps: 25,
+                }),
+              );
+          });
+        }
+        if (type === 'recording.videoList') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            versions: [],
+          });
+        }
+        if (type === 'listening.recordingReady') {
+          return new Promise<BridgeResponse>((resolve) => {
+            resolveReady = () =>
+              resolve(
+                ok(message.id, type, {
+                  ready: true,
+                  reasons: [],
+                  encoderName: 'ffmpeg',
+                  codec: 'h264',
+                  resolution: '1920x1080',
+                  pageTransition: 'crossFade',
+                  subtitleMode: 'srt',
+                  outputDirectory: 'F:\\Tomato\\recording-export',
+                  requiredEnglish: 1,
+                  readyEnglish: 1,
+                  requiredChinese: 0,
+                  readyChinese: 0,
+                  missingEnglish: [],
+                  missingChinese: [],
+                  failed: 0,
+                }),
+              );
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    await clickSelectedCreationAction('视频');
+    await waitFor(() => {
+      expect(calls.some((call) => call.type === 'listening.recordingReady')).toBe(true);
+    });
+    expect(calls.some((call) => call.type === 'recording.settings.load')).toBe(true);
+    const exportButton = await screen.findByRole('button', { name: /导出听力视频/ });
+    expect(exportButton).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /检查中/ })).toBeDisabled();
+
+    fireEvent.click(exportButton);
+    expect(await screen.findByRole('dialog', { name: '录制视频设置' })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveSettings?.();
+      resolveReady?.();
+    });
   });
 
   it('allows switching books in the creation center after opening from a routed book', async () => {

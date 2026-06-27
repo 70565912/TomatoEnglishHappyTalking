@@ -181,8 +181,9 @@ Get-Process -Name tomato_english_happy_talking -ErrorAction SilentlyContinue |
 原因与处理：
 
 - Windows 桌面版的 `sqflite_common_ffi` 数据库会落在 EXE 工作目录下的 `.dart_tool/sqflite_common_ffi/databases/english_love.db`。
-- 如果发布脚本直接删除整个 `release/windows/tomato_english_happy_talking/` 再复制新构建，运行数据库也会被一起删掉。
-- `tools/build_windows.ps1` 发布阶段需要在删除发布目录前临时备份 `.dart_tool`，复制新包后再恢复。
+- 如果发布脚本直接删除整个 `release/windows/tomato_english_happy_talking/` 再复制新构建，运行数据库、缓存、歌曲和导出文件都会被一起删掉。
+- `tools/build_windows.ps1` 发布阶段只允许覆盖程序产物：EXE、DLL、`data/flutter_assets`、Flutter 运行文件、`ffmpeg.exe` 和同目录依赖。不要清空发布目录，也不要把运行数据搬出再搬回。
+- 发布目录中的 `.dart_tool`、`tomato_api_cache`、`picture_book`、`suno-music`、`recording-export`、`diagnostics`、`logs` 等运行数据应保持原位。需要整理或迁移这些数据时，应单独手工执行并先核对路径。
 - 联调时不要把发布目录里的 `.dart_tool` 当作普通构建缓存随手清理；它可能就是当前测试数据。
 
 快速验证：
@@ -191,7 +192,7 @@ Get-Process -Name tomato_english_happy_talking -ErrorAction SilentlyContinue |
 Test-Path .\release\windows\tomato_english_happy_talking\.dart_tool\sqflite_common_ffi\databases\english_love.db
 ```
 
-重新构建后该文件仍应存在，文章列表不应被清空。
+重新构建后该文件仍应存在，文章列表不应被清空；`recording-export`、`suno-music` 等用户生成资产也不应因为构建而消失。
 
 ## Flutter 插件 symlink 指到错误依赖源
 

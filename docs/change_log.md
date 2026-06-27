@@ -10,6 +10,8 @@
 - 记录本轮绘本分镜 prompt 调优原则：`E10 - The Caucus Race` 只作为人工评审样例，不把故事特例词写入通用 prompt；后续调优继续围绕可迁移的视觉构图边界，而不是长度、固定数量或单篇故事事件。
 - 歌曲字幕匹配补强低信息词处理，避免 ASR 跳过弱词时抢占后续歌词锚点造成字幕过长或过短；新增 E07 真实 ASR fixture 和回归用例，作为后续歌词匹配算法改动的固定素材。
 - 发布目录运行数据恢复：确认 `release/windows/tomato_english_happy_talking` 空库后，从最近有书的 runtime backup 恢复 `.dart_tool` 数据库和 `tomato_api_cache`，真实 release App 默认数据根读取到 20 篇文章、3 本书和 20 个章节。
+- Windows 发布脚本改为覆盖复制 EXE、DLL、Flutter assets 和 FFmpeg 等程序文件，不再清空整个发布目录或搬移运行数据；`.dart_tool` 数据库、缓存、导出文件和歌曲资产保持原位，降低构建时误删本机测试数据的风险。
+- 章节列表正序/倒序改为 Web UI 全局偏好，使用 `localStorage` key `tomato.chapterOrder.v1` 记忆；书库首页、书籍详情、练习中心、创作中心和书籍播放器章节抽屉共享同一排序，非法值回退正序。
 
 验证：
 
