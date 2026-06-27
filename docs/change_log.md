@@ -12,9 +12,12 @@
 - 发布目录运行数据恢复：确认 `release/windows/tomato_english_happy_talking` 空库后，从最近有书的 runtime backup 恢复 `.dart_tool` 数据库和 `tomato_api_cache`，真实 release App 默认数据根读取到 20 篇文章、3 本书和 20 个章节。
 - Windows 发布脚本改为覆盖复制 EXE、DLL、Flutter assets 和 FFmpeg 等程序文件，不再清空整个发布目录或搬移运行数据；`.dart_tool` 数据库、缓存、导出文件和歌曲资产保持原位，降低构建时误删本机测试数据的风险。
 - 章节列表正序/倒序改为 Web UI 全局偏好，使用 `localStorage` key `tomato.chapterOrder.v1` 记忆；书库首页、书籍详情、练习中心、创作中心和书籍播放器章节抽屉共享同一排序，非法值回退正序。
+- 新增英文原文区本地提取规则文档和 Alice 课程稿回归样本：E01 卷首诗、E11 The Mouse's Sad Tale、E27 槌球场、E28 柴郡猫原始输入均固定为 parser 测试；解析器通用处理拓展说明、文化卡片、生词好句、音标和例句边界，不按单篇文章名特判。
+- 修正标准中英对照和英文原文区解析：正文开始后遇到词汇/练习/翻译等学习材料 hard stop；`【拓展】`、背景、难句解析等 soft interruption 会跳过讲解，只在后续出现可信散文或诗歌正文时恢复，避免学习材料污染文章正文、导入译文和绘本分镜输入。
 
 验证：
 
+- `D:\DevTools\flutter\bin\flutter.bat test test\practice_input_parser_test.dart --reporter expanded -j 1`
 - `D:\DevTools\flutter\bin\flutter.bat test test\api_cache_service_test.dart --reporter expanded -j 1`
 - `D:\DevTools\flutter\bin\flutter.bat test test\tts_memory_cache_service_test.dart --reporter expanded -j 1`
 - `npm --prefix web_ui test -- App.test.tsx --testTimeout=20000`

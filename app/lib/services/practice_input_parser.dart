@@ -205,6 +205,11 @@ class PracticeInputParser {
         notes.add(line);
         continue;
       }
+      // Standard bilingual imports can be followed by vocab or exercise
+      // sections; those are terminal learning material, not story text.
+      if (bodyStarted && _isEnglishOriginalTerminalHeading(line)) {
+        break;
+      }
 
       final isEnglish = _isEnglishLine(line);
       final isChinese = _isChineseLine(line);
@@ -300,12 +305,15 @@ class PracticeInputParser {
 
     final englishLines = <String>[];
     var insideSoftInterruption = false;
+    var insideStoryVerseBlock = false;
     var sawSoftInterruption = false;
     var resumedAfterSoftInterruption = false;
     var skippedLikelyEnglishInSoftInterruption = false;
     for (var index = startIndex + 1; index < lines.length; index += 1) {
-      final line = lines[index].trim();
+      final rawLine = lines[index];
+      final line = rawLine.trim();
       if (line.isEmpty) {
+        insideStoryVerseBlock = false;
         if (!insideSoftInterruption &&
             englishLines.isNotEmpty &&
             englishLines.last.isNotEmpty) {
@@ -313,11 +321,12 @@ class PracticeInputParser {
         }
         continue;
       }
-      if (_isEnglishOriginalSectionHardStop(line)) {
+      if (!insideSoftInterruption && _isEnglishOriginalSectionHardStop(line)) {
         break;
       }
       if (_isEnglishOriginalSectionSoftInterruption(line)) {
         insideSoftInterruption = true;
+        insideStoryVerseBlock = false;
         sawSoftInterruption = true;
         if (englishLines.isNotEmpty && englishLines.last.isNotEmpty) {
           englishLines.add('');
@@ -326,8 +335,17 @@ class PracticeInputParser {
       }
 
       if (insideSoftInterruption) {
-        if (_isLikelyStoryEnglishContinuation(line)) {
+        final resumesVerseBlock =
+            _isStoryVerseStartAfterPrompt(line, englishLines);
+        final resumesPoemBlock = _sectionSoFarLooksLikeVerse(englishLines) &&
+            _isLikelyStoryVerseContinuationLine(line);
+        if (resumesVerseBlock ||
+            resumesPoemBlock ||
+            _isLikelyStoryEnglishContinuation(line, rawLine: rawLine)) {
           insideSoftInterruption = false;
+          insideStoryVerseBlock = resumesVerseBlock ||
+              resumesPoemBlock ||
+              _isIndentedEnglishVerseLine(rawLine, line);
           resumedAfterSoftInterruption = true;
         } else {
           if (_isEnglishLine(line) && _isLikelyStoryEnglish(line)) {
@@ -337,8 +355,12 @@ class PracticeInputParser {
         }
       }
 
-      if (_isEnglishLine(line) && _isLikelyStoryEnglish(line)) {
+      if (_isEnglishLine(line) &&
+          (_isLikelyStoryEnglish(line) ||
+              (insideStoryVerseBlock && _isLikelyStoryVerseLine(line)))) {
         englishLines.add(_cleanEnglishParagraph(line));
+      } else {
+        insideStoryVerseBlock = false;
       }
     }
 
@@ -659,11 +681,20 @@ class PracticeInputParser {
     return wordCount >= 5 || RegExp(r'[.!?;:,"—–]$').hasMatch(line.trim());
   }
 
-  static bool _isLikelyStoryEnglishContinuation(String line) {
-    if (!_isEnglishLine(line) || !_isLikelyStoryEnglish(line)) {
+  static bool _isLikelyStoryEnglishContinuation(
+    String line, {
+    String rawLine = '',
+  }) {
+    if (!_isEnglishLine(line)) {
       return false;
     }
     final trimmed = line.trim();
+    if (_isIndentedEnglishVerseLine(rawLine, trimmed)) {
+      return true;
+    }
+    if (!_isLikelyStoryEnglish(line)) {
+      return false;
+    }
     final lower = trimmed.toLowerCase();
     if (_looksLikeEnglishTitle(trimmed) &&
         !trimmed.startsWith('"') &&
@@ -682,9 +713,68 @@ class PracticeInputParser {
     ).hasMatch(lower)) {
       return true;
     }
-    final wordCount =
-        RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(trimmed).length;
-    return wordCount >= 12 && RegExp(r'[.!?;:]$').hasMatch(trimmed);
+    return false;
+  }
+
+  static bool _isIndentedEnglishVerseLine(String rawLine, String line) {
+    final leadingSpaces = rawLine.length - rawLine.trimLeft().length;
+    return leadingSpaces >= 2 &&
+        _isLikelyStoryVerseLine(line) &&
+        (line.startsWith('"') || line.startsWith("'"));
+  }
+
+  static bool _isLikelyStoryVerseLine(String line) {
+    if (!_isEnglishLine(line) || _containsChinese(line)) {
+      return false;
+    }
+    if (_isEnglishOriginalTerminalHeading(line)) {
+      return false;
+    }
+    return RegExp(r"[A-Za-z][A-Za-z'\-]*").hasMatch(line);
+  }
+
+  static bool _isLikelyStoryVerseContinuationLine(String line) {
+    if (!_isLikelyStoryVerseLine(line)) {
+      return false;
+    }
+    final wordCount = RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(line).length;
+    return wordCount >= 2 && wordCount <= 12;
+  }
+
+  static bool _sectionSoFarLooksLikeVerse(List<String> englishLines) {
+    final recent = englishLines
+        .where((line) => line.trim().isNotEmpty)
+        .toList(growable: false);
+    if (recent.length < 4) {
+      return false;
+    }
+
+    final sample =
+        recent.length > 12 ? recent.sublist(recent.length - 12) : recent;
+    final wordCounts = sample
+        .map((line) => RegExp(r"[A-Za-z][A-Za-z'\-]*").allMatches(line).length)
+        .toList(growable: false);
+    final shortLines = wordCounts.where((count) => count >= 2 && count <= 8);
+    final longLines = wordCounts.where((count) => count > 12);
+    return shortLines.length >= 4 && longLines.isEmpty;
+  }
+
+  static bool _isStoryVerseStartAfterPrompt(
+    String line,
+    List<String> englishLines,
+  ) {
+    if (!(line.startsWith('"') || line.startsWith("'")) ||
+        !_isLikelyStoryVerseLine(line)) {
+      return false;
+    }
+    for (var index = englishLines.length - 1; index >= 0; index -= 1) {
+      final previous = englishLines[index].trim();
+      if (previous.isEmpty) {
+        continue;
+      }
+      return previous.endsWith(':');
+    }
+    return false;
   }
 
   static String _cleanTitleCandidate(String line) =>

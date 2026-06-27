@@ -63,6 +63,19 @@
 8. 如果正文处理或标题生成在保存前已经调用过远程，保存后调用 `attachExistingCache` 把全局缓存引用绑定到新文章。
 9. 默认创建/复用“书籍”系列与章节关系；保存返回后 Web UI 调用 `pictureBook.promptReview` 打开提示词审核弹窗，用户确认后才提交顺序组图生成。
 
+### 英文原文区本地提取规则
+
+入口仍是 `PracticeInputParser.parse(content)`。这些规则用于“课程导读 + 英文原文 + 拓展讲解 + 文化卡片/生词好句”这类课程稿，目标是在本地提取真正的英文故事正文，避免把词汇、音标、例句或中文讲解带入文章正文和绘本分镜输入。
+
+- 起点只认正文区标题：`英文原文`、`英语原文`、`英文故事`、`原文`。标题、日期、作者、难度、课程导读不进入正文。
+- 终端学习材料是 hard stop：`【文化卡片】`、`生词好句`、`词汇/单词/例句`、`参考译文/翻译`、`练习/答案`，以及对应英文 `Vocabulary`、`Useful phrases`、`Translation`、`Exercises` 等标题之后的内容都不进入正文。
+- 标准中英对照也使用同一类 hard stop：正文/译文配对开始后，遇到词汇、例句、文化卡片或练习区，直接停止配对，避免把学习材料写入 `article_sentence_translations`。
+- `【拓展】`、`背景知识`、`补充说明`、`难句解析`、`文化注释`、`Teacher's Note` 等属于 soft interruption：先跳过讲解内容，但不会立刻结束整篇正文。
+- soft interruption 后只有出现可信故事续接才恢复正文。散文续接通常是引号对话，或包含 `said/asked/thought/looked/went/came/appeared` 等叙事动词的英文句；看起来像英文说明标题的行继续跳过。
+- 诗歌正文按通用形态判断，不按文章标题特判：如果已提取的正文呈现为连续短行诗歌，拓展说明后再次出现 2-12 个英文词的短行，可恢复为同一首诗；冒号提示后的缩进/引号诗行也按诗歌续接处理。
+- 如果正文过短，或 soft interruption 后只看到疑似英文讲解而没有可靠故事续接，本地解析会放弃并返回 mixed，让后续文本 provider 走“中英混杂提取英文原文”路径。
+- 这些规则不得写入单篇文章名、人物名或课程编号条件；新增样本应优先落到 `app/test/fixtures/` 并通过 `practice_input_parser_test.dart` 固化边界。
+
 ## OpenAI-compatible 文本生成统一层
 
 入口：`TextGenerationService.generate`。

@@ -88,6 +88,46 @@ They smile and walk home.
       expect(rows.last.chineseText, '他们微笑着走回家。');
     });
 
+    test('stops standard bilingual import at generic learning sections', () {
+      final parsed = PracticeInputParser.parse('''
+Mina's Garden Map
+
+米娜的花园地图
+
+Mina opens a garden map. She marks the first path.
+米娜打开花园地图。她标出第一条小路。
+
+The lanterns turn blue, and Mina walks home.
+灯笼变成蓝色，米娜走回家。
+
+Vocabulary: Key words
+map
+英 [mæp] 美 [mæp]
+Useful phrases
+She needs to attend class.
+参考译文
+她需要去上课。
+''');
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+      final rows = parsed.buildSentenceTranslations(
+        articleId: 8,
+        sentences: sentences,
+        now: DateTime.utc(2026, 1, 2),
+      );
+      final importedChinese = rows.map((row) => row.chineseText).join('\n');
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.standardBilingual);
+      expect(parsed.englishContent, contains('Mina opens a garden map.'));
+      expect(parsed.englishContent, contains('Mina walks home.'));
+      expect(parsed.englishContent, isNot(contains('Vocabulary')));
+      expect(parsed.englishContent, isNot(contains('英 [')));
+      expect(parsed.englishContent, isNot(contains('attend class')));
+      expect(sentences.last, contains('walks home.'));
+      expect(rows, hasLength(sentences.length));
+      expect(importedChinese, isNot(contains('参考译文')));
+      expect(importedChinese, isNot(contains('需要去上课')));
+    });
+
     test('keeps imported translations aligned near the end of a long story',
         () {
       final parsed = PracticeInputParser.parse('''
@@ -250,7 +290,7 @@ The Queen said—
 
     test('extracts full E28 story around inserted expansion notes', () {
       final raw = File(
-        'test/fixtures/e28_mixed_story_with_insertions.txt',
+        'test/fixtures/e28_cheshire_cat_raw_input.txt',
       ).readAsStringSync();
 
       final parsed = PracticeInputParser.parse(raw);
@@ -279,6 +319,151 @@ The Queen said—
           isNot(contains('This seems to me an excellent opportunity')));
       expect(sentences.length, greaterThan(20));
       expect(sentences.last, contains('what they said.'));
+    });
+
+    test('extracts E01 preface poem from raw lesson input', () {
+      final raw = File(
+        'test/fixtures/e01_preface_poem_raw_input.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(parsed.englishContent, contains('All in the golden afternoon'));
+      expect(
+          parsed.englishContent, contains('Against three tongues together?'));
+      expect(parsed.englishContent, contains('Imperious Prima flashes forth'));
+      expect(parsed.englishContent, contains('The happy voices cry.'));
+      expect(
+          parsed.englishContent, contains('Thus grew the tale of Wonderland:'));
+      expect(parsed.englishContent, contains("Pluck'd in a far-off land."));
+      expect(parsed.englishContent,
+          isNot(contains('ALICE’S ADVENTURES IN WONDERLAND')));
+      expect(parsed.englishContent, isNot(contains('Clotho')));
+      expect(parsed.englishContent, isNot(contains('Hippocrene')));
+      expect(parsed.englishContent, isNot(contains('【文化卡片】')));
+      expect(parsed.englishContent, isNot(contains('生词好句')));
+      expect(parsed.englishContent, isNot(contains('英 [')));
+      expect(parsed.englishContent, isNot(contains('hammer n. 锤子')));
+      expect(
+        parsed.englishContent.trim(),
+        endsWith("Pluck'd in a far-off land."),
+      );
+    });
+
+    test('extracts E27 croquet story from raw lesson input', () {
+      final raw = File(
+        'test/fixtures/e27_croquet_ground_raw_input.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(parsed.englishContent,
+          contains("\"It's—it's a very fine day!\" said a timid voice"));
+      expect(parsed.englishContent, contains('"Get to your places!"'));
+      expect(parsed.englishContent,
+          contains('Alice thought she had never seen such a curious'));
+      expect(parsed.englishContent,
+          contains('The chief difficulty Alice found at first'));
+      expect(parsed.englishContent,
+          contains('now I shall have somebody to talk to.'));
+      expect(parsed.englishContent, contains('no more of it appeared.'));
+      expect(parsed.englishContent, isNot(contains('【文化卡片】')));
+      expect(parsed.englishContent, isNot(contains('生词好句')));
+      expect(parsed.englishContent,
+          isNot(contains('Everything is under control')));
+      expect(parsed.englishContent,
+          isNot(contains('I need time to straighten out my finances')));
+      expect(parsed.englishContent,
+          isNot(contains('The diaries contained a detailed account')));
+      expect(sentences.length, greaterThan(20));
+      expect(sentences.last, contains('no more of it appeared.'));
+    });
+
+    test('extracts E11 Mouse story from raw lesson input', () {
+      final raw = File(
+        'test/fixtures/e11_mouse_sad_tale_raw_input.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(
+        parsed.englishContent,
+        contains('"You promised to tell me your history'),
+      );
+      expect(parsed.englishContent, contains('Fury said to a mouse'));
+      expect(parsed.englishContent, contains('condemn you to death'));
+      expect(parsed.englishContent, contains('"I didn\'t mean it!"'));
+      expect(
+        parsed.englishContent,
+        contains('coming back to finish his story.'),
+      );
+      expect(parsed.englishContent, isNot(contains('concrete poetry')));
+      expect(
+        parsed.englishContent,
+        isNot(contains('with so evident a design')),
+      );
+      expect(parsed.englishContent, isNot(contains('Anticlimax')));
+      expect(
+        parsed.englishContent,
+        isNot(contains('attend vs. pay attention')),
+      );
+      expect(parsed.englishContent, isNot(contains('英 [')));
+      expect(parsed.englishContent, isNot(contains('pretext vs. excuse')));
+      expect(sentences, isNotEmpty);
+      expect(sentences.last, contains('finish his story.'));
+    });
+
+    test('stops Mouse sad tale import before learning notes', () {
+      final raw = File(
+        'test/fixtures/mouse_sad_tale_with_learning_notes.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+      final rows = parsed.buildSentenceTranslations(
+        articleId: 56,
+        sentences: sentences,
+        now: DateTime.utc(2026, 6, 27),
+      );
+      final importedChinese = rows.map((row) => row.chineseText).join('\n');
+      const learningNoteNeedles = [
+        'attend vs. pay attention',
+        'Bill has not been attending',
+        '英 [',
+        '美 [',
+        "lose one's temper",
+        'pretext',
+      ];
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.standardBilingual);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(parsed.titleCandidate, "The Mouse's Sad Tale");
+      expect(
+        parsed.englishContent,
+        contains('"You promised to tell me your history'),
+      );
+      expect(
+        parsed.englishContent,
+        contains('coming back to finish his story.'),
+      );
+      for (final needle in learningNoteNeedles) {
+        expect(parsed.englishContent, isNot(contains(needle)));
+      }
+      expect(sentences, isNotEmpty);
+      expect(sentences.last, contains('finish his story.'));
+      expect(sentences.last, isNot(contains('pretext')));
+      expect(importedChinese, isNot(contains('文化卡片')));
+      expect(importedChinese, isNot(contains('生词好句')));
+      expect(
+          rows.every((row) => row.englishSentence.trim().isNotEmpty), isTrue);
     });
 
     test('skips generic explanation insertions and resumes story prose', () {

@@ -13,8 +13,10 @@ import 'package:tomato_english_happy_talking/services/aliyun_wanx_image_service.
 import 'package:tomato_english_happy_talking/services/content_safety_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/listening_audio_material_service.dart';
+import 'package:tomato_english_happy_talking/services/nlp_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_image_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_service.dart';
+import 'package:tomato_english_happy_talking/services/practice_input_parser.dart';
 import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
 import 'package:tomato_english_happy_talking/services/tts_memory_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/tts_service.dart';
@@ -1968,6 +1970,95 @@ but the three were all crowded together at one corner of it.
     expect((scenes.first as Map)['sceneDescription'], contains('clue 1'));
     expect((scenes.last as Map)['sceneDescription'], contains('clue 16'));
     expect(await DatabaseService.getPictureBookPages(articleId), isEmpty);
+  });
+
+  test('picture-book prompt review keeps Mouse learning notes out of draft',
+      () async {
+    final raw = File(path_lib.join(
+      previousDirectory.path,
+      'test',
+      'fixtures',
+      'mouse_sad_tale_with_learning_notes.txt',
+    )).readAsStringSync();
+    final parsed = PracticeInputParser.parse(raw);
+    final sentences = NlpService.splitSentences(parsed.englishContent);
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: "The Mouse's Sad Tale",
+        content: parsed.englishContent,
+        sentences: sentences,
+        createdAt: DateTime(2026, 6, 27),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description: 'Victorian Alice storybook world in soft watercolor.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+
+    var textAiCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        throw StateError('local Mouse prompt review should not call text AI');
+      },
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    final scenes = review['scenes'] as List;
+    final draftText = [
+      review['chapterDescription']?.toString() ?? '',
+      review['groupPrompt']?.toString() ?? '',
+      for (final scene in scenes)
+        (scene as Map)['sceneDescription']?.toString() ?? '',
+    ].join('\n');
+    const learningNoteNeedles = [
+      'attend vs. pay attention',
+      'Bill has not been attending',
+      '英 [',
+      '美 [',
+      "lose one's temper",
+      'pretext',
+    ];
+
+    expect(textAiCalls, 0);
+    expect(scenes, isNotEmpty);
+    expect(parsed.englishContent, contains('finish his story'));
+    expect((scenes.last as Map)['sentenceEndIndex'], sentences.length - 1);
+    for (final needle in learningNoteNeedles) {
+      expect(draftText, isNot(contains(needle)));
+    }
+
+    await PictureBookService.savePromptReview(
+      reviewId: review['reviewId'].toString(),
+      groupPrompt: review['groupPrompt'].toString(),
+      bookDescription: review['bookDescription'].toString(),
+      bookCharacters: _charactersFromPayload(review['bookCharacters']),
+      newCharacters: _charactersFromPayload(review['newCharacters']),
+      chapterDescription: review['chapterDescription'].toString(),
+      scenes: [
+        for (final scene in scenes) Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    final savedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    final savedSummary = savedChapter?.summaryJson ?? '';
+    final savedSummaryJson = jsonDecode(savedSummary) as Map<String, dynamic>;
+    final savedScenes = savedSummaryJson['scenes'] as List;
+    expect((savedScenes.last as Map)['sentenceEndIndex'], sentences.length - 1);
+    for (final needle in learningNoteNeedles) {
+      expect(savedSummary, isNot(contains(needle)));
+    }
   });
 
   test(
