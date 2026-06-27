@@ -368,6 +368,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 重新打开绘本提示词审核时优先读取 `story_chapters.summary_json` 中的 `picture_book_chapter_scene_plan_v2`。如果 summary 缺失或 hash 不匹配，但旧 `picture_book_pages` 仍有完整 prompt scene 信息，则从页面记录恢复章节计划并写回 summary。
 - 如果本地 summary 和页面记录都无法恢复，promptReview 仍先打开审核框：章节描述和分镜描述保持为空，只提供句子范围和原文片段供用户可视化编辑；用户可以手工填写，或在弹窗里显式刷新章节规划。这个入口不得因为缺少本地计划而静默提交远程文本生成。
+- 无章节计划时的分镜行只是审核框占位行，不是章节场景规划：正文有多个段落时按段落生成占位分镜并最多保留 12 行；正文只有一个段落时按句子数生成，占位行数为 `min(12, sentenceCount)`；单段超过 12 句时按句子范围均分成 12 行。占位行的 `sceneDescription` 必须为空，不能本地伪造章节描述或分镜描述。
 - 审核弹窗可刷新书籍简介，或同次刷新章节规划（`chapterDescription` + `scenes[]`）。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
 - savePromptReview 使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
 - confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。

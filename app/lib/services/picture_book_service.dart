@@ -2759,6 +2759,9 @@ class PictureBookService {
   static List<_PicturePageSegment> _blankPromptReviewSegments(
     Article article,
   ) {
+    // These are editable placeholders for the review dialog, not an AI scene
+    // plan. Keep descriptions empty and only derive ranges so users can see
+    // what each draft row covers before they type or explicitly refresh AI.
     final sentences = article.sentences
         .map((sentence) => sentence.trim())
         .where((sentence) => sentence.isNotEmpty)
@@ -2856,6 +2859,9 @@ class PictureBookService {
     String content,
     List<String> sentences,
   ) {
+    // Placeholder row contract: multi-paragraph chapters start with paragraph
+    // ranges capped at 12; single-paragraph chapters use one row per sentence
+    // up to 12; longer single paragraphs are evenly split into 12 ranges.
     final sentenceCount = sentences.length;
     final paragraphRanges = _paragraphSentenceRanges(content, sentences);
     if (paragraphRanges.length > 1) {

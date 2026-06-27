@@ -1979,8 +1979,7 @@ but the three were all crowded together at one corner of it.
     expect(textAiCalls, 0);
     expect(review['chapterDescription'], '');
     final scenes = review['scenes'] as List;
-    expect(scenes.length, greaterThan(1));
-    expect(scenes.length, lessThanOrEqualTo(12));
+    expect(scenes, hasLength(12));
     expect((scenes.first as Map)['sceneDescription'], '');
     expect((scenes.last as Map)['sceneDescription'], '');
     expect((scenes.first as Map)['paragraphText'], contains('clue 1'));
@@ -2038,6 +2037,60 @@ but the three were all crowded together at one corner of it.
       (refreshedScenes.last as Map)['sceneDescription'],
       contains('final hallway clues'),
     );
+  });
+
+  test('picture-book prompt review draft rows follow paragraph cap without AI',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-paragraph-draft-key-12345678901234567890');
+    final paragraphs = [
+      for (var index = 0; index < 14; index += 1)
+        'Paragraph marker ${index + 1} gives Alice a distinct visible beat.',
+    ];
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Paragraph Draft Chapter',
+        content: paragraphs.join('\n\n'),
+        sentences: paragraphs,
+        createdAt: DateTime(2026, 1, 2),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description: 'Victorian fantasy picture book with Alice as the lead.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+
+    var textAiCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        throw StateError('opening paragraph draft should not call text AI');
+      },
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    final scenes = review['scenes'] as List;
+    expect(textAiCalls, 0);
+    expect(review['chapterDescription'], '');
+    expect(scenes, hasLength(12));
+    expect(
+      scenes.every((scene) => (scene as Map)['sceneDescription'] == ''),
+      isTrue,
+    );
+    expect((scenes.first as Map)['sentenceStartIndex'], 0);
+    expect((scenes.first as Map)['paragraphText'], contains('marker 1'));
+    expect((scenes.last as Map)['sentenceEndIndex'], paragraphs.length - 1);
+    expect((scenes.last as Map)['paragraphText'], contains('marker 14'));
+    expect(await DatabaseService.getPictureBookPages(articleId), isEmpty);
   });
 
   test('picture-book prompt review keeps Mouse learning notes out of draft',
