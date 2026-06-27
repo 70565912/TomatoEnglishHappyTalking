@@ -1872,7 +1872,7 @@ class PictureBookService {
       const TextGenerationTurn(
         role: 'system',
         content:
-            'Create a concise picture-book plan for one chapter. Return strict minified JSON only.',
+            'Create a compact picture-book scene plan for one chapter. Return strict minified JSON only.',
       ),
       TextGenerationTurn(
         role: 'user',
@@ -1895,11 +1895,29 @@ class PictureBookService {
           '- Do not repeat character appearance, clothing, hair, age, facial features, accessories, or other visual anchors already present in Relevant characters.',
           '- If this chapter introduces an image-relevant character or group not present in Relevant characters, add it to newCharacters with name and stable visible description.',
           '- newCharacters must include only characters or recurring visual groups that affect image consistency; do not include temporary props, places, actions, emotions, or ordinary background elements.',
+          // Keep scene planning visual-composition driven. Do not replace this
+          // with length quotas or story-specific examples; those caused brittle
+          // over-splitting or over-merging during prompt-review tuning.
           '- First identify the main visual story beats of the chapter, then assign sentence ranges to those beats.',
           '- Numbered sentences are coverage anchors, not scene candidates; do not create one scene per numbered sentence.',
-          '- Create a new scene only when the main visual story beat changes: place, time, main character group, story purpose, or a major visible turning point.',
+          '- Use a compact but complete set of illustrations that preserves every major visible transition needed to understand the chapter.',
+          '- Balance compactness and completeness: avoid over-merging unrelated phases, and avoid over-splitting consecutive beats that share one drawable composition.',
+          '- Do not decide the scene count from text length or sentence count.',
+          '- The $_maxSceneCount scene limit is an extreme upper bound, not a target. Never use $_maxSceneCount scenes unless there are $_maxSceneCount genuinely different visual beats.',
+          '- A scene boundary is valid only when the next part has a clear visual boundary reason: location change, time jump, main character group change, story purpose change, major visible state change, or an action result that cannot be shown in the same illustration.',
+          '- Create a new scene only when the main visual story beat changes for one of those visual boundary reasons.',
           '- Do not split a scene only because of one sentence, one prop, one line of dialogue, one internal thought, one facial expression, one camera angle, or one small action.',
           '- Merge adjacent sentences into one scene when they share the same place, time, characters, and story purpose, even if several actions or props are mentioned.',
+          '- Keep a continuous action chain in one location as one scene when it has the same location, same character group, and same story purpose.',
+          '- A boundary must come from a non-composable visual change, not from narration order, dialogue turns, or small sequential steps.',
+          '- Neighboring parts should be merged when they share the same setting, main participants, immediate story purpose, and can be drawn as one coherent composition with foreground and background action.',
+          '- Each sceneDescription must describe one dominant drawable composition, not a sequence of separate visible states.',
+          '- If a sceneDescription needs words like "then", "after", "next", "later", or "meanwhile" to connect different visible states, revise the scene split.',
+          '- Do not split narrative micro-phases of the same immediate visual outcome.',
+          '- A boundary is weak when neighboring parts share the same setting, main participants, immediate purpose, and can be shown as one stable composition.',
+          '- Dialogue turns, decision steps, brief responses, and acknowledgements are not scene boundaries unless they create a new non-composable visual state.',
+          '- Do not merge distant story phases only to reduce the count; brief visible transitions still deserve their own scene when they cannot share the same drawable composition.',
+          '- Before returning JSON, run the final audit in this order: first, split any scene that mixes multiple non-composable compositions; second, merge neighboring scenes whose boundary is only a narrative micro-phase of the same immediate visual outcome.',
           '- Use the smallest complete scene set that covers the chapter naturally.',
           '- Use at most $_maxSceneCount scenes.',
           '- sceneDescription: describe only the scene, action, objects, location, composition, emotion, and visual change for that story beat.',

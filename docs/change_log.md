@@ -6,6 +6,8 @@
 - 新增 `listening.audioStatus` / `listening.audioGenerate` bridge 命令和 `listening.audioMaterial.progress` 事件；章节英文 TTS 统一作为 `listening_tts` 听力材料管理，`overwrite=false` 只补缺失，`overwrite=true` 清理当前文章 `listening_tts` 和旧 `follow_tts` 引用后全量重建。
 - 听力打开、跟读打开、听力播放、全屏播放、视频导出 readiness 和跟读原音播放改为只检查本地听力材料缓存；缺失时明确提示“需要先在创作中心生成听力材料”，不再后台静默提交 TTS。
 - 绘本提示词审核框重新打开时优先读取本地章节计划；如果 `story_chapters.summary_json` 缺失或不匹配，会尝试从旧 `picture_book_pages` prompt scene 恢复并写回；仍无法恢复时先打开可编辑的本地 fallback 审核框，不静默远程生成。
+- 绘本章节分镜规划 prompt 改为按“紧凑但完整的必要插画”和明确视觉边界理由拆分，不再给普通章节设置数字目标；12 只作为极端上限，只有存在对应数量的真实视觉 story beats 才使用。提示词继续强化通用的边界审核与 scene cohesion audit：同时避免过度合并和过度拆分；相邻内容如果能用同一前景/背景构图表达就合并，同一直接视觉结果下的叙述微阶段不拆成多个 scene；最终审核顺序改为先拆内部混场，再合并弱边界。
+- 记录本轮绘本分镜 prompt 调优原则：`E10 - The Caucus Race` 只作为人工评审样例，不把故事特例词写入通用 prompt；后续调优继续围绕可迁移的视觉构图边界，而不是长度、固定数量或单篇故事事件。
 - 歌曲字幕匹配补强低信息词处理，避免 ASR 跳过弱词时抢占后续歌词锚点造成字幕过长或过短；新增 E07 真实 ASR fixture 和回归用例，作为后续歌词匹配算法改动的固定素材。
 - 发布目录运行数据恢复：确认 `release/windows/tomato_english_happy_talking` 空库后，从最近有书的 runtime backup 恢复 `.dart_tool` 数据库和 `tomato_api_cache`，真实 release App 默认数据根读取到 20 篇文章、3 本书和 20 个章节。
 

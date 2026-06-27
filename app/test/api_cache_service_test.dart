@@ -662,13 +662,142 @@ void main() {
     );
     expect(
       planningPrompt,
+      contains('compact but complete set of illustrations'),
+    );
+    expect(
+      planningPrompt,
+      contains('balance compactness and completeness'),
+    );
+    expect(
+      planningPrompt,
+      contains('avoid over-merging unrelated phases'),
+    );
+    expect(
+      planningPrompt,
+      contains('avoid over-splitting consecutive beats'),
+    );
+    expect(
+      planningPrompt,
+      contains('do not decide the scene count from text length'),
+    );
+    expect(
+      planningPrompt,
+      contains('extreme upper bound, not a target'),
+    );
+    expect(
+      planningPrompt,
+      contains('genuinely different visual beats'),
+    );
+    expect(
+      planningPrompt,
+      contains('a scene boundary is valid only when'),
+    );
+    expect(
+      planningPrompt,
+      contains('clear visual boundary reason'),
+    );
+    expect(
+      planningPrompt,
+      contains('location change, time jump, main character group change'),
+    );
+    expect(
+      planningPrompt,
       contains(
-          'create a new scene only when the main visual story beat changes'),
+          'story purpose change, major visible state change, or an action result'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'create a new scene only when the main visual story beat changes for one of those visual boundary reasons'),
     );
     expect(
       planningPrompt,
       contains('use the smallest complete scene set'),
     );
+    expect(
+      planningPrompt,
+      contains('continuous action chain in one location'),
+    );
+    expect(
+      planningPrompt,
+      contains('same location, same character group, and same story purpose'),
+    );
+    expect(
+      planningPrompt,
+      contains('non-composable visual change'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'not from narration order, dialogue turns, or small sequential steps'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'one coherent composition with foreground and background action'),
+    );
+    expect(
+      planningPrompt,
+      contains('one dominant drawable composition'),
+    );
+    expect(
+      planningPrompt,
+      contains('not a sequence of separate visible states'),
+    );
+    expect(
+      planningPrompt,
+      contains('do not split narrative micro-phases'),
+    );
+    expect(
+      planningPrompt,
+      contains('same immediate visual outcome'),
+    );
+    expect(
+      planningPrompt,
+      contains('a boundary is weak when neighboring parts share'),
+    );
+    expect(
+      planningPrompt,
+      contains('one stable composition'),
+    );
+    expect(
+      planningPrompt,
+      contains('dialogue turns, decision steps, brief responses'),
+    );
+    expect(
+      planningPrompt,
+      contains('not scene boundaries unless they create a new'),
+    );
+    expect(
+      planningPrompt,
+      contains('do not merge distant story phases only to reduce the count'),
+    );
+    expect(
+      planningPrompt,
+      contains('brief visible transitions still deserve their own scene'),
+    );
+    expect(
+      planningPrompt,
+      contains('run the final audit in this order'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'split any scene that mixes multiple non-composable compositions'),
+    );
+    expect(
+      planningPrompt,
+      contains('merge neighboring scenes whose boundary is only'),
+    );
+    expect(planningPrompt, isNot(contains('object handoff')));
+    expect(planningPrompt, isNot(contains('small ceremony')));
+    expect(planningPrompt, isNot(contains('minimum number')));
+    expect(planningPrompt, isNot(contains('question, answer')));
+    expect(planningPrompt, isNot(contains('typical chapters')));
+    expect(planningPrompt, isNot(contains('4-9 scenes')));
+    expect(planningPrompt, isNot(contains('for example')));
+    expect(planningPrompt, isNot(contains('e.g.')));
+    expect(planningPrompt, isNot(contains('such as')));
     expect(planningPrompt, contains('use character names only'));
     expect(planningPrompt, isNot(contains('bailian')));
     expect(planningPrompt, isNot(contains('aliyun')));

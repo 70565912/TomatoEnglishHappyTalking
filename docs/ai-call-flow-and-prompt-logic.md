@@ -342,13 +342,15 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - 页面策略版本为 `picture_book_group_prompt_scene_description_v2`，章节图片计划缓存为 `picture_book_chapter_scene_plan_v2`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
 - 每章只在本地无法读取或恢复章节计划时才调用一次文本规划 API，让 AI 只基于 `bookDescription`、章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。
-- 场景按故事段落切分，最多 12 段；同一地点、时间、角色和故事目的的相邻句子合并为同一 scene；每个 scene 对应一张图片并按顺序覆盖完整句子范围。
+- 场景数量不按章节长度或句子数量决定，而按“紧凑但完整的必要插画”与“视觉故事 beat”决定；12 只作为极端上限，不是目标值。分镜需要同时避免过度合并和过度拆分：只有相邻内容存在明确、不可组合的视觉边界理由时才拆分，例如地点变化、时间跳跃、主要角色组变化、故事目的变化、重大可见状态变化，或一个动作结果无法在同一张插画中表达；同一地点、时间、角色和故事目的的相邻句子合并为同一 scene；相邻内容如果可以用同一个前景/背景构图表达，就应保持为一个视觉 beat。不要拆分同一直接视觉结果下的叙述微阶段；当相邻内容共享设置、主要参与者、直接目的且能被同一个稳定构图表达时，这个边界就是弱边界。返回前先检查每个 scene 内部是否混入多个不可组合构图，再合并边界只是叙述微阶段的相邻 scene，同时避免为了减少数量把相隔较远的故事阶段或多个不可同时表达的可见状态塞进同一 scene。每个 scene 对应一张图片并按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 重新打开绘本提示词审核时优先读取 `story_chapters.summary_json` 中的 `picture_book_chapter_scene_plan_v2`。如果 summary 缺失或 hash 不匹配，但旧 `picture_book_pages` 仍有完整 prompt scene 信息，则从页面记录恢复章节计划并写回 summary。
 - 如果本地 summary 和页面记录都无法恢复，promptReview 仍先打开审核框，使用本地 fallback 按当前句子构造可编辑分镜；用户可以手工修改，或在弹窗里显式刷新章节规划。这个入口不得因为缺少本地计划而静默提交远程文本生成。
 - 审核弹窗可刷新书籍简介，或同次刷新章节规划（`chapterDescription` + `scenes[]`）。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
 - savePromptReview 使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
 - confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。
+
+调优记录：2026-06-27 使用 `E10 - The Caucus Race` 作为人工评审样例，确认简单长度约束、固定数量目标或故事特例词都会让通用 prompt 变脆。正式 prompt 不写入 E10 专用词，也不按章节字数/句子数决定分镜数量；只保留可迁移的视觉构图判断：弱边界、同一直接视觉结果、不可组合视觉变化，以及“先拆内部混场，再合并弱边界”的最终审核顺序。后续继续调优时，应先用真实章节计划评审是否过度拆分或过度合并，再修改通用规则。
 
 ### 计划中的书籍角色数组流程
 
