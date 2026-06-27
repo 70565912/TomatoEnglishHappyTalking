@@ -127,12 +127,14 @@ Sequential/group request:
   description, and every `Image N` scene description are not shortened by the
   app before the image request.
 - Prompt review uses `picture_book_group_prompt_scene_description_v2` /
-  `picture_book_chapter_scene_plan_v2`. It produces editable `chapterDescription`,
-  `scenes[].sceneDescription`, and `groupPrompt`, then waits for
-  `pictureBook.confirmPromptReview` before submitting any image request.
+  `picture_book_chapter_scene_plan_v2`. Opening the review dialog only loads
+  persisted local `chapterDescription` / scene planning data; if none exists,
+  the editable chapter description is intentionally blank. The user must either
+  type the content or explicitly click the AI refresh action before any text
+  planning call happens.
 - Do not restore the old series bible, character-card, or reference-image
-  switches. Default cold-cache production flow should spend one v4 planning text
-  call and one sequential image-group call per confirmed chapter.
+  switches. Cold-cache prompt review must not hide a text-generation call behind
+  dialog opening; image generation still waits for `pictureBook.confirmPromptReview`.
 - When the current cloud provider is Volcengine, `PictureBookImageService`
   dispatches to `VolcImageService.generatePictureBookImageGroup(...,
   useSequential: true)` for the product flow. It sets

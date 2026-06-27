@@ -10,6 +10,7 @@
 - 缓存 key 由规范化后的请求 JSON 或音频字节 SHA-256 生成，必须包含模型、资源 ID、声音、尺寸、输出格式、prompt policy version 等会影响结果的字段。
 - 标准中英对照故事必须本地解析直用，不允许整篇送 AI 做英文提取。
 - 新增文章页保存后先打开绘本提示词审核；用户确认后才用一次顺序组图请求让第 N 张图对应第 N 个分镜。
+- 所有 AI 文本、语音和图片提交都必须对应用户可见的明确操作；打开弹窗、保存草稿、读取状态或后台加载不得隐藏触发远程 AI。
 
 ## 密钥与配置来源
 
@@ -35,7 +36,7 @@
 | 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | 当前云平台 TTS：阿里云 CosyVoice 或火山 Doubao TTS 2.0 | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
 | 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | 当前云平台 ASR：阿里云 Qwen-ASR 或火山 BigASR | `asr_recognize` / `asr` | 识别文本 |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
-| 绘本提示词审核 | 保存后生成/读取章节场景计划，用户确认前不提交图片 | OpenAI-compatible 文本 | `picture_book_chapter_scene_plan_v2` / `openai_text` | `chapterDescription`、`scenes[].sceneDescription`、group prompt |
+| 绘本提示词审核 | 打开时只读取本地持久化章节计划/章节描述；缺失时显示空草稿 | OpenAI-compatible 文本仅在用户点击刷新时调用 | `picture_book_chapter_scene_plan_v2` / `openai_text` | `chapterDescription`、`scenes[].sceneDescription`、group prompt |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 当前云平台图片：阿里云万相异步连续组图或火山 Seedream 顺序组图 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 | 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
 | 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 阿里云百聆（Fun-Music）或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
@@ -62,6 +63,14 @@
 7. 保存文章、句子和导入中文对照。
 8. 如果正文处理或标题生成在保存前已经调用过远程，保存后调用 `attachExistingCache` 把全局缓存引用绑定到新文章。
 9. 默认创建/复用“书籍”系列与章节关系；保存返回后 Web UI 调用 `pictureBook.promptReview` 打开提示词审核弹窗，用户确认后才提交顺序组图生成。
+
+### 绘本提示词审核手动触发规则
+
+- `pictureBook.promptReview` 只读取本地持久化数据：有效 `picture_book_chapter_scene_plan_v2`、已保存的 `chapterDescription`，或带真实 `chapterDescription` 的旧页面 prompt。
+- 新建文章没有章节描述时，审核框的 `chapterDescription` 显示为空；已有文章没有本地持久化描述时同样显示为空。
+- 打开审核框不会调用文本 AI、图片 API，也不会从正文、标题、scene 摘要或旧 `summary` 本地拼接章节描述。
+- 用户可在审核框中手动填写章节描述和分镜描述，或点击“自动生成章节规划”显式调用文本 AI 刷新 `chapterDescription` 与 `scenes[]`。
+- `pictureBook.savePromptReview` 只保存当前可见草稿，不调用图片 API、不删除旧图；`pictureBook.confirmPromptReview` 才提交可见审核内容并触发顺序组图。
 
 ### 英文原文区本地提取规则
 
@@ -354,11 +363,11 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - 页面策略版本为 `picture_book_group_prompt_scene_description_v2`，章节图片计划缓存为 `picture_book_chapter_scene_plan_v2`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
-- 每章只在本地无法读取或恢复章节计划时才调用一次文本规划 API，让 AI 只基于 `bookDescription`、章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。
+- 打开审核框只读取本地持久化章节描述/章节计划；文本规划 API 只在用户点击“自动生成章节规划”时调用，让 AI 基于 `bookDescription`、章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。
 - 场景数量不按章节长度或句子数量决定，而按“紧凑但完整的必要插画”与“视觉故事 beat”决定；12 只作为极端上限，不是目标值。分镜需要同时避免过度合并和过度拆分：只有相邻内容存在明确、不可组合的视觉边界理由时才拆分，例如地点变化、时间跳跃、主要角色组变化、故事目的变化、重大可见状态变化，或一个动作结果无法在同一张插画中表达；同一地点、时间、角色和故事目的的相邻句子合并为同一 scene；相邻内容如果可以用同一个前景/背景构图表达，就应保持为一个视觉 beat。不要拆分同一直接视觉结果下的叙述微阶段；当相邻内容共享设置、主要参与者、直接目的且能被同一个稳定构图表达时，这个边界就是弱边界。返回前先检查每个 scene 内部是否混入多个不可组合构图，再合并边界只是叙述微阶段的相邻 scene，同时避免为了减少数量把相隔较远的故事阶段或多个不可同时表达的可见状态塞进同一 scene。每个 scene 对应一张图片并按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 重新打开绘本提示词审核时优先读取 `story_chapters.summary_json` 中的 `picture_book_chapter_scene_plan_v2`。如果 summary 缺失或 hash 不匹配，但旧 `picture_book_pages` 仍有完整 prompt scene 信息，则从页面记录恢复章节计划并写回 summary。
-- 如果本地 summary 和页面记录都无法恢复，promptReview 仍先打开审核框，使用本地 fallback 按当前句子构造可编辑分镜；用户可以手工修改，或在弹窗里显式刷新章节规划。这个入口不得因为缺少本地计划而静默提交远程文本生成。
+- 如果本地 summary 和页面记录都无法恢复，promptReview 仍先打开审核框：章节描述和分镜描述保持为空，只提供句子范围和原文片段供用户可视化编辑；用户可以手工填写，或在弹窗里显式刷新章节规划。这个入口不得因为缺少本地计划而静默提交远程文本生成。
 - 审核弹窗可刷新书籍简介，或同次刷新章节规划（`chapterDescription` + `scenes[]`）。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
 - savePromptReview 使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
 - confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。

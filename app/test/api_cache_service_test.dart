@@ -1758,7 +1758,13 @@ but the three were all crowded together at one corner of it.
       seriesId: series.id!,
       article: article!,
     );
-    await _installTwoPageChapterPlanOverride();
+    var textAiCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        throw StateError('opening prompt review should not call text AI');
+      },
+    );
     var imageCalls = 0;
     VolcImageService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
@@ -1797,12 +1803,15 @@ but the three were all crowded together at one corner of it.
     );
     expect(groupPrompt, contains('Image 1:'));
     expect(review['bookDescription'], isA<String>());
-    expect(review['chapterDescription'], contains('Alice'));
-    expect(review['chapterDescription'], contains('Queen'));
-    expect(review['scenes'], isA<List>());
+    expect(review['chapterDescription'], '');
+    final scenes = review['scenes'] as List;
+    expect(scenes, hasLength(2));
+    expect((scenes.first as Map)['sceneDescription'], '');
+    expect((scenes.last as Map)['sceneDescription'], '');
     expect(review.containsKey('characterCards'), isFalse);
     expect(review.containsKey('referenceAssets'), isFalse);
     expect(review.containsKey('styleGuide'), isFalse);
+    expect(textAiCalls, 0);
     expect(imageCalls, 0);
     final pages = await DatabaseService.getPictureBookPages(articleId);
     expect(pages, hasLength(1));
@@ -1922,7 +1931,7 @@ but the three were all crowded together at one corner of it.
     expect(savedSummary['scenes'], hasLength(2));
   });
 
-  test('picture-book prompt review opens a local editable draft without AI',
+  test('picture-book prompt review opens an empty editable draft without AI',
       () async {
     _writeImageArkKey(tempDir, 'ark-local-draft-key-12345678901234567890');
     final sentences = [
@@ -1968,17 +1977,72 @@ but the three were all crowded together at one corner of it.
     );
 
     expect(textAiCalls, 0);
-    expect(review['chapterDescription'], isA<String>());
+    expect(review['chapterDescription'], '');
     final scenes = review['scenes'] as List;
     expect(scenes.length, greaterThan(1));
     expect(scenes.length, lessThanOrEqualTo(12));
-    expect((scenes.first as Map)['sceneDescription'], contains('clue 1'));
-    expect((scenes.last as Map)['sceneDescription'], contains('clue 16'));
+    expect((scenes.first as Map)['sceneDescription'], '');
+    expect((scenes.last as Map)['sceneDescription'], '');
+    expect((scenes.first as Map)['paragraphText'], contains('clue 1'));
+    expect((scenes.last as Map)['paragraphText'], contains('clue 16'));
     expect(await DatabaseService.getPictureBookPages(articleId), isEmpty);
+
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_scene_plan_v2',
+                  'chapterDescription':
+                      'Alice follows a trail of hallway clues from the first discovery to the final clue.',
+                  'scenes': [
+                    {
+                      'pageIndex': 0,
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 7,
+                      'sceneDescription':
+                          'Alice studies the first hallway clues with growing curiosity.',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'sentenceStartIndex': 8,
+                      'sentenceEndIndex': 15,
+                      'sceneDescription':
+                          'Alice reaches the final hallway clues and prepares to move on.',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final refreshed = await _refreshChapterPlanFromReview(review);
+    expect(textAiCalls, 1);
+    expect(
+      refreshed['chapterDescription'],
+      'Alice follows a trail of hallway clues from the first discovery to the final clue.',
+    );
+    final refreshedScenes = refreshed['scenes'] as List;
+    expect(refreshedScenes, hasLength(2));
+    expect(
+      (refreshedScenes.first as Map)['sceneDescription'],
+      contains('first hallway clues'),
+    );
+    expect(
+      (refreshedScenes.last as Map)['sceneDescription'],
+      contains('final hallway clues'),
+    );
   });
 
   test('picture-book prompt review keeps Mouse learning notes out of draft',
       () async {
+    _writeImageArkKey(tempDir, 'ark-mouse-refresh-key-12345678901234567890');
     final raw = File(path_lib.join(
       previousDirectory.path,
       'test',
@@ -2009,7 +2073,7 @@ but the three were all crowded together at one corner of it.
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
         textAiCalls += 1;
-        throw StateError('local Mouse prompt review should not call text AI');
+        throw StateError('opening Mouse prompt review should not call text AI');
       },
     );
 
@@ -2020,12 +2084,6 @@ but the three were all crowded together at one corner of it.
     );
 
     final scenes = review['scenes'] as List;
-    final draftText = [
-      review['chapterDescription']?.toString() ?? '',
-      review['groupPrompt']?.toString() ?? '',
-      for (final scene in scenes)
-        (scene as Map)['sceneDescription']?.toString() ?? '',
-    ].join('\n');
     const learningNoteNeedles = [
       'attend vs. pay attention',
       'Bill has not been attending',
@@ -2038,26 +2096,89 @@ but the three were all crowded together at one corner of it.
     expect(textAiCalls, 0);
     expect(scenes, isNotEmpty);
     expect(parsed.englishContent, contains('finish his story'));
-    expect(review['chapterDescription'], contains("The Mouse's Sad Tale"));
-    expect(review['chapterDescription'], contains('finish his story'));
+    expect(review['chapterDescription'], '');
+    expect(scenes.every((scene) => (scene as Map)['sceneDescription'] == ''),
+        isTrue);
+    expect((scenes.last as Map)['sentenceEndIndex'], sentences.length - 1);
+    final emptyDraftText = [
+      review['chapterDescription']?.toString() ?? '',
+      review['groupPrompt']?.toString() ?? '',
+      for (final scene in scenes)
+        (scene as Map)['sceneDescription']?.toString() ?? '',
+    ].join('\n');
+    for (final needle in learningNoteNeedles) {
+      expect(emptyDraftText, isNot(contains(needle)));
+    }
+
+    const mouseChapterDescription =
+        'The Mouse recounts his grievance with Fury, storms away after Alice offends him, and Alice looks for his return.';
+    final middleSentenceIndex = sentences.length ~/ 2;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_scene_plan_v2',
+                  'chapterDescription': mouseChapterDescription,
+                  'scenes': [
+                    {
+                      'pageIndex': 0,
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': middleSentenceIndex - 1,
+                      'sceneDescription':
+                          'The Mouse begins his sad tale while Alice and the birds listen closely.',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'sentenceStartIndex': middleSentenceIndex,
+                      'sentenceEndIndex': sentences.length - 1,
+                      'sceneDescription':
+                          'Alice upsets the Mouse, then searches anxiously as he refuses to return.',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final refreshed = await _refreshChapterPlanFromReview(review);
+    expect(textAiCalls, 1);
+    final refreshedScenes = refreshed['scenes'] as List;
+    final draftText = [
+      refreshed['chapterDescription']?.toString() ?? '',
+      refreshed['groupPrompt']?.toString() ?? '',
+      for (final scene in refreshedScenes)
+        (scene as Map)['sceneDescription']?.toString() ?? '',
+    ].join('\n');
+    expect(refreshed['chapterDescription'], mouseChapterDescription);
     expect(
-      review['chapterDescription'].toString().trim(),
+      refreshed['chapterDescription'].toString().trim(),
       isNot(startsWith('"You promised')),
     );
-    expect((scenes.last as Map)['sentenceEndIndex'], sentences.length - 1);
+    expect(
+      (refreshedScenes.last as Map)['sentenceEndIndex'],
+      sentences.length - 1,
+    );
     for (final needle in learningNoteNeedles) {
       expect(draftText, isNot(contains(needle)));
     }
 
     await PictureBookService.savePromptReview(
-      reviewId: review['reviewId'].toString(),
-      groupPrompt: review['groupPrompt'].toString(),
-      bookDescription: review['bookDescription'].toString(),
-      bookCharacters: _charactersFromPayload(review['bookCharacters']),
-      newCharacters: _charactersFromPayload(review['newCharacters']),
-      chapterDescription: review['chapterDescription'].toString(),
+      reviewId: refreshed['reviewId'].toString(),
+      groupPrompt: refreshed['groupPrompt'].toString(),
+      bookDescription: refreshed['bookDescription'].toString(),
+      bookCharacters: _charactersFromPayload(refreshed['bookCharacters']),
+      newCharacters: _charactersFromPayload(refreshed['newCharacters']),
+      chapterDescription: refreshed['chapterDescription'].toString(),
       scenes: [
-        for (final scene in scenes) Map<String, dynamic>.from(scene as Map),
+        for (final scene in refreshedScenes)
+          Map<String, dynamic>.from(scene as Map),
       ],
     );
 
@@ -2066,8 +2187,7 @@ but the three were all crowded together at one corner of it.
     final savedSummary = savedChapter?.summaryJson ?? '';
     final savedSummaryJson = jsonDecode(savedSummary) as Map<String, dynamic>;
     final savedScenes = savedSummaryJson['scenes'] as List;
-    expect(
-        savedSummaryJson['chapterDescription'], contains('finish his story'));
+    expect(savedSummaryJson['chapterDescription'], mouseChapterDescription);
     expect(savedSummaryJson.containsKey('summary'), isFalse);
     expect((savedScenes.last as Map)['sentenceEndIndex'], sentences.length - 1);
     for (final needle in learningNoteNeedles) {
@@ -2101,8 +2221,10 @@ but the three were all crowded together at one corner of it.
       seriesId: series.id!,
       article: article!,
     );
+    var textAiCalls = 0;
     TextGenerationService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
         return {
           'choices': [
             {
@@ -2141,22 +2263,26 @@ but the three were all crowded together at one corner of it.
 
     expect(review['bookDescription'], isNot(contains('Queen of Hearts')));
     expect(review['bookDescription'], isNot(contains('White Rabbit')));
-    expect(review['chapterDescription'], contains('Queen'));
-    expect(review['chapterDescription'], contains('White Rabbit'));
-    expect(review['groupPrompt'], contains('Queen of Hearts'));
+    expect(review['chapterDescription'], '');
+    expect(textAiCalls, 0);
+    final refreshed = await _refreshChapterPlanFromReview(review);
+    expect(textAiCalls, 1);
+    expect(refreshed['chapterDescription'], contains('Queen'));
+    expect(refreshed['chapterDescription'], contains('White Rabbit'));
+    expect(refreshed['groupPrompt'], contains('Queen of Hearts'));
     final unchangedSeries =
         await DatabaseService.getStorySeriesById(series.id!);
     expect(unchangedSeries?.description, isNot(contains('Queen of Hearts')));
 
     await PictureBookService.savePromptReview(
-      reviewId: review['reviewId'].toString(),
-      groupPrompt: review['groupPrompt'].toString(),
-      bookDescription: review['bookDescription'].toString(),
+      reviewId: refreshed['reviewId'].toString(),
+      groupPrompt: refreshed['groupPrompt'].toString(),
+      bookDescription: refreshed['bookDescription'].toString(),
       bookCharacters: const [],
       newCharacters: const [],
-      chapterDescription: review['chapterDescription'].toString(),
+      chapterDescription: refreshed['chapterDescription'].toString(),
       scenes: [
-        for (final scene in review['scenes'] as List)
+        for (final scene in refreshed['scenes'] as List)
           Map<String, dynamic>.from(scene as Map),
       ],
     );

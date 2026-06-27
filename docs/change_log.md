@@ -5,7 +5,7 @@
 - 创作中心绘本面板新增“生成听力”按钮，位于“生成组图”后同一行；面板显示章节听力材料生成状态，缺失时可显式提交远程语音合成，完整时需确认覆盖后才重新生成。
 - 新增 `listening.audioStatus` / `listening.audioGenerate` bridge 命令和 `listening.audioMaterial.progress` 事件；章节英文 TTS 统一作为 `listening_tts` 听力材料管理，`overwrite=false` 只补缺失，`overwrite=true` 清理当前文章 `listening_tts` 和旧 `follow_tts` 引用后全量重建。
 - 听力打开、跟读打开、听力播放、全屏播放、视频导出 readiness 和跟读原音播放改为只检查本地听力材料缓存；缺失时明确提示“需要先在创作中心生成听力材料”，不再后台静默提交 TTS。
-- 绘本提示词审核框重新打开时优先读取本地章节计划；如果 `story_chapters.summary_json` 缺失或不匹配，会尝试从旧 `picture_book_pages` prompt scene 恢复并写回；仍无法恢复时先打开可编辑的本地 fallback 审核框，不静默远程生成。
+- 绘本提示词审核框重新打开时只读取本地持久化章节描述/章节计划；新建文章或缺失描述的已有文章显示空章节描述，用户可手动填写或点击“自动生成章节规划”显式触发文本 AI 刷新，不再本地伪造章节描述，也不在打开弹窗时隐藏提交 AI。
 - 绘本章节分镜规划 prompt 改为按“紧凑但完整的必要插画”和明确视觉边界理由拆分，不再给普通章节设置数字目标；12 只作为极端上限，只有存在对应数量的真实视觉 story beats 才使用。提示词继续强化通用的边界审核与 scene cohesion audit：同时避免过度合并和过度拆分；相邻内容如果能用同一前景/背景构图表达就合并，同一直接视觉结果下的叙述微阶段不拆成多个 scene；最终审核顺序改为先拆内部混场，再合并弱边界。
 - 记录本轮绘本分镜 prompt 调优原则：`E10 - The Caucus Race` 只作为人工评审样例，不把故事特例词写入通用 prompt；后续调优继续围绕可迁移的视觉构图边界，而不是长度、固定数量或单篇故事事件。
 - 歌曲字幕匹配补强低信息词处理，避免 ASR 跳过弱词时抢占后续歌词锚点造成字幕过长或过短；新增 E07 真实 ASR fixture 和回归用例，作为后续歌词匹配算法改动的固定素材。
@@ -14,7 +14,7 @@
 - 章节列表正序/倒序改为 Web UI 全局偏好，使用 `localStorage` key `tomato.chapterOrder.v1` 记忆；书库首页、书籍详情、练习中心、创作中心和书籍播放器章节抽屉共享同一排序，非法值回退正序。
 - 新增英文原文区本地提取规则文档和 Alice 课程稿回归样本：E01 卷首诗、E11 The Mouse's Sad Tale、E27 槌球场、E28 柴郡猫原始输入均固定为 parser 测试；解析器通用处理拓展说明、文化卡片、生词好句、音标和例句边界，不按单篇文章名特判。
 - 修正标准中英对照和英文原文区解析：正文开始后遇到词汇/练习/翻译等学习材料 hard stop；`【拓展】`、背景、难句解析等 soft interruption 会跳过讲解，只在后续出现可信散文或诗歌正文时恢复，避免学习材料污染文章正文、导入译文和绘本分镜输入。
-- 修正新建书籍章节的初始摘要：`ensureChapterForArticle` / `attachArticleToSeries` 不再把正文开头截断写入旧 `summary` 字段；本地提示词审核草稿改用首段、中段和结尾句生成覆盖式章节描述，避免 The Mouse's Tale 这类新提交章节继续显示正文开头片段。
+- 修正新建书籍章节的初始摘要：`ensureChapterForArticle` / `attachArticleToSeries` 不再把正文开头截断写入旧 `summary` 字段；`clearArticlePictureBookCache` 也不再重写旧 `summary`，避免正文片段再次污染章节描述。
 
 验证：
 
