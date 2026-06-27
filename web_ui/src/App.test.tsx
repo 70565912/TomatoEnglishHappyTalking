@@ -1798,7 +1798,7 @@ describe('App', () => {
       }),
     };
 
-    const { container } = render(<App />);
+    render(<App />);
 
     expect(await screen.findByRole('heading', { name: '创作中心' })).toBeInTheDocument();
     expect(await screen.findByText('0 / 2 已生成 · 缺 2 句')).toBeInTheDocument();
@@ -1810,9 +1810,23 @@ describe('App', () => {
     expect(buttonLabels.findIndex((label) => label.includes('生成听力')))
       .toBeLessThan(buttonLabels.findIndex((label) => label.includes('刷新状态')));
 
-    fireEvent.click(within(buttonRow).getByRole('button', { name: /生成听力/ }));
+    const generateButton = within(buttonRow).getByRole('button', { name: /生成听力/ });
+    fireEvent.click(generateButton);
 
-    expect(await screen.findByRole('dialog', { name: '正在生成听力材料' })).toBeInTheDocument();
+    const progressDialog = await screen.findByRole('dialog', { name: '正在生成听力材料' });
+    expect(progressDialog).toHaveAttribute('aria-modal', 'true');
+    expect(progressDialog.closest('.edit-dialog-backdrop')).toBeNull();
+    const progressOverlay = progressDialog.closest('.audio-material-progress-overlay');
+    expect(progressOverlay).toBeTruthy();
+    expect(progressOverlay?.parentElement).toBe(document.body);
+    expect(within(progressDialog).getByText('生成期间已禁止页面操作，请等待完成')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(calls.filter((call) => call.type === 'listening.audioGenerate')).toHaveLength(1);
+    });
+    const busyGenerateButton = within(buttonRow).getByRole('button', { name: /生成中/ });
+    expect(busyGenerateButton).toBeDisabled();
+    fireEvent.click(busyGenerateButton);
+    expect(calls.filter((call) => call.type === 'listening.audioGenerate')).toHaveLength(1);
     await act(async () => {
       window.__tomatoNativeEvent?.({
         type: 'listening.audioMaterial.progress',
@@ -1838,7 +1852,9 @@ describe('App', () => {
       });
     });
     expect(await screen.findByText('听力材料已生成')).toBeInTheDocument();
-    expect(container.querySelector('.audio-material-dialog')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '正在生成听力材料' })).not.toBeInTheDocument();
+    });
   });
 
   it('confirms before overwriting complete listening audio material', async () => {
@@ -1866,6 +1882,7 @@ describe('App', () => {
       updatedAt: new Date().toISOString(),
     }];
     const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    let resolveGenerate: (() => void) | null = null;
     const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
       id: String(id),
       ok: true,
@@ -1900,15 +1917,17 @@ describe('App', () => {
           });
         }
         if (type === 'listening.audioGenerate') {
-          return ok(message.id, type, {
-            articleId: article.id,
-            total: 2,
-            ready: 2,
-            missing: [],
-            failed: 0,
-            status: 'ready',
-            requested: 2,
-            overwrite: true,
+          return new Promise<BridgeResponse>((resolve) => {
+            resolveGenerate = () => resolve(ok(message.id, type, {
+              articleId: article.id,
+              total: 2,
+              ready: 2,
+              missing: [],
+              failed: 0,
+              status: 'ready',
+              requested: 2,
+              overwrite: true,
+            }));
           });
         }
         return ok(message.id, type, {});
@@ -1927,11 +1946,21 @@ describe('App', () => {
       expect(calls.some((call) => call.type === 'listening.audioGenerate')).toBe(false);
 
       fireEvent.click(within(confirmDialog).getByRole('button', { name: /覆盖生成/ }));
+      const progressDialog = await screen.findByRole('dialog', { name: '正在生成听力材料' });
+      expect(screen.queryByRole('dialog', { name: '覆盖听力材料确认' })).not.toBeInTheDocument();
+      expect(progressDialog.closest('.audio-material-progress-overlay')).toBeTruthy();
+      expect(progressDialog.closest('.edit-dialog-backdrop')).toBeNull();
       await waitFor(() => {
         expect(calls.find((call) => call.type === 'listening.audioGenerate')?.payload).toMatchObject({
           articleId: article.id,
           overwrite: true,
         });
+      });
+      await act(async () => {
+        resolveGenerate?.();
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog', { name: '正在生成听力材料' })).not.toBeInTheDocument();
       });
     } finally {
       confirmSpy.mockRestore();

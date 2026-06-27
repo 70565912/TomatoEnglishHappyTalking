@@ -2131,7 +2131,7 @@ img {
   line-height: 1.6;
 }
 
-.audio-material-dialog .progress-line {
+.audio-material-progress-panel .progress-line {
   margin-top: 6px;
 }
 
@@ -3257,7 +3257,8 @@ select:disabled {
   color: var(--ink);
 }
 
-.recording-progress-overlay {
+.recording-progress-overlay,
+.audio-material-progress-overlay {
   position: fixed;
   inset: 0;
   z-index: 60;
@@ -3268,7 +3269,8 @@ select:disabled {
   backdrop-filter: blur(3px);
 }
 
-.recording-progress-panel {
+.recording-progress-panel,
+.audio-material-progress-panel {
   display: grid;
   gap: 14px;
   width: min(620px, 100%);
@@ -3279,18 +3281,21 @@ select:disabled {
   box-shadow: 0 30px 90px rgba(15, 23, 42, 0.28);
 }
 
-.recording-progress-heading {
+.recording-progress-heading,
+.audio-material-progress-heading {
   display: grid;
   gap: 4px;
 }
 
-.recording-progress-heading b {
+.recording-progress-heading b,
+.audio-material-progress-heading b {
   color: var(--ink);
   font-size: 18px;
   font-weight: 1000;
 }
 
-.recording-progress-heading small {
+.recording-progress-heading small,
+.audio-material-progress-heading small {
   color: var(--soft-ink);
   font-size: 13px;
   font-weight: 900;

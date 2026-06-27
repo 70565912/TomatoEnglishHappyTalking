@@ -3912,17 +3912,18 @@ function AudioMaterialProgressDialog({ progress }: { progress: ListeningAudioMat
     ? `正在提交远程语音合成 ${Math.min(completed, total)} / ${total}`
     : '正在确认听力材料状态';
 
-  return (
-    <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog audio-material-dialog" role="dialog" aria-modal="true" aria-label="正在生成听力材料">
-        <div className="edit-dialog-heading">
+  return createPortal(
+    <div className="audio-material-progress-overlay" role="presentation">
+      <section className="audio-material-progress-panel" role="dialog" aria-modal="true" aria-label="正在生成听力材料">
+        <div className="audio-material-progress-heading">
           <b>正在生成听力材料</b>
-          <small>远程语音合成进行中，请等待完成</small>
+          <small>生成期间已禁止页面操作，请等待完成</small>
         </div>
         <ProgressLine value={value} label={label} />
         {progress?.failed ? <p className="edit-dialog-error">{progress.failed} 句生成失败</p> : null}
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
