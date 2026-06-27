@@ -1947,6 +1947,11 @@ but the three were all crowded together at one corner of it.
       seriesId: series.id!,
       article: article!,
     );
+    final initialSummary =
+        jsonDecode(chapter.summaryJson) as Map<String, dynamic>;
+    expect(initialSummary.containsKey('summary'), isFalse);
+    expect(chapter.summaryJson, isNot(contains('"You promised')));
+    expect(chapter.summaryJson, isNot(contains('attend vs. pay attention')));
 
     var textAiCalls = 0;
     TextGenerationService.setPostOverrideForTest(
@@ -2033,6 +2038,12 @@ but the three were all crowded together at one corner of it.
     expect(textAiCalls, 0);
     expect(scenes, isNotEmpty);
     expect(parsed.englishContent, contains('finish his story'));
+    expect(review['chapterDescription'], contains("The Mouse's Sad Tale"));
+    expect(review['chapterDescription'], contains('finish his story'));
+    expect(
+      review['chapterDescription'].toString().trim(),
+      isNot(startsWith('"You promised')),
+    );
     expect((scenes.last as Map)['sentenceEndIndex'], sentences.length - 1);
     for (final needle in learningNoteNeedles) {
       expect(draftText, isNot(contains(needle)));
@@ -2055,6 +2066,9 @@ but the three were all crowded together at one corner of it.
     final savedSummary = savedChapter?.summaryJson ?? '';
     final savedSummaryJson = jsonDecode(savedSummary) as Map<String, dynamic>;
     final savedScenes = savedSummaryJson['scenes'] as List;
+    expect(
+        savedSummaryJson['chapterDescription'], contains('finish his story'));
+    expect(savedSummaryJson.containsKey('summary'), isFalse);
     expect((savedScenes.last as Map)['sentenceEndIndex'], sentences.length - 1);
     for (final needle in learningNoteNeedles) {
       expect(savedSummary, isNot(contains(needle)));

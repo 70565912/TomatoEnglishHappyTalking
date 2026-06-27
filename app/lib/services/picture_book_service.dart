@@ -152,7 +152,6 @@ class PictureBookService {
       chapterTitle: article.title,
       summaryJson: ApiCacheService.canonicalJson({
         'title': article.title,
-        'summary': _fallbackChapterSummary(article.content),
       }),
       createdAt: now,
       updatedAt: now,
@@ -194,7 +193,6 @@ class PictureBookService {
       chapterTitle: article.title,
       summaryJson: ApiCacheService.canonicalJson({
         'title': article.title,
-        'summary': _fallbackChapterSummary(article.content),
       }),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -2213,21 +2211,12 @@ class PictureBookService {
           ),
         ),
     ];
-    final summaryCandidates = [
-      _decodeJson(chapter.summaryJson, const <String, dynamic>{})['summary'],
-      chapter.chapterTitle,
-      _fallbackChapterSummary(article.content),
-      article.title,
-    ];
-    var chapterDescription = '';
-    for (final candidate in summaryCandidates) {
-      chapterDescription = _sanitizeForImagePrompt(
-        candidate?.toString() ?? '',
-      );
-      if (chapterDescription.isNotEmpty) {
-        break;
-      }
-    }
+    var chapterDescription = _localChapterDescriptionFromScenes(
+      chapterTitle: chapter.chapterTitle,
+      articleTitle: article.title,
+      sentences: sentences,
+      scenes: scenes,
+    );
     if (chapterDescription.isEmpty) {
       chapterDescription = _sanitizeForImagePrompt(
         scenes.take(4).map((scene) => scene.sceneDescription).join(' '),
@@ -2394,9 +2383,8 @@ class PictureBookService {
     );
     for (final value in [
       chapterSummary['chapterDescription'],
-      chapterSummary['summary'],
       chapter.chapterTitle,
-      _fallbackChapterSummary(article.content),
+      article.title,
     ]) {
       final sanitized = _sanitizeForImagePrompt(value?.toString() ?? '');
       if (sanitized.isNotEmpty) {
@@ -2404,6 +2392,65 @@ class PictureBookService {
       }
     }
     return _sanitizeForImagePrompt(article.title);
+  }
+
+  static String _localChapterDescriptionFromScenes({
+    required String chapterTitle,
+    required String articleTitle,
+    required List<String> sentences,
+    required List<PictureBookScene> scenes,
+  }) {
+    final title = _sanitizeForImagePrompt(
+      chapterTitle.trim().isNotEmpty ? chapterTitle : articleTitle,
+    );
+    final uniqueScenes = <String>[];
+    for (final scene in scenes) {
+      final description = _sanitizeForImagePrompt(scene.sceneDescription);
+      if (description.isEmpty || uniqueScenes.contains(description)) {
+        continue;
+      }
+      uniqueScenes.add(description);
+    }
+    if (uniqueScenes.isEmpty) {
+      return title;
+    }
+    final selected = <String>[];
+    void addScene(int index) {
+      if (index < 0 || index >= uniqueScenes.length) {
+        return;
+      }
+      final item = uniqueScenes[index];
+      if (!selected.contains(item)) {
+        selected.add(item);
+      }
+    }
+
+    addScene(0);
+    addScene(uniqueScenes.length ~/ 2);
+    addScene(uniqueScenes.length - 1);
+    final ending = sentences.isEmpty
+        ? ''
+        : _promptExcerpt(sentences.last, maxWords: 32, maxChars: 220);
+    if (ending.isNotEmpty && !selected.contains(ending)) {
+      selected.add(ending);
+    }
+    final coverageParts = <String>[];
+    for (final item in selected) {
+      final excerpt = item == ending
+          ? _promptExcerpt(item, maxWords: 32, maxChars: 220)
+          : _promptExcerpt(item, maxWords: 18, maxChars: 120);
+      if (excerpt.isNotEmpty) {
+        coverageParts.add(excerpt);
+      }
+    }
+    final coverage = coverageParts.join(' | ');
+    if (coverage.isEmpty) {
+      return title;
+    }
+    if (title.isEmpty) {
+      return coverage;
+    }
+    return '$title: $coverage';
   }
 
   static _PicturePageSegment? _segmentFromExistingPage({
