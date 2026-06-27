@@ -219,6 +219,29 @@ export interface ListeningSynthesisPayload {
   error?: string | null;
 }
 
+export interface ListeningAudioMaterialStatus {
+  articleId: number;
+  total: number;
+  ready: number;
+  missing: number[];
+  failed: number;
+  status: 'empty' | 'missing' | 'partial' | 'partial_error' | 'ready' | string;
+  requested?: number;
+  overwrite?: boolean;
+}
+
+export interface ListeningAudioMaterialProgress {
+  articleId: number;
+  status: 'loading' | 'complete' | 'partial' | 'ready' | string;
+  completed: number;
+  total: number;
+  failed: number;
+  overwrite?: boolean;
+  ready?: number;
+  missing?: number[];
+  requested?: number;
+}
+
 export type SongSource = 'suno' | 'bailian_fun_music' | 'external_audio';
 export type AiProvider = 'aliyun_bailian' | 'volcengine';
 

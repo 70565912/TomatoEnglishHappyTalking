@@ -11,6 +11,8 @@ import type {
   ChatState,
   DiagnosticLogExportPayload,
   FollowState,
+  ListeningAudioMaterialProgress,
+  ListeningAudioMaterialStatus,
   ListeningItem,
   ListeningFullscreenReadyPayload,
   ListeningOpenPayload,
@@ -473,7 +475,7 @@ function App() {
 
   const openPictureBookPromptReview = async (articleId: number, regenerate = false) => {
     setPicturePromptReviewLoadingArticleId(articleId);
-    setNotice(regenerate ? '正在准备绘本重建提示词' : '章节已保存，正在准备绘本提示词');
+    setNotice(regenerate ? '正在读取本地绘本提示词草稿' : '章节已保存，正在读取本地绘本提示词草稿');
     try {
       const review = await sendNative<PictureBookPromptReview>('pictureBook.promptReview', {
         articleId,
@@ -884,8 +886,8 @@ function App() {
       )}
       {picturePromptReviewLoadingArticleId !== null && (
         <AiBlockingOverlay
-          title="正在准备绘本提示词"
-          detail="正在生成或读取分镜计划，请等待审核弹窗打开。"
+          title="正在读取绘本提示词"
+          detail="正在从本地读取分镜草稿；如需 AI 自动生成，可在审核框中点击自动生成章节规划。"
           timeoutSeconds={180}
         />
       )}
@@ -2302,6 +2304,10 @@ function PictureBookCreationPanel({
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [audioStatus, setAudioStatus] = useState<ListeningAudioMaterialStatus | null>(null);
+  const [audioStatusLoading, setAudioStatusLoading] = useState(true);
+  const [audioGenerating, setAudioGenerating] = useState(false);
+  const [audioProgress, setAudioProgress] = useState<ListeningAudioMaterialProgress | null>(null);
 
   const loadState = () => {
     setLoading(true);
@@ -2311,7 +2317,25 @@ function PictureBookCreationPanel({
       .finally(() => setLoading(false));
   };
 
+  const loadAudioStatus = async () => {
+    setAudioStatusLoading(true);
+    try {
+      const payload = await sendNative<ListeningAudioMaterialStatus>('listening.audioStatus', { articleId: article.id });
+      const normalized = normalizeAudioMaterialStatus(payload, article.id);
+      setAudioStatus(normalized);
+      return normalized;
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '听力材料状态加载失败');
+      return null;
+    } finally {
+      setAudioStatusLoading(false);
+    }
+  };
+
   useEffect(loadState, [article.id]);
+  useEffect(() => {
+    void loadAudioStatus();
+  }, [article.id]);
   useEffect(() => {
     return onNativeEvent<PictureBookState>('pictureBook.state', (payload) => {
       if (payload.articleId !== article.id) {
@@ -2319,6 +2343,14 @@ function PictureBookCreationPanel({
       }
       setState((current) => mergePictureBookState(current, payload));
       setLoading(false);
+    });
+  }, [article.id]);
+  useEffect(() => {
+    return onNativeEvent<ListeningAudioMaterialProgress>('listening.audioMaterial.progress', (payload) => {
+      if (payload.articleId !== article.id) {
+        return;
+      }
+      setAudioProgress(payload);
     });
   }, [article.id]);
   useEnsureAllPictureBookPageImages({
@@ -2347,6 +2379,49 @@ function PictureBookCreationPanel({
     }
   };
 
+  const generateListeningAudio = async () => {
+    if (audioGenerating) return;
+    const currentStatus = audioStatus ?? (await loadAudioStatus());
+    if (!currentStatus || currentStatus.total <= 0) {
+      onNotice('章节没有可生成的英文听力材料');
+      return;
+    }
+    const complete = currentStatus.ready >= currentStatus.total && currentStatus.missing.length === 0;
+    const overwrite = complete;
+    if (overwrite) {
+      const confirmed = window.confirm('听力材料已经生成。是否覆盖原内容并重新提交远程语音合成？');
+      if (!confirmed) {
+        return;
+      }
+    }
+    const requestTotal = overwrite ? currentStatus.total : currentStatus.missing.length;
+    setAudioGenerating(true);
+    setAudioProgress({
+      articleId: article.id,
+      status: 'loading',
+      completed: 0,
+      total: requestTotal,
+      failed: 0,
+      overwrite,
+    });
+    try {
+      const payload = normalizeAudioMaterialStatus(await sendNative<ListeningAudioMaterialStatus>('listening.audioGenerate', {
+        articleId: article.id,
+        overwrite,
+      }), article.id);
+      setAudioStatus(payload);
+      if (payload.ready >= payload.total && payload.missing.length === 0 && payload.failed === 0) {
+        onNotice('听力材料已生成');
+      } else {
+        onNotice('听力材料生成完成，但仍有缺失项');
+      }
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '听力材料生成失败');
+    } finally {
+      setAudioGenerating(false);
+    }
+  };
+
   return (
     <section className="creation-panel">
       <div className="section-heading with-action">
@@ -2361,6 +2436,15 @@ function PictureBookCreationPanel({
             <Icon name={promptReviewLoading ? 'refresh' : 'wand'} />
             {promptReviewLoading ? '准备中' : '重新生成组图'}
           </button>
+          <button
+            className="ghost-action small"
+            type="button"
+            onClick={() => void generateListeningAudio()}
+            disabled={audioGenerating || audioStatusLoading}
+          >
+            <Icon name={audioGenerating ? 'refresh' : 'sound'} />
+            {audioGenerating ? '生成中' : '重新生成听力'}
+          </button>
           <button className="ghost-action small" type="button" onClick={loadState} disabled={loading}>
             <Icon name="refresh" /> 刷新状态
           </button>
@@ -2373,7 +2457,9 @@ function PictureBookCreationPanel({
       <div className="creation-resource-grid" aria-label="绘本资源状态">
         <ResourceRow label="章节正文" value={`${article.sentenceCount} 句英文`} />
         <ResourceRow label="绘本图片" value={state ? `${state.pages.length} 页 · ${pictureBookStatusLabel(state.status)}` : '读取中'} />
+        <ResourceRow label="听力材料" value={audioMaterialStatusLabel(audioStatus, audioStatusLoading)} />
       </div>
+      {audioGenerating && <AudioMaterialProgressDialog progress={audioProgress} />}
       {loading && <LoadingPanel text="正在读取绘本状态" />}
       {!loading && !state && <p className="sentence-empty">还没有绘本状态。</p>}
       {state && (
@@ -3682,6 +3768,55 @@ function ResourceRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function normalizeAudioMaterialStatus(payload: Partial<ListeningAudioMaterialStatus> | null | undefined, articleId: number): ListeningAudioMaterialStatus {
+  const total = Number.isFinite(payload?.total) ? Number(payload?.total) : 0;
+  const ready = Number.isFinite(payload?.ready) ? Number(payload?.ready) : 0;
+  const failed = Number.isFinite(payload?.failed) ? Number(payload?.failed) : 0;
+  const missing = Array.isArray(payload?.missing)
+    ? payload!.missing.map((item) => Number(item)).filter((item) => Number.isFinite(item))
+    : [];
+  return {
+    articleId: Number.isFinite(payload?.articleId) ? Number(payload?.articleId) : articleId,
+    total,
+    ready,
+    missing,
+    failed,
+    status: typeof payload?.status === 'string' ? payload.status : total > 0 && ready >= total && missing.length === 0 ? 'ready' : 'missing',
+    requested: Number.isFinite(payload?.requested) ? Number(payload?.requested) : undefined,
+    overwrite: typeof payload?.overwrite === 'boolean' ? payload.overwrite : undefined,
+  };
+}
+
+function audioMaterialStatusLabel(status: ListeningAudioMaterialStatus | null, loading: boolean) {
+  if (loading && !status) return '读取中';
+  if (!status) return '未检查';
+  if (status.total <= 0) return '无英文句子';
+  const suffix = status.missing.length > 0 ? ` · 缺 ${status.missing.length} 句` : '';
+  return `${status.ready} / ${status.total} 已生成${suffix}`;
+}
+
+function AudioMaterialProgressDialog({ progress }: { progress: ListeningAudioMaterialProgress | null }) {
+  const completed = progress?.completed ?? 0;
+  const total = progress?.total ?? 0;
+  const value = total > 0 ? (completed / total) * 100 : 0;
+  const label = total > 0
+    ? `正在提交远程语音合成 ${Math.min(completed, total)} / ${total}`
+    : '正在确认听力材料状态';
+
+  return (
+    <div className="edit-dialog-backdrop" role="presentation">
+      <section className="edit-dialog audio-material-dialog" role="dialog" aria-modal="true" aria-label="正在生成听力材料">
+        <div className="edit-dialog-heading">
+          <b>正在生成听力材料</b>
+          <small>远程语音合成进行中，请等待完成</small>
+        </div>
+        <ProgressLine value={value} label={label} />
+        {progress?.failed ? <p className="edit-dialog-error">{progress.failed} 句生成失败</p> : null}
+      </section>
+    </div>
+  );
+}
+
 type ChapterOrder = 'asc' | 'desc';
 
 function promptRecord(value: unknown): Record<string, unknown> | null {
@@ -4423,6 +4558,7 @@ function ListeningPage({
   const [fullscreenReady, setFullscreenReady] = useState<ListeningFullscreenReadyPayload | null>(null);
   const [fullscreenReadyLoading, setFullscreenReadyLoading] = useState(false);
   const [fullscreenPlayerOpen, setFullscreenPlayerOpen] = useState(false);
+  const [songFullscreenPlayerOpen, setSongFullscreenPlayerOpen] = useState(false);
   const [recordingReady, setRecordingReady] = useState<ListeningRecordingReadyPayload | null>(null);
   const [recordingReadyLoading, setRecordingReadyLoading] = useState(false);
   const [recordingProgress, setRecordingProgress] = useState<ListeningRecordingProgressPayload | null>(null);
@@ -4431,6 +4567,7 @@ function ListeningPage({
   const [recordingBusy, setRecordingBusy] = useState(false);
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
+  const [recordingDialogSongVersionId, setRecordingDialogSongVersionId] = useState('');
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
   const [songCue, setSongCue] = useState<ListeningSongPositionPayload['cue']>(null);
   const [songDialog, setSongDialog] = useState<SongDialogState | null>(null);
@@ -4467,6 +4604,7 @@ function ListeningPage({
     setFullscreenReady(null);
     setFullscreenReadyLoading(false);
     setFullscreenPlayerOpen(false);
+    setSongFullscreenPlayerOpen(false);
     setRecordingReady(null);
     setRecordingReadyLoading(false);
     setRecordingProgress(null);
@@ -4475,6 +4613,7 @@ function ListeningPage({
     setRecordingBusy(false);
     setRecordingDialogDraft(null);
     setRecordingDialogSaving(false);
+    setRecordingDialogSongVersionId('');
     setSongState(null);
     setSongCue(null);
     setSongDialog(null);
@@ -4755,6 +4894,12 @@ function ListeningPage({
   ]);
 
   useEffect(() => {
+    if (mode !== 'song') {
+      setSongFullscreenPlayerOpen(false);
+    }
+  }, [mode]);
+
+  useEffect(() => {
     if (items.length === 0 || !recordingSettings) {
       setRecordingReady(null);
       setRecordingReadyLoading(false);
@@ -4932,6 +5077,21 @@ function ListeningPage({
 
   const openRecordingDialog = () => {
     if (!canRecordVideo || !recordingSettings) return;
+    setRecordingDialogSongVersionId('');
+    setRecordingDialogDraft(recordingSettings);
+    setRecordingError(null);
+  };
+
+  const openSongRecordingDialog = (versionId?: string) => {
+    if (!versionId) {
+      setRecordingError('请选择要导出的歌曲');
+      return;
+    }
+    if (!recordingSettings) {
+      setRecordingError('录制设置尚未加载，请稍后重试');
+      return;
+    }
+    setRecordingDialogSongVersionId(versionId);
     setRecordingDialogDraft(recordingSettings);
     setRecordingError(null);
   };
@@ -4957,6 +5117,7 @@ function ListeningPage({
     if (!recordingDialogDraft || recordingDialogSaving) return;
     setRecordingDialogSaving(true);
     setRecordingError(null);
+    const songVersionId = recordingDialogSongVersionId;
     try {
       const savedSettings = await sendNative<RecordingSettings>('recording.settings.save', {
         codec: recordingDialogDraft.codec,
@@ -4966,7 +5127,12 @@ function ListeningPage({
       });
       onRecordingSettingsLoaded(savedSettings);
       setRecordingDialogDraft(null);
-      await startRecording(savedSettings);
+      setRecordingDialogSongVersionId('');
+      if (songVersionId) {
+        await recordSongVideo(songVersionId, savedSettings);
+      } else {
+        await startRecording(savedSettings);
+      }
     } catch (saveError) {
       setRecordingError(saveError instanceof Error ? saveError.message : '录制设置保存失败');
     } finally {
@@ -5598,6 +5764,28 @@ function ListeningPage({
     songVersions[0] ??
     null;
   const selectedSongSubtitleNotice = songSubtitleNoticeForVersion(selectedSongVersion);
+  const songFullscreenReadiness = songFullscreenReadinessForVersion({
+    version: selectedSongVersion,
+    hasSongVersions: songVersions.length > 0,
+    songGenerating,
+    recordingBusy,
+    pictureReadiness: fullscreenPictureReadiness,
+  });
+  const canOpenSongFullscreen = songFullscreenReadiness.ready;
+  const songFullscreenHint =
+    !songFullscreenReadiness.ready &&
+    songFullscreenReadiness.reason !== selectedSongSubtitleNotice
+      ? songFullscreenReadiness.reason
+      : null;
+  const songVideoExportReadiness = songVideoExportReadinessForVersion({
+    version: selectedSongVersion,
+    hasSongVersions: songVersions.length > 0,
+    songGenerating,
+    recordingBusy,
+    recordingSettingsLoaded: Boolean(recordingSettings),
+    pictureReadiness: recordingPictureReadiness,
+  });
+  const canRecordSongVideo = songVideoExportReadiness.ready && !busy;
   const canRetrySunoDownload =
     songState?.source === 'suno' &&
     songState?.status !== 'playing' &&
@@ -5711,11 +5899,22 @@ function ListeningPage({
                     </button>
                   )}
                   <button
+                    className="ghost-action fullscreen-start-button"
+                    type="button"
+                    onClick={() => setSongFullscreenPlayerOpen(true)}
+                    disabled={!canOpenSongFullscreen}
+                    title={songFullscreenReadiness.reason}
+                  >
+                    <Icon name="fullscreen" /> 全屏播放
+                  </button>
+                  <button
                     className="ghost-action"
                     type="button"
-                    onClick={() => onNavigate(`/creation?articleId=${articleId}${article?.seriesId != null ? `&seriesId=${article.seriesId}` : ''}`)}
+                    onClick={() => openSongRecordingDialog(selectedSongVersion?.id)}
+                    disabled={!canRecordSongVideo}
+                    title={songVideoExportReadiness.reason}
                   >
-                    <Icon name="recordVideo" /> 创作中心
+                    <Icon name="recordVideo" /> 导出视频
                   </button>
                 </div>
                 <div className="song-version-picker">
@@ -5751,6 +5950,9 @@ function ListeningPage({
                 )}
                 {selectedSongSubtitleNotice && (
                   <p className="fullscreen-ready-hint">{selectedSongSubtitleNotice}</p>
+                )}
+                {songFullscreenHint && (
+                  <p className="fullscreen-ready-hint">{songFullscreenHint}</p>
                 )}
               </div>
             ) : (
@@ -5934,13 +6136,30 @@ function ListeningPage({
           onClose={() => setFullscreenPlayerOpen(false)}
         />
       )}
+      {songFullscreenPlayerOpen && article && selectedSongVersion && (
+        <FullscreenSongPlayer
+          article={article}
+          version={selectedSongVersion}
+          pictureBookState={pictureBookState}
+          onPlaybackStopped={() => {
+            setSongCue(null);
+            setSongState((current) =>
+              current?.status === 'playing' ? { ...current, status: 'ready' } : current,
+            );
+          }}
+          onClose={() => setSongFullscreenPlayerOpen(false)}
+        />
+      )}
       {recordingDialogDraft && (
         <RecordingSettingsDialog
           settings={recordingDialogDraft}
           saving={recordingDialogSaving}
           onChange={updateRecordingDialogDraft}
           onCancel={() => {
-            if (!recordingDialogSaving) setRecordingDialogDraft(null);
+            if (!recordingDialogSaving) {
+              setRecordingDialogDraft(null);
+              setRecordingDialogSongVersionId('');
+            }
           }}
           onConfirm={() => void confirmRecordingDialog()}
         />
@@ -6541,6 +6760,306 @@ function FullscreenListeningPlayer({
         <div className="fullscreen-listening-meta">
           <strong>{article.title}</strong>
           <small>{Math.min(currentIndex + 1, items.length)} / {items.length}</small>
+        </div>
+        {error && <p className="fullscreen-listening-error">{error}</p>}
+        <div className="fullscreen-listening-actions">
+          <button
+            className="ghost-action"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              void togglePause();
+            }}
+            disabled={status === 'completed' || status === 'error'}
+          >
+            <Icon name={status === 'paused' ? 'play' : 'pause'} />
+            {status === 'paused' ? '继续' : '暂停'}
+          </button>
+          <button
+            className="primary-action"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              close();
+            }}
+          >
+            <Icon name="exit" /> 退出全屏
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function FullscreenSongPlayer({
+  article,
+  version,
+  pictureBookState,
+  onPlaybackStopped,
+  onClose,
+}: {
+  article: Article;
+  version: SongVersionPayload;
+  pictureBookState: PictureBookState | null;
+  onPlaybackStopped: () => void;
+  onClose: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const closingRef = useRef(false);
+  const enteredFullscreenRef = useRef(false);
+  const [currentCue, setCurrentCue] = useState<NonNullable<ListeningSongPositionPayload['cue']> | null>(null);
+  const [currentLineIndex, setCurrentLineIndex] = useState(0);
+  const [positionMs, setPositionMs] = useState(0);
+  const [durationMs, setDurationMs] = useState(version.durationMs ?? 0);
+  const [status, setStatus] = useState<'starting' | 'playing' | 'paused' | 'completed' | 'error'>('starting');
+  const [error, setError] = useState<string | null>(null);
+  const [controlsVisible, setControlsVisible] = useState(false);
+  const [cursorVisible, setCursorVisible] = useState(false);
+  const controlsHideTimerRef = useRef<number | null>(null);
+  const cursorHideTimerRef = useRef<number | null>(null);
+  const stoppedRef = useRef(false);
+  const onPlaybackStoppedRef = useRef(onPlaybackStopped);
+  const articleId = article.id ?? 0;
+  const currentPage = currentPictureBookPage(pictureBookState, currentLineIndex);
+  const imageSrc = pageHasPictureBookImageVariant(currentPage, 'full')
+    ? directImageSource(currentPage?.imageUri) ?? ''
+    : '';
+  const safeDurationMs = Math.max(0, durationMs || version.durationMs || 0);
+  const progress = safeDurationMs > 0
+    ? Math.min(100, Math.max(0, Math.round((positionMs / safeDurationMs) * 100)))
+    : 0;
+  const title = version.title?.trim() || article.title;
+  const english = currentCue?.english?.trim() || title;
+  const chinese = currentCue?.chinese?.trim() || '';
+  const keepControlsVisible = status === 'paused' || status === 'completed' || status === 'error';
+  const shouldShowControls = controlsVisible || keepControlsVisible;
+  const statusText =
+    status === 'completed'
+      ? '播放完成'
+      : status === 'paused'
+        ? '已暂停'
+        : status === 'starting'
+          ? '正在启动'
+          : '正在播放';
+
+  const clearControlsHideTimer = () => {
+    if (controlsHideTimerRef.current !== null) {
+      window.clearTimeout(controlsHideTimerRef.current);
+      controlsHideTimerRef.current = null;
+    }
+  };
+
+  const clearCursorHideTimer = () => {
+    if (cursorHideTimerRef.current !== null) {
+      window.clearTimeout(cursorHideTimerRef.current);
+      cursorHideTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    onPlaybackStoppedRef.current = onPlaybackStopped;
+  }, [onPlaybackStopped]);
+
+  const showControls = () => {
+    setControlsVisible(true);
+    clearControlsHideTimer();
+    if (!keepControlsVisible) {
+      controlsHideTimerRef.current = window.setTimeout(() => {
+        setControlsVisible(false);
+        controlsHideTimerRef.current = null;
+      }, 3000);
+    }
+  };
+
+  const showCursorTemporarily = () => {
+    setCursorVisible(true);
+    clearCursorHideTimer();
+    cursorHideTimerRef.current = window.setTimeout(() => {
+      setCursorVisible(false);
+      cursorHideTimerRef.current = null;
+    }, 2000);
+  };
+
+  useEffect(() => {
+    const element = rootRef.current;
+    if (!element) return undefined;
+
+    const request = element.requestFullscreen?.();
+    if (request) {
+      request
+        .then(() => {
+          enteredFullscreenRef.current = true;
+        })
+        .catch(() => {
+          enteredFullscreenRef.current = false;
+        });
+    }
+
+    const onFullscreenChange = () => {
+      if (enteredFullscreenRef.current && !document.fullscreenElement && !closingRef.current) {
+        onClose();
+      }
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    stoppedRef.current = false;
+    setStatus('starting');
+    setError(null);
+    setCurrentCue(null);
+    setCurrentLineIndex(0);
+    setPositionMs(0);
+    setDurationMs(version.durationMs ?? 0);
+
+    sendNative('listening.songPlay', {
+      articleId,
+      versionId: version.id,
+    })
+      .then(() => {
+        if (cancelled) return;
+        setStatus((current) => (current === 'paused' ? current : 'playing'));
+      })
+      .catch((playError) => {
+        if (cancelled) return;
+        setStatus('error');
+        setError(playError instanceof Error ? playError.message : '歌曲全屏播放失败');
+      });
+
+    return () => {
+      cancelled = true;
+      if (!stoppedRef.current) {
+        stoppedRef.current = true;
+        onPlaybackStoppedRef.current();
+        void sendNative('listening.songStop', { articleId }).catch(() => undefined);
+      }
+    };
+  }, [articleId, version.id]);
+
+  useEffect(() => {
+    if (keepControlsVisible) {
+      clearControlsHideTimer();
+      setControlsVisible(true);
+      return undefined;
+    }
+    if (!controlsVisible) {
+      return undefined;
+    }
+    clearControlsHideTimer();
+    controlsHideTimerRef.current = window.setTimeout(() => {
+      setControlsVisible(false);
+      controlsHideTimerRef.current = null;
+    }, 3000);
+    return () => {
+      clearControlsHideTimer();
+    };
+  }, [controlsVisible, keepControlsVisible]);
+
+  useEffect(() => {
+    return () => {
+      clearControlsHideTimer();
+      clearCursorHideTimer();
+    };
+  }, []);
+
+  useEffect(() => {
+    return onNativeEvent<ListeningSongPositionPayload>('listening.song.position', (payload) => {
+      if (payload.articleId !== articleId) return;
+      if (payload.versionId && payload.versionId !== version.id) return;
+      const nextDurationMs = payload.durationMs ?? 0;
+      setPositionMs(Math.max(0, payload.positionMs));
+      setDurationMs((current) => (nextDurationMs > 0 ? nextDurationMs : current));
+      if (payload.cue) {
+        setCurrentCue(payload.cue);
+        setCurrentLineIndex(payload.cue.lineIndex);
+        setStatus((current) => (current === 'paused' ? current : 'playing'));
+        return;
+      }
+      if (
+        nextDurationMs > 0 &&
+        payload.positionMs >= Math.max(0, nextDurationMs - 250)
+      ) {
+        setStatus('completed');
+      }
+    });
+  }, [articleId, version.id]);
+
+  const close = () => {
+    closingRef.current = true;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+    onClose();
+  };
+
+  const togglePause = async () => {
+    if (status === 'paused') {
+      const payload = await sendNative<ListeningResumePayload>('listening.songResume');
+      if (payload.resumed) {
+        setStatus('playing');
+      }
+      return;
+    }
+    if (status !== 'playing' && status !== 'starting') {
+      return;
+    }
+    const payload = await sendNative<ListeningPausePayload>('listening.songPause');
+    if (payload.paused) {
+      setStatus('paused');
+    }
+  };
+
+  const rootClassName = [
+    'fullscreen-listening',
+    'fullscreen-song',
+    shouldShowControls ? 'controls-visible' : 'controls-hidden',
+    cursorVisible ? 'cursor-visible' : 'cursor-hidden',
+  ].join(' ');
+
+  return createPortal(
+    <div
+      className={rootClassName}
+      ref={rootRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="全屏歌曲播放"
+      onClick={showControls}
+      onPointerMove={showCursorTemporarily}
+    >
+      <div className="fullscreen-listening-stage">
+        <div className="fullscreen-listening-frame">
+          {imageSrc ? (
+            <img src={imageSrc} alt="" />
+          ) : (
+            <div className="fullscreen-listening-missing">
+              <Icon name="spark" />
+              <span>绘本图暂不可用</span>
+            </div>
+          )}
+          <div className="fullscreen-listening-subtitles">
+            <h1>{english}</h1>
+            {chinese && <p>{chinese}</p>}
+          </div>
+        </div>
+      </div>
+      <div
+        className="fullscreen-listening-toolbar"
+        aria-hidden={!shouldShowControls}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="fullscreen-listening-progress" aria-label={`播放进度 ${progress}%`}>
+          <span style={{ width: `${progress}%` }} />
+        </div>
+        <div className="fullscreen-listening-meta">
+          <strong>{title}</strong>
+          <small>
+            {statusText} · {formatDurationMs(positionMs)} / {safeDurationMs > 0 ? formatDurationMs(safeDurationMs) : '--:--'}
+          </small>
         </div>
         {error && <p className="fullscreen-listening-error">{error}</p>}
         <div className="fullscreen-listening-actions">
@@ -7242,6 +7761,93 @@ function combineFullscreenReadiness(
     return picture;
   }
   return { ready: true, reason: '全屏播放已准备好' };
+}
+
+function songFullscreenReadinessForVersion({
+  version,
+  hasSongVersions,
+  songGenerating,
+  recordingBusy,
+  pictureReadiness,
+}: {
+  version: SongVersionPayload | null;
+  hasSongVersions: boolean;
+  songGenerating: boolean;
+  recordingBusy: boolean;
+  pictureReadiness: FullscreenReadiness;
+}): FullscreenReadiness {
+  if (!hasSongVersions) {
+    return { ready: false, reason: '还没有本地歌曲，请到创作中心生成或下载。' };
+  }
+  if (songGenerating) {
+    return { ready: false, reason: '歌曲正在生成或下载中...' };
+  }
+  if (recordingBusy) {
+    return { ready: false, reason: '正在导出视频，请等待完成后再全屏播放。' };
+  }
+  if (!version) {
+    return { ready: false, reason: '请选择要全屏播放的歌曲。' };
+  }
+  if (!version.audioPath?.trim()) {
+    return { ready: false, reason: '这首歌还没有本地音频文件。' };
+  }
+  const timelineStatus = String(version.timelineStatus ?? '').trim();
+  if (timelineStatus !== 'ready' || !version.timelinePath?.trim()) {
+    return {
+      ready: false,
+      reason: songSubtitleNoticeForVersion(version) ?? '这首歌还没有生成字幕，请到创作中心生成歌曲字幕。',
+    };
+  }
+  if (!pictureReadiness.ready) {
+    return pictureReadiness;
+  }
+  return { ready: true, reason: '歌曲全屏播放已准备好' };
+}
+
+function songVideoExportReadinessForVersion({
+  version,
+  hasSongVersions,
+  songGenerating,
+  recordingBusy,
+  recordingSettingsLoaded,
+  pictureReadiness,
+}: {
+  version: SongVersionPayload | null;
+  hasSongVersions: boolean;
+  songGenerating: boolean;
+  recordingBusy: boolean;
+  recordingSettingsLoaded: boolean;
+  pictureReadiness: FullscreenReadiness;
+}): FullscreenReadiness {
+  if (!recordingSettingsLoaded) {
+    return { ready: false, reason: '正在读取录制设置' };
+  }
+  if (!hasSongVersions) {
+    return { ready: false, reason: '还没有本地歌曲，请到创作中心生成或下载。' };
+  }
+  if (songGenerating) {
+    return { ready: false, reason: '歌曲正在生成或下载中，请等待完成后再导出视频。' };
+  }
+  if (recordingBusy) {
+    return { ready: false, reason: '正在导出视频，请等待完成后再导出。' };
+  }
+  if (!version) {
+    return { ready: false, reason: '请选择要导出视频的歌曲。' };
+  }
+  if (!version.audioPath?.trim()) {
+    return { ready: false, reason: '这首歌还没有本地音频文件。' };
+  }
+  const timelineStatus = String(version.timelineStatus ?? '').trim();
+  if (timelineStatus !== 'ready' || !version.timelinePath?.trim()) {
+    return {
+      ready: false,
+      reason: songSubtitleNoticeForVersion(version) ?? '这首歌还没有生成字幕，请到创作中心生成歌曲字幕。',
+    };
+  }
+  if (!pictureReadiness.ready) {
+    return pictureReadiness;
+  }
+  return { ready: true, reason: '歌曲视频导出已准备好' };
 }
 
 type ChatTimelineEntry =

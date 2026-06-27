@@ -21,6 +21,25 @@ List<AsrWordTiming> _e03FullAsrWords() {
   return _asrWordsFromRows(fixture['words'] as List<dynamic>);
 }
 
+Map<String, dynamic> _e07Fixture() {
+  return jsonDecode(
+    File('test/fixtures/e07_song_asr_full_20260625_233843.json')
+        .readAsStringSync(),
+  ) as Map<String, dynamic>;
+}
+
+List<AsrWordTiming> _e07FullAsrWords() {
+  final fixture = _e07Fixture();
+  return _asrWordsFromRows(fixture['words'] as List<dynamic>);
+}
+
+List<String> _e07LyricLines() {
+  final fixture = _e07Fixture();
+  return (fixture['lyricLines'] as List<dynamic>)
+      .map((line) => line as String)
+      .toList(growable: false);
+}
+
 List<AsrWordTiming> _asrWordsFromRows(List<dynamic> rows) {
   return rows.map((entry) {
     final row = entry as Map<String, dynamic>;
@@ -402,6 +421,56 @@ void main() {
       timeline.warnings,
       contains('部分歌词行仅局部匹配 ASR，已按歌词长度补齐时间'),
     );
+  });
+
+  test('builds E07 full song timeline without weak-anchor cascade', () {
+    final lyricLines = _e07LyricLines();
+    final words = _e07FullAsrWords();
+    final stopwatch = Stopwatch()..start();
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 52,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 377664,
+      source: 'suno',
+      lyricLines: lyricLines,
+      translations: const {},
+      words: words,
+    );
+    stopwatch.stop();
+
+    final fourTimesSix = timeline.cues[8];
+    final fourTimesSeven = timeline.cues[9];
+    final ohDear = timeline.cues[10];
+    final geography = timeline.cues[11];
+    final lessons = timeline.cues[15];
+    final crocodile = timeline.cues[19];
+
+    expect(timeline.cues, hasLength(lyricLines.length));
+    expect(stopwatch.elapsedMilliseconds, lessThan(5000));
+    expect(timeline.confidence, greaterThan(0.82));
+    expect(fourTimesSix.english, 'and four times six is thirteen,');
+    expect(fourTimesSix.method, 'matched');
+    expect(fourTimesSix.startMs, inInclusiveRange(57000, 60500));
+    expect(fourTimesSix.endMs, lessThan(64000));
+    expect(fourTimesSeven.english, 'and four times seven is—');
+    expect(fourTimesSeven.method, 'matched');
+    expect(fourTimesSeven.startMs, inInclusiveRange(63000, 67000));
+    expect(fourTimesSeven.endMs, lessThan(70000));
+    expect(ohDear.method, 'matched');
+    expect(ohDear.endMs - ohDear.startMs, inInclusiveRange(9000, 18000));
+    expect(geography.method, 'matched');
+    expect(geography.endMs - geography.startMs, inInclusiveRange(2500, 7000));
+    expect(lessons.method, 'matched');
+    expect(lessons.endMs - lessons.startMs, greaterThanOrEqualTo(1800));
+    expect(crocodile.endMs - crocodile.startMs, greaterThanOrEqualTo(1800));
+    for (final cue in timeline.cues.sublist(15, 33)) {
+      expect(
+        cue.endMs - cue.startMs,
+        greaterThanOrEqualTo(900),
+        reason: 'E07 line ${cue.lineIndex + 1} must stay readable',
+      );
+    }
   });
 
   test('keeps original lyrics for mismatched interpolated song subtitles', () {

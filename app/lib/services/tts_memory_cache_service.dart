@@ -238,6 +238,40 @@ class TtsMemoryCacheService {
     return false;
   }
 
+  static Future<TtsFileHandle?> cachedFileHandle({
+    required String text,
+    String voiceType = TtsService.defaultVoiceType,
+    bool preferRequestedVoice = false,
+    int? articleId,
+    String cachePurpose = 'tts',
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    final cacheKeys = await TtsService.cacheKeysForText(
+      text: trimmed,
+      voiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
+      cachePurpose: cachePurpose,
+    );
+    for (final cacheKey in cacheKeys) {
+      final path = await ApiCacheService.getFilePath(
+        cacheKey,
+        articleId: articleId,
+        purpose: cachePurpose,
+      );
+      if (path == null || path.trim().isEmpty) {
+        continue;
+      }
+      final file = File(path);
+      if (await file.exists() && await file.length() > 0) {
+        return TtsFileHandle(key: cacheKey, filePath: path);
+      }
+    }
+    return null;
+  }
+
   static Future<bool> hasInMemory({
     required String text,
     String voiceType = TtsService.defaultVoiceType,

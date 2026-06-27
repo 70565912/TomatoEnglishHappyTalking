@@ -1078,6 +1078,17 @@ class SongSubtitleTimelineService {
         }
       }
       if (bestWordIndex >= 0 && bestScore >= 0.54) {
+        // ASR often drops light lyric tokens such as "and", "but", or "the".
+        // If a low-information token jumps across several recognized words, it
+        // can steal a later lyric line's anchor and cascade into very long or
+        // squeezed subtitles. Treat that weak token as missing; the surrounding
+        // stronger words are better anchors for the line.
+        final allowedWeakTokenGap = tokenIndex == 0 ? 1 : 2;
+        if (_isSkippableLowInformationToken(token) &&
+            bestWordIndex - cursor > allowedWeakTokenGap) {
+          score -= 0.08;
+          continue;
+        }
         first ??= bestWordIndex;
         last = bestWordIndex;
         firstMatchedTokenIndex ??= tokenIndex;
@@ -1108,6 +1119,22 @@ class SongSubtitleTimelineService {
       firstMatchedTokenIndex: firstMatchedTokenIndex ?? 0,
       lastMatchedTokenIndex: lastMatchedTokenIndex ?? tokens.length - 1,
     );
+  }
+
+  static bool _isSkippableLowInformationToken(String token) {
+    switch (token) {
+      case 'and':
+      case 'but':
+      case 'or':
+      case 'so':
+      case 'for':
+      case 'the':
+      case 'a':
+      case 'an':
+        return true;
+      default:
+        return false;
+    }
   }
 
   static void _rescueMissingLineMatches({

@@ -25,6 +25,7 @@ import '../../services/book_transfer_service.dart';
 import '../../services/database_service.dart';
 import '../../services/content_safety_service.dart';
 import '../../services/external_song_import_service.dart';
+import '../../services/listening_audio_material_service.dart';
 import '../../services/nlp_service.dart';
 import '../../services/picture_book_service.dart';
 import '../../services/practice_input_parser.dart';
@@ -120,14 +121,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   int _listeningPlaybackToken = 0;
   int _previewPlaybackToken = 0;
   int _songPlaybackToken = 0;
-  int _preloadRunCounter = 0;
   bool _listeningPausedForWord = false;
   bool _webReady = false;
   String? _loadError;
   final List<Map<String, dynamic>> _pendingEvents = [];
   final Set<String> _retryingPictureBookPages = <String>{};
-  final Map<String, _PreloadAggregate> _preloadAggregates =
-      <String, _PreloadAggregate>{};
 
   bool get _usesDevServer => _devServerUrl.trim().isNotEmpty;
 
@@ -181,6 +179,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'follow.pause': _handleFollowPause,
         'follow.resume': _handleFollowResume,
         'listening.open': _handleListeningOpen,
+        'listening.audioStatus': _handleListeningAudioStatus,
+        'listening.audioGenerate': _handleListeningAudioGenerate,
         'listening.prepare': _handleListeningPrepare,
         'listening.preloadChinese': _handleListeningPreloadChinese,
         'listening.play': _handleListeningPlay,
@@ -206,6 +206,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'listening.songSetDefault': _handleListeningSongSetDefault,
         'listening.songDeleteVersion': _handleListeningSongDeleteVersion,
         'listening.songStop': _handleListeningSongStop,
+        'listening.songPause': _handleListeningSongPause,
+        'listening.songResume': _handleListeningSongResume,
         'listening.songRecordVideo': _handleListeningSongRecordVideo,
         'listening.songExportAudio': _handleListeningSongExportAudio,
         'suno.debugInspect': _handleSunoDebugInspect,
@@ -280,13 +282,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _listeningTtsPathFutures.clear();
     final followArticleId = _activeFollowArticleId;
     if (followArticleId != null) {
-      _clearPreloadAggregatesForArticle(followArticleId);
       TtsMemoryCacheService.releaseArticle(followArticleId);
     }
     _closeFollowSession();
     final listeningArticleId = _activeListeningArticleId;
     if (listeningArticleId != null) {
-      _clearPreloadAggregatesForArticle(listeningArticleId);
       TtsMemoryCacheService.releaseArticle(listeningArticleId);
     }
     _activeListeningArticleId = null;
@@ -542,7 +542,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (!path.startsWith('/follow')) {
       final articleId = _activeFollowArticleId;
       if (articleId != null) {
-        _clearPreloadAggregatesForArticle(articleId);
         TtsMemoryCacheService.releaseArticle(articleId);
       }
       _closeFollowSession();
@@ -556,7 +555,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       unawaited(_stopSongPlayback());
       _stopSunoAutomation(clearVisible: true);
       if (articleId != null) {
-        _clearPreloadAggregatesForArticle(articleId);
         TtsMemoryCacheService.releaseArticle(articleId);
       }
       _activeListeningArticleId = null;
@@ -740,7 +738,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final articleId = _payloadInt(message.payload, 'articleId');
     await DatabaseService.deleteArticle(articleId);
     await ExternalSongImportService.deleteArticleAssets(articleId);
-    _clearPreloadAggregatesForArticle(articleId);
     TtsMemoryCacheService.releaseArticle(articleId);
     if (_activeFollowArticleId == articleId) {
       _closeFollowSession();
@@ -1330,7 +1327,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _closeChatSession();
     final listeningArticleId = _activeListeningArticleId;
     if (listeningArticleId != null && listeningArticleId != articleId) {
-      _clearPreloadAggregatesForArticle(listeningArticleId);
       TtsMemoryCacheService.releaseArticle(listeningArticleId);
     }
     _activeListeningArticleId = null;
@@ -1339,12 +1335,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _openFollowSession(articleId);
     final value = await ref.read(followReadProvider(articleId).future);
     final payload = _followPayload(AsyncValue.data(value));
-    final preloadRunId = _resetPreloadAggregate(
-      articleId,
-      'follow',
-      scope: 'english',
-    );
-    unawaited(_preloadFollowArticle(value.article, runId: preloadRunId));
     unawaited(_pushEvent('follow.state', payload));
     unawaited(
       PictureBookService.statePayload(articleId).then(
@@ -1436,14 +1426,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final articleId = _payloadInt(message.payload, 'articleId');
     final followArticleId = _activeFollowArticleId;
     if (followArticleId != null && followArticleId != articleId) {
-      _clearPreloadAggregatesForArticle(followArticleId);
       TtsMemoryCacheService.releaseArticle(followArticleId);
     }
     _closeFollowSession();
     _closeChatSession();
     final listeningArticleId = _activeListeningArticleId;
     if (listeningArticleId != null && listeningArticleId != articleId) {
-      _clearPreloadAggregatesForArticle(listeningArticleId);
       TtsMemoryCacheService.releaseArticle(listeningArticleId);
     }
     await _stopListeningPlayback();
@@ -1459,19 +1447,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final items = await _listeningItemsForArticle(article);
 
     if (article.id != null && items.isNotEmpty) {
-      final preloadRunId = _resetPreloadAggregate(
-        article.id!,
-        'listening',
-        scope: 'english',
-      );
-      unawaited(
-        _preloadListeningWindow(
-          article.id!,
-          items,
-          startIndex: 0,
-          runId: preloadRunId,
-        ),
-      );
       unawaited(_pushSongState(article.id!));
     }
 
@@ -1479,6 +1454,53 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'article': _articleJson(article),
       'items': items,
     };
+  }
+
+  Future<Map<String, dynamic>> _handleListeningAudioStatus(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final status = await ListeningAudioMaterialService.status(articleId);
+    return status.toJson();
+  }
+
+  Future<Map<String, dynamic>> _handleListeningAudioGenerate(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final overwrite = _payloadBool(
+      message.payload,
+      'overwrite',
+      fallback: false,
+    );
+    _listeningTtsPathFutures.clear();
+    await _stopListeningPlayback();
+    await _stopSongPlayback();
+
+    final result = await ListeningAudioMaterialService.generate(
+      articleId: articleId,
+      overwrite: overwrite,
+      onProgress: (progress) {
+        final loading = progress.completed < progress.total;
+        unawaited(_pushEvent('listening.audioMaterial.progress', {
+          'articleId': articleId,
+          'status': loading
+              ? 'loading'
+              : progress.failed > 0
+                  ? 'partial'
+                  : 'complete',
+          'completed': progress.completed,
+          'total': progress.total,
+          'failed': progress.failed,
+          'overwrite': overwrite,
+        }));
+      },
+    );
+    unawaited(_pushEvent('listening.audioMaterial.progress', {
+      ...result.toJson(),
+      'completed': result.ready,
+    }));
+    return result.toJson();
   }
 
   Future<List<Map<String, dynamic>>> _listeningItemsForArticle(
@@ -2121,204 +2143,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         .toList(growable: false);
   }
 
-  Future<void> _preloadListeningWindow(
-    int articleId,
-    List<Map<String, dynamic>> items, {
-    required int startIndex,
-    required String runId,
-  }) async {
-    final windowItems = _listeningWindowItems(
-      items,
-      startIndex: startIndex,
-      lookaheadCount: 2,
-    );
-    final requests = <TtsPreloadRequest>[
-      for (final item in windowItems)
-        TtsPreloadRequest(
-          text: (item['english'] ?? '').toString(),
-          voiceType: TtsService.defaultVoiceType,
-          preferRequestedVoice: false,
-          cachePurpose: 'listening_tts',
-          articleId: articleId,
-        ),
-    ];
-    await _preloadTtsRequests(
-      articleId: articleId,
-      mode: 'listening',
-      scope: 'english',
-      requests: requests,
-      runId: runId,
-    );
-  }
-
-  Future<void> _preloadFollowArticle(
-    Article article, {
-    required String runId,
-  }) async {
-    final id = article.id;
-    if (id == null) {
-      return;
-    }
-    final requests = <TtsPreloadRequest>[
-      for (final sentence in article.sentences)
-        TtsPreloadRequest(
-          text: sentence,
-          voiceType: TtsService.defaultVoiceType,
-          preferRequestedVoice: false,
-          cachePurpose: 'follow_tts',
-          articleId: id,
-        ),
-    ];
-    await _preloadTtsRequests(
-      articleId: id,
-      mode: 'follow',
-      scope: 'english',
-      requests: requests,
-      runId: runId,
-    );
-  }
-
-  Future<void> _preloadTtsRequests({
-    required int articleId,
-    required String mode,
-    required String scope,
-    required List<TtsPreloadRequest> requests,
-    required String runId,
-  }) async {
-    final total =
-        requests.where((request) => request.text.trim().isNotEmpty).length;
-    final aggregate = _preloadAggregate(articleId, mode, scope: scope);
-    if (aggregate.runId != runId) {
-      return;
-    }
-    aggregate.total = total;
-    aggregate.completed = 0;
-    aggregate.failed = 0;
-    if (total == 0) {
-      await _pushAggregatePreloadState(
-        articleId,
-        mode,
-        scope: scope,
-        runId: runId,
-      );
-      return;
-    }
-    await _pushAggregatePreloadState(
-      articleId,
-      mode,
-      scope: scope,
-      runId: runId,
-    );
-    await TtsMemoryCacheService.preload(
-      requests,
-      onProgress: (progress) {
-        final current = _preloadAggregates[_preloadAggregateKey(
-          articleId,
-          mode,
-          scope,
-        )];
-        if (current == null || current.runId != runId) {
-          return;
-        }
-        current.completed = progress.completed;
-        current.failed = progress.failed;
-        current.total = progress.total;
-        unawaited(_pushAggregatePreloadState(
-          articleId,
-          mode,
-          scope: scope,
-          runId: runId,
-        ));
-      },
-    );
-    await _pushAggregatePreloadState(
-      articleId,
-      mode,
-      scope: scope,
-      runId: runId,
-    );
-  }
-
-  _PreloadAggregate _preloadAggregate(
-    int articleId,
-    String mode, {
-    required String scope,
-  }) {
-    return _preloadAggregates.putIfAbsent(
-      _preloadAggregateKey(articleId, mode, scope),
-      () => _PreloadAggregate('idle_${articleId}_${mode}_$scope'),
-    );
-  }
-
-  String _resetPreloadAggregate(
-    int articleId,
-    String mode, {
-    required String scope,
-  }) {
-    final runId = '${mode}_${scope}_${articleId}_${++_preloadRunCounter}';
-    _preloadAggregates[_preloadAggregateKey(articleId, mode, scope)] =
-        _PreloadAggregate(runId);
-    return runId;
-  }
-
-  void _clearPreloadAggregatesForArticle(int articleId) {
-    _preloadAggregates.removeWhere(
-      (key, _) => key.endsWith(':$articleId'),
-    );
-  }
-
-  String _preloadAggregateKey(int articleId, String mode, String scope) =>
-      '$mode:$scope:$articleId';
-
-  Future<void> _pushAggregatePreloadState(
-    int articleId,
-    String mode, {
-    required String scope,
-    required String runId,
-  }) {
-    final aggregate = _preloadAggregate(articleId, mode, scope: scope);
-    if (aggregate.runId != runId) {
-      return Future<void>.value();
-    }
-    final loading = aggregate.completed < aggregate.total;
-    final status = loading
-        ? 'loading'
-        : aggregate.failed > 0
-            ? 'partial'
-            : 'complete';
-    return _pushPreloadState(
-      articleId: articleId,
-      mode: mode,
-      scope: scope,
-      status: status,
-      completed: aggregate.completed,
-      total: aggregate.total,
-      failed: aggregate.failed,
-      runId: aggregate.runId,
-    );
-  }
-
-  Future<void> _pushPreloadState({
-    required int articleId,
-    required String mode,
-    required String scope,
-    required String status,
-    required int completed,
-    required int total,
-    required int failed,
-    required String runId,
-  }) =>
-      _pushEvent('preload.state', {
-        'articleId': articleId,
-        'mode': mode,
-        'scope': scope,
-        'runId': runId,
-        'status': status,
-        'completed': completed,
-        'total': total,
-        'failed': failed,
-      });
-
   Future<Map<String, dynamic>> _handleListeningPlay(
     BridgeMessage message,
   ) async {
@@ -2432,16 +2256,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
 
-    final englishFailed = _preloadAggregates[
-                _preloadAggregateKey(articleId, 'listening', 'english')]
-            ?.failed ??
-        0;
     const chineseFailed = 0;
     final reasons = <String>[];
     if (missingEnglish.isNotEmpty) {
-      reasons.add('当前和下一句英文音频文件还没有预热完成');
+      reasons.add('当前和下一句英文音频未生成，请先在创作中心生成听力材料');
     }
-    final failed = englishFailed + chineseFailed;
+    const failed = chineseFailed;
     if (failed > 0 &&
         (missingEnglish.isNotEmpty || missingChinese.isNotEmpty)) {
       reasons.add('有 $failed 项音频预热失败');
@@ -3070,6 +2890,55 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   ) async {
     await _stopSongPlayback();
     return {'stopped': true};
+  }
+
+  Future<Map<String, dynamic>> _handleListeningSongPause(
+    BridgeMessage message,
+  ) async {
+    final player = _songPlayer;
+    if (player == null) {
+      return {'paused': false};
+    }
+    try {
+      await player.pause().timeout(const Duration(seconds: 2));
+      return {'paused': true};
+    } catch (error) {
+      TomatoLogger.warn(
+        category: 'listening',
+        event: 'song.play.pause_failed',
+        articleId: _activeListeningArticleId,
+        error: error,
+      );
+      return {'paused': false};
+    }
+  }
+
+  Future<Map<String, dynamic>> _handleListeningSongResume(
+    BridgeMessage message,
+  ) async {
+    final player = _songPlayer;
+    if (player == null) {
+      return {'resumed': false};
+    }
+    try {
+      unawaited(player.play().catchError((Object error) {
+        TomatoLogger.warn(
+          category: 'listening',
+          event: 'song.play.resume_failed',
+          articleId: _activeListeningArticleId,
+          error: error,
+        );
+      }));
+      return {'resumed': true};
+    } catch (error) {
+      TomatoLogger.warn(
+        category: 'listening',
+        event: 'song.play.resume_failed',
+        articleId: _activeListeningArticleId,
+        error: error,
+      );
+      return {'resumed': false};
+    }
   }
 
   Future<ArticleSongVersion> _selectedSongVersion({
@@ -8003,13 +7872,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'reason': 'chinese_tts_disabled',
       };
     }
-    await _cachedListeningPath(
+    final handle = await TtsMemoryCacheService.cachedFileHandle(
       text: text,
       voiceType: TtsService.defaultVoiceType,
       preferRequestedVoice: false,
       cachePurpose: 'listening_tts',
+      articleId: _activeArticleContextId,
     );
-    return {'prepared': true};
+    if (handle == null) {
+      return {
+        'prepared': false,
+        'reason': 'missing_audio_material',
+        'message': ListeningAudioMaterialService.missingMaterialMessage,
+      };
+    }
+    return {'prepared': true, 'path': handle.filePath};
   }
 
   Future<Map<String, dynamic>> _handleListeningPreloadChinese(
@@ -8098,6 +7975,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       newEnglish: english,
       refreshEnglish: englishChanged,
       refreshChinese: chineseChanged,
+      synthesizeEnglish: false,
     );
     final payload = await _articleListPayload();
     unawaited(_pushEvent('article.state', payload));
@@ -8149,6 +8027,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       newEnglish: english,
       refreshEnglish: part == 'both' || part == 'english',
       refreshChinese: refreshChinese,
+      synthesizeEnglish: true,
     );
     return {
       'item': {
@@ -8267,13 +8146,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final articleId = _payloadInt(message.payload, 'articleId');
     final followArticleId = _activeFollowArticleId;
     if (followArticleId != null && followArticleId != articleId) {
-      _clearPreloadAggregatesForArticle(followArticleId);
       TtsMemoryCacheService.releaseArticle(followArticleId);
     }
     _closeFollowSession();
     final listeningArticleId = _activeListeningArticleId;
     if (listeningArticleId != null && listeningArticleId != articleId) {
-      _clearPreloadAggregatesForArticle(listeningArticleId);
       TtsMemoryCacheService.releaseArticle(listeningArticleId);
     }
     _activeListeningArticleId = null;
@@ -8617,13 +8494,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     await _disposeListeningPlayer();
 
     try {
-      final handle = await TtsMemoryCacheService.loadFile(
+      final handle = await TtsMemoryCacheService.cachedFileHandle(
         text: text,
         voiceType: TtsService.defaultVoiceType,
         preferRequestedVoice: false,
         articleId: _activeArticleContextId,
         cachePurpose: 'listening_tts',
       );
+      if (handle == null) {
+        throw const TtsException(
+          ListeningAudioMaterialService.missingMaterialMessage,
+        );
+      }
       if (!_isActiveListeningPlayback(token)) {
         return;
       }
@@ -8689,16 +8571,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     var currentPlaybackIndex = safeStart;
     final pendingHandles = <int, Future<TtsFileHandle>>{};
 
-    Future<TtsFileHandle> loadHandleAt(int itemIndex) {
+    Future<TtsFileHandle> loadHandleAt(int itemIndex) async {
       final item = cleanItems[itemIndex];
       final english = (item['english'] ?? '').toString().trim();
-      return TtsMemoryCacheService.loadFile(
+      final handle = await TtsMemoryCacheService.cachedFileHandle(
         text: english,
         voiceType: TtsService.defaultVoiceType,
         preferRequestedVoice: false,
         articleId: articleId,
         cachePurpose: 'listening_tts',
       );
+      if (handle == null) {
+        throw const TtsException(
+          ListeningAudioMaterialService.missingMaterialMessage,
+        );
+      }
+      return handle;
     }
 
     void warmHandleAt(int itemIndex) {
@@ -8818,6 +8706,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required String newEnglish,
     required bool refreshEnglish,
     required bool refreshChinese,
+    required bool synthesizeEnglish,
   }) async {
     final errors = <String>[];
     var englishStatus = refreshEnglish ? 'pending' : 'unchanged';
@@ -8835,15 +8724,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           text: newEnglish,
           deleteDiskCache: true,
         );
-        await TtsMemoryCacheService.loadFile(
-          text: newEnglish,
-          voiceType: TtsService.defaultVoiceType,
-          preferRequestedVoice: false,
-          articleId: articleId,
-          cachePurpose: 'listening_tts',
-          forceRefresh: true,
-        );
-        englishStatus = 'ready';
+        if (synthesizeEnglish) {
+          await TtsMemoryCacheService.loadFile(
+            text: newEnglish,
+            voiceType: TtsService.defaultVoiceType,
+            preferRequestedVoice: false,
+            articleId: articleId,
+            cachePurpose: 'listening_tts',
+            forceRefresh: true,
+          );
+          englishStatus = 'ready';
+        } else {
+          englishStatus = 'missing';
+        }
       } catch (error) {
         englishStatus = 'error';
         errors.add('英文语音合成失败：$error');
@@ -8851,7 +8744,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
 
     return {
-      'status': errors.isEmpty ? 'ready' : 'error',
+      'status': errors.isEmpty
+          ? englishStatus == 'missing'
+              ? 'missing'
+              : 'ready'
+          : 'error',
       'english': englishStatus,
       'chinese': chineseStatus,
       'error': errors.join('\n'),
@@ -11514,15 +11411,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
     return targetPath;
   }
-}
-
-class _PreloadAggregate {
-  _PreloadAggregate(this.runId);
-
-  final String runId;
-  int completed = 0;
-  int total = 0;
-  int failed = 0;
 }
 
 class _NativeErrorView extends StatelessWidget {

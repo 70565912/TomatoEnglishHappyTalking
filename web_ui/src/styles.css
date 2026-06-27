@@ -2115,6 +2115,14 @@ img {
   width: min(640px, 100%);
 }
 
+.audio-material-dialog {
+  width: min(460px, 100%);
+}
+
+.audio-material-dialog .progress-line {
+  margin-top: 6px;
+}
+
 .picture-prompt-backdrop {
   z-index: 32;
 }

@@ -341,9 +341,11 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - 页面策略版本为 `picture_book_group_prompt_scene_description_v2`，章节图片计划缓存为 `picture_book_chapter_scene_plan_v2`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
-- 每章只调用一次文本规划 API，让 AI 只基于 `bookDescription`、章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。
+- 每章只在本地无法读取或恢复章节计划时才调用一次文本规划 API，让 AI 只基于 `bookDescription`、章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。
 - 场景按故事段落切分，最多 12 段；同一地点、时间、角色和故事目的的相邻句子合并为同一 scene；每个 scene 对应一张图片并按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
+- 重新打开绘本提示词审核时优先读取 `story_chapters.summary_json` 中的 `picture_book_chapter_scene_plan_v2`。如果 summary 缺失或 hash 不匹配，但旧 `picture_book_pages` 仍有完整 prompt scene 信息，则从页面记录恢复章节计划并写回 summary。
+- 如果本地 summary 和页面记录都无法恢复，promptReview 仍先打开审核框，使用本地 fallback 按当前句子构造可编辑分镜；用户可以手工修改，或在弹窗里显式刷新章节规划。这个入口不得因为缺少本地计划而静默提交远程文本生成。
 - 审核弹窗可刷新书籍简介，或同次刷新章节规划（`chapterDescription` + `scenes[]`）。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
 - savePromptReview 使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
 - confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。
@@ -579,6 +581,15 @@ Scene description: <sceneDescription>
 - 如果套用规则后仍然返回 400 或安全类失败，记录到 `content_safety_failures` 并提示失败原因，不再继续自动猜测。
 
 缓存命中时直接返回本地 MP3 路径，不再请求 TTS。
+
+章节英文 TTS 在产品语义上统一视为“听力材料”：
+
+- `listening.audioStatus` 只通过 `TtsService.cacheKeysForText` 和 `ApiCacheService.getFilePath` 检查本地 `listening_tts` 缓存，不触发远程合成。
+- 创作中心绘本面板显示“听力材料 X / Y 已生成”，并在“重新生成组图”后提供“重新生成听力”显式入口。
+- `listening.audioGenerate { articleId, overwrite }` 是批量生成听力材料的唯一章节级显式入口。`overwrite=false` 只补齐缺失句子；`overwrite=true` 清理当前文章的 `listening_tts` 和旧 `follow_tts` 引用后重新生成全部英文句子。
+- 已完整生成时，Web UI 必须先确认“覆盖原内容并重新提交远程语音合成”；缺失或部分缺失时，点击按钮会显示“正在生成听力材料”等待弹窗和进度。
+- 听力打开、跟读打开、听力播放、全屏 readiness、视频导出 readiness 和跟读原音播放都只读本地缓存。缺失时返回“需要先在创作中心生成听力材料”，不得在后台自动提交 TTS。
+- 听力页单句“重新合成语音”仍是显式远程操作；编辑句子只清理失效缓存并标记缺失，不自动重合成。
 
 ## ASR 与跟读评分
 

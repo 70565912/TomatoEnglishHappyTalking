@@ -1,0 +1,217 @@
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
+
+import '../data/models/article_model.dart';
+import 'api_cache_service.dart';
+import 'database_service.dart';
+import 'nlp_service.dart';
+import 'tts_memory_cache_service.dart';
+import 'tts_service.dart';
+
+class ListeningAudioMaterialStatus {
+  const ListeningAudioMaterialStatus({
+    required this.articleId,
+    required this.total,
+    required this.ready,
+    required this.missing,
+    this.failed = 0,
+  });
+
+  final int articleId;
+  final int total;
+  final int ready;
+  final List<int> missing;
+  final int failed;
+
+  String get status {
+    if (total <= 0) {
+      return 'empty';
+    }
+    if (ready >= total && missing.isEmpty && failed == 0) {
+      return 'ready';
+    }
+    if (ready <= 0) {
+      return 'missing';
+    }
+    return failed > 0 ? 'partial_error' : 'partial';
+  }
+
+  Map<String, dynamic> toJson() => {
+        'articleId': articleId,
+        'total': total,
+        'ready': ready,
+        'missing': missing,
+        'failed': failed,
+        'status': status,
+      };
+}
+
+class ListeningAudioMaterialGenerateResult
+    extends ListeningAudioMaterialStatus {
+  const ListeningAudioMaterialGenerateResult({
+    required super.articleId,
+    required super.total,
+    required super.ready,
+    required super.missing,
+    required super.failed,
+    required this.requested,
+    required this.overwrite,
+  });
+
+  final int requested;
+  final bool overwrite;
+
+  @override
+  Map<String, dynamic> toJson() => {
+        ...super.toJson(),
+        'requested': requested,
+        'overwrite': overwrite,
+      };
+}
+
+class ListeningAudioMaterialService {
+  static const cachePurpose = 'listening_tts';
+  static const legacyFollowCachePurpose = 'follow_tts';
+  static const missingMaterialMessage = '需要先在创作中心生成听力材料';
+
+  static Future<ListeningAudioMaterialStatus> status(int articleId) async {
+    final sentences = await _sentencesForArticle(articleId);
+    final missing = <int>[];
+    var ready = 0;
+    for (var index = 0; index < sentences.length; index += 1) {
+      final handle = await TtsMemoryCacheService.cachedFileHandle(
+        text: sentences[index],
+        voiceType: TtsService.defaultVoiceType,
+        preferRequestedVoice: false,
+        articleId: articleId,
+        cachePurpose: cachePurpose,
+      );
+      if (handle == null) {
+        missing.add(index);
+      } else {
+        ready += 1;
+      }
+    }
+    return ListeningAudioMaterialStatus(
+      articleId: articleId,
+      total: sentences.length,
+      ready: ready,
+      missing: missing,
+    );
+  }
+
+  static Future<ListeningAudioMaterialGenerateResult> generate({
+    required int articleId,
+    required bool overwrite,
+    void Function(TtsPreloadProgress progress)? onProgress,
+  }) async {
+    final sentences = await _sentencesForArticle(articleId);
+    if (overwrite) {
+      await ApiCacheService.deleteArticleRefsAndUnusedFilesForPurposes(
+        articleId,
+        purposes: {cachePurpose, legacyFollowCachePurpose},
+      );
+      TtsMemoryCacheService.releaseArticle(articleId);
+    }
+
+    final requests = <TtsPreloadRequest>[];
+    for (var index = 0; index < sentences.length; index += 1) {
+      final sentence = sentences[index];
+      if (!overwrite) {
+        final cached = await TtsMemoryCacheService.cachedFileHandle(
+          text: sentence,
+          voiceType: TtsService.defaultVoiceType,
+          preferRequestedVoice: false,
+          articleId: articleId,
+          cachePurpose: cachePurpose,
+        );
+        if (cached != null) {
+          continue;
+        }
+      }
+      requests.add(TtsPreloadRequest(
+        text: sentence,
+        voiceType: TtsService.defaultVoiceType,
+        preferRequestedVoice: false,
+        cachePurpose: cachePurpose,
+        articleId: articleId,
+      ));
+    }
+
+    var failed = 0;
+    if (requests.isEmpty) {
+      onProgress?.call(
+        TtsPreloadProgress(completed: 0, total: 0, failed: failed),
+      );
+    } else {
+      final override = _preloadOverrideForTest;
+      if (override != null) {
+        await override(
+          requests,
+          onProgress: (progress) {
+            failed = progress.failed;
+            onProgress?.call(progress);
+          },
+        );
+      } else {
+        await TtsMemoryCacheService.preload(
+          requests,
+          onProgress: (progress) {
+            failed = progress.failed;
+            onProgress?.call(progress);
+          },
+        );
+      }
+    }
+
+    final current = await status(articleId);
+    return ListeningAudioMaterialGenerateResult(
+      articleId: articleId,
+      total: current.total,
+      ready: current.ready,
+      missing: current.missing,
+      failed: failed,
+      requested: requests.length,
+      overwrite: overwrite,
+    );
+  }
+
+  @visibleForTesting
+  static void setPreloadOverrideForTest(
+    Future<void> Function(
+      List<TtsPreloadRequest> requests, {
+      void Function(TtsPreloadProgress progress)? onProgress,
+    })? override,
+  ) {
+    _preloadOverrideForTest = override;
+  }
+
+  static Future<List<String>> _sentencesForArticle(int articleId) async {
+    final rawArticle = await DatabaseService.getArticleById(articleId);
+    if (rawArticle == null) {
+      throw FormatException('文章不存在（id=$articleId）');
+    }
+    final article = await _articleWithCurrentSentences(rawArticle);
+    return article.sentences
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static Future<Article> _articleWithCurrentSentences(Article article) async {
+    final sentences = NlpService.splitSentences(article.content);
+    if (sentences.isEmpty || listEquals(article.sentences, sentences)) {
+      return article;
+    }
+
+    final id = article.id;
+    if (id != null) {
+      await DatabaseService.updateArticleSentences(id, sentences);
+    }
+    return article.copyWith(sentences: sentences);
+  }
+
+  static Future<void> Function(
+    List<TtsPreloadRequest> requests, {
+    void Function(TtsPreloadProgress progress)? onProgress,
+  })? _preloadOverrideForTest;
+}

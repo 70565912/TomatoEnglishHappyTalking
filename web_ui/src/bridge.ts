@@ -764,6 +764,43 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'listening.open') {
     return mockListening;
   }
+  if (type === 'listening.audioStatus') {
+    return {
+      articleId: Number(payload.articleId ?? mockListening.article.id),
+      total: mockListening.items.length,
+      ready: mockListening.items.length,
+      missing: [],
+      failed: 0,
+      status: 'ready',
+    };
+  }
+  if (type === 'listening.audioGenerate') {
+    const articleId = Number(payload.articleId ?? mockListening.article.id);
+    const result = {
+      articleId,
+      total: mockListening.items.length,
+      ready: mockListening.items.length,
+      missing: [],
+      failed: 0,
+      status: 'ready',
+      requested: payload.overwrite === true ? mockListening.items.length : 0,
+      overwrite: payload.overwrite === true,
+    };
+    window.setTimeout(() => {
+      emitNativeEvent({
+        type: 'listening.audioMaterial.progress',
+        payload: {
+          articleId,
+          status: 'complete',
+          completed: result.requested,
+          total: result.requested,
+          failed: 0,
+          overwrite: result.overwrite,
+        },
+      });
+    }, 40);
+    return result;
+  }
   if (type === 'listening.songState') {
     return {
       articleId: Number(payload.articleId ?? mockListening.article.id),
@@ -934,6 +971,12 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       });
     }, 20);
     return { playbackState: 'playing' };
+  }
+  if (type === 'listening.songPause') {
+    return { paused: true };
+  }
+  if (type === 'listening.songResume') {
+    return { resumed: true };
   }
   if (type === 'listening.songTimelineGenerate') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);

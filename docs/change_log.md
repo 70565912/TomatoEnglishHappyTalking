@@ -1,5 +1,25 @@
 # 修改日志
 
+## 2026-06-27
+
+- 创作中心绘本面板新增“重新生成听力”按钮，位于“重新生成组图”后同一行；面板显示章节听力材料生成状态，缺失时可显式提交远程语音合成，完整时需确认覆盖后才重新生成。
+- 新增 `listening.audioStatus` / `listening.audioGenerate` bridge 命令和 `listening.audioMaterial.progress` 事件；章节英文 TTS 统一作为 `listening_tts` 听力材料管理，`overwrite=false` 只补缺失，`overwrite=true` 清理当前文章 `listening_tts` 和旧 `follow_tts` 引用后全量重建。
+- 听力打开、跟读打开、听力播放、全屏播放、视频导出 readiness 和跟读原音播放改为只检查本地听力材料缓存；缺失时明确提示“需要先在创作中心生成听力材料”，不再后台静默提交 TTS。
+- 绘本提示词审核框重新打开时优先读取本地章节计划；如果 `story_chapters.summary_json` 缺失或不匹配，会尝试从旧 `picture_book_pages` prompt scene 恢复并写回；仍无法恢复时先打开可编辑的本地 fallback 审核框，不静默远程生成。
+- 歌曲字幕匹配补强低信息词处理，避免 ASR 跳过弱词时抢占后续歌词锚点造成字幕过长或过短；新增 E07 真实 ASR fixture 和回归用例，作为后续歌词匹配算法改动的固定素材。
+- 发布目录运行数据恢复：确认 `release/windows/tomato_english_happy_talking` 空库后，从最近有书的 runtime backup 恢复 `.dart_tool` 数据库和 `tomato_api_cache`，真实 release App 默认数据根读取到 20 篇文章、3 本书和 20 个章节。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\api_cache_service_test.dart --reporter expanded -j 1`
+- `D:\DevTools\flutter\bin\flutter.bat test test\tts_memory_cache_service_test.dart --reporter expanded -j 1`
+- `npm --prefix web_ui test -- App.test.tsx --testTimeout=20000`
+- `npm --prefix web_ui run build`
+- `D:\DevTools\flutter\bin\flutter.bat analyze`
+- `D:\PowerShell\7\pwsh.exe -Command ".\tools\build_windows.ps1 -Release"`
+- 真实 release QA 联调：ready 样本 `articleId=46` 听力材料 `46/46 ready`，prepare/fullscreen/recording/play/follow 均通过；missing 样本 `articleId=52` 为 `0/53 missing`，prepare/fullscreen/play/recording/follow 均明确提示需要先在创作中心生成听力材料；联调前后 `api_cache_entries` 和 `api_cache_article_refs` 计数不变，确认未触发隐式远程 TTS。
+- 默认 release 数据根验证：`article.list` 返回 20 篇文章，包含 `E10 - The Caucus Race`、`E07 - Am I Still Alice` 和 `E03 - Alice's Long Fall`。
+
 ## 2026-06-26
 
 - 重写公开仓库首页 `README.md`：从内部开发状态长文档调整为面向 GitHub 访客的项目介绍，突出应用用途、平台、架构、云服务配置、快速开始、构建脚本和发布数据安全边界。

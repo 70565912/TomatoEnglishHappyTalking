@@ -1772,7 +1772,7 @@ class RecordingExportService {
         articleId: request.articleId,
       );
       if (englishHandle == null) {
-        reasons.add('第 ${index + 1} 句英文音频文件准备失败');
+        reasons.add('第 ${index + 1} 句英文音频未生成，请先在创作中心生成听力材料');
       } else {
         readyEnglish += 1;
         if (collectAudioClips) {
@@ -1908,7 +1908,7 @@ class RecordingExportService {
     required int articleId,
   }) async {
     try {
-      return await TtsMemoryCacheService.loadFile(
+      return await TtsMemoryCacheService.cachedFileHandle(
         text: text,
         voiceType: voiceType,
         preferRequestedVoice: preferRequestedVoice,

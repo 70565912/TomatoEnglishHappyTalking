@@ -8,6 +8,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path_lib;
 
+import '../core/logging/tomato_logger.dart';
 import '../data/models/article_model.dart';
 import '../data/models/picture_book_model.dart';
 import 'api_cache_service.dart';
@@ -246,6 +247,48 @@ class PictureBookService {
       return existing;
     }
 
+    final summaryMissReason = _chapterPlanSummaryMissReason(
+      chapter.summaryJson,
+      contentHash: contentHash,
+      sentenceCount: article.sentences.length,
+    );
+    final recovered = await _recoverChapterPlanFromPages(
+      article: article,
+      chapter: chapter,
+    );
+    if (recovered != null) {
+      await DatabaseService.updateStoryChapter(
+        chapter.copyWith(
+          summaryJson: ApiCacheService.canonicalJson(
+            _chapterPlanSummaryJson(
+              article: article,
+              contentHash: contentHash,
+              plan: recovered,
+            ),
+          ),
+          updatedAt: DateTime.now(),
+        ),
+      );
+      TomatoLogger.info(
+        category: 'picture_book',
+        event: 'chapter_plan.recovered_from_pages',
+        articleId: articleId,
+        status: 'cached',
+        data: {
+          'summaryMissReason': summaryMissReason,
+          'sceneCount': recovered.scenes.length,
+        },
+      );
+      return recovered;
+    }
+
+    TomatoLogger.info(
+      category: 'picture_book',
+      event: 'chapter_plan.remote_required',
+      articleId: articleId,
+      status: 'remote',
+      data: {'summaryMissReason': summaryMissReason},
+    );
     final reply = await TextGenerationService.generateStrict(
       turns: _chapterPlanPromptTurns(
         article: article,
@@ -272,18 +315,15 @@ class PictureBookService {
         '文本提交处理失败：AI 未返回有效绘本分镜，请重试。',
       );
     }
-    final summaryJson = {
-      'planKind': _chapterPlanCachePurpose,
-      'contentHash': contentHash,
-      'title': article.title,
-      'chapterDescription': plan.chapterDescription,
-      'scenes': plan.scenes.map((scene) => scene.toJson()).toList(),
-      'newCharacters':
-          plan.newCharacters.map((character) => character.toJson()).toList(),
-    };
     await DatabaseService.updateStoryChapter(
       chapter.copyWith(
-        summaryJson: ApiCacheService.canonicalJson(summaryJson),
+        summaryJson: ApiCacheService.canonicalJson(
+          _chapterPlanSummaryJson(
+            article: article,
+            contentHash: contentHash,
+            plan: plan,
+          ),
+        ),
         updatedAt: DateTime.now(),
       ),
     );
@@ -331,7 +371,7 @@ class PictureBookService {
       throw const TextGenerationException('文本提交处理失败：书籍信息不存在，请重试。');
     }
 
-    final plan = await ensureChapterPlanForArticle(
+    final plan = await _localChapterPlanForPromptReview(
       article: article,
       chapter: currentChapter,
       series: series,
@@ -386,6 +426,87 @@ class PictureBookService {
     _promptReviewDrafts[reviewId] = draft;
     _prunePromptReviewDrafts();
     return draft.toPayload();
+  }
+
+  static Future<ChapterPicturePlan> _localChapterPlanForPromptReview({
+    required Article article,
+    required StoryChapter chapter,
+    required StorySeries series,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      throw StateError('Article must be saved before reviewing picture book');
+    }
+    final relevantCharacters = _relevantBookCharactersForArticle(
+      article,
+      series.characters,
+    );
+    final contentHash = await _chapterContentHashFor(
+      articleTitle: article.title,
+      articleContent: article.content,
+      sentences: article.sentences,
+      bookDescription: series.description,
+      relevantCharacters: relevantCharacters,
+    );
+    final existing = _chapterPlanFromSummary(
+      chapter.summaryJson,
+      contentHash: contentHash,
+      sentenceCount: article.sentences.length,
+    );
+    if (existing != null) {
+      return existing;
+    }
+
+    final summaryMissReason = _chapterPlanSummaryMissReason(
+      chapter.summaryJson,
+      contentHash: contentHash,
+      sentenceCount: article.sentences.length,
+    );
+    final recovered = await _recoverChapterPlanFromPages(
+      article: article,
+      chapter: chapter,
+    );
+    if (recovered != null) {
+      await DatabaseService.updateStoryChapter(
+        chapter.copyWith(
+          summaryJson: ApiCacheService.canonicalJson(
+            _chapterPlanSummaryJson(
+              article: article,
+              contentHash: contentHash,
+              plan: recovered,
+            ),
+          ),
+          updatedAt: DateTime.now(),
+        ),
+      );
+      TomatoLogger.info(
+        category: 'picture_book',
+        event: 'chapter_plan.prompt_review_recovered_from_pages',
+        articleId: articleId,
+        status: 'cached',
+        data: {
+          'summaryMissReason': summaryMissReason,
+          'sceneCount': recovered.scenes.length,
+        },
+      );
+      return recovered;
+    }
+
+    final fallback = _fallbackChapterPlanForPromptReview(
+      article: article,
+      chapter: chapter,
+    );
+    TomatoLogger.info(
+      category: 'picture_book',
+      event: 'chapter_plan.prompt_review_local_fallback',
+      articleId: articleId,
+      status: 'local',
+      data: {
+        'summaryMissReason': summaryMissReason,
+        'sceneCount': fallback.scenes.length,
+      },
+    );
+    return fallback;
   }
 
   static Future<Map<String, dynamic>> pagePromptReviewPayload({
@@ -1895,6 +2016,215 @@ class PictureBookService {
     );
   }
 
+  static Map<String, dynamic> _chapterPlanSummaryJson({
+    required Article article,
+    required String contentHash,
+    required ChapterPicturePlan plan,
+  }) =>
+      {
+        'planKind': _chapterPlanCachePurpose,
+        'contentHash': contentHash,
+        'title': article.title,
+        'chapterDescription': plan.chapterDescription,
+        'scenes': plan.scenes.map((scene) => scene.toJson()).toList(),
+        'newCharacters':
+            plan.newCharacters.map((character) => character.toJson()).toList(),
+      };
+
+  static String _chapterPlanSummaryMissReason(
+    String summaryJson, {
+    required String contentHash,
+    required int sentenceCount,
+  }) {
+    final json = _decodeJson(summaryJson, const <String, dynamic>{});
+    if (json.isEmpty) {
+      return 'empty_summary';
+    }
+    final planKind = json['planKind']?.toString();
+    if (planKind != _chapterPlanCachePurpose) {
+      return 'plan_kind_mismatch';
+    }
+    final savedContentHash = json['contentHash']?.toString() ?? '';
+    if (savedContentHash.isNotEmpty && savedContentHash != contentHash) {
+      return 'content_hash_mismatch';
+    }
+    if (json['scenes'] is! List) {
+      return 'missing_scenes';
+    }
+    final scenes = _pictureBookScenesFromJson(
+      json['scenes'],
+      sentenceCount: sentenceCount,
+    );
+    if (scenes.isEmpty) {
+      return 'empty_scenes';
+    }
+    final chapterDescription = _sanitizeForImagePrompt(
+      json['chapterDescription']?.toString().trim() ?? '',
+    );
+    if (chapterDescription.isEmpty) {
+      return 'empty_chapter_description';
+    }
+    return 'unknown';
+  }
+
+  static Future<ChapterPicturePlan?> _recoverChapterPlanFromPages({
+    required Article article,
+    required StoryChapter chapter,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null || article.sentences.isEmpty) {
+      return null;
+    }
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    if (pages.isEmpty) {
+      return null;
+    }
+
+    final sortedPages = [...pages]
+      ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+    final chapterSummary = _decodeJson(
+      chapter.summaryJson,
+      const <String, dynamic>{},
+    );
+    final scenes = <PictureBookScene>[];
+    var chapterDescription = '';
+    var newCharacters = <BookCharacter>[];
+
+    for (final page in sortedPages) {
+      final prompt = _pagePromptMap(page);
+      if (chapterDescription.isEmpty) {
+        for (final value in [
+          prompt['chapterDescription'],
+          chapterSummary['chapterDescription'],
+          chapterSummary['summary'],
+        ]) {
+          chapterDescription = _sanitizeForImagePrompt(
+            value?.toString() ?? '',
+          );
+          if (chapterDescription.isNotEmpty) {
+            break;
+          }
+        }
+      }
+      newCharacters = _mergeBookCharacters(
+        newCharacters,
+        _bookCharactersFromJson(prompt['newCharacters']),
+      );
+
+      final sceneDescription = _pageSceneDescription(page);
+      if (sceneDescription.isEmpty) {
+        continue;
+      }
+      final promptScene = _mapValue(prompt['scene']);
+      final rawPageIndex = promptScene['pageIndex'];
+      final rawStart = promptScene['sentenceStartIndex'];
+      final rawEnd = promptScene['sentenceEndIndex'];
+      final pageIndex =
+          rawPageIndex is num ? rawPageIndex.toInt() : page.pageIndex;
+      final sentenceStart =
+          rawStart is num ? rawStart.toInt() : page.sentenceStartIndex;
+      final sentenceEnd =
+          rawEnd is num ? rawEnd.toInt() : page.sentenceEndIndex;
+      scenes.add(
+        PictureBookScene(
+          pageIndex: pageIndex,
+          sentenceStartIndex: sentenceStart,
+          sentenceEndIndex: sentenceEnd,
+          sceneDescription: sceneDescription,
+        ),
+      );
+    }
+
+    final normalizedScenes = _normalizeSceneCoverage(
+      scenes,
+      article.sentences.length,
+    );
+    if (normalizedScenes.isEmpty) {
+      return null;
+    }
+
+    if (chapterDescription.isEmpty) {
+      chapterDescription = _sanitizeForImagePrompt(
+        normalizedScenes
+            .take(4)
+            .map((scene) => scene.sceneDescription)
+            .join(' '),
+      );
+    }
+    if (chapterDescription.isEmpty) {
+      chapterDescription = _sanitizeForImagePrompt(
+        chapter.chapterTitle.trim().isNotEmpty
+            ? chapter.chapterTitle
+            : _fallbackChapterSummary(article.content),
+      );
+    }
+    if (chapterDescription.isEmpty) {
+      return null;
+    }
+
+    return ChapterPicturePlan(
+      chapterDescription: chapterDescription,
+      scenes: normalizedScenes,
+      newCharacters: _sanitizeBookCharacters(newCharacters),
+      source: TextGenerationReplySource.cached,
+    );
+  }
+
+  static ChapterPicturePlan _fallbackChapterPlanForPromptReview({
+    required Article article,
+    required StoryChapter chapter,
+  }) {
+    final sentences = article.sentences
+        .map((sentence) => sentence.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
+    if (sentences.isEmpty) {
+      throw const FormatException('章节内容不足，无法生成绘本分镜。');
+    }
+    final ranges = _draftSceneRanges(article.content, sentences);
+    final scenes = [
+      for (var index = 0; index < ranges.length; index += 1)
+        PictureBookScene(
+          pageIndex: index,
+          sentenceStartIndex: ranges[index].$1,
+          sentenceEndIndex: ranges[index].$2,
+          sceneDescription: _sceneDescriptionForRange(
+            sentences,
+            ranges[index].$1,
+            ranges[index].$2,
+          ),
+        ),
+    ];
+    final summaryCandidates = [
+      _decodeJson(chapter.summaryJson, const <String, dynamic>{})['summary'],
+      chapter.chapterTitle,
+      _fallbackChapterSummary(article.content),
+      article.title,
+    ];
+    var chapterDescription = '';
+    for (final candidate in summaryCandidates) {
+      chapterDescription = _sanitizeForImagePrompt(
+        candidate?.toString() ?? '',
+      );
+      if (chapterDescription.isNotEmpty) {
+        break;
+      }
+    }
+    if (chapterDescription.isEmpty) {
+      chapterDescription = _sanitizeForImagePrompt(
+        scenes.take(4).map((scene) => scene.sceneDescription).join(' '),
+      );
+    }
+    if (chapterDescription.isEmpty) {
+      throw const FormatException('章节内容不足，无法生成绘本分镜。');
+    }
+    return ChapterPicturePlan(
+      chapterDescription: chapterDescription,
+      scenes: _normalizeSceneCoverage(scenes, sentences.length),
+      source: TextGenerationReplySource.cached,
+    );
+  }
+
   static ChapterPicturePlan? _chapterPlanFromJson(
     Map<String, dynamic> json, {
     required String contentHash,
@@ -2580,6 +2910,33 @@ class PictureBookService {
       limited.add((start, math.max(start, end)));
     }
     return limited;
+  }
+
+  static List<(int, int)> _draftSceneRanges(
+    String content,
+    List<String> sentences,
+  ) {
+    final sentenceCount = sentences.length;
+    final paragraphRanges = _paragraphSentenceRanges(content, sentences);
+    if (paragraphRanges.length > 1) {
+      return _limitSceneRanges(paragraphRanges, sentenceCount);
+    }
+    final sceneCount = math.min(_maxSceneCount, sentenceCount);
+    if (sceneCount <= 1) {
+      return [(0, sentenceCount - 1)];
+    }
+    return [
+      for (var index = 0; index < sceneCount; index += 1)
+        (
+          (index * sentenceCount / sceneCount).floor(),
+          index == sceneCount - 1
+              ? sentenceCount - 1
+              : math.max(
+                  (index * sentenceCount / sceneCount).floor(),
+                  (((index + 1) * sentenceCount / sceneCount).floor() - 1),
+                ),
+        ),
+    ];
   }
 
   static String _sceneDescriptionForRange(

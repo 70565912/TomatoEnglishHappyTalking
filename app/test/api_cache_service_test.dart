@@ -12,9 +12,12 @@ import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/aliyun_wanx_image_service.dart';
 import 'package:tomato_english_happy_talking/services/content_safety_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
+import 'package:tomato_english_happy_talking/services/listening_audio_material_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_image_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_service.dart';
 import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
+import 'package:tomato_english_happy_talking/services/tts_memory_cache_service.dart';
+import 'package:tomato_english_happy_talking/services/tts_service.dart';
 import 'package:tomato_english_happy_talking/services/volc_image_service.dart';
 
 void main() {
@@ -37,6 +40,7 @@ void main() {
     TextGenerationService.setPostOverrideForTest(null);
     AliyunWanxImageService.setOverridesForTest();
     VolcImageService.setPostOverrideForTest(null);
+    ListeningAudioMaterialService.setPreloadOverrideForTest(null);
     AppConfig.resetRuntimeConfigForTest();
   });
 
@@ -44,6 +48,7 @@ void main() {
     TextGenerationService.setPostOverrideForTest(null);
     AliyunWanxImageService.setOverridesForTest();
     VolcImageService.setPostOverrideForTest(null);
+    ListeningAudioMaterialService.setPreloadOverrideForTest(null);
     AppConfig.resetRuntimeConfigForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
@@ -264,6 +269,84 @@ void main() {
       isTrue,
     );
     expect(filePath, isNot(contains('.dart_tool')));
+  });
+
+  test('listening audio material status reads local cache only', () async {
+    final articleId = await _saveArticle('Tom waves. He smiles.');
+    await _writeCachedListeningTts(
+      articleId: articleId,
+      text: 'Tom waves.',
+      bytes: [1, 2, 3],
+    );
+
+    final status = await ListeningAudioMaterialService.status(articleId);
+
+    expect(status.total, 2);
+    expect(status.ready, 1);
+    expect(status.missing, [1]);
+    expect(status.status, 'partial');
+  });
+
+  test(
+      'listening audio material generation fills missing and overwrites caches',
+      () async {
+    final articleId = await _saveArticle('Tom waves. He smiles.');
+    await _writeCachedListeningTts(
+      articleId: articleId,
+      text: 'Tom waves.',
+      bytes: [1, 2, 3],
+    );
+    final legacyFollowPath = await _writeCachedListeningTts(
+      articleId: articleId,
+      text: 'Legacy follow only.',
+      purpose: ListeningAudioMaterialService.legacyFollowCachePurpose,
+      bytes: [7, 7, 7],
+    );
+    final generated = <String>[];
+    ListeningAudioMaterialService.setPreloadOverrideForTest((
+      requests, {
+      onProgress,
+    }) async {
+      var completed = 0;
+      for (final request in requests) {
+        generated.add(request.text);
+        await _writeCachedListeningTts(
+          articleId: articleId,
+          text: request.text,
+          purpose: request.cachePurpose,
+          bytes: [9, 8, 7, completed + 1],
+        );
+        completed += 1;
+        onProgress?.call(TtsPreloadProgress(
+          completed: completed,
+          total: requests.length,
+          failed: 0,
+        ));
+      }
+    });
+
+    final fillMissing = await ListeningAudioMaterialService.generate(
+      articleId: articleId,
+      overwrite: false,
+    );
+
+    expect(fillMissing.requested, 1);
+    expect(generated, ['He smiles.']);
+    expect(fillMissing.ready, 2);
+    expect(fillMissing.missing, isEmpty);
+    expect(await File(legacyFollowPath).exists(), isTrue);
+
+    generated.clear();
+    final overwrite = await ListeningAudioMaterialService.generate(
+      articleId: articleId,
+      overwrite: true,
+    );
+
+    expect(overwrite.requested, 2);
+    expect(generated, ['Tom waves.', 'He smiles.']);
+    expect(overwrite.ready, 2);
+    expect(overwrite.missing, isEmpty);
+    expect(await File(legacyFollowPath).exists(), isFalse);
   });
 
   test('migrates legacy cached files from the database directory', () async {
@@ -1596,6 +1679,169 @@ but the three were all crowded together at one corner of it.
   });
 
   test(
+      'picture-book prompt review recovers local page prompts when chapter plan summary is missing',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-page-recovery-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Recovered Prompt Chapter',
+        content:
+            'Alice finds a tiny door. Alice follows a golden key into a bright hall.',
+        sentences: const [
+          'Alice finds a tiny door.',
+          'Alice follows a golden key into a bright hall.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    final now = DateTime(2026, 1, 1);
+    final pagePrompts = [
+      {
+        'planKind': 'picture_book_chapter_scene_plan_v2',
+        'chapterDescription':
+            'Alice explores a magical hallway and notices clues that lead her onward.',
+        'scene': {
+          'pageIndex': 0,
+          'sentenceStartIndex': 0,
+          'sentenceEndIndex': 0,
+          'sceneDescription':
+              'Alice kneels near a tiny door glowing in the hallway.',
+        },
+        'groupPrompt': 'Recovered local group prompt.',
+        'newCharacters': [
+          {
+            'name': 'Golden Key',
+            'description': 'A small bright golden key with a delicate bow.',
+          },
+        ],
+      },
+      {
+        'planKind': 'picture_book_chapter_scene_plan_v2',
+        'chapterDescription':
+            'Alice explores a magical hallway and notices clues that lead her onward.',
+        'scene': {
+          'pageIndex': 1,
+          'sentenceStartIndex': 1,
+          'sentenceEndIndex': 1,
+          'sceneDescription':
+              'Alice follows the golden key through a bright hall.',
+        },
+        'groupPrompt': 'Recovered local group prompt.',
+      },
+    ];
+    for (var index = 0; index < pagePrompts.length; index += 1) {
+      await DatabaseService.upsertPictureBookPage(
+        PictureBookPage(
+          articleId: articleId,
+          seriesId: series.id,
+          pageIndex: index,
+          sentenceStartIndex: index,
+          sentenceEndIndex: index,
+          paragraphText: article.sentences[index],
+          promptJson: ApiCacheService.canonicalJson(pagePrompts[index]),
+          status: 'ready',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
+
+    var textAiCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        throw StateError('prompt review should recover from local pages');
+      },
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    expect(textAiCalls, 0);
+    expect(review['chapterDescription'], contains('magical hallway'));
+    final scenes = review['scenes'] as List;
+    expect(scenes, hasLength(2));
+    expect(
+      (scenes[0] as Map)['sceneDescription'],
+      contains('tiny door'),
+    );
+    expect(
+      (scenes[1] as Map)['sceneDescription'],
+      contains('golden key'),
+    );
+    final savedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    final savedSummary =
+        jsonDecode(savedChapter!.summaryJson) as Map<String, dynamic>;
+    expect(savedSummary['planKind'], 'picture_book_chapter_scene_plan_v2');
+    expect(savedSummary['chapterDescription'], contains('magical hallway'));
+    expect(savedSummary['scenes'], hasLength(2));
+  });
+
+  test('picture-book prompt review opens a local editable draft without AI',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-local-draft-key-12345678901234567890');
+    final sentences = [
+      for (var index = 0; index < 16; index += 1)
+        'Alice sees clue ${index + 1} in the long hallway.',
+    ];
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Local Draft Chapter',
+        content: sentences.join(' '),
+        sentences: sentences,
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+
+    var textAiCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        throw StateError('opening prompt review should not call text AI');
+      },
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    expect(textAiCalls, 0);
+    expect(review['chapterDescription'], isA<String>());
+    final scenes = review['scenes'] as List;
+    expect(scenes.length, greaterThan(1));
+    expect(scenes.length, lessThanOrEqualTo(12));
+    expect((scenes.first as Map)['sceneDescription'], contains('clue 1'));
+    expect((scenes.last as Map)['sceneDescription'], contains('clue 16'));
+    expect(await DatabaseService.getPictureBookPages(articleId), isEmpty);
+  });
+
+  test(
       'picture-book prompt review does not merge chapter description into book draft',
       () async {
     _writeImageArkKey(tempDir, 'ark-chapter-roster-key-12345678901234567890');
@@ -1739,10 +1985,11 @@ but the three were all crowded together at one corner of it.
       },
     );
 
-    final review = await PictureBookService.promptReviewPayload(
+    final initialReview = await PictureBookService.promptReviewPayload(
       article: article,
       chapter: chapter,
     );
+    final review = await _refreshChapterPlanFromReview(initialReview);
     final prompt = review['groupPrompt'].toString();
 
     expect(prompt, contains('Image 1:'));
@@ -2074,10 +2321,11 @@ but the three were all crowded together at one corner of it.
       },
     );
 
-    final review = await PictureBookService.promptReviewPayload(
+    final initialReview = await PictureBookService.promptReviewPayload(
       article: article,
       chapter: chapter,
     );
+    final review = await _refreshChapterPlanFromReview(initialReview);
     expect(review['bookCharacters'], hasLength(1));
     expect(review['relevantCharacters'], hasLength(1));
     expect(review['newCharacters'], hasLength(1));
@@ -2184,10 +2432,11 @@ but the three were all crowded together at one corner of it.
       article: article!,
     );
     await _installTwoPageChapterPlanOverride();
-    final review = await PictureBookService.promptReviewPayload(
+    final initialReview = await PictureBookService.promptReviewPayload(
       article: article,
       chapter: chapter,
     );
+    final review = await _refreshChapterPlanFromReview(initialReview);
     Map<String, dynamic>? imageBody;
     VolcImageService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
@@ -2565,6 +2814,31 @@ Future<int> _saveArticle(String content) {
   );
 }
 
+Future<String> _writeCachedListeningTts({
+  required int articleId,
+  required String text,
+  required List<int> bytes,
+  String purpose = ListeningAudioMaterialService.cachePurpose,
+}) async {
+  final keys = await TtsService.cacheKeysForText(
+    text: text,
+    cachePurpose: purpose,
+  );
+  expect(keys, isNotEmpty);
+  final cacheKey = keys.first;
+  return ApiCacheService.putFileBytes(
+    cacheKey: cacheKey,
+    kind: 'tts',
+    purpose: purpose,
+    request: {'service': 'unit_tts', 'text': text, 'purpose': purpose},
+    bytes: bytes,
+    subdirectory: 'tts',
+    extension: 'mp3',
+    contentType: 'audio/mpeg',
+    articleId: articleId,
+  );
+}
+
 Future<File> _writeTestPng(
   Directory directory,
   String name, {
@@ -2644,4 +2918,34 @@ Future<void> _installTwoPageChapterPlanOverride() async {
       };
     },
   );
+}
+
+Future<Map<String, dynamic>> _refreshChapterPlanFromReview(
+  Map<String, dynamic> review,
+) {
+  return PictureBookService.refreshPromptReview(
+    reviewId: review['reviewId'].toString(),
+    target: 'chapterPlan',
+    bookDescription: review['bookDescription']?.toString() ?? '',
+    bookCharacters: _charactersFromPayload(review['bookCharacters']),
+    newCharacters: _charactersFromPayload(review['newCharacters']),
+    chapterDescription: review['chapterDescription']?.toString() ?? '',
+    scenes: [
+      for (final scene in (review['scenes'] as List? ?? const []))
+        Map<String, dynamic>.from(scene as Map),
+    ],
+  );
+}
+
+List<BookCharacter> _charactersFromPayload(Object? raw) {
+  if (raw is! List) {
+    return const [];
+  }
+  return raw
+      .map(BookCharacter.fromJson)
+      .where(
+        (item) =>
+            item.name.trim().isNotEmpty && item.description.trim().isNotEmpty,
+      )
+      .toList(growable: false);
 }

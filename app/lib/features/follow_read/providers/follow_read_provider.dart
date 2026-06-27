@@ -15,6 +15,7 @@ import '../../../data/models/learning_record_model.dart';
 import '../../../shared/models/playback_visual_state.dart';
 import '../../../services/api_cache_service.dart';
 import '../../../services/database_service.dart';
+import '../../../services/listening_audio_material_service.dart';
 import '../../../services/nlp_service.dart';
 import '../../../services/recognition_based_assessment_service.dart';
 import '../../../services/scoring_service.dart';
@@ -33,7 +34,7 @@ final followReadAssessmentEngineProvider = Provider<SpeechAssessmentEngine>(
 
 enum FollowReadStep {
   idle, // ready — waiting for user action
-  loadingTts, // fetching TTS audio from cloud
+  loadingTts, // checking cached TTS audio before playback
   playing, // playing TTS audio
   recording, // user is recording
   scoring, // recognizing audio and computing scores
@@ -564,11 +565,16 @@ class FollowRead extends _$FollowRead {
     required String sentence,
   }) async {
     final key = '${articleId}_${index}_${_stableTextHash(sentence)}';
-    final handle = await TtsMemoryCacheService.load(
+    final handle = await TtsMemoryCacheService.cachedFileHandle(
       text: sentence,
       articleId: articleId,
-      cachePurpose: 'follow_tts',
+      cachePurpose: ListeningAudioMaterialService.cachePurpose,
     );
+    if (handle == null) {
+      throw const TtsException(
+        ListeningAudioMaterialService.missingMaterialMessage,
+      );
+    }
     _trace('tts key=$key path=${handle.filePath}');
     return handle.toAudioSource();
   }
