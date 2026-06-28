@@ -2191,6 +2191,11 @@ function CreationCenterPage({
               </>
             }
             onDelete={() => {
+              const title = article.title.trim() || '当前章节';
+              const confirmed = window.confirm(`确定删除章节“${title}”？删除后不可恢复。`);
+              if (!confirmed) {
+                return;
+              }
               void onDelete(article.id).catch((error) => {
                 onNotice(error instanceof Error ? error.message : '章节删除失败');
               });
@@ -2343,6 +2348,105 @@ function CreationCenterPage({
   );
 }
 
+function useListeningAudioMaterial(
+  article: Article,
+  onNotice: (message: string) => void,
+  options: { onGenerated?: (status: ListeningAudioMaterialStatus) => void } = {},
+) {
+  const [audioStatus, setAudioStatus] = useState<ListeningAudioMaterialStatus | null>(null);
+  const [audioStatusLoading, setAudioStatusLoading] = useState(true);
+  const [audioGenerating, setAudioGenerating] = useState(false);
+  const [audioProgress, setAudioProgress] = useState<ListeningAudioMaterialProgress | null>(null);
+  const [audioOverwriteConfirm, setAudioOverwriteConfirm] = useState<ListeningAudioMaterialStatus | null>(null);
+
+  const loadAudioStatus = async () => {
+    setAudioStatusLoading(true);
+    try {
+      const payload = await sendNative<ListeningAudioMaterialStatus>('listening.audioStatus', { articleId: article.id });
+      const normalized = normalizeAudioMaterialStatus(payload, article.id);
+      setAudioStatus(normalized);
+      return normalized;
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '听力材料状态加载失败');
+      return null;
+    } finally {
+      setAudioStatusLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAudioStatus();
+  }, [article.id]);
+
+  useEffect(() => {
+    return onNativeEvent<ListeningAudioMaterialProgress>('listening.audioMaterial.progress', (payload) => {
+      if (payload.articleId !== article.id) {
+        return;
+      }
+      setAudioProgress(payload);
+    });
+  }, [article.id]);
+
+  const startListeningAudioGeneration = async (
+    currentStatus: ListeningAudioMaterialStatus,
+    overwrite: boolean,
+  ) => {
+    const requestTotal = overwrite ? currentStatus.total : currentStatus.missing.length;
+    setAudioGenerating(true);
+    setAudioProgress({
+      articleId: article.id,
+      status: 'loading',
+      completed: 0,
+      total: requestTotal,
+      failed: 0,
+      overwrite,
+    });
+    try {
+      const payload = normalizeAudioMaterialStatus(await sendNative<ListeningAudioMaterialStatus>('listening.audioGenerate', {
+        articleId: article.id,
+        overwrite,
+      }), article.id);
+      setAudioStatus(payload);
+      options.onGenerated?.(payload);
+      if (payload.ready >= payload.total && payload.missing.length === 0 && payload.failed === 0) {
+        onNotice('听力材料已生成');
+      } else {
+        onNotice('听力材料生成完成，但仍有缺失项');
+      }
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '听力材料生成失败');
+    } finally {
+      setAudioGenerating(false);
+    }
+  };
+
+  const generateListeningAudio = async () => {
+    if (audioGenerating) return;
+    const currentStatus = audioStatus ?? (await loadAudioStatus());
+    if (!currentStatus || currentStatus.total <= 0) {
+      onNotice('章节没有可生成的英文听力材料');
+      return;
+    }
+    const complete = currentStatus.ready >= currentStatus.total && currentStatus.missing.length === 0;
+    if (complete) {
+      setAudioOverwriteConfirm(currentStatus);
+      return;
+    }
+    await startListeningAudioGeneration(currentStatus, false);
+  };
+
+  return {
+    audioStatus,
+    audioStatusLoading,
+    audioGenerating,
+    audioProgress,
+    audioOverwriteConfirm,
+    setAudioOverwriteConfirm,
+    startListeningAudioGeneration,
+    generateListeningAudio,
+  };
+}
+
 function PictureBookCreationPanel({
   article,
   pictureBookRetryGate,
@@ -2360,11 +2464,16 @@ function PictureBookCreationPanel({
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
-  const [audioStatus, setAudioStatus] = useState<ListeningAudioMaterialStatus | null>(null);
-  const [audioStatusLoading, setAudioStatusLoading] = useState(true);
-  const [audioGenerating, setAudioGenerating] = useState(false);
-  const [audioProgress, setAudioProgress] = useState<ListeningAudioMaterialProgress | null>(null);
-  const [audioOverwriteConfirm, setAudioOverwriteConfirm] = useState<ListeningAudioMaterialStatus | null>(null);
+  const {
+    audioStatus,
+    audioStatusLoading,
+    audioGenerating,
+    audioProgress,
+    audioOverwriteConfirm,
+    setAudioOverwriteConfirm,
+    startListeningAudioGeneration,
+    generateListeningAudio,
+  } = useListeningAudioMaterial(article, onNotice);
 
   const loadState = () => {
     setLoading(true);
@@ -2374,25 +2483,7 @@ function PictureBookCreationPanel({
       .finally(() => setLoading(false));
   };
 
-  const loadAudioStatus = async () => {
-    setAudioStatusLoading(true);
-    try {
-      const payload = await sendNative<ListeningAudioMaterialStatus>('listening.audioStatus', { articleId: article.id });
-      const normalized = normalizeAudioMaterialStatus(payload, article.id);
-      setAudioStatus(normalized);
-      return normalized;
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : '听力材料状态加载失败');
-      return null;
-    } finally {
-      setAudioStatusLoading(false);
-    }
-  };
-
   useEffect(loadState, [article.id]);
-  useEffect(() => {
-    void loadAudioStatus();
-  }, [article.id]);
   useEffect(() => {
     return onNativeEvent<PictureBookState>('pictureBook.state', (payload) => {
       if (payload.articleId !== article.id) {
@@ -2400,14 +2491,6 @@ function PictureBookCreationPanel({
       }
       setState((current) => mergePictureBookState(current, payload));
       setLoading(false);
-    });
-  }, [article.id]);
-  useEffect(() => {
-    return onNativeEvent<ListeningAudioMaterialProgress>('listening.audioMaterial.progress', (payload) => {
-      if (payload.articleId !== article.id) {
-        return;
-      }
-      setAudioProgress(payload);
     });
   }, [article.id]);
   useEnsureAllPictureBookPageImages({
@@ -2434,53 +2517,6 @@ function PictureBookCreationPanel({
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '全文复制失败');
     }
-  };
-
-  const startListeningAudioGeneration = async (
-    currentStatus: ListeningAudioMaterialStatus,
-    overwrite: boolean,
-  ) => {
-    const requestTotal = overwrite ? currentStatus.total : currentStatus.missing.length;
-    setAudioGenerating(true);
-    setAudioProgress({
-      articleId: article.id,
-      status: 'loading',
-      completed: 0,
-      total: requestTotal,
-      failed: 0,
-      overwrite,
-    });
-    try {
-      const payload = normalizeAudioMaterialStatus(await sendNative<ListeningAudioMaterialStatus>('listening.audioGenerate', {
-        articleId: article.id,
-        overwrite,
-      }), article.id);
-      setAudioStatus(payload);
-      if (payload.ready >= payload.total && payload.missing.length === 0 && payload.failed === 0) {
-        onNotice('听力材料已生成');
-      } else {
-        onNotice('听力材料生成完成，但仍有缺失项');
-      }
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : '听力材料生成失败');
-    } finally {
-      setAudioGenerating(false);
-    }
-  };
-
-  const generateListeningAudio = async () => {
-    if (audioGenerating) return;
-    const currentStatus = audioStatus ?? (await loadAudioStatus());
-    if (!currentStatus || currentStatus.total <= 0) {
-      onNotice('章节没有可生成的英文听力材料');
-      return;
-    }
-    const complete = currentStatus.ready >= currentStatus.total && currentStatus.missing.length === 0;
-    if (complete) {
-      setAudioOverwriteConfirm(currentStatus);
-      return;
-    }
-    await startListeningAudioGeneration(currentStatus, false);
   };
 
   return (
@@ -3583,7 +3619,12 @@ function VideoCreationPanel({
   const [busy, setBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
   const [exportingListeningVideo, setExportingListeningVideo] = useState(false);
+  const [exportingSongVideo, setExportingSongVideo] = useState(false);
+  const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
+  const [songBusy, setSongBusy] = useState(false);
+  const [generatingSongTimeline, setGeneratingSongTimeline] = useState(false);
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
+  const [recordingDialogSongVersionId, setRecordingDialogSongVersionId] = useState('');
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
 
   const checkReady = () => {
@@ -3602,6 +3643,18 @@ function VideoCreationPanel({
       .catch((error) => onNotice(error instanceof Error ? error.message : '视频准备状态检查失败'))
       .finally(() => setRecordingReadyLoading(false));
   };
+  const {
+    audioStatus,
+    audioStatusLoading,
+    audioGenerating,
+    audioProgress,
+    audioOverwriteConfirm,
+    setAudioOverwriteConfirm,
+    startListeningAudioGeneration,
+    generateListeningAudio,
+  } = useListeningAudioMaterial(article, onNotice, {
+    onGenerated: () => checkReady(),
+  });
 
   const loadVideoLibrary = async () => {
     setVideoBusy(true);
@@ -3617,10 +3670,34 @@ function VideoCreationPanel({
     }
   };
 
+  const loadSongState = async () => {
+    setSongBusy(true);
+    try {
+      const payload = await sendNative<ListeningSongStatePayload>('listening.songState', {
+        articleId: article.id,
+      });
+      setSongState(payload);
+      return payload;
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '歌曲状态加载失败');
+      return null;
+    } finally {
+      setSongBusy(false);
+    }
+  };
+
   useEffect(checkReady, [article.id, recordingSettings?.codec, recordingSettings?.resolution, recordingSettings?.pageTransition, recordingSettings?.subtitleMode, recordingSettings?.fps]);
   useEffect(() => {
     void loadVideoLibrary();
   }, [article.id]);
+  useEffect(() => {
+    void loadSongState();
+  }, [article.id]);
+  useEffect(() => onNativeEvent<ListeningSongStatePayload>('listening.song.state', (payload) => {
+    if (payload.articleId === article.id) {
+      setSongState(payload);
+    }
+  }), [article.id]);
 
   const recordListeningVideo = async (selectedSettings: RecordingSettings) => {
     setBusy(true);
@@ -3645,11 +3722,48 @@ function VideoCreationPanel({
     }
   };
 
+  const recordSongVideo = async (versionId: string, selectedSettings: RecordingSettings) => {
+    setBusy(true);
+    setExportingSongVideo(true);
+    try {
+      await sendNative<ListeningRecordingResultPayload>('listening.songRecordVideo', {
+        articleId: article.id,
+        versionId,
+        codec: selectedSettings.codec,
+        resolution: selectedSettings.resolution,
+        pageTransition: selectedSettings.pageTransition,
+        subtitleMode: selectedSettings.subtitleMode,
+        fps: selectedSettings.fps || 25,
+      });
+      onNotice('歌曲视频导出完成');
+      await loadVideoLibrary();
+      await loadSongState();
+      onArticlesUpdated({});
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '歌曲视频导出失败');
+    } finally {
+      setBusy(false);
+      setExportingSongVideo(false);
+    }
+  };
+
   const openRecordingDialog = () => {
     if (recordingReady && !recordingReady.ready) {
       onNotice(recordingReady.reasons?.[0] ?? '视频准备状态检查未通过');
       return;
     }
+    setRecordingDialogDraft(recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings));
+    setRecordingDialogSongVersionId('');
+  };
+
+  const openSongRecordingDialog = (versionId: string) => {
+    const version = songState?.versions?.find((item) => item.id === versionId) ?? null;
+    const subtitleNotice = songSubtitleNoticeForVersion(version);
+    if (subtitleNotice) {
+      onNotice(subtitleNotice);
+      return;
+    }
+    setRecordingDialogSongVersionId(versionId);
     setRecordingDialogDraft(recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings));
   };
 
@@ -3660,6 +3774,7 @@ function VideoCreationPanel({
   const confirmRecordingDialog = async () => {
     if (!recordingDialogDraft || recordingDialogSaving) return;
     setRecordingDialogSaving(true);
+    const songVersionId = recordingDialogSongVersionId;
     try {
       const savedSettings = await sendNative<RecordingSettings>('recording.settings.save', {
         codec: recordingDialogDraft.codec,
@@ -3669,11 +3784,59 @@ function VideoCreationPanel({
       });
       onRecordingSettingsLoaded(savedSettings);
       setRecordingDialogDraft(null);
-      await recordListeningVideo(savedSettings);
+      setRecordingDialogSongVersionId('');
+      if (songVersionId) {
+        await recordSongVideo(songVersionId, savedSettings);
+      } else {
+        await recordListeningVideo(savedSettings);
+      }
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '录制设置保存失败');
     } finally {
       setRecordingDialogSaving(false);
+    }
+  };
+
+  const generateSongTimeline = async (versionId: string) => {
+    setSongBusy(true);
+    setGeneratingSongTimeline(true);
+    setSongState((current) =>
+      current
+        ? {
+            ...current,
+            versions: current.versions?.map((version) =>
+              version.id === versionId
+                ? { ...version, timelineStatus: 'generating', timelineError: null }
+                : version,
+            ),
+          }
+        : current,
+    );
+    try {
+      const payload = await sendNative<ListeningSongStatePayload>('listening.songTimelineGenerate', {
+        articleId: article.id,
+        versionId,
+      });
+      setSongState(payload);
+      onNotice('歌曲字幕已生成');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '歌曲字幕生成失败';
+      setSongState((current) =>
+        current
+          ? {
+              ...current,
+              versions: current.versions?.map((version) =>
+                version.id === versionId
+                  ? { ...version, timelineStatus: 'error', timelineError: message }
+                  : version,
+              ),
+            }
+          : current,
+      );
+      onNotice(message);
+    } finally {
+      setSongBusy(false);
+      setGeneratingSongTimeline(false);
     }
   };
 
@@ -3742,12 +3905,23 @@ function VideoCreationPanel({
   };
 
   const videoVersions = videoLibrary?.versions?.filter((version) => version.id && version.videoPath) ?? [];
+  const songVersions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
+  const groupedSongVersions = groupSongVersionsForDisplay(songVersions);
 
   return (
     <section className="creation-panel">
       <div className="section-heading with-action">
         <span>视频导出</span>
         <div className="section-heading-actions">
+          <button
+            className="ghost-action small"
+            type="button"
+            onClick={() => void generateListeningAudio()}
+            disabled={audioGenerating || audioStatusLoading}
+          >
+            <Icon name={audioGenerating ? 'refresh' : 'sound'} />
+            {audioGenerating ? '生成中' : '生成听力'}
+          </button>
           <button className="ghost-action small" type="button" onClick={() => void openVideoDirectory()} disabled={videoBusy}>
             <Icon name="folder" /> 打开保存目录
           </button>
@@ -3755,6 +3929,14 @@ function VideoCreationPanel({
             <Icon name="refresh" /> {recordingReadyLoading ? '检查中' : '检查准备状态'}
           </button>
         </div>
+      </div>
+      <div className="creation-resource-grid" aria-label="视频资源状态">
+        <ResourceRow label="章节正文" value={`${article.sentenceCount} 句英文`} />
+        <ResourceRow label="听力材料" value={audioMaterialStatusLabel(audioStatus, audioStatusLoading)} />
+        <ResourceRow
+          label="视频准备"
+          value={recordingReadyLoading ? '检查中' : recordingReady?.ready ? '已就绪' : recordingReady ? '未就绪' : '未检查'}
+        />
       </div>
       <div className="video-version-list" aria-label="已导出视频版本">
         <div className="song-style-group-heading">
@@ -3807,9 +3989,56 @@ function VideoCreationPanel({
         <button className="primary-action" type="button" disabled={exportingListeningVideo} onClick={openRecordingDialog}>
           <Icon name="recordVideo" /> 导出听力视频
         </button>
-        <button className="ghost-action" type="button" disabled>
-          <Icon name="recordVideo" /> 歌曲视频请在歌曲标签选择版本
-        </button>
+      </div>
+      <div className="video-version-list" aria-label="可导出歌曲视频版本">
+        <div className="song-style-group-heading">
+          <span>歌曲视频</span>
+          <b>{songBusy ? '刷新中' : `${songVersions.length} 个歌曲版本`}</b>
+          <button className="ghost-action small" type="button" onClick={() => void loadSongState()} disabled={songBusy}>
+            <Icon name="refresh" /> 刷新歌曲
+          </button>
+        </div>
+        {groupedSongVersions.length === 0 ? (
+          <p className="sentence-empty">还没有本地完整歌曲版本，请先在歌曲页生成或导入歌曲。</p>
+        ) : groupedSongVersions.map((group) => (
+          <div className="song-style-group" key={group.key}>
+            <div className="song-style-group-heading">
+              <span>来源</span>
+              <b>{group.label}</b>
+            </div>
+            <div className="song-version-row">
+              {group.versions.map((version, index) => {
+                const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
+                const title = version.title?.trim() || `版本 ${index + 1}`;
+                const timelineBlockedTitle =
+                  timelineStatus === 'stale' ? '歌曲字幕时间线版本过旧，请重新生成字幕' : '请先生成歌曲字幕';
+                return (
+                  <div className="song-version-actions" key={version.id}>
+                    <span className="song-version-title">{title}{version.isDefault ? ' · 默认' : ''}</span>
+                    <button
+                      className="ghost-action small"
+                      type="button"
+                      disabled={songBusy || timelineStatus === 'generating'}
+                      onClick={() => void generateSongTimeline(version.id)}
+                    >
+                      <Icon name={timelineStatus === 'generating' ? 'refresh' : 'sentence'} /> {songTimelineLabel(timelineStatus)}
+                    </button>
+                    <button
+                      className="ghost-action small"
+                      type="button"
+                      disabled={busy || songBusy || timelineStatus !== 'ready'}
+                      title={timelineStatus === 'ready' ? '导出歌曲视频' : timelineBlockedTitle}
+                      onClick={() => openSongRecordingDialog(version.id)}
+                    >
+                      <Icon name="recordVideo" /> 导出歌曲视频
+                    </button>
+                    {version.durationMs ? <small>{formatDurationMs(version.durationMs)}</small> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
       {exportingListeningVideo && (
         <AiBlockingOverlay
@@ -3818,6 +4047,33 @@ function VideoCreationPanel({
           timeoutSeconds={900}
         />
       )}
+      {exportingSongVideo && (
+        <AiBlockingOverlay
+          title="正在导出歌曲视频"
+          detail="正在合成歌曲音频、字幕和绘本画面，请等待导出完成。"
+          timeoutSeconds={900}
+        />
+      )}
+      {generatingSongTimeline && (
+        <AiBlockingOverlay
+          title="正在生成歌曲字幕"
+          detail="正在识别歌曲音频并生成字幕时间轴，请等待服务返回。"
+          timeoutSeconds={600}
+        />
+      )}
+      {audioOverwriteConfirm && (
+        <AudioMaterialOverwriteConfirmDialog
+          status={audioOverwriteConfirm}
+          busy={audioGenerating}
+          onCancel={() => setAudioOverwriteConfirm(null)}
+          onConfirm={() => {
+            const status = audioOverwriteConfirm;
+            setAudioOverwriteConfirm(null);
+            void startListeningAudioGeneration(status, true);
+          }}
+        />
+      )}
+      {audioGenerating && <AudioMaterialProgressDialog progress={audioProgress} />}
       {recordingDialogDraft && (
         <RecordingSettingsDialog
           settings={recordingDialogDraft}
@@ -3826,6 +4082,7 @@ function VideoCreationPanel({
           onCancel={() => {
             if (recordingDialogSaving) return;
             setRecordingDialogDraft(null);
+            setRecordingDialogSongVersionId('');
           }}
           onConfirm={() => void confirmRecordingDialog()}
         />

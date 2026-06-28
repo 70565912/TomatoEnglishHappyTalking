@@ -1278,12 +1278,19 @@ describe('App', () => {
     const chapterDeleteButtons = container.querySelectorAll('.mission-row .delete-action');
     expect(chapterDeleteButtons).toHaveLength(1);
 
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    fireEvent.click(chapterDeleteButtons[0]);
+    expect(confirmSpy).toHaveBeenCalledWith('确定删除章节“Draft Chapter”？删除后不可恢复。');
+    expect(calls.some((call) => call.type === 'article.delete')).toBe(false);
+
+    confirmSpy.mockReturnValue(true);
     fireEvent.click(chapterDeleteButtons[0]);
 
     await waitFor(() => {
       expect(calls.find((call) => call.type === 'article.delete')?.payload).toMatchObject({ articleId: 42 });
     });
     expect(await screen.findByText('章节已删除')).toBeInTheDocument();
+    confirmSpy.mockRestore();
   });
 
   it('exports and imports books from the creation center', async () => {
@@ -3584,6 +3591,28 @@ describe('App', () => {
             versions: [],
           });
         }
+        if (type === 'listening.audioStatus') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            total: 1,
+            ready: 0,
+            missing: [0],
+            failed: 0,
+            status: 'missing',
+          });
+        }
+        if (type === 'listening.audioGenerate') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            total: 1,
+            ready: 1,
+            missing: [],
+            failed: 0,
+            status: 'ready',
+            requested: 1,
+            overwrite: false,
+          });
+        }
         if (type === 'listening.recordingReady') {
           return new Promise<BridgeResponse>((resolve) => {
             resolveReady = () =>
@@ -3622,6 +3651,20 @@ describe('App', () => {
     const exportButton = await screen.findByRole('button', { name: /导出听力视频/ });
     expect(exportButton).not.toBeDisabled();
     expect(screen.getByRole('button', { name: /检查中/ })).toBeDisabled();
+    expect(await screen.findByText('0 / 1 已生成 · 缺 1 句')).toBeInTheDocument();
+
+    const videoPanel = screen.getByText('视频导出').closest('.creation-panel') as HTMLElement;
+    fireEvent.click(within(videoPanel).getByRole('button', { name: /生成听力/ }));
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'listening.audioGenerate')?.payload).toMatchObject({
+        articleId: article.id,
+        overwrite: false,
+      });
+    });
+    expect(await screen.findByText('听力材料已生成')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(calls.filter((call) => call.type === 'listening.recordingReady').length).toBeGreaterThanOrEqual(2);
+    });
 
     fireEvent.click(exportButton);
     expect(await screen.findByRole('dialog', { name: '录制视频设置' })).toBeInTheDocument();
@@ -3630,6 +3673,149 @@ describe('App', () => {
       resolveSettings?.();
       resolveReady?.();
     });
+  });
+
+  it('exports song video from the creation center video tab', async () => {
+    window.location.hash = '/creation?articleId=7';
+    const article = {
+      id: 7,
+      title: 'Song Video Chapter',
+      content: 'Tom sings with the stars.',
+      sentences: ['Tom sings with the stars.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 80,
+    };
+    const recordingSettings = {
+      codec: 'h264',
+      resolution: '1920x1080',
+      pageTransition: 'crossFade',
+      subtitleMode: 'srt',
+      outputDirectory: 'F:\\Tomato\\recording-export',
+      fps: 25,
+      quality: 'high',
+      hardwareBackend: 'auto',
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [],
+          });
+        }
+        if (type === 'recording.settings.load' || type === 'recording.settings.save') {
+          return ok(message.id, type, recordingSettings);
+        }
+        if (type === 'recording.videoList') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            versions: [],
+          });
+        }
+        if (type === 'listening.audioStatus') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            total: 1,
+            ready: 1,
+            missing: [],
+            failed: 0,
+            status: 'ready',
+          });
+        }
+        if (type === 'listening.recordingReady') {
+          return ok(message.id, type, {
+            ready: true,
+            reasons: [],
+            encoderName: 'ffmpeg',
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'crossFade',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            requiredEnglish: 1,
+            readyEnglish: 1,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: [],
+            missingChinese: [],
+            failed: 0,
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            source: 'suno',
+            versions: [
+              {
+                id: 'song-v1',
+                audioPath: 'F:\\Tomato\\suno-music\\song-v1.mp3',
+                title: 'Star Song',
+                durationMs: 123000,
+                source: 'suno',
+                timelinePath: 'F:\\Tomato\\suno-music\\song-v1.timeline.json',
+                timelineStatus: 'ready',
+                isDefault: true,
+              },
+            ],
+          });
+        }
+        if (type === 'listening.songRecordVideo') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            videoPath: 'F:\\Tomato\\recording-export\\song\\star-song.mp4',
+            subtitlePath: 'F:\\Tomato\\recording-export\\song\\star-song.srt',
+            durationMs: 123000,
+            frameCount: 250,
+            droppedFrameCount: 0,
+            encoderName: 'ffmpeg',
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'crossFade',
+            warnings: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    await clickSelectedCreationAction('视频');
+    const songVideoList = await screen.findByLabelText('可导出歌曲视频版本');
+    expect(within(songVideoList).getByText('Star Song · 默认')).toBeInTheDocument();
+
+    fireEvent.click(within(songVideoList).getByRole('button', { name: /导出歌曲视频/ }));
+    const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
+    fireEvent.click(within(dialog).getByRole('button', { name: /开始录制/ }));
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'listening.songRecordVideo')?.payload).toMatchObject({
+        articleId: article.id,
+        versionId: 'song-v1',
+        codec: 'h264',
+        resolution: '1920x1080',
+      });
+    });
+    expect(await screen.findByText('歌曲视频导出完成')).toBeInTheDocument();
   });
 
   it('allows switching books in the creation center after opening from a routed book', async () => {
