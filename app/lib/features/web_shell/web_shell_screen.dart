@@ -3910,6 +3910,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'magicClicked': fill['magicClicked'],
             'styleLength': (fill['stylePrompt'] ?? '').toString().length,
             'magicTarget': fill['magicTarget'],
+            'magicTrigger': fill['magicTrigger'],
             'styleExpandTarget': fill['styleExpandTarget'],
             'stylePlaceholder': fill['stylePlaceholder'],
             'lyricsField': fill['lyricsField'],
@@ -5547,7 +5548,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return hit === el || el.contains(hit);
     });
   };
-  const visible = (el) => {
+  const rendered = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
@@ -5555,8 +5556,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       rect.height > 0 &&
       style.visibility !== 'hidden' &&
       style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01 &&
-      hitTestVisible(el);
+      Number(style.opacity || '1') > 0.01;
+  };
+  const visible = (el) => {
+    return rendered(el) && hitTestVisible(el);
   };
   const attrsText = (el) => normalize([
     el.getAttribute?.('aria-label'),
@@ -5678,7 +5681,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return hit === el || el.contains(hit);
     });
   };
-  const visible = (el) => {
+  const rendered = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
@@ -5686,8 +5689,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       rect.height > 0 &&
       style.visibility !== 'hidden' &&
       style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01 &&
-      hitTestVisible(el);
+      Number(style.opacity || '1') > 0.01;
+  };
+  const visible = (el) => {
+    return rendered(el) && hitTestVisible(el);
   };
   const attrsText = (el) => normalize([
     el.getAttribute?.('aria-label'),
@@ -5976,6 +5981,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final readOnlyJson = jsonEncode(readOnly);
     return '''
 (() => {
+  try {
   const lyrics = $lyricsJson;
   const style = $styleJson;
   const ignoredStyleRaw = $ignoredStyleJson;
@@ -6025,7 +6031,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return hit === el || el.contains(hit);
     });
   };
-  const visible = (el) => {
+  const rendered = (el) => {
     if (!el) return false;
     const rect = el.getBoundingClientRect();
     const style = window.getComputedStyle(el);
@@ -6033,8 +6039,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       rect.height > 0 &&
       style.visibility !== 'hidden' &&
       style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01 &&
-      hitTestVisible(el);
+      Number(style.opacity || '1') > 0.01;
+  };
+  const visible = (el) => {
+    return rendered(el) && hitTestVisible(el);
   };
   const textOf = (el) => [
     el.getAttribute?.('aria-label'),
@@ -6252,7 +6260,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return /[,，]|\\bbpm\\b|vocals?|guitar|drum|bass|piano|synth|folk|pop|rock|rap|house|ambient|trance|beats?|minor|major|music|melody|rhythm|voice|vocal|和声|鼓|吉他|钢琴|贝斯|旋律|节奏|人声|民谣|流行|摇滚|说唱|电子/i.test(text);
   };
   const allFields = Array.from(document.querySelectorAll(editorSelector))
-    .filter(visible)
+    .filter(rendered)
     .filter((el) => !isDisabled(el))
     .map((el) => {
       const context = contextText(el);
@@ -6274,7 +6282,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   const editorIn = (root, reject = null) => {
     if (!root) return null;
     const editors = Array.from(root.querySelectorAll(editorSelector))
-      .filter(visible)
+      .filter(rendered)
       .filter((el) => !isDisabled(el))
       .filter((el) => !isUtilityEditor(el, contextText(el)))
       .filter((el) => !(reject && reject.test(normalize([utilityMeta(el), contextText(el)].join(' ')))))
@@ -6298,7 +6306,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   ].join(' '));
   const panelByTestId = (pattern, reject = null) => {
     const panels = Array.from(document.querySelectorAll('[data-testid],[data-test-id]'))
-      .filter(visible)
+      .filter(rendered)
       .filter((el) => {
         const meta = normalize([
           el.getAttribute?.('data-testid'),
@@ -6313,7 +6321,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   };
   const panelByTitle = (titlePattern, rejectTitlePattern = null) => {
     const panels = Array.from(document.querySelectorAll('section,article,[role="group"],div'))
-      .filter(visible)
+      .filter(rendered)
       .filter((el) => editorIn(el, rejectTitlePattern))
       .filter((el) => {
         const rect = el.getBoundingClientRect();
@@ -6459,16 +6467,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (el.matches?.('input,textarea')) return normalize(el.value || '');
     return normalize(el.innerText || el.textContent || el.value || '');
   };
-  const rendered = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 &&
-      rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
   const textIsMuted = (el) => {
     if (!el) return true;
     const color = window.getComputedStyle(el).color || '';
@@ -6571,6 +6569,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       const direct = el.matches?.('input,textarea')
         ? normalize(el.value || '')
         : normalize(el.innerText || el.textContent || el.value || '');
+      if (el.matches?.('input,textarea')) {
+        return looksLikeSunoGeneratedStyle(direct) ? direct : '';
+      }
       if (looksLikeSunoGeneratedStyle(direct) &&
           (el.matches?.('input,textarea') || !textIsMuted(el))) {
         return direct;
@@ -6637,7 +6638,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     const root = findStyleContainer(panel);
     if (!root) return false;
     return Array.from(root.querySelectorAll('button,[role="button"],a,label,[aria-label],[data-testid],[data-test-id]'))
-      .filter(visible)
+      .filter(rendered)
       .some((el) => {
         const clickable = clickableAncestor(el);
         if (!clickable || isDisabled(clickable)) return false;
@@ -6670,7 +6671,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     const candidates = Array.from(document.querySelectorAll(
       'button,[role="button"],summary,a,label,[aria-expanded],[data-state],[tabindex]'
     ))
-      .filter(visible)
+      .filter(rendered)
       .map((el) => {
         const clickable = clickableAncestor(el);
         if (!clickable || isDisabled(clickable)) return null;
@@ -6847,7 +6848,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       .flatMap((root) => Array.from(root.querySelectorAll(
         'button,[role="button"],a,label,[aria-label],[data-testid],[data-test-id]'
       )))
-      .filter(visible)
+      .filter(rendered)
       .map((el) => {
         const clickable = clickableAncestor(el);
         if (!clickable || isDisabled(clickable)) return null;
@@ -6898,6 +6899,202 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       candidates[0] ||
       null;
   };
+  const triggerStateKey = '__tomatoSunoStyleMagicTrigger';
+  const triggerSignature = normalize(
+    presenceText(expectedLyrics).slice(0, 180) + '|' + ignoredStyle.slice(0, 180)
+  );
+  const readTriggerState = () => {
+    const state = window[triggerStateKey];
+    if (!state || state.signature !== triggerSignature) return null;
+    if (!Array.isArray(state.attempts)) state.attempts = [];
+    if (!Number.isFinite(state.startedAt)) state.startedAt = Date.now();
+    return state;
+  };
+  const writeTriggerState = (state) => {
+    window[triggerStateKey] = state;
+    return state;
+  };
+  const dispatchActivationEvents = (target) => {
+    const rect = target.getBoundingClientRect();
+    const clientX = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
+    const clientY = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
+    const base = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      view: window,
+      button: 0,
+      buttons: 1,
+      clientX,
+      clientY
+    };
+    const eventTypes = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
+    const fired = [];
+    for (const type of eventTypes) {
+      try {
+        const Ctor = type.startsWith('pointer') && typeof PointerEvent !== 'undefined'
+          ? PointerEvent
+          : MouseEvent;
+        const event = new Ctor(type, {
+          ...base,
+          buttons: /down\$/.test(type) ? 1 : 0,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true
+        });
+        target.dispatchEvent(event);
+        fired.push(type);
+      } catch (_) {}
+    }
+    return fired;
+  };
+  const invokeReactOnClick = (target) => {
+    let node = target;
+    while (node && node !== document.body && node !== document.documentElement) {
+      const reactKey = Object.keys(node).find((key) =>
+        key.startsWith('__reactProps\$') ||
+        key.startsWith('__reactEventHandlers\$')
+      );
+      const props = reactKey ? node[reactKey] : null;
+      const handler = props &&
+        (props.onClick || props.onPointerDown || props.onMouseDown);
+      if (typeof handler === 'function') {
+        const event = {
+          type: 'click',
+          target,
+          currentTarget: node,
+          bubbles: true,
+          cancelable: true,
+          defaultPrevented: false,
+          nativeEvent: {},
+          preventDefault() {
+            this.defaultPrevented = true;
+          },
+          stopPropagation() {},
+          isPropagationStopped() {
+            return false;
+          },
+          isDefaultPrevented() {
+            return this.defaultPrevented;
+          },
+          persist() {}
+        };
+        try {
+          handler(event);
+          return {
+            ok: true,
+            node: summarize(node),
+            reactKey
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            error: String(error && error.message ? error.message : error),
+            node: summarize(node),
+            reactKey
+          };
+        }
+      }
+      node = node.parentElement;
+    }
+    return {
+      ok: false,
+      error: 'reactHandlerNotFound'
+    };
+  };
+  const nextTriggerMethod = () => {
+    let state = readTriggerState();
+    if (!state && magicAlreadyRequested) {
+      state = writeTriggerState({
+        signature: triggerSignature,
+        startedAt: Date.now() - 4200,
+        attempts: ['nativeClick']
+      });
+    }
+    if (!state || !magicAlreadyRequested) {
+      state = writeTriggerState({
+        signature: triggerSignature,
+        startedAt: Date.now(),
+        attempts: []
+      });
+    }
+    const attempts = state.attempts;
+    const ageMs = Date.now() - state.startedAt;
+    if (!attempts.includes('nativeClick')) return 'nativeClick';
+    if (!attempts.includes('activationEvents') && ageMs >= 4000) {
+      return 'activationEvents';
+    }
+    if (!attempts.includes('reactOnClick') && ageMs >= 8000) {
+      return 'reactOnClick';
+    }
+    return '';
+  };
+  const triggerStyleMagicButton = (magic) => {
+    const target = magic?.clickable;
+    if (!target) {
+      return {
+        clicked: false,
+        waiting: false,
+        method: '',
+        error: 'missingTarget'
+      };
+    }
+    const state = readTriggerState() || writeTriggerState({
+      signature: triggerSignature,
+      startedAt: Date.now(),
+      attempts: []
+    });
+    const method = nextTriggerMethod();
+    if (!method) {
+      return {
+        clicked: false,
+        waiting: true,
+        method: '',
+        attempts: state.attempts.slice(),
+        ageMs: Date.now() - state.startedAt
+      };
+    }
+    let result = {};
+    try {
+      target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    } catch (_) {}
+    try {
+      target.focus?.();
+    } catch (_) {}
+    if (method === 'nativeClick') {
+      try {
+        target.click();
+        result = { ok: true };
+      } catch (error) {
+        result = {
+          ok: false,
+          error: String(error && error.message ? error.message : error)
+        };
+      }
+    } else if (method === 'activationEvents') {
+      result = {
+        ok: true,
+        events: dispatchActivationEvents(target)
+      };
+    } else if (method === 'reactOnClick') {
+      result = invokeReactOnClick(target);
+    }
+    const updatedState = readTriggerState() || state;
+    if (!updatedState.attempts.includes(method)) {
+      updatedState.attempts.push(method);
+    }
+    updatedState.lastAttemptAt = Date.now();
+    updatedState.lastMethod = method;
+    writeTriggerState(updatedState);
+    return {
+      clicked: result.ok !== false,
+      waiting: false,
+      method,
+      result,
+      attempts: updatedState.attempts.slice(),
+      ageMs: Date.now() - updatedState.startedAt
+    };
+  };
   const missing = [];
   let styleValue = styleSurface ? getStyleValue(styleSurface) : '';
   let stylePlaceholder = styleField ? getPlaceholder(styleField) : '';
@@ -6905,6 +7102,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   let styleSource = '';
   let magicClicked = false;
   let magicTarget = null;
+  let magicTrigger = null;
   if (!lyricsField && !lyricsAlreadyPresent) {
     missing.push('lyrics');
   } else if (!expectedLyrics) {
@@ -7025,19 +7223,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         textSample: normalize(document.body?.innerText || '').slice(0, 1000)
       });
     } else if (magic && !magicAlreadyRequested && allowMagicClick) {
-      magic.clickable.scrollIntoView({ block: 'center', inline: 'center' });
-      magic.clickable.focus?.();
-      magic.clickable.click();
-      magicClicked = true;
+      magicTrigger = triggerStyleMagicButton(magic);
+      magicClicked = magicTrigger.clicked;
       magicTarget = summarize(magic.clickable);
       return JSON.stringify({
         ok: false,
         retry: true,
-        magicClicked: true,
-        message: 'Tomato 已点击 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成风格。',
+        magicClicked,
+        message: magicClicked
+          ? 'Tomato 已通过 DOM 触发 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成风格。'
+          : 'Tomato 已找到 Suno 自动风格魔法棒，正在等待可触发状态。',
         stylePrompt: '',
         styleSource: 'sunoMagic',
         magicTarget,
+        magicTrigger,
         ignoredStylePrompt: ignoredStyle,
         fieldCount: allFields.length,
         lyricsField: summarize(lyricsField),
@@ -7046,7 +7245,30 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         fields,
         textSample: normalize(document.body?.innerText || '').slice(0, 1000)
       });
-    } else if (magicAlreadyRequested || (magic && !allowMagicClick)) {
+    } else if (magic && magicAlreadyRequested) {
+      magicTrigger = triggerStyleMagicButton(magic);
+      magicClicked = magicTrigger.clicked;
+      magicTarget = summarize(magic.clickable);
+      return JSON.stringify({
+        ok: false,
+        retry: true,
+        magicClicked,
+        message: magicClicked
+          ? 'Tomato 已用备用 DOM 方式再次触发 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成风格。'
+          : '正在等待 Suno 自动风格生成完成...',
+        stylePrompt: '',
+        styleSource: 'sunoMagic',
+        magicTarget,
+        magicTrigger,
+        ignoredStylePrompt: ignoredStyle,
+        stylePlaceholder,
+        fieldCount: allFields.length,
+        lyricsField: summarize(lyricsField),
+        styleField: summarize(styleField),
+        fields,
+        textSample: normalize(document.body?.innerText || '').slice(0, 1000)
+      });
+    } else if (magic && !allowMagicClick) {
       return JSON.stringify({
         ok: false,
         retry: true,
@@ -7055,6 +7277,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         stylePrompt: '',
         styleSource: 'sunoMagic',
         magicTarget: magic ? summarize(magic.clickable) : null,
+        magicTrigger,
         ignoredStylePrompt: ignoredStyle,
         stylePlaceholder,
         fieldCount: allFields.length,
@@ -7072,6 +7295,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     retry: false,
     magicClicked,
     magicTarget,
+    magicTrigger,
     stylePrompt: styleValue,
     stylePlaceholder,
     styleSource,
@@ -7088,6 +7312,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     fields,
     textSample: normalize(document.body?.innerText || '').slice(0, 1000)
   });
+  } catch (error) {
+    return JSON.stringify({
+      ok: false,
+      retry: false,
+      missing: ['scriptError'],
+      magicClicked: false,
+      message: 'Suno 填表脚本执行失败：' +
+        String(error && error.message ? error.message : error),
+      error: String(error && error.message ? error.message : error),
+      stack: String(error && error.stack ? error.stack : '')
+    });
+  }
 })()
 ''';
   }
