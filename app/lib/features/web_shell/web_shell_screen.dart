@@ -6899,136 +6899,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       candidates[0] ||
       null;
   };
-  const triggerStateKey = '__tomatoSunoStyleMagicTrigger';
-  const triggerSignature = normalize(
-    presenceText(expectedLyrics).slice(0, 180) + '|' + ignoredStyle.slice(0, 180)
-  );
-  const readTriggerState = () => {
-    const state = window[triggerStateKey];
-    if (!state || state.signature !== triggerSignature) return null;
-    if (!Array.isArray(state.attempts)) state.attempts = [];
-    if (!Number.isFinite(state.startedAt)) state.startedAt = Date.now();
-    return state;
-  };
-  const writeTriggerState = (state) => {
-    window[triggerStateKey] = state;
-    return state;
-  };
-  const dispatchActivationEvents = (target) => {
-    const rect = target.getBoundingClientRect();
-    const clientX = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
-    const clientY = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
-    const base = {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      view: window,
-      button: 0,
-      buttons: 1,
-      clientX,
-      clientY
-    };
-    const eventTypes = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
-    const fired = [];
-    for (const type of eventTypes) {
-      try {
-        const Ctor = type.startsWith('pointer') && typeof PointerEvent !== 'undefined'
-          ? PointerEvent
-          : MouseEvent;
-        const event = new Ctor(type, {
-          ...base,
-          buttons: /down\$/.test(type) ? 1 : 0,
-          pointerId: 1,
-          pointerType: 'mouse',
-          isPrimary: true
-        });
-        target.dispatchEvent(event);
-        fired.push(type);
-      } catch (_) {}
-    }
-    return fired;
-  };
-  const invokeReactOnClick = (target) => {
-    let node = target;
-    while (node && node !== document.body && node !== document.documentElement) {
-      const reactKey = Object.keys(node).find((key) =>
-        key.startsWith('__reactProps\$') ||
-        key.startsWith('__reactEventHandlers\$')
-      );
-      const props = reactKey ? node[reactKey] : null;
-      const handler = props &&
-        (props.onClick || props.onPointerDown || props.onMouseDown);
-      if (typeof handler === 'function') {
-        const event = {
-          type: 'click',
-          target,
-          currentTarget: node,
-          bubbles: true,
-          cancelable: true,
-          defaultPrevented: false,
-          nativeEvent: {},
-          preventDefault() {
-            this.defaultPrevented = true;
-          },
-          stopPropagation() {},
-          isPropagationStopped() {
-            return false;
-          },
-          isDefaultPrevented() {
-            return this.defaultPrevented;
-          },
-          persist() {}
-        };
-        try {
-          handler(event);
-          return {
-            ok: true,
-            node: summarize(node),
-            reactKey
-          };
-        } catch (error) {
-          return {
-            ok: false,
-            error: String(error && error.message ? error.message : error),
-            node: summarize(node),
-            reactKey
-          };
-        }
-      }
-      node = node.parentElement;
-    }
-    return {
-      ok: false,
-      error: 'reactHandlerNotFound'
-    };
-  };
-  const nextTriggerMethod = () => {
-    let state = readTriggerState();
-    if (!state && magicAlreadyRequested) {
-      state = writeTriggerState({
-        signature: triggerSignature,
-        startedAt: Date.now() - 4200,
-        attempts: ['nativeClick']
-      });
-    }
-    if (!state || !magicAlreadyRequested) {
-      state = writeTriggerState({
-        signature: triggerSignature,
-        startedAt: Date.now(),
-        attempts: []
-      });
-    }
-    const attempts = state.attempts;
-    const ageMs = Date.now() - state.startedAt;
-    if (!attempts.includes('nativeClick')) return 'nativeClick';
-    if (!attempts.includes('activationEvents') && ageMs >= 4000) {
-      return 'activationEvents';
-    }
-    if (!attempts.includes('reactOnClick') && ageMs >= 8000) {
-      return 'reactOnClick';
-    }
-    return '';
-  };
   const triggerStyleMagicButton = (magic) => {
     const target = magic?.clickable;
     if (!target) {
@@ -7039,21 +6909,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         error: 'missingTarget'
       };
     }
-    const state = readTriggerState() || writeTriggerState({
-      signature: triggerSignature,
-      startedAt: Date.now(),
-      attempts: []
-    });
-    const method = nextTriggerMethod();
-    if (!method) {
-      return {
-        clicked: false,
-        waiting: true,
-        method: '',
-        attempts: state.attempts.slice(),
-        ageMs: Date.now() - state.startedAt
-      };
-    }
     let result = {};
     try {
       target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
@@ -7061,38 +6916,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     try {
       target.focus?.();
     } catch (_) {}
-    if (method === 'nativeClick') {
-      try {
-        target.click();
-        result = { ok: true };
-      } catch (error) {
-        result = {
-          ok: false,
-          error: String(error && error.message ? error.message : error)
-        };
-      }
-    } else if (method === 'activationEvents') {
+    try {
+      target.click();
       result = {
-        ok: true,
-        events: dispatchActivationEvents(target)
+        ok: true
       };
-    } else if (method === 'reactOnClick') {
-      result = invokeReactOnClick(target);
+    } catch (error) {
+      result = {
+        ok: false,
+        error: String(error && error.message ? error.message : error)
+      };
     }
-    const updatedState = readTriggerState() || state;
-    if (!updatedState.attempts.includes(method)) {
-      updatedState.attempts.push(method);
-    }
-    updatedState.lastAttemptAt = Date.now();
-    updatedState.lastMethod = method;
-    writeTriggerState(updatedState);
     return {
       clicked: result.ok !== false,
       waiting: false,
-      method,
-      result,
-      attempts: updatedState.attempts.slice(),
-      ageMs: Date.now() - updatedState.startedAt
+      method: 'nativeClick',
+      result
     };
   };
   const missing = [];
@@ -7228,11 +7067,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       magicTarget = summarize(magic.clickable);
       return JSON.stringify({
         ok: false,
-        retry: true,
+        retry: magicClicked,
+        missing: magicClicked ? [] : ['styleMagicClick'],
         magicClicked,
         message: magicClicked
           ? 'Tomato 已通过 DOM 触发 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成风格。'
-          : 'Tomato 已找到 Suno 自动风格魔法棒，正在等待可触发状态。',
+          : 'Tomato 已找到 Suno 自动风格魔法棒，但 DOM click 触发失败。',
         stylePrompt: '',
         styleSource: 'sunoMagic',
         magicTarget,
@@ -7246,20 +7086,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         textSample: normalize(document.body?.innerText || '').slice(0, 1000)
       });
     } else if (magic && magicAlreadyRequested) {
-      magicTrigger = triggerStyleMagicButton(magic);
-      magicClicked = magicTrigger.clicked;
-      magicTarget = summarize(magic.clickable);
       return JSON.stringify({
         ok: false,
         retry: true,
-        magicClicked,
-        message: magicClicked
-          ? 'Tomato 已用备用 DOM 方式再次触发 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成风格。'
-          : '正在等待 Suno 自动风格生成完成...',
+        magicClicked: false,
+        message: '正在等待 Suno 自动风格生成完成...',
         stylePrompt: '',
         styleSource: 'sunoMagic',
-        magicTarget,
-        magicTrigger,
+        magicTarget: summarize(magic.clickable),
         ignoredStylePrompt: ignoredStyle,
         stylePlaceholder,
         fieldCount: allFields.length,
