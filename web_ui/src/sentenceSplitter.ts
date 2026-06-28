@@ -35,27 +35,44 @@ const ABBREVIATIONS = new Set([
 ]);
 
 export function splitSentences(text: string): string[] {
-  const cleaned = normalizeArticleText(text);
-  if (!cleaned) return [];
+  const paragraphs = normalizeArticleParagraphs(text);
+  if (paragraphs.length === 0) return [];
 
-  return splitSentenceCandidates(cleaned)
-    .flatMap(splitLongReadAloudChunk)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean);
+  return paragraphs.flatMap((paragraph) => {
+    const chunks = splitSentenceCandidates(paragraph)
+      .flatMap(splitLongReadAloudChunk)
+      .map((sentence) => sentence.trim())
+      .filter(Boolean);
+    return mergeReadAloudContinuations(chunks);
+  });
 }
 
-function normalizeArticleText(text: string): string {
-  return text
-    .split(/\r?\n/g)
-    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
-    .filter((line) => line.length > 0 && !isImportedHeadingLine(line))
-    .map(stripCjkPrefix)
-    .filter((line) => line.length > 0 && !isImportedHeadingLine(line))
-    .map(normalizeInWordHyphens)
-    .join(' ')
-    .replace(/[ \t\r\n]+/g, ' ')
-    .replace(/([A-Za-z])\s*-\s*([A-Za-z])/g, '$1-$2')
-    .trim();
+function normalizeArticleParagraphs(text: string): string[] {
+  const paragraphs: string[] = [];
+  const currentLines: string[] = [];
+
+  const flushParagraph = () => {
+    if (currentLines.length === 0) return;
+    const paragraph = normalizeInWordHyphens(currentLines.join(' ').replace(/[ \t\r\n]+/g, ' ').trim());
+    if (paragraph) paragraphs.push(paragraph);
+    currentLines.length = 0;
+  };
+
+  for (const rawLine of text.split(/\r?\n/g)) {
+    let line = rawLine.replace(/[ \t]+/g, ' ').trim();
+    if (!line) {
+      flushParagraph();
+      continue;
+    }
+    if (isImportedHeadingLine(line)) continue;
+    line = stripCjkPrefix(line);
+    if (line && !isImportedHeadingLine(line)) {
+      currentLines.push(normalizeInWordHyphens(line));
+    }
+  }
+  flushParagraph();
+
+  return paragraphs;
 }
 
 function normalizeInWordHyphens(text: string): string {
@@ -165,17 +182,18 @@ function splitSentenceCandidates(cleaned: string): string[] {
   return candidates.length > 0 ? candidates : [cleaned];
 }
 
-type BreakKind = 'strong' | 'comma';
+type BreakKind = 'strong' | 'comma' | 'connector' | 'directQuote';
 
 type PhraseBreak = {
   index: number;
   kind: BreakKind;
 };
 
-const TARGET_PHRASE_MIN_WORDS = 8;
-const TARGET_PHRASE_MAX_WORDS = 16;
-const HARD_PHRASE_MAX_WORDS = 22;
-const SHORT_CONNECTOR_MIN_WORDS = 5;
+const TARGET_PHRASE_MIN_WORDS = 10;
+const TARGET_PHRASE_MAX_WORDS = 24;
+const HARD_PHRASE_MAX_WORDS = 32;
+const SHORT_CONNECTOR_MIN_WORDS = 6;
+const QUOTE_CONTINUATION_MIN_WORDS = 14;
 
 function splitLongReadAloudChunk(sentence: string): string[] {
   const trimmed = sentence.trim();
@@ -190,16 +208,13 @@ function splitLongReadAloudChunk(sentence: string): string[] {
     if (!rest) break;
 
     const restWordCount = words(rest).length;
-    const optionalBreak = chooseOptionalPhraseBreak(trimmed, start);
-    if (restWordCount <= HARD_PHRASE_MAX_WORDS && optionalBreak == null) {
+    const requiredBreak = requiredPhraseBreak(trimmed, start);
+    if (restWordCount <= TARGET_PHRASE_MAX_WORDS && requiredBreak == null) {
       chunks.push(rest);
       break;
     }
 
-    const breakIndex =
-      restWordCount <= HARD_PHRASE_MAX_WORDS && optionalBreak != null
-        ? optionalBreak
-        : choosePhraseBreak(trimmed, start);
+    const breakIndex = requiredBreak ?? choosePhraseBreak(trimmed, start);
     if (breakIndex <= start || breakIndex >= trimmed.length) {
       chunks.push(rest);
       break;
@@ -213,55 +228,55 @@ function splitLongReadAloudChunk(sentence: string): string[] {
   return chunks.length > 0 ? chunks : [trimmed];
 }
 
-function chooseOptionalPhraseBreak(text: string, start: number): number | null {
-  for (const phraseBreak of phraseBreaks(text, start)) {
-    const current = text.slice(start, phraseBreak.index).trim();
-    const count = words(current).length;
-    const remaining = words(text.slice(phraseBreak.index).trim()).length;
-    if (remaining < 4) continue;
-
-    if (phraseBreak.kind === 'strong' && count >= SHORT_CONNECTOR_MIN_WORDS) {
-      return phraseBreak.index;
-    }
-    if (count >= TARGET_PHRASE_MIN_WORDS && count <= TARGET_PHRASE_MAX_WORDS) {
-      return phraseBreak.index;
-    }
-    if (
-      count >= SHORT_CONNECTOR_MIN_WORDS &&
-      nextChunkStartsWithConnector(text, phraseBreak.index)
-    ) {
-      return phraseBreak.index;
-    }
-  }
-  return null;
-}
-
 function choosePhraseBreak(text: string, start: number): number {
   const breaks = phraseBreaks(text, start);
   let fallbackBeforeHard: PhraseBreak | null = null;
+  let fallbackStrongBeforeHard: PhraseBreak | null = null;
+  let bestStrong: PhraseBreak | null = null;
+  let bestAny: PhraseBreak | null = null;
 
   for (const phraseBreak of breaks) {
     const current = text.slice(start, phraseBreak.index).trim();
     const count = words(current).length;
     if (count > HARD_PHRASE_MAX_WORDS) break;
-    fallbackBeforeHard = phraseBreak;
+    if (count >= SHORT_CONNECTOR_MIN_WORDS) {
+      fallbackBeforeHard = phraseBreak;
+      if (phraseBreak.kind === 'strong' || phraseBreak.kind === 'directQuote') {
+        fallbackStrongBeforeHard = phraseBreak;
+      }
+    }
 
-    if (phraseBreak.kind === 'strong' && count >= SHORT_CONNECTOR_MIN_WORDS) {
-      return phraseBreak.index;
-    }
+    const remaining = words(text.slice(phraseBreak.index).trim()).length;
+    if (remaining < 4) continue;
     if (count >= TARGET_PHRASE_MIN_WORDS && count <= TARGET_PHRASE_MAX_WORDS) {
-      return phraseBreak.index;
-    }
-    if (
-      count >= SHORT_CONNECTOR_MIN_WORDS &&
-      nextChunkStartsWithConnector(text, phraseBreak.index)
-    ) {
-      return phraseBreak.index;
+      if (phraseBreak.kind === 'strong') {
+        if (!bestStrong || words(text.slice(start, bestStrong.index).trim()).length < count) {
+          bestStrong = phraseBreak;
+        }
+      }
+      if (!bestAny || words(text.slice(start, bestAny.index).trim()).length < count) {
+        bestAny = phraseBreak;
+      }
     }
   }
 
+  if (bestStrong) return bestStrong.index;
+  if (bestAny) return bestAny.index;
+  if (fallbackStrongBeforeHard) return fallbackStrongBeforeHard.index;
   if (fallbackBeforeHard) return fallbackBeforeHard.index;
   return wordBoundaryAfterWords(text, start, TARGET_PHRASE_MAX_WORDS);
+}
+
+function requiredPhraseBreak(text: string, start: number): number | null {
+  for (const phraseBreak of phraseBreaks(text, start)) {
+    if (phraseBreak.kind !== 'directQuote') continue;
+    const current = text.slice(start, phraseBreak.index).trim();
+    const remaining = text.slice(phraseBreak.index).trim();
+    if (words(current).length >= SHORT_CONNECTOR_MIN_WORDS && words(remaining).length >= 4) {
+      return phraseBreak.index;
+    }
+  }
+  return null;
 }
 
 function phraseBreaks(text: string, start: number): PhraseBreak[] {
@@ -274,9 +289,36 @@ function phraseBreaks(text: string, start: number): PhraseBreak[] {
     }
     if (ch === ',' && !hasUnclosedDoubleQuote(text.slice(start, index + 1))) {
       breaks.push({ index: consumeClosingPunctuation(text, index + 1), kind: 'comma' });
+      continue;
+    }
+    if ((ch === '"' || ch === '“') && shouldBreakBeforeDirectQuote(text, start, index)) {
+      breaks.push({ index, kind: 'directQuote' });
     }
   }
-  return breaks;
+  breaks.push(...connectorBreaks(text, start));
+  return breaks.sort((a, b) => a.index - b.index);
+}
+
+function connectorBreaks(text: string, start: number): PhraseBreak[] {
+  const rest = text.slice(start);
+  return [...rest.matchAll(/\s+(?:so that|because|while|when|before|after|although|though)\b/gi)]
+    .map((match) => ({ index: start + (match.index ?? 0), kind: 'connector' as const }));
+}
+
+function shouldBreakBeforeDirectQuote(text: string, start: number, index: number): boolean {
+  if (index <= start) return false;
+  const current = text.slice(start, index).trim();
+  if (words(current).length < SHORT_CONNECTOR_MIN_WORDS) return false;
+
+  const previous = previousNonWhitespace(text, index - 1);
+  if (previous < start) return false;
+  if (!/[A-Za-z0-9,;:]/.test(text[previous]) && !isClosingPunctuation(text[previous])) {
+    return false;
+  }
+
+  const next = nextNonWhitespace(text, index + 1);
+  if (next >= text.length) return false;
+  return /[A-Z]/.test(text[next]);
 }
 
 function consumeClosingPunctuation(text: string, index: number): number {
@@ -287,18 +329,35 @@ function consumeClosingPunctuation(text: string, index: number): number {
   return cursor;
 }
 
-function nextChunkStartsWithConnector(text: string, index: number): boolean {
-  const rest = text.slice(index).trimStart();
-  return /^(?:and|but|or|so|for|yet|then|because|while|when|as|though|although|which|who|that)\b/i.test(rest);
-}
-
 function wordBoundaryAfterWords(text: string, start: number, count: number): number {
   const matches = [...text.slice(start).matchAll(/[A-Za-z][A-Za-z'’-]*(?:-[A-Za-z][A-Za-z'’-]*)*/g)];
   if (matches.length <= count) return text.length;
-  const match = matches[count - 1];
-  const end = start + (match.index ?? 0) + match[0].length;
+  let matchIndex = count - 1;
+  let match = matches[matchIndex];
+  let end = start + (match.index ?? 0) + match[0].length;
+  while (wouldEndAtProtectedPeriod(text, end) && matchIndex + 1 < matches.length) {
+    matchIndex += 1;
+    match = matches[matchIndex];
+    end = start + (match.index ?? 0) + match[0].length;
+  }
   const nextSpace = text.indexOf(' ', end);
-  return nextSpace > end ? nextSpace : end;
+  return nextSpace > end ? nextSpace : consumeClosingPunctuation(text, end);
+}
+
+function wouldEndAtProtectedPeriod(text: string, wordEnd: number): boolean {
+  let cursor = wordEnd;
+  while (cursor < text.length && isClosingPunctuation(text[cursor])) {
+    cursor += 1;
+  }
+  if (cursor >= text.length || text[cursor] !== '.') return false;
+  const before = text.slice(0, wordEnd).trimEnd();
+  const lastWord = before
+    .split(/\s+/)
+    .at(-1)
+    ?.replace(/^[\"“”]+/g, '')
+    .replace(/["”’)\]}》]+$/g, '')
+    .toLowerCase() ?? '';
+  return ABBREVIATIONS.has(lastWord) || /^[a-z]$/.test(lastWord);
 }
 
 function words(text: string): string[] {
@@ -319,12 +378,20 @@ function isDecimalPoint(text: string, index: number): boolean {
 }
 
 function isProtectedPeriod(current: string): boolean {
-  const lastWord = words(current).at(-1)?.replace(/[.!?。！？"”’)\]}》]+$/g, '').toLowerCase() ?? '';
+  const lastWord = words(current).at(-1)
+    ?.replace(/^[\"“”]+/g, '')
+    .replace(/[.!?。！？"”’)\]}》]+$/g, '')
+    .toLowerCase() ?? '';
   return ABBREVIATIONS.has(lastWord) || /^[a-z]$/.test(lastWord);
 }
 
 function shouldKeepReadingThroughSentenceEnd(current: string, text: string, lookahead: number): boolean {
-  if (hasUnclosedDoubleQuote(current)) return true;
+  if (hasUnclosedDoubleQuote(current)) {
+    const next = nextNonWhitespace(text, lookahead);
+    if (next >= text.length) return true;
+    if (/[a-z]/.test(text[next])) return true;
+    return words(current).length < QUOTE_CONTINUATION_MIN_WORDS;
+  }
 
   const next = nextNonWhitespace(text, lookahead);
   if (next >= text.length) return false;
@@ -334,7 +401,18 @@ function shouldKeepReadingThroughSentenceEnd(current: string, text: string, look
 
 function hasUnclosedDoubleQuote(text: string): boolean {
   const straightQuotes = (text.match(/"/g) ?? []).length;
-  if (straightQuotes % 2 === 1) return true;
+  if (straightQuotes % 2 === 1) {
+    const trimmed = text.trimEnd();
+    const lastQuote = trimmed.lastIndexOf('"');
+    if (lastQuote >= 0) {
+      let cursor = lastQuote + 1;
+      while (cursor < trimmed.length && isClosingPunctuation(trimmed[cursor])) {
+        cursor += 1;
+      }
+      if (cursor >= trimmed.length) return false;
+    }
+    return true;
+  }
 
   const openCurlyQuotes = (text.match(/“/g) ?? []).length;
   const closeCurlyQuotes = (text.match(/”/g) ?? []).length;
@@ -347,4 +425,81 @@ function nextNonWhitespace(text: string, start: number): number {
     index += 1;
   }
   return index;
+}
+
+function previousNonWhitespace(text: string, start: number): number {
+  let index = start;
+  while (index >= 0 && /\s/.test(text[index])) {
+    index -= 1;
+  }
+  return index;
+}
+
+function mergeReadAloudContinuations(chunks: string[]): string[] {
+  const merged: string[] = [];
+  for (const rawChunk of chunks) {
+    const chunk = rawChunk.trim();
+    if (!chunk) continue;
+    const previous = merged.at(-1);
+    if (previous && shouldMergeWithPrevious(previous, chunk)) {
+      merged[merged.length - 1] = `${previous} ${chunk}`.replace(/\s+/g, ' ').trim();
+    } else {
+      merged.push(chunk);
+    }
+  }
+  return merged;
+}
+
+function shouldMergeWithPrevious(previous: string, current: string): boolean {
+  const combinedWords = words(`${previous} ${current}`).length;
+  if (combinedWords > HARD_PHRASE_MAX_WORDS) return false;
+  if (hasUnclosedDoubleQuote(previous)) {
+    return combinedWords <= TARGET_PHRASE_MAX_WORDS;
+  }
+  if (endsWithDanglingReadAloudPhrase(previous)) return true;
+  if (endsWithShortCommaPhrase(previous)) {
+    return combinedWords <= TARGET_PHRASE_MAX_WORDS;
+  }
+  if (isShortQuotedFragment(previous)) {
+    return combinedWords <= TARGET_PHRASE_MAX_WORDS;
+  }
+  if (startsWithLowercaseConnector(current) && !endsWithFinalSentencePunctuation(previous)) {
+    if (endsWithStrongPhrasePunctuation(previous) && words(previous).length >= TARGET_PHRASE_MIN_WORDS) {
+      return false;
+    }
+    return combinedWords <= TARGET_PHRASE_MAX_WORDS;
+  }
+  return false;
+}
+
+function startsWithLowercaseConnector(text: string): boolean {
+  return /^(?:and|but|or|so|for|yet|then|because|while|when|as|though|although|which|who|that)\b/.test(text.trim());
+}
+
+function endsWithDanglingReadAloudPhrase(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.endsWith('—') || trimmed.endsWith('–') || trimmed.endsWith('-')) {
+    return true;
+  }
+  return /\b(?:a|an|the|and|or|but|as|if|to|of|for|with|from|into|upon|about|like|than|that|which|who|what|how|why|where|when|me|my|your|his|her|their|our)\s*["”’)\]}》]*$/i.test(trimmed);
+}
+
+function endsWithShortCommaPhrase(text: string): boolean {
+  const trimmed = text.trim();
+  return words(trimmed).length < TARGET_PHRASE_MIN_WORDS && /,["”’)\]}》]*$/.test(trimmed);
+}
+
+function isShortQuotedFragment(text: string): boolean {
+  const trimmed = text.trim();
+  if (words(trimmed).length >= TARGET_PHRASE_MIN_WORDS) return false;
+  if (!/^["'“‘]/.test(trimmed)) return false;
+  return !endsWithFinalSentencePunctuation(trimmed) || /[,'"“‘][^"'“”‘’]*[.!?。！？]$/.test(trimmed);
+}
+
+function endsWithFinalSentencePunctuation(text: string): boolean {
+  return /[.!?。！？]["”’)\]}》]*$/.test(text.trim());
+}
+
+function endsWithStrongPhrasePunctuation(text: string): boolean {
+  return /[;:—–]["”’)\]}》]*$/.test(text.trim());
 }

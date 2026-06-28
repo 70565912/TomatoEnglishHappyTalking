@@ -39,45 +39,67 @@ class NlpService {
     'st',
   };
 
-  static const _targetPhraseMinWords = 8;
-  static const _targetPhraseMaxWords = 16;
-  static const _hardPhraseMaxWords = 22;
-  static const _shortConnectorMinWords = 5;
+  static const _targetPhraseMinWords = 10;
+  static const _targetPhraseMaxWords = 24;
+  static const _hardPhraseMaxWords = 32;
+  static const _shortConnectorMinWords = 6;
+  static const _quoteContinuationMinWords = 14;
 
   /// Split [text] into natural read-aloud sentences.
   ///
   /// Keep sentence-end boundaries first, then split long Alice-style compound
   /// sentences into shorter read-aloud phrase chunks.
   static List<String> splitSentences(String text) {
-    final cleaned = _normalizeArticleText(text);
-    if (cleaned.isEmpty) return [];
+    final paragraphs = _normalizeArticleParagraphs(text);
+    if (paragraphs.isEmpty) return [];
 
-    return _splitSentenceCandidates(cleaned)
-        .expand(_splitLongReadAloudChunk)
-        .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
-        .toList(growable: false);
+    final allChunks = <String>[];
+    for (final paragraph in paragraphs) {
+      final chunks = _splitSentenceCandidates(paragraph)
+          .expand(_splitLongReadAloudChunk)
+          .map((sentence) => sentence.trim())
+          .where((sentence) => sentence.isNotEmpty)
+          .toList(growable: false);
+      allChunks.addAll(_mergeReadAloudContinuations(chunks));
+    }
+    return allChunks;
   }
 
-  static String _normalizeArticleText(String text) {
+  static List<String> _normalizeArticleParagraphs(String text) {
     final lines = text.split(RegExp(r'\r?\n'));
-    final keptLines = <String>[];
+    final paragraphs = <String>[];
+    final currentLines = <String>[];
+
+    void flushParagraph() {
+      if (currentLines.isEmpty) {
+        return;
+      }
+      final paragraph = _normalizeInWordHyphens(
+        currentLines.join(' ').replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim(),
+      );
+      if (paragraph.isNotEmpty) {
+        paragraphs.add(paragraph);
+      }
+      currentLines.clear();
+    }
 
     for (final rawLine in lines) {
       var line = rawLine.replaceAll(RegExp(r'[ \t]+'), ' ').trim();
-      if (line.isEmpty || _isImportedHeadingLine(line)) {
+      if (line.isEmpty) {
+        flushParagraph();
+        continue;
+      }
+      if (_isImportedHeadingLine(line)) {
         continue;
       }
       line = _stripCjkPrefix(line);
       if (line.isNotEmpty && !_isImportedHeadingLine(line)) {
-        keptLines.add(_normalizeInWordHyphens(line));
+        currentLines.add(_normalizeInWordHyphens(line));
       }
     }
+    flushParagraph();
 
-    final normalized = _normalizeInWordHyphens(
-      keptLines.join(' ').replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim(),
-    );
-    return normalized;
+    return paragraphs;
   }
 
   static String _normalizeInWordHyphens(String text) => text.replaceAllMapped(
@@ -267,16 +289,13 @@ class NlpService {
       }
 
       final restWordCount = _wordCount(rest);
-      final optionalBreak = _chooseOptionalPhraseBreak(trimmed, start);
-      if (restWordCount <= _hardPhraseMaxWords && optionalBreak == null) {
+      final requiredBreak = _requiredPhraseBreak(trimmed, start);
+      if (restWordCount <= _targetPhraseMaxWords && requiredBreak == null) {
         chunks.add(rest);
         break;
       }
 
-      final breakIndex =
-          restWordCount <= _hardPhraseMaxWords && optionalBreak != null
-              ? optionalBreak
-              : _choosePhraseBreak(trimmed, start);
+      final breakIndex = requiredBreak ?? _choosePhraseBreak(trimmed, start);
       if (breakIndex <= start || breakIndex >= trimmed.length) {
         chunks.add(rest);
         break;
@@ -292,33 +311,12 @@ class NlpService {
     return chunks.isEmpty ? [trimmed] : chunks;
   }
 
-  static int? _chooseOptionalPhraseBreak(String text, int start) {
-    for (final phraseBreak in _phraseBreaks(text, start)) {
-      final current = text.substring(start, phraseBreak.index).trim();
-      final count = _wordCount(current);
-      final remaining = _wordCount(text.substring(phraseBreak.index).trim());
-      if (remaining < 4) {
-        continue;
-      }
-
-      if (phraseBreak.kind == _PhraseBreakKind.strong &&
-          count >= _shortConnectorMinWords) {
-        return phraseBreak.index;
-      }
-      if (count >= _targetPhraseMinWords && count <= _targetPhraseMaxWords) {
-        return phraseBreak.index;
-      }
-      if (count >= _shortConnectorMinWords &&
-          _nextChunkStartsWithConnector(text, phraseBreak.index)) {
-        return phraseBreak.index;
-      }
-    }
-    return null;
-  }
-
   static int _choosePhraseBreak(String text, int start) {
     final breaks = _phraseBreaks(text, start);
     _PhraseBreak? fallbackBeforeHard;
+    _PhraseBreak? fallbackStrongBeforeHard;
+    _PhraseBreak? bestStrong;
+    _PhraseBreak? bestAny;
 
     for (final phraseBreak in breaks) {
       final current = text.substring(start, phraseBreak.index).trim();
@@ -326,25 +324,61 @@ class NlpService {
       if (count > _hardPhraseMaxWords) {
         break;
       }
-      fallbackBeforeHard = phraseBreak;
+      if (count >= _shortConnectorMinWords) {
+        fallbackBeforeHard = phraseBreak;
+        if (phraseBreak.kind == _PhraseBreakKind.strong ||
+            phraseBreak.kind == _PhraseBreakKind.directQuote) {
+          fallbackStrongBeforeHard = phraseBreak;
+        }
+      }
 
-      if (phraseBreak.kind == _PhraseBreakKind.strong &&
-          count >= _shortConnectorMinWords) {
-        return phraseBreak.index;
+      final remaining = _wordCount(text.substring(phraseBreak.index).trim());
+      if (remaining < 4) {
+        continue;
       }
       if (count >= _targetPhraseMinWords && count <= _targetPhraseMaxWords) {
-        return phraseBreak.index;
-      }
-      if (count >= _shortConnectorMinWords &&
-          _nextChunkStartsWithConnector(text, phraseBreak.index)) {
-        return phraseBreak.index;
+        if (phraseBreak.kind == _PhraseBreakKind.strong) {
+          if (bestStrong == null ||
+              _wordCount(text.substring(start, bestStrong.index).trim()) <
+                  count) {
+            bestStrong = phraseBreak;
+          }
+        }
+        if (bestAny == null ||
+            _wordCount(text.substring(start, bestAny.index).trim()) < count) {
+          bestAny = phraseBreak;
+        }
       }
     }
 
+    if (bestStrong != null) {
+      return bestStrong.index;
+    }
+    if (bestAny != null) {
+      return bestAny.index;
+    }
+    if (fallbackStrongBeforeHard != null) {
+      return fallbackStrongBeforeHard.index;
+    }
     if (fallbackBeforeHard != null) {
       return fallbackBeforeHard.index;
     }
     return _wordBoundaryAfterWords(text, start, _targetPhraseMaxWords);
+  }
+
+  static int? _requiredPhraseBreak(String text, int start) {
+    for (final phraseBreak in _phraseBreaks(text, start)) {
+      if (phraseBreak.kind != _PhraseBreakKind.directQuote) {
+        continue;
+      }
+      final current = text.substring(start, phraseBreak.index).trim();
+      final remaining = text.substring(phraseBreak.index).trim();
+      if (_wordCount(current) >= _shortConnectorMinWords &&
+          _wordCount(remaining) >= 4) {
+        return phraseBreak.index;
+      }
+    }
+    return null;
   }
 
   static List<_PhraseBreak> _phraseBreaks(String text, int start) {
@@ -370,11 +404,28 @@ class NlpService {
           _shouldBreakBeforeDirectQuote(text, start, index)) {
         breaks.add(_PhraseBreak(
           index: index,
-          kind: _PhraseBreakKind.strong,
+          kind: _PhraseBreakKind.directQuote,
         ));
       }
     }
+    breaks.addAll(_connectorBreaks(text, start));
+    breaks.sort((a, b) => a.index.compareTo(b.index));
     return breaks;
+  }
+
+  static List<_PhraseBreak> _connectorBreaks(String text, int start) {
+    final rest = text.substring(start);
+    final matches = RegExp(
+      r'\s+(?:so that|because|while|when|before|after|although|though)\b',
+      caseSensitive: false,
+    ).allMatches(rest);
+    return [
+      for (final match in matches)
+        _PhraseBreak(
+          index: start + match.start,
+          kind: _PhraseBreakKind.connector,
+        ),
+    ];
   }
 
   static bool _shouldBreakBeforeDirectQuote(
@@ -392,8 +443,11 @@ class NlpService {
     }
 
     final previous = _previousNonWhitespace(text, index - 1);
-    if (previous < start ||
-        !RegExp(r'[A-Za-z0-9,;:]').hasMatch(text[previous])) {
+    if (previous < start) {
+      return false;
+    }
+    if (!RegExp(r'[A-Za-z0-9,;:]').hasMatch(text[previous]) &&
+        !_isClosingPunctuation(text[previous])) {
       return false;
     }
 
@@ -412,14 +466,6 @@ class NlpService {
     return cursor;
   }
 
-  static bool _nextChunkStartsWithConnector(String text, int index) {
-    final rest = text.substring(index).trimLeft();
-    return RegExp(
-      r'^(?:and|but|or|so|for|yet|then|because|while|when|as|though|although|which|who|that)\b',
-      caseSensitive: false,
-    ).hasMatch(rest);
-  }
-
   static int _wordBoundaryAfterWords(String text, int start, int count) {
     final matches = RegExp(r"[A-Za-z][A-Za-z'’-]*(?:-[A-Za-z][A-Za-z'’-]*)*")
         .allMatches(text.substring(start))
@@ -428,10 +474,35 @@ class NlpService {
       return text.length;
     }
 
-    final match = matches[count - 1];
-    final end = start + match.start + match.group(0)!.length;
+    var matchIndex = count - 1;
+    var match = matches[matchIndex];
+    var end = start + match.start + match.group(0)!.length;
+    while (_wouldEndAtProtectedPeriod(text, end) &&
+        matchIndex + 1 < matches.length) {
+      matchIndex += 1;
+      match = matches[matchIndex];
+      end = start + match.start + match.group(0)!.length;
+    }
     final nextSpace = text.indexOf(' ', end);
-    return nextSpace > end ? nextSpace : end;
+    return nextSpace > end ? nextSpace : _consumeClosingPunctuation(text, end);
+  }
+
+  static bool _wouldEndAtProtectedPeriod(String text, int wordEnd) {
+    var cursor = wordEnd;
+    while (cursor < text.length && _isClosingPunctuation(text[cursor])) {
+      cursor++;
+    }
+    if (cursor >= text.length || text[cursor] != '.') {
+      return false;
+    }
+    final before = text.substring(0, wordEnd).trimRight();
+    final lastWord = before
+        .split(RegExp(r'\s+'))
+        .last
+        .replaceAll(RegExp(r'["“”’)\]}》]+$'), '')
+        .toLowerCase();
+    return _abbreviations.contains(lastWord) ||
+        RegExp(r'^[a-z]$').hasMatch(lastWord);
   }
 
   static int _wordCount(String text) => text
@@ -465,8 +536,10 @@ class NlpService {
       return false;
     }
 
-    final lastWord =
-        words.last.replaceAll(RegExp(r'[.!?。！？"”’)\]}》]+$'), '').toLowerCase();
+    final lastWord = words.last
+        .replaceAll(RegExp(r'^[\"“”]+'), '')
+        .replaceAll(RegExp(r'[.!?。！？"”’)\]}》]+$'), '')
+        .toLowerCase();
 
     return _abbreviations.contains(lastWord) ||
         RegExp(r'^[a-z]$').hasMatch(lastWord);
@@ -478,7 +551,14 @@ class NlpService {
     int lookahead,
   ) {
     if (_hasUnclosedDoubleQuote(current)) {
-      return true;
+      final next = _nextNonWhitespace(text, lookahead);
+      if (next >= text.length) {
+        return true;
+      }
+      if (RegExp(r'[a-z]').hasMatch(text[next])) {
+        return true;
+      }
+      return _wordCount(current) < _quoteContinuationMinWords;
     }
 
     final next = _nextNonWhitespace(text, lookahead);
@@ -492,6 +572,18 @@ class NlpService {
   static bool _hasUnclosedDoubleQuote(String text) {
     final straightQuotes = '"'.allMatches(text).length;
     if (straightQuotes.isOdd) {
+      final trimmed = text.trimRight();
+      final lastQuote = trimmed.lastIndexOf('"');
+      if (lastQuote >= 0) {
+        var cursor = lastQuote + 1;
+        while (
+            cursor < trimmed.length && _isClosingPunctuation(trimmed[cursor])) {
+          cursor++;
+        }
+        if (cursor >= trimmed.length) {
+          return false;
+        }
+      }
       return true;
     }
 
@@ -515,9 +607,100 @@ class NlpService {
     }
     return index;
   }
+
+  static List<String> _mergeReadAloudContinuations(List<String> chunks) {
+    final merged = <String>[];
+    for (final rawChunk in chunks) {
+      final chunk = rawChunk.trim();
+      if (chunk.isEmpty) {
+        continue;
+      }
+      if (merged.isNotEmpty && _shouldMergeWithPrevious(merged.last, chunk)) {
+        merged[merged.length - 1] =
+            '${merged.last} $chunk'.replaceAll(RegExp(r'\s+'), ' ').trim();
+      } else {
+        merged.add(chunk);
+      }
+    }
+    return merged;
+  }
+
+  static bool _shouldMergeWithPrevious(String previous, String current) {
+    final combinedWords = _wordCount('$previous $current');
+    if (combinedWords > _hardPhraseMaxWords) {
+      return false;
+    }
+    if (_hasUnclosedDoubleQuote(previous)) {
+      return combinedWords <= _targetPhraseMaxWords;
+    }
+    if (_endsWithDanglingReadAloudPhrase(previous)) {
+      return true;
+    }
+    if (_endsWithShortCommaPhrase(previous)) {
+      return combinedWords <= _targetPhraseMaxWords;
+    }
+    if (_isShortQuotedFragment(previous)) {
+      return combinedWords <= _targetPhraseMaxWords;
+    }
+    if (_startsWithLowercaseConnector(current) &&
+        !_endsWithFinalSentencePunctuation(previous)) {
+      if (_endsWithStrongPhrasePunctuation(previous) &&
+          _wordCount(previous) >= _targetPhraseMinWords) {
+        return false;
+      }
+      return combinedWords <= _targetPhraseMaxWords;
+    }
+    return false;
+  }
+
+  static bool _startsWithLowercaseConnector(String text) {
+    return RegExp(
+      r'^(?:and|but|or|so|for|yet|then|because|while|when|as|though|although|which|who|that)\b',
+    ).hasMatch(text.trim());
+  }
+
+  static bool _endsWithDanglingReadAloudPhrase(String text) {
+    final trimmed = text.trim();
+    if (trimmed.endsWith('—') ||
+        trimmed.endsWith('–') ||
+        trimmed.endsWith('-')) {
+      return true;
+    }
+    return RegExp(
+      r'\b(?:a|an|the|and|or|but|as|if|to|of|for|with|from|into|upon|about|like|than|that|which|who|what|how|why|where|when|me|my|your|his|her|their|our)\s*["”’)]*$',
+      caseSensitive: false,
+    ).hasMatch(trimmed);
+  }
+
+  static bool _endsWithFinalSentencePunctuation(String text) {
+    return RegExp(r'[.!?。！？]["”’)\]}》]*$').hasMatch(text.trim());
+  }
+
+  static bool _endsWithStrongPhrasePunctuation(String text) {
+    return RegExp(r'[;:—–]["”’)\]}》]*$').hasMatch(text.trim());
+  }
+
+  static bool _endsWithShortCommaPhrase(String text) {
+    final trimmed = text.trim();
+    return _wordCount(trimmed) < _targetPhraseMinWords &&
+        RegExp(r',["”’)\]}》]*$').hasMatch(trimmed);
+  }
+
+  static bool _isShortQuotedFragment(String text) {
+    final trimmed = text.trim();
+    if (_wordCount(trimmed) >= _targetPhraseMinWords) {
+      return false;
+    }
+    final startsWithQuote = RegExp(r'''^["'“‘]''').hasMatch(trimmed);
+    if (!startsWithQuote) {
+      return false;
+    }
+    return !_endsWithFinalSentencePunctuation(trimmed) ||
+        RegExp(r'''[,'"“‘][^"'“”‘’]*[.!?。！？]$''').hasMatch(trimmed);
+  }
 }
 
-enum _PhraseBreakKind { strong, comma }
+enum _PhraseBreakKind { strong, comma, connector, directQuote }
 
 class _PhraseBreak {
   const _PhraseBreak({

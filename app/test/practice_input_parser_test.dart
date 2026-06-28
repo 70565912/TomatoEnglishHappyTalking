@@ -171,7 +171,7 @@ The soldiers were silent, and looked at Alice, as the question was evidently mea
       expect(rows.every((row) => row.chineseText.trim().isNotEmpty), isTrue);
       expect(joinedRow.chineseText, contains('爱丽丝加入了游行队伍'));
       expect(joinedRow.chineseText, contains('接下来会发生什么'));
-      expect(joinedRow.chineseText.startsWith('"'), isFalse);
+      expect(joinedRow.chineseText, isNot(contains('会！"爱丽丝大声回答')));
     });
 
     test('keeps translations when phrase chunks merge across paragraphs', () {

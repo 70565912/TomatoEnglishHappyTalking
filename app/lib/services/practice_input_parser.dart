@@ -995,15 +995,24 @@ List<ArticleSentenceTranslation> _fillMissingImportedTranslations({
   };
 
   for (var index = 0; index < sentences.length; index++) {
-    if (byIndex.containsKey(index)) {
-      continue;
-    }
-
-    final fallback = _fallbackChineseForSentence(
+    final fallbackMatches = _fallbackChineseMatchesForSentence(
       sentence: sentences[index],
       paragraphPairs: paragraphPairs,
     );
-    if (fallback == null || fallback.trim().isEmpty) {
+    if (fallbackMatches.isEmpty) {
+      continue;
+    }
+    final fallback = _joinUniqueChineseTranslations(fallbackMatches);
+    if (fallback.trim().isEmpty) {
+      continue;
+    }
+
+    final existing = byIndex[index];
+    if (existing != null && fallbackMatches.length <= 1) {
+      continue;
+    }
+    if (existing != null &&
+        _translationCovers(existing.chineseText, fallback)) {
       continue;
     }
 
@@ -1014,7 +1023,7 @@ List<ArticleSentenceTranslation> _fillMissingImportedTranslations({
       chineseText: _normalizeChineseTranslation(fallback),
       source: 'imported_bilingual',
       createdAt: createdAt,
-      updatedAt: createdAt,
+      updatedAt: existing?.updatedAt ?? createdAt,
     );
   }
 
@@ -1023,13 +1032,27 @@ List<ArticleSentenceTranslation> _fillMissingImportedTranslations({
   return filledRows;
 }
 
-String? _fallbackChineseForSentence({
+bool _translationCovers(String existing, String candidate) {
+  final existingCompact = _compactChineseForAlignment(existing);
+  final candidateCompact = _compactChineseForAlignment(candidate);
+  return existingCompact.isNotEmpty &&
+      candidateCompact.isNotEmpty &&
+      (existingCompact == candidateCompact ||
+          existingCompact.contains(candidateCompact) ||
+          candidateCompact.contains(existingCompact) &&
+              candidateCompact.length - existingCompact.length < 8);
+}
+
+String _compactChineseForAlignment(String text) =>
+    text.replaceAll(RegExp(r'\s+'), '').trim();
+
+List<String> _fallbackChineseMatchesForSentence({
   required String sentence,
   required List<PracticeParagraphPair> paragraphPairs,
 }) {
   final sentenceCompact = _compactEnglishForAlignment(sentence);
   if (sentenceCompact.isEmpty) {
-    return null;
+    return const [];
   }
 
   final exactMatches = <String>[];
@@ -1048,13 +1071,13 @@ String? _fallbackChineseForSentence({
     }
   }
   if (exactMatches.isNotEmpty) {
-    return _joinUniqueChineseTranslations(exactMatches);
+    return exactMatches;
   }
 
   final tokenMatches = <String>[];
   final sentenceTokens = _englishTokenSetForAlignment(sentence);
   if (sentenceTokens.length < 2) {
-    return null;
+    return const [];
   }
   for (final pair in paragraphPairs) {
     final chinese = pair.chineseParagraph.trim();
@@ -1073,10 +1096,10 @@ String? _fallbackChineseForSentence({
     }
   }
   if (tokenMatches.isNotEmpty) {
-    return _joinUniqueChineseTranslations(tokenMatches);
+    return tokenMatches;
   }
 
-  return null;
+  return const [];
 }
 
 Set<String> _englishTokenSetForAlignment(String text) {

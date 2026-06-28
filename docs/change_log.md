@@ -1,5 +1,21 @@
 # 修改日志
 
+## 2026-06-28
+
+- Dart `NlpService` 与 Web UI `sentenceSplitter` 统一朗读分句策略：按段落归一化正文，保留段落边界；最长朗读块上限放宽到 32 词，减少过碎停顿；新增连接词、直接引语、短逗号片段和悬空短语的合并/切分规则。
+- 分句逻辑增强缩写和单字母句点保护，避免在 `W. RABBIT`、称谓缩写或引号闭合处切出一词碎片；新增 E10 / E11 / E12 Alice 真实章节回归样本，覆盖标题过滤、直接引语、破折号和低质量碎片检查。
+- 标准中英对照导入译文回填改为收集同一句的多个候选中文段并去重合并；已有译文不足以覆盖新候选时才更新，避免跨段分句后漏译或把旧引号片段误并入当前句。
+- 刷新 Web UI 打包产物，`app/assets/web/index.html` 指向新的 hash 资源。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\nlp_service_test.dart test\practice_input_parser_test.dart --reporter expanded -j 1`
+- `npm --prefix web_ui test`
+- `D:\DevTools\flutter\bin\flutter.bat analyze`
+- `npm --prefix web_ui run build`
+- `D:\PowerShell\7\pwsh.exe -Command ".\tools\build_windows.ps1 -Release"`
+- `D:\PowerShell\7\pwsh.exe -Command ".\tools\build_android.ps1"`
+
 ## 2026-06-27
 
 - 创作中心绘本面板新增“生成听力”按钮，位于“生成组图”后同一行；面板显示章节听力材料生成状态，缺失时可显式提交远程语音合成，完整时需确认覆盖后才重新生成。
