@@ -79,10 +79,16 @@ class ListeningAudioMaterialService {
     final sentences = await _sentencesForArticle(articleId);
     final missing = <int>[];
     var ready = 0;
+    Map<String, TtsFileHandle>? historicalHandles;
+
     for (var index = 0; index < sentences.length; index += 1) {
-      final handle = await cachedFileHandle(
+      final handle = await _cachedFileHandle(
         text: sentences[index],
         articleId: articleId,
+        historicalHandles: () async {
+          return historicalHandles ??=
+              await _historicalFileHandlesByText(articleId: articleId);
+        },
       );
       if (handle == null) {
         missing.add(index);
@@ -113,12 +119,17 @@ class ListeningAudioMaterialService {
     }
 
     final requests = <TtsPreloadRequest>[];
+    Map<String, TtsFileHandle>? historicalHandles;
     for (var index = 0; index < sentences.length; index += 1) {
       final sentence = sentences[index];
       if (!overwrite) {
-        final cached = await cachedFileHandle(
+        final cached = await _cachedFileHandle(
           text: sentence,
           articleId: articleId,
+          historicalHandles: () async {
+            return historicalHandles ??=
+                await _historicalFileHandlesByText(articleId: articleId);
+          },
         );
         if (cached != null) {
           continue;
@@ -187,6 +198,24 @@ class ListeningAudioMaterialService {
     String voiceType = TtsService.defaultVoiceType,
     bool preferRequestedVoice = false,
   }) async {
+    return _cachedFileHandle(
+      text: text,
+      articleId: articleId,
+      voiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
+      historicalHandles: articleId == null
+          ? null
+          : () => _historicalFileHandlesByText(articleId: articleId),
+    );
+  }
+
+  static Future<TtsFileHandle?> _cachedFileHandle({
+    required String text,
+    required int? articleId,
+    String voiceType = TtsService.defaultVoiceType,
+    bool preferRequestedVoice = false,
+    Future<Map<String, TtsFileHandle>> Function()? historicalHandles,
+  }) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) {
       return null;
@@ -203,17 +232,11 @@ class ListeningAudioMaterialService {
       return current;
     }
 
-    for (final purpose in const {cachePurpose, legacyFollowCachePurpose}) {
-      final historical = await _historicalFileHandleForExactText(
-        articleId: articleId,
-        text: trimmed,
-        purpose: purpose,
-      );
-      if (historical != null) {
-        return historical;
-      }
+    final handles = await historicalHandles?.call();
+    if (handles == null || handles.isEmpty) {
+      return null;
     }
-    return null;
+    return handles[_normalizeCacheText(trimmed)];
   }
 
   static Future<List<String>> _sentencesForArticle(int articleId) async {
@@ -238,35 +261,35 @@ class ListeningAudioMaterialService {
         .toList(growable: false);
   }
 
-  static Future<TtsFileHandle?> _historicalFileHandleForExactText({
+  static Future<Map<String, TtsFileHandle>> _historicalFileHandlesByText({
     required int articleId,
-    required String text,
-    required String purpose,
   }) async {
-    final requested = _normalizeCacheText(text);
-    if (requested.isEmpty) {
-      return null;
+    final handles = <String, TtsFileHandle>{};
+    for (final purpose in const {cachePurpose, legacyFollowCachePurpose}) {
+      final entries = await ApiCacheService.getEntriesForArticlePurpose(
+        articleId: articleId,
+        purpose: purpose,
+        limit: 5000,
+      );
+      for (final entry in entries) {
+        final cachedText = _normalizeCacheText(_requestText(entry.requestJson));
+        if (cachedText.isEmpty || handles.containsKey(cachedText)) {
+          continue;
+        }
+        final filePath = entry.filePath?.trim();
+        if (filePath == null || filePath.isEmpty) {
+          continue;
+        }
+        final file = File(filePath);
+        if (await file.exists() && await file.length() > 0) {
+          handles[cachedText] = TtsFileHandle(
+            key: entry.cacheKey,
+            filePath: filePath,
+          );
+        }
+      }
     }
-    final entries = await ApiCacheService.getEntriesForArticlePurpose(
-      articleId: articleId,
-      purpose: purpose,
-      limit: 5000,
-    );
-    for (final entry in entries) {
-      final cachedText = _normalizeCacheText(_requestText(entry.requestJson));
-      if (cachedText.isEmpty || cachedText != requested) {
-        continue;
-      }
-      final filePath = entry.filePath?.trim();
-      if (filePath == null || filePath.isEmpty) {
-        continue;
-      }
-      final file = File(filePath);
-      if (await file.exists() && await file.length() > 0) {
-        return TtsFileHandle(key: entry.cacheKey, filePath: filePath);
-      }
-    }
-    return null;
+    return handles;
   }
 
   static String _requestText(String requestJson) {
