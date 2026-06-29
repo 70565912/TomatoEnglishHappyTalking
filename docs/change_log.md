@@ -1,5 +1,18 @@
 # 修改日志
 
+## 2026-06-30
+
+- 修复旧章节听力材料读取和播放卡住：`articles.sentences` 继续作为已保存文章的生成素材边界，按持久化句子文本复用历史 `listening_tts` / `follow_tts` 本地音频，不做重新分句兼容。
+- `listening.audioStatus`、`listening.playSequence`、`listening.fullscreenReady` 和 `listening.recordingReady` 改为按文章一次性建立本地音频句柄索引，避免每句重复扫描缓存表导致页面长期显示“读取中”。
+- 优化 `ApiCacheService.getEntriesForArticlePurpose`，直接使用已查询出的 `api_cache_entries` 行构造缓存对象，保留文件存在性检查和 legacy 路径迁移，避免列表查询后逐条再次查库。
+- 发布目录数据修复：从当前库持久化的逐句翻译表恢复被写短的旧文章 `articles.sentences`；用 `Alice's Adventures in Wonderland.zip` 导出包补齐 `E01 - All In The Golden Afternoon` 的 22 句英文和中英对照，旧 E01/E02 导出包素材确认可作为保险备份。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\api_cache_service_test.dart --reporter expanded -j 1`
+- `D:\DevTools\flutter\bin\flutter.bat analyze`
+- Windows release QA：E07 `listening.audioStatus` 183ms 返回 `53/53 ready`，`listening.recordingReady` 约 2.5s 返回 ready，`listening.playSequence` 第 1 句约 4.1s 返回 success。
+
 ## 2026-06-28
 
 - Dart `NlpService` 与 Web UI `sentenceSplitter` 统一朗读分句策略：按段落归一化正文，保留段落边界；最长朗读块上限放宽到 32 词，减少过碎停顿；新增连接词、直接引语、短逗号片段和悬空短语的合并/切分规则。

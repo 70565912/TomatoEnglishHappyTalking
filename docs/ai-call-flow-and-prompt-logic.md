@@ -609,11 +609,12 @@ Scene description: <sceneDescription>
 
 章节英文 TTS 在产品语义上统一视为“听力材料”：
 
-- `listening.audioStatus` 只通过 `TtsService.cacheKeysForText` 和 `ApiCacheService.getFilePath` 检查本地 `listening_tts` 缓存，不触发远程合成。
+- `listening.audioStatus` 只检查本地听力材料缓存，不触发远程合成。检查范围包括当前 `listening_tts` 和旧 `follow_tts` 中与持久化句子文本完全一致的音频文件，用于兼容旧平台、旧音色和历史生成素材。
 - 创作中心绘本面板显示“听力材料 X / Y 已生成”，并在“生成组图”后提供“生成听力”显式入口。
 - `listening.audioGenerate { articleId, overwrite }` 是批量生成听力材料的唯一章节级显式入口。`overwrite=false` 只补齐缺失句子；`overwrite=true` 清理当前文章的 `listening_tts` 和旧 `follow_tts` 引用后重新生成全部英文句子。
 - 已完整生成时，Web UI 必须先确认“覆盖原内容并重新提交远程语音合成”；缺失或部分缺失时，点击按钮会显示“正在生成听力材料”等待弹窗和进度。
 - 听力打开、跟读打开、听力播放、全屏 readiness、视频导出 readiness 和跟读原音播放都只读本地缓存。缺失时返回“需要先在创作中心生成听力材料”，不得在后台自动提交 TTS。
+- 听力状态、播放、全屏 readiness 和视频导出 readiness 必须按 `articleId` 一次性加载本地音频句柄索引，再按持久化句子文本查找；不要在每一句里重复扫描 `api_cache_article_refs` / `api_cache_entries`，否则旧文章会在“读取中”停留很久并拖慢播放。
 - 听力页单句“重新合成语音”仍是显式远程操作；编辑句子只清理失效缓存并标记缺失，不自动重合成。
 
 ## ASR 与跟读评分
