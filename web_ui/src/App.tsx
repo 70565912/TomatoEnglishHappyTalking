@@ -3619,12 +3619,7 @@ function VideoCreationPanel({
   const [busy, setBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
   const [exportingListeningVideo, setExportingListeningVideo] = useState(false);
-  const [exportingSongVideo, setExportingSongVideo] = useState(false);
-  const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
-  const [songBusy, setSongBusy] = useState(false);
-  const [generatingSongTimeline, setGeneratingSongTimeline] = useState(false);
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
-  const [recordingDialogSongVersionId, setRecordingDialogSongVersionId] = useState('');
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
 
   const checkReady = () => {
@@ -3670,34 +3665,10 @@ function VideoCreationPanel({
     }
   };
 
-  const loadSongState = async () => {
-    setSongBusy(true);
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songState', {
-        articleId: article.id,
-      });
-      setSongState(payload);
-      return payload;
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : '歌曲状态加载失败');
-      return null;
-    } finally {
-      setSongBusy(false);
-    }
-  };
-
   useEffect(checkReady, [article.id, recordingSettings?.codec, recordingSettings?.resolution, recordingSettings?.pageTransition, recordingSettings?.subtitleMode, recordingSettings?.fps]);
   useEffect(() => {
     void loadVideoLibrary();
   }, [article.id]);
-  useEffect(() => {
-    void loadSongState();
-  }, [article.id]);
-  useEffect(() => onNativeEvent<ListeningSongStatePayload>('listening.song.state', (payload) => {
-    if (payload.articleId === article.id) {
-      setSongState(payload);
-    }
-  }), [article.id]);
 
   const recordListeningVideo = async (selectedSettings: RecordingSettings) => {
     setBusy(true);
@@ -3722,48 +3693,11 @@ function VideoCreationPanel({
     }
   };
 
-  const recordSongVideo = async (versionId: string, selectedSettings: RecordingSettings) => {
-    setBusy(true);
-    setExportingSongVideo(true);
-    try {
-      await sendNative<ListeningRecordingResultPayload>('listening.songRecordVideo', {
-        articleId: article.id,
-        versionId,
-        codec: selectedSettings.codec,
-        resolution: selectedSettings.resolution,
-        pageTransition: selectedSettings.pageTransition,
-        subtitleMode: selectedSettings.subtitleMode,
-        fps: selectedSettings.fps || 25,
-      });
-      onNotice('歌曲视频导出完成');
-      await loadVideoLibrary();
-      await loadSongState();
-      onArticlesUpdated({});
-    } catch (error) {
-      onNotice(error instanceof Error ? error.message : '歌曲视频导出失败');
-    } finally {
-      setBusy(false);
-      setExportingSongVideo(false);
-    }
-  };
-
   const openRecordingDialog = () => {
     if (recordingReady && !recordingReady.ready) {
       onNotice(recordingReady.reasons?.[0] ?? '视频准备状态检查未通过');
       return;
     }
-    setRecordingDialogDraft(recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings));
-    setRecordingDialogSongVersionId('');
-  };
-
-  const openSongRecordingDialog = (versionId: string) => {
-    const version = songState?.versions?.find((item) => item.id === versionId) ?? null;
-    const subtitleNotice = songSubtitleNoticeForVersion(version);
-    if (subtitleNotice) {
-      onNotice(subtitleNotice);
-      return;
-    }
-    setRecordingDialogSongVersionId(versionId);
     setRecordingDialogDraft(recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings));
   };
 
@@ -3774,7 +3708,6 @@ function VideoCreationPanel({
   const confirmRecordingDialog = async () => {
     if (!recordingDialogDraft || recordingDialogSaving) return;
     setRecordingDialogSaving(true);
-    const songVersionId = recordingDialogSongVersionId;
     try {
       const savedSettings = await sendNative<RecordingSettings>('recording.settings.save', {
         codec: recordingDialogDraft.codec,
@@ -3784,59 +3717,11 @@ function VideoCreationPanel({
       });
       onRecordingSettingsLoaded(savedSettings);
       setRecordingDialogDraft(null);
-      setRecordingDialogSongVersionId('');
-      if (songVersionId) {
-        await recordSongVideo(songVersionId, savedSettings);
-      } else {
-        await recordListeningVideo(savedSettings);
-      }
+      await recordListeningVideo(savedSettings);
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '录制设置保存失败');
     } finally {
       setRecordingDialogSaving(false);
-    }
-  };
-
-  const generateSongTimeline = async (versionId: string) => {
-    setSongBusy(true);
-    setGeneratingSongTimeline(true);
-    setSongState((current) =>
-      current
-        ? {
-            ...current,
-            versions: current.versions?.map((version) =>
-              version.id === versionId
-                ? { ...version, timelineStatus: 'generating', timelineError: null }
-                : version,
-            ),
-          }
-        : current,
-    );
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songTimelineGenerate', {
-        articleId: article.id,
-        versionId,
-      });
-      setSongState(payload);
-      onNotice('歌曲字幕已生成');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '歌曲字幕生成失败';
-      setSongState((current) =>
-        current
-          ? {
-              ...current,
-              versions: current.versions?.map((version) =>
-                version.id === versionId
-                  ? { ...version, timelineStatus: 'error', timelineError: message }
-                  : version,
-              ),
-            }
-          : current,
-      );
-      onNotice(message);
-    } finally {
-      setSongBusy(false);
-      setGeneratingSongTimeline(false);
     }
   };
 
@@ -3905,8 +3790,6 @@ function VideoCreationPanel({
   };
 
   const videoVersions = videoLibrary?.versions?.filter((version) => version.id && version.videoPath) ?? [];
-  const songVersions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
-  const groupedSongVersions = groupSongVersionsForDisplay(songVersions);
 
   return (
     <section className="creation-panel">
@@ -3986,79 +3869,18 @@ function VideoCreationPanel({
         )}
       </div>
       <div className="button-row">
-        <button className="primary-action" type="button" disabled={exportingListeningVideo} onClick={openRecordingDialog}>
+        <button className="primary-action" type="button" disabled={busy || exportingListeningVideo} onClick={openRecordingDialog}>
           <Icon name="recordVideo" /> 导出听力视频
         </button>
-      </div>
-      <div className="video-version-list" aria-label="可导出歌曲视频版本">
-        <div className="song-style-group-heading">
-          <span>歌曲视频</span>
-          <b>{songBusy ? '刷新中' : `${songVersions.length} 个歌曲版本`}</b>
-          <button className="ghost-action small" type="button" onClick={() => void loadSongState()} disabled={songBusy}>
-            <Icon name="refresh" /> 刷新歌曲
-          </button>
-        </div>
-        {groupedSongVersions.length === 0 ? (
-          <p className="sentence-empty">还没有本地完整歌曲版本，请先在歌曲页生成或导入歌曲。</p>
-        ) : groupedSongVersions.map((group) => (
-          <div className="song-style-group" key={group.key}>
-            <div className="song-style-group-heading">
-              <span>来源</span>
-              <b>{group.label}</b>
-            </div>
-            <div className="song-version-row">
-              {group.versions.map((version, index) => {
-                const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
-                const title = version.title?.trim() || `版本 ${index + 1}`;
-                const timelineBlockedTitle =
-                  timelineStatus === 'stale' ? '歌曲字幕时间线版本过旧，请重新生成字幕' : '请先生成歌曲字幕';
-                return (
-                  <div className="song-version-actions" key={version.id}>
-                    <span className="song-version-title">{title}{version.isDefault ? ' · 默认' : ''}</span>
-                    <button
-                      className="ghost-action small"
-                      type="button"
-                      disabled={songBusy || timelineStatus === 'generating'}
-                      onClick={() => void generateSongTimeline(version.id)}
-                    >
-                      <Icon name={timelineStatus === 'generating' ? 'refresh' : 'sentence'} /> {songTimelineLabel(timelineStatus)}
-                    </button>
-                    <button
-                      className="ghost-action small"
-                      type="button"
-                      disabled={busy || songBusy || timelineStatus !== 'ready'}
-                      title={timelineStatus === 'ready' ? '导出歌曲视频' : timelineBlockedTitle}
-                      onClick={() => openSongRecordingDialog(version.id)}
-                    >
-                      <Icon name="recordVideo" /> 导出歌曲视频
-                    </button>
-                    {version.durationMs ? <small>{formatDurationMs(version.durationMs)}</small> : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+        <button className="ghost-action" type="button" disabled>
+          <Icon name="recordVideo" /> 歌曲视频请在歌曲标签选择版本
+        </button>
       </div>
       {exportingListeningVideo && (
         <AiBlockingOverlay
           title="正在导出听力视频"
           detail="正在渲染听力视频文件，请等待导出完成。"
           timeoutSeconds={900}
-        />
-      )}
-      {exportingSongVideo && (
-        <AiBlockingOverlay
-          title="正在导出歌曲视频"
-          detail="正在合成歌曲音频、字幕和绘本画面，请等待导出完成。"
-          timeoutSeconds={900}
-        />
-      )}
-      {generatingSongTimeline && (
-        <AiBlockingOverlay
-          title="正在生成歌曲字幕"
-          detail="正在识别歌曲音频并生成字幕时间轴，请等待服务返回。"
-          timeoutSeconds={600}
         />
       )}
       {audioOverwriteConfirm && (
@@ -4082,7 +3904,6 @@ function VideoCreationPanel({
           onCancel={() => {
             if (recordingDialogSaving) return;
             setRecordingDialogDraft(null);
-            setRecordingDialogSongVersionId('');
           }}
           onConfirm={() => void confirmRecordingDialog()}
         />
