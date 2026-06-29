@@ -13,9 +13,10 @@ import '../data/models/article_model.dart';
 import '../data/models/article_song_model.dart';
 import '../data/models/picture_book_model.dart';
 import 'database_service.dart';
+import 'listening_audio_material_service.dart';
 import 'recording_export_utils.dart';
 import 'song_subtitle_timeline_service.dart';
-import 'tts_memory_cache_service.dart';
+import 'tts_memory_cache_service.dart' show TtsFileHandle;
 import 'tts_service.dart';
 
 enum RecordingCodec { h264, h265 }
@@ -1908,12 +1909,11 @@ class RecordingExportService {
     required int articleId,
   }) async {
     try {
-      return await TtsMemoryCacheService.cachedFileHandle(
+      return await ListeningAudioMaterialService.cachedFileHandle(
         text: text,
         voiceType: voiceType,
         preferRequestedVoice: preferRequestedVoice,
         articleId: articleId,
-        cachePurpose: 'listening_tts',
       );
     } catch (_) {
       return null;

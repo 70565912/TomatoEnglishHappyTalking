@@ -7,6 +7,7 @@ import 'package:path/path.dart' as path_lib;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
+import 'package:tomato_english_happy_talking/data/models/article_sentence_translation_model.dart';
 import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/aliyun_wanx_image_service.dart';
@@ -274,7 +275,11 @@ void main() {
   });
 
   test('listening audio material status reads local cache only', () async {
-    final articleId = await _saveArticle('Tom waves. He smiles.');
+    const content = 'Tom waves. He smiles.';
+    final articleId = await _saveArticle(
+      content,
+      sentences: NlpService.splitSentences(content),
+    );
     await _writeCachedListeningTts(
       articleId: articleId,
       text: 'Tom waves.',
@@ -289,10 +294,84 @@ void main() {
     expect(status.status, 'partial');
   });
 
+  test('listening materials keep saved sentence boundaries and translations',
+      () async {
+    const savedSentence = 'Tom waves. He smiles.';
+    final articleId = await _saveArticle(
+      savedSentence,
+      sentences: [savedSentence],
+    );
+    await _writeCachedListeningTts(
+      articleId: articleId,
+      text: savedSentence,
+      bytes: [1, 2, 3],
+    );
+    final now = DateTime(2026, 1, 1);
+    await DatabaseService.saveArticleSentenceTranslations(articleId, [
+      ArticleSentenceTranslation(
+        articleId: articleId,
+        sentenceIndex: 0,
+        englishSentence: savedSentence,
+        chineseText: '汤姆挥手。他笑了。',
+        source: 'import',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    ]);
+
+    final status = await ListeningAudioMaterialService.status(articleId);
+    final article = await DatabaseService.getArticleById(articleId);
+    final translations =
+        await DatabaseService.getArticleSentenceTranslationsForSentences(
+      articleId: articleId,
+      sentences: article?.sentences ?? const [],
+    );
+
+    expect(status.total, 1);
+    expect(status.ready, 1);
+    expect(status.missing, isEmpty);
+    expect(article?.sentences, [savedSentence]);
+    expect(translations, {0: '汤姆挥手。他笑了。'});
+  });
+
+  test('listening status accepts historical voice cache for the same sentence',
+      () async {
+    const sentence = 'Tom waves.';
+    final articleId = await _saveArticle(sentence, sentences: [sentence]);
+    await _writeHistoricalListeningTts(
+      articleId: articleId,
+      text: sentence,
+      request: {
+        'service': 'doubao_tts_2',
+        'endpoint': 'https://legacy.example.test/tts',
+        'resourceId': 'legacy-resource',
+        'speaker': 'legacy_voice',
+        'text': sentence,
+      },
+      bytes: [6, 7, 8],
+    );
+
+    final status = await ListeningAudioMaterialService.status(articleId);
+    final handle = await ListeningAudioMaterialService.cachedFileHandle(
+      text: sentence,
+      articleId: articleId,
+    );
+
+    expect(status.total, 1);
+    expect(status.ready, 1);
+    expect(status.missing, isEmpty);
+    expect(handle, isNotNull);
+    expect(await File(handle!.filePath).readAsBytes(), [6, 7, 8]);
+  });
+
   test(
       'listening audio material generation fills missing and overwrites caches',
       () async {
-    final articleId = await _saveArticle('Tom waves. He smiles.');
+    const content = 'Tom waves. He smiles.';
+    final articleId = await _saveArticle(
+      content,
+      sentences: NlpService.splitSentences(content),
+    );
     await _writeCachedListeningTts(
       articleId: articleId,
       text: 'Tom waves.',
@@ -3216,12 +3295,12 @@ but the three were all crowded together at one corner of it.
   });
 }
 
-Future<int> _saveArticle(String content) {
+Future<int> _saveArticle(String content, {List<String>? sentences}) {
   return DatabaseService.saveArticle(
     Article(
       title: 'Test',
       content: content,
-      sentences: [content],
+      sentences: sentences ?? [content],
       createdAt: DateTime(2026, 1, 1),
     ),
   );
@@ -3244,6 +3323,28 @@ Future<String> _writeCachedListeningTts({
     kind: 'tts',
     purpose: purpose,
     request: {'service': 'unit_tts', 'text': text, 'purpose': purpose},
+    bytes: bytes,
+    subdirectory: 'tts',
+    extension: 'mp3',
+    contentType: 'audio/mpeg',
+    articleId: articleId,
+  );
+}
+
+Future<String> _writeHistoricalListeningTts({
+  required int articleId,
+  required String text,
+  required Map<String, dynamic> request,
+  required List<int> bytes,
+  String purpose = ListeningAudioMaterialService.cachePurpose,
+}) async {
+  final requestWithText = {...request, 'text': text};
+  final cacheKey = await ApiCacheService.keyForJson('tts', requestWithText);
+  return ApiCacheService.putFileBytes(
+    cacheKey: cacheKey,
+    kind: 'tts',
+    purpose: purpose,
+    request: requestWithText,
     bytes: bytes,
     subdirectory: 'tts',
     extension: 'mp3',

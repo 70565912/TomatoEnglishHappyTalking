@@ -118,6 +118,7 @@ web_ui/
 - 歌曲字幕时间轴使用歌曲版本记录的 `submittedLyrics` 作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；如果 `submittedLyrics` 与文章原歌词不同，不要复用文章逐句中文翻译。不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
 - Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
 - 听力播放、全屏播放和普通录制只播放英文 TTS；中文翻译只作为字幕/对照文本显示，不再触发听力中文 TTS 预加载或播放。`listening.fullscreenReady` 只检查当前和下一句英文音频，绘本图片只预取当前和下一张；文章保存时应优先保存导入译文，缺失时可用 `PracticeTextService.translateToChinese` 生成逐句字幕，后续听力/跟读只读库中译文，不在打开页面时批量翻译。
+- 文章一旦保存并完成分句，`articles.sentences` 就是听力音频、字幕、逐句翻译、绘本、歌曲和导出的持久化边界；打开文章、查询素材状态、播放、导出和列表展示都必须读取已持久化句子，不得重新分句并写回。需要改变分句时只能重建文章并重新生成相关素材。
 - 跟读录音可根据 BigASR 实时识别文本自动停止：只有识别结果达到参考句覆盖率并匹配句尾时才触发，避免只说末尾短语就结束。相关启发式在 `follow_read_provider.dart`，更新阈值时同步 `follow_recording_auto_stop_test.dart`。
 
 ## Flutter / Dart 规范

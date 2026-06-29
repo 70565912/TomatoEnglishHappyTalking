@@ -4,7 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:just_audio/just_audio.dart';
 import 'package:record/record.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -20,7 +20,6 @@ import '../../../services/nlp_service.dart';
 import '../../../services/recognition_based_assessment_service.dart';
 import '../../../services/scoring_service.dart';
 import '../../../services/streaming_asr_service.dart';
-import '../../../services/tts_memory_cache_service.dart';
 import '../../../services/tts_service.dart' show TtsException;
 
 part 'follow_read_provider.g.dart';
@@ -401,7 +400,7 @@ class FollowRead extends _$FollowRead {
 
     final rawArticle = await DatabaseService.getArticleById(articleId);
     if (rawArticle == null) throw Exception('文章不存在（id=$articleId）');
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     final initialSentence = article.sentences.first;
     final initialTranslation = await _savedTranslationFor(
       articleId: article.id,
@@ -547,17 +546,20 @@ class FollowRead extends _$FollowRead {
     );
   }
 
-  Future<Article> _articleWithCurrentSentences(Article article) async {
-    final sentences = NlpService.splitSentences(article.content);
-    if (sentences.isEmpty || listEquals(article.sentences, sentences)) {
-      return article;
+  Future<Article> _articleWithPersistedSentences(Article article) async {
+    final storedSentences = article.sentences
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
+    if (storedSentences.isNotEmpty) {
+      return article.copyWith(sentences: storedSentences);
     }
 
-    final id = article.id;
-    if (id != null) {
-      await DatabaseService.updateArticleSentences(id, sentences);
-    }
-    return article.copyWith(sentences: sentences);
+    // Saved article sentences anchor generated materials. This fallback is
+    // read-only for incomplete rows; changing sentence boundaries requires
+    // rebuilding the article and regenerating dependent assets.
+    final fallback = NlpService.splitSentences(article.content);
+    return fallback.isEmpty ? article : article.copyWith(sentences: fallback);
   }
 
   Future<AudioSource> _cachedTtsSource({
@@ -565,10 +567,9 @@ class FollowRead extends _$FollowRead {
     required String sentence,
   }) async {
     final key = '${articleId}_${index}_${_stableTextHash(sentence)}';
-    final handle = await TtsMemoryCacheService.cachedFileHandle(
+    final handle = await ListeningAudioMaterialService.cachedFileHandle(
       text: sentence,
       articleId: articleId,
-      cachePurpose: ListeningAudioMaterialService.cachePurpose,
     );
     if (handle == null) {
       throw const TtsException(

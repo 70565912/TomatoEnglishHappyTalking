@@ -798,7 +798,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       throw FormatException('文章不存在（id=$articleId）');
     }
 
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     final articleJson = await _articleJsonWithStory(
       article,
       averageScore: await DatabaseService.getAverageScore(articleId),
@@ -949,7 +949,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       throw FormatException('文章不存在（id=$articleId）');
     }
 
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     final series = await _resolveStorySeries(
       requestedSeriesId: requestedSeriesId,
       requestedSeriesTitle: requestedSeriesTitle,
@@ -1258,7 +1258,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     var chapter = await DatabaseService.getStoryChapterForArticle(articleId);
     if (chapter == null) {
       final series = await PictureBookService.createSeries(
@@ -1290,7 +1290,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
     if (chapter == null) {
       return _pictureBookPromptReviewForArticle(
@@ -1443,7 +1443,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       throw FormatException('文章不存在（id=$articleId）');
     }
 
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     final items = await _listeningItemsForArticle(article);
 
     if (article.id != null && items.isNotEmpty) {
@@ -1532,7 +1532,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    return _articleWithCurrentSentences(rawArticle);
+    return _articleWithPersistedSentences(rawArticle);
   }
 
   Future<String> _articleSongContentHash(Article article) =>
@@ -2175,7 +2175,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     final items = _payloadListeningItems(message.payload) ??
         await _listeningItemsForArticle(article);
     final startIndex = _payloadOptionalInt(message.payload, 'startIndex') ?? 0;
@@ -2219,7 +2219,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       };
     }
 
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     final items = _payloadListeningItems(message.payload) ??
         await _listeningItemsForArticle(article);
     final startIndex = _payloadOptionalInt(message.payload, 'startIndex') ?? 0;
@@ -2243,14 +2243,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final english = (item['english'] ?? '').toString().trim();
       if (english.isNotEmpty) {
         requiredEnglish += 1;
-        final ready = await TtsMemoryCacheService.hasCachedFile(
+        final handle = await ListeningAudioMaterialService.cachedFileHandle(
           text: english,
           voiceType: TtsService.defaultVoiceType,
           preferRequestedVoice: false,
           articleId: articleId,
-          cachePurpose: 'listening_tts',
         );
-        if (!ready) {
+        if (handle == null) {
           missingEnglish.add(sentenceIndex);
         }
       }
@@ -7946,11 +7945,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'reason': 'chinese_tts_disabled',
       };
     }
-    final handle = await TtsMemoryCacheService.cachedFileHandle(
+    final handle = await ListeningAudioMaterialService.cachedFileHandle(
       text: text,
       voiceType: TtsService.defaultVoiceType,
       preferRequestedVoice: false,
-      cachePurpose: 'listening_tts',
       articleId: _activeArticleContextId,
     );
     if (handle == null) {
@@ -7989,7 +7987,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     if (sentenceIndex < 0 || sentenceIndex >= article.sentences.length) {
       throw FormatException('句子序号不存在（index=$sentenceIndex）');
     }
@@ -8080,7 +8078,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    final article = await _articleWithCurrentSentences(rawArticle);
+    final article = await _articleWithPersistedSentences(rawArticle);
     if (sentenceIndex < 0 || sentenceIndex >= article.sentences.length) {
       throw FormatException('句子序号不存在（index=$sentenceIndex）');
     }
@@ -8568,12 +8566,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     await _disposeListeningPlayer();
 
     try {
-      final handle = await TtsMemoryCacheService.cachedFileHandle(
+      final handle = await ListeningAudioMaterialService.cachedFileHandle(
         text: text,
         voiceType: TtsService.defaultVoiceType,
         preferRequestedVoice: false,
         articleId: _activeArticleContextId,
-        cachePurpose: 'listening_tts',
       );
       if (handle == null) {
         throw const TtsException(
@@ -8648,12 +8645,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     Future<TtsFileHandle> loadHandleAt(int itemIndex) async {
       final item = cleanItems[itemIndex];
       final english = (item['english'] ?? '').toString().trim();
-      final handle = await TtsMemoryCacheService.cachedFileHandle(
+      final handle = await ListeningAudioMaterialService.cachedFileHandle(
         text: english,
         voiceType: TtsService.defaultVoiceType,
         preferRequestedVoice: false,
         articleId: articleId,
-        cachePurpose: 'listening_tts',
       );
       if (handle == null) {
         throw const TtsException(
@@ -9450,7 +9446,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final articles = await DatabaseService.getArticles();
     final articlePayloads = <Map<String, dynamic>>[];
     for (final originalArticle in articles) {
-      final article = await _articleWithCurrentSentences(originalArticle);
+      final article = await _articleWithPersistedSentences(originalArticle);
       final id = article.id;
       final averageScore =
           id == null ? 0.0 : await DatabaseService.getAverageScore(id);
@@ -9724,52 +9720,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
   }
 
-  Future<Article> _articleWithCurrentSentences(Article article) async {
-    final id = article.id;
-    final originalContent = article.content;
-    var content = _normalizeEnglishWordJoiners(originalContent);
-    var sentences = NlpService.splitSentences(content);
-
-    if (sentences.isEmpty && _containsChinese(content)) {
-      final parsedInput = PracticeInputParser.parse(content);
-      final translatedContent = await _englishPracticeContent(
-        content,
-        articleId: id,
-        parsedInput: parsedInput,
-      );
-      final translatedSentences = NlpService.splitSentences(translatedContent);
-      if (translatedSentences.isNotEmpty) {
-        content = translatedContent;
-        sentences = translatedSentences;
-        if (id != null) {
-          await DatabaseService.updateArticleContentAndSentences(
-            id,
-            content,
-            sentences,
-          );
-        }
-        return article.copyWith(content: content, sentences: sentences);
-      }
+  Future<Article> _articleWithPersistedSentences(Article article) async {
+    final storedSentences = article.sentences
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
+    if (storedSentences.isNotEmpty) {
+      // A saved article's sentence list is the contract for generated assets:
+      // TTS files, subtitles, translations, pictures, songs, and exports all
+      // point at these boundaries. Rebuilding sentence boundaries must happen
+      // by rebuilding the article and regenerating dependent materials.
+      return article.copyWith(sentences: storedSentences);
     }
 
-    final contentChanged = content != originalContent;
-    final sentencesChanged = !listEquals(article.sentences, sentences);
-    if (sentences.isEmpty || (!contentChanged && !sentencesChanged)) {
+    // Incomplete rows get an in-memory fallback only. Read/open/status paths
+    // must never rewrite article content or sentence boundaries.
+    final content = _normalizeEnglishWordJoiners(article.content);
+    final fallback = NlpService.splitSentences(content);
+    if (fallback.isEmpty) {
       return article;
     }
-
-    if (id != null) {
-      if (contentChanged) {
-        await DatabaseService.updateArticleContentAndSentences(
-          id,
-          content,
-          sentences,
-        );
-      } else {
-        await DatabaseService.updateArticleSentences(id, sentences);
-      }
-    }
-    return article.copyWith(content: content, sentences: sentences);
+    return article.copyWith(content: content, sentences: fallback);
   }
 
   String _contentWithUpdatedSentence({

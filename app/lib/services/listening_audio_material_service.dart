@@ -1,6 +1,8 @@
-import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
+import 'dart:convert';
+import 'dart:io';
 
-import '../data/models/article_model.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import 'api_cache_service.dart';
 import 'database_service.dart';
 import 'nlp_service.dart';
@@ -78,12 +80,9 @@ class ListeningAudioMaterialService {
     final missing = <int>[];
     var ready = 0;
     for (var index = 0; index < sentences.length; index += 1) {
-      final handle = await TtsMemoryCacheService.cachedFileHandle(
+      final handle = await cachedFileHandle(
         text: sentences[index],
-        voiceType: TtsService.defaultVoiceType,
-        preferRequestedVoice: false,
         articleId: articleId,
-        cachePurpose: cachePurpose,
       );
       if (handle == null) {
         missing.add(index);
@@ -117,12 +116,9 @@ class ListeningAudioMaterialService {
     for (var index = 0; index < sentences.length; index += 1) {
       final sentence = sentences[index];
       if (!overwrite) {
-        final cached = await TtsMemoryCacheService.cachedFileHandle(
+        final cached = await cachedFileHandle(
           text: sentence,
-          voiceType: TtsService.defaultVoiceType,
-          preferRequestedVoice: false,
           articleId: articleId,
-          cachePurpose: cachePurpose,
         );
         if (cached != null) {
           continue;
@@ -185,30 +181,113 @@ class ListeningAudioMaterialService {
     _preloadOverrideForTest = override;
   }
 
+  static Future<TtsFileHandle?> cachedFileHandle({
+    required String text,
+    required int? articleId,
+    String voiceType = TtsService.defaultVoiceType,
+    bool preferRequestedVoice = false,
+  }) async {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+
+    final current = await TtsMemoryCacheService.cachedFileHandle(
+      text: trimmed,
+      voiceType: voiceType,
+      preferRequestedVoice: preferRequestedVoice,
+      articleId: articleId,
+      cachePurpose: cachePurpose,
+    );
+    if (current != null || articleId == null) {
+      return current;
+    }
+
+    for (final purpose in const {cachePurpose, legacyFollowCachePurpose}) {
+      final historical = await _historicalFileHandleForExactText(
+        articleId: articleId,
+        text: trimmed,
+        purpose: purpose,
+      );
+      if (historical != null) {
+        return historical;
+      }
+    }
+    return null;
+  }
+
   static Future<List<String>> _sentencesForArticle(int articleId) async {
     final rawArticle = await DatabaseService.getArticleById(articleId);
     if (rawArticle == null) {
       throw FormatException('文章不存在（id=$articleId）');
     }
-    final article = await _articleWithCurrentSentences(rawArticle);
-    return article.sentences
+    // Saved article sentences are the generated-material contract. Re-splitting
+    // an existing article here would orphan already persisted TTS, subtitles,
+    // and translations; sentence changes must happen by rebuilding the article.
+    final storedSentences = rawArticle.sentences
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .toList(growable: false);
+    if (storedSentences.isNotEmpty) {
+      return storedSentences;
+    }
+
+    return NlpService.splitSentences(rawArticle.content)
         .map((sentence) => sentence.trim())
         .where((sentence) => sentence.isNotEmpty)
         .toList(growable: false);
   }
 
-  static Future<Article> _articleWithCurrentSentences(Article article) async {
-    final sentences = NlpService.splitSentences(article.content);
-    if (sentences.isEmpty || listEquals(article.sentences, sentences)) {
-      return article;
+  static Future<TtsFileHandle?> _historicalFileHandleForExactText({
+    required int articleId,
+    required String text,
+    required String purpose,
+  }) async {
+    final requested = _normalizeCacheText(text);
+    if (requested.isEmpty) {
+      return null;
     }
-
-    final id = article.id;
-    if (id != null) {
-      await DatabaseService.updateArticleSentences(id, sentences);
+    final entries = await ApiCacheService.getEntriesForArticlePurpose(
+      articleId: articleId,
+      purpose: purpose,
+      limit: 5000,
+    );
+    for (final entry in entries) {
+      final cachedText = _normalizeCacheText(_requestText(entry.requestJson));
+      if (cachedText.isEmpty || cachedText != requested) {
+        continue;
+      }
+      final filePath = entry.filePath?.trim();
+      if (filePath == null || filePath.isEmpty) {
+        continue;
+      }
+      final file = File(filePath);
+      if (await file.exists() && await file.length() > 0) {
+        return TtsFileHandle(key: entry.cacheKey, filePath: filePath);
+      }
     }
-    return article.copyWith(sentences: sentences);
+    return null;
   }
+
+  static String _requestText(String requestJson) {
+    try {
+      final decoded = jsonDecode(requestJson);
+      if (decoded is Map<String, dynamic>) {
+        final text = decoded['text'];
+        return text is String ? text : '';
+      }
+      if (decoded is Map) {
+        final text = decoded['text'];
+        return text is String ? text : '';
+      }
+    } catch (_) {
+      return '';
+    }
+    return '';
+  }
+
+  static String _normalizeCacheText(String text) =>
+      text.trim().replaceAll(RegExp(r'\s+'), ' ');
 
   static Future<void> Function(
     List<TtsPreloadRequest> requests, {
