@@ -16,8 +16,6 @@ import 'database_service.dart';
 import 'listening_audio_material_service.dart';
 import 'recording_export_utils.dart';
 import 'song_subtitle_timeline_service.dart';
-import 'tts_memory_cache_service.dart' show TtsFileHandle;
-import 'tts_service.dart';
 
 enum RecordingCodec { h264, h265 }
 
@@ -1746,6 +1744,10 @@ class RecordingExportService {
     var requiredChinese = 0;
     var readyChinese = 0;
     final audioClips = <_RecordingAudioClip>[];
+    final audioHandlesByText =
+        await ListeningAudioMaterialService.cachedFileHandlesByTextForArticle(
+      articleId: request.articleId,
+    );
     for (var index = 0; index < sentences.length; index += 1) {
       final english = sentences[index];
       final overrideChinese = request.subtitleTranslations[index]?.trim() ?? '';
@@ -1766,11 +1768,10 @@ class RecordingExportService {
       ));
 
       requiredEnglish += 1;
-      final englishHandle = await _audioFileHandleOrNull(
+      final englishHandle =
+          ListeningAudioMaterialService.cachedFileHandleFromArticleMap(
         text: english,
-        voiceType: TtsService.defaultVoiceType,
-        preferRequestedVoice: false,
-        articleId: request.articleId,
+        handlesByText: audioHandlesByText,
       );
       if (englishHandle == null) {
         reasons.add('第 ${index + 1} 句英文音频未生成，请先在创作中心生成听力材料');
@@ -1900,24 +1901,6 @@ class RecordingExportService {
       items: items,
       timeline: timeline,
     );
-  }
-
-  static Future<TtsFileHandle?> _audioFileHandleOrNull({
-    required String text,
-    required String voiceType,
-    required bool preferRequestedVoice,
-    required int articleId,
-  }) async {
-    try {
-      return await ListeningAudioMaterialService.cachedFileHandle(
-        text: text,
-        voiceType: voiceType,
-        preferRequestedVoice: preferRequestedVoice,
-        articleId: articleId,
-      );
-    } catch (_) {
-      return null;
-    }
   }
 
   static _RecordingTimeline _buildTimeline(

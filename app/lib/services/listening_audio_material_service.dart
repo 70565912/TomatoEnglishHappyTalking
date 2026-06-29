@@ -77,18 +77,16 @@ class ListeningAudioMaterialService {
 
   static Future<ListeningAudioMaterialStatus> status(int articleId) async {
     final sentences = await _sentencesForArticle(articleId);
+    final handlesByText = await cachedFileHandlesByTextForArticle(
+      articleId: articleId,
+    );
     final missing = <int>[];
     var ready = 0;
-    Map<String, TtsFileHandle>? historicalHandles;
 
     for (var index = 0; index < sentences.length; index += 1) {
-      final handle = await _cachedFileHandle(
+      final handle = cachedFileHandleFromArticleMap(
         text: sentences[index],
-        articleId: articleId,
-        historicalHandles: () async {
-          return historicalHandles ??=
-              await _historicalFileHandlesByText(articleId: articleId);
-        },
+        handlesByText: handlesByText,
       );
       if (handle == null) {
         missing.add(index);
@@ -119,17 +117,15 @@ class ListeningAudioMaterialService {
     }
 
     final requests = <TtsPreloadRequest>[];
-    Map<String, TtsFileHandle>? historicalHandles;
+    final handlesByText = overwrite
+        ? const <String, TtsFileHandle>{}
+        : await cachedFileHandlesByTextForArticle(articleId: articleId);
     for (var index = 0; index < sentences.length; index += 1) {
       final sentence = sentences[index];
       if (!overwrite) {
-        final cached = await _cachedFileHandle(
+        final cached = cachedFileHandleFromArticleMap(
           text: sentence,
-          articleId: articleId,
-          historicalHandles: () async {
-            return historicalHandles ??=
-                await _historicalFileHandlesByText(articleId: articleId);
-          },
+          handlesByText: handlesByText,
         );
         if (cached != null) {
           continue;
@@ -190,6 +186,22 @@ class ListeningAudioMaterialService {
     })? override,
   ) {
     _preloadOverrideForTest = override;
+  }
+
+  static Future<Map<String, TtsFileHandle>> cachedFileHandlesByTextForArticle({
+    required int articleId,
+  }) =>
+      _historicalFileHandlesByText(articleId: articleId);
+
+  static TtsFileHandle? cachedFileHandleFromArticleMap({
+    required String text,
+    required Map<String, TtsFileHandle> handlesByText,
+  }) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return handlesByText[_normalizeCacheText(trimmed)];
   }
 
   static Future<TtsFileHandle?> cachedFileHandle({
@@ -265,7 +277,7 @@ class ListeningAudioMaterialService {
     required int articleId,
   }) async {
     final handles = <String, TtsFileHandle>{};
-    for (final purpose in const {cachePurpose, legacyFollowCachePurpose}) {
+    for (final purpose in const [cachePurpose, legacyFollowCachePurpose]) {
       final entries = await ApiCacheService.getEntriesForArticlePurpose(
         articleId: articleId,
         purpose: purpose,

@@ -237,18 +237,40 @@ class ApiCacheService {
     );
     final entries = <ApiCacheEntry>[];
     for (final row in rows) {
-      final cacheKey = row['cache_key']?.toString() ?? '';
-      if (cacheKey.isEmpty) {
+      var entry = ApiCacheEntry.fromMap(row);
+      final filePath = entry.filePath;
+      if (filePath != null && filePath.trim().isNotEmpty) {
+        final resolvedPath = await migrateLegacyCacheFileIfNeeded(filePath);
+        if (!await File(resolvedPath).exists()) {
+          await db.delete(
+            'api_cache_entries',
+            where: 'cache_key = ?',
+            whereArgs: [entry.cacheKey],
+          );
+          continue;
+        }
+        if (resolvedPath != filePath) {
+          final updatedAt = DateTime.now().toIso8601String();
+          await db.update(
+            'api_cache_entries',
+            {
+              'file_path': resolvedPath,
+              'updated_at': updatedAt,
+            },
+            where: 'cache_key = ?',
+            whereArgs: [entry.cacheKey],
+          );
+          entry = ApiCacheEntry.fromMap({
+            ...row,
+            'file_path': resolvedPath,
+            'updated_at': updatedAt,
+          });
+        }
+      }
+      if (entry.cacheKey.isEmpty) {
         continue;
       }
-      final entry = await getEntry(
-        cacheKey,
-        articleId: articleId,
-        purpose: purpose,
-      );
-      if (entry != null) {
-        entries.add(entry);
-      }
+      entries.add(entry);
     }
     return entries;
   }

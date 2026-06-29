@@ -2236,6 +2236,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final missingChinese = <int>[];
     var requiredEnglish = 0;
     const requiredChinese = 0;
+    final audioHandlesByText =
+        await ListeningAudioMaterialService.cachedFileHandlesByTextForArticle(
+      articleId: articleId,
+    );
 
     for (var position = 0; position < readinessItems.length; position += 1) {
       final item = readinessItems[position];
@@ -2243,11 +2247,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final english = (item['english'] ?? '').toString().trim();
       if (english.isNotEmpty) {
         requiredEnglish += 1;
-        final handle = await ListeningAudioMaterialService.cachedFileHandle(
+        final handle =
+            ListeningAudioMaterialService.cachedFileHandleFromArticleMap(
           text: english,
-          voiceType: TtsService.defaultVoiceType,
-          preferRequestedVoice: false,
-          articleId: articleId,
+          handlesByText: audioHandlesByText,
         );
         if (handle == null) {
           missingEnglish.add(sentenceIndex);
@@ -8641,15 +8644,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _listeningPlayer = player;
     var currentPlaybackIndex = safeStart;
     final pendingHandles = <int, Future<TtsFileHandle>>{};
+    final audioHandlesByText =
+        await ListeningAudioMaterialService.cachedFileHandlesByTextForArticle(
+      articleId: articleId,
+    );
 
     Future<TtsFileHandle> loadHandleAt(int itemIndex) async {
       final item = cleanItems[itemIndex];
       final english = (item['english'] ?? '').toString().trim();
-      final handle = await ListeningAudioMaterialService.cachedFileHandle(
+      final handle =
+          ListeningAudioMaterialService.cachedFileHandleFromArticleMap(
         text: english,
-        voiceType: TtsService.defaultVoiceType,
-        preferRequestedVoice: false,
-        articleId: articleId,
+        handlesByText: audioHandlesByText,
       );
       if (handle == null) {
         throw const TtsException(
