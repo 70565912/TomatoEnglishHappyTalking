@@ -13,10 +13,10 @@ import '../data/models/article_model.dart';
 import '../data/models/article_song_model.dart';
 import '../data/models/picture_book_model.dart';
 import 'database_service.dart';
+import 'listening_audio_material_service.dart';
 import 'recording_export_utils.dart';
 import 'song_subtitle_timeline_service.dart';
 import 'tts_memory_cache_service.dart';
-import 'tts_service.dart';
 
 enum RecordingCodec { h264, h265 }
 
@@ -1765,25 +1765,25 @@ class RecordingExportService {
       ));
 
       requiredEnglish += 1;
-      final englishHandle = await _audioFileHandleOrNull(
+      final englishHandles = await _audioFileHandlesOrNull(
         text: english,
-        voiceType: TtsService.defaultVoiceType,
-        preferRequestedVoice: false,
         articleId: request.articleId,
       );
-      if (englishHandle == null) {
+      if (englishHandles.isEmpty) {
         reasons.add('第 ${index + 1} 句英文音频未生成，请先在创作中心生成听力材料');
       } else {
         readyEnglish += 1;
         if (collectAudioClips) {
-          final bytes = await File(englishHandle.filePath).readAsBytes();
-          audioClips.add(_RecordingAudioClip(
-            sentenceIndex: index,
-            part: 'english',
-            text: english,
-            filePath: englishHandle.filePath,
-            durationMs: RecordingExportUtils.estimateMp3DurationMs(bytes),
-          ));
+          for (final englishHandle in englishHandles) {
+            final bytes = await File(englishHandle.filePath).readAsBytes();
+            audioClips.add(_RecordingAudioClip(
+              sentenceIndex: index,
+              part: 'english',
+              text: english,
+              filePath: englishHandle.filePath,
+              durationMs: RecordingExportUtils.estimateMp3DurationMs(bytes),
+            ));
+          }
         }
       }
     }
@@ -1901,22 +1901,17 @@ class RecordingExportService {
     );
   }
 
-  static Future<TtsFileHandle?> _audioFileHandleOrNull({
+  static Future<List<TtsFileHandle>> _audioFileHandlesOrNull({
     required String text,
-    required String voiceType,
-    required bool preferRequestedVoice,
     required int articleId,
   }) async {
     try {
-      return await TtsMemoryCacheService.cachedFileHandle(
-        text: text,
-        voiceType: voiceType,
-        preferRequestedVoice: preferRequestedVoice,
+      return await ListeningAudioMaterialService.cachedFileHandles(
         articleId: articleId,
-        cachePurpose: 'listening_tts',
+        text: text,
       );
     } catch (_) {
-      return null;
+      return const [];
     }
   }
 
@@ -1934,13 +1929,14 @@ class RecordingExportService {
     for (final item in assets.items) {
       final clips =
           clipsBySentence[item.index] ?? const <_RecordingAudioClip>[];
-      final english = clips.firstWhere(
-        (clip) => clip.part == 'english',
-        orElse: () => _RecordingAudioClip.empty(item.index, 'english'),
-      );
+      final englishClips =
+          clips.where((clip) => clip.part == 'english').toList(growable: false);
       final chinese = _RecordingAudioClip.empty(item.index, 'chinese');
       final englishStart = cursorMs;
-      final englishDurationMs = english.durationMs < 0 ? 0 : english.durationMs;
+      final englishDurationMs = englishClips.fold<int>(
+        0,
+        (sum, clip) => sum + (clip.durationMs < 0 ? 0 : clip.durationMs),
+      );
       final chineseDurationMs = chinese.durationMs < 0 ? 0 : chinese.durationMs;
       final englishEnd = englishStart + englishDurationMs;
       final chineseStart = englishEnd;

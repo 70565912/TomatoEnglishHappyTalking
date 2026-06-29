@@ -2243,14 +2243,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final english = (item['english'] ?? '').toString().trim();
       if (english.isNotEmpty) {
         requiredEnglish += 1;
-        final ready = await TtsMemoryCacheService.hasCachedFile(
-          text: english,
-          voiceType: TtsService.defaultVoiceType,
-          preferRequestedVoice: false,
+        final handles = await ListeningAudioMaterialService.cachedFileHandles(
           articleId: articleId,
-          cachePurpose: 'listening_tts',
+          text: english,
         );
-        if (!ready) {
+        if (handles.isEmpty) {
           missingEnglish.add(sentenceIndex);
         }
       }
@@ -7946,21 +7943,25 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'reason': 'chinese_tts_disabled',
       };
     }
-    final handle = await TtsMemoryCacheService.cachedFileHandle(
-      text: text,
-      voiceType: TtsService.defaultVoiceType,
-      preferRequestedVoice: false,
-      cachePurpose: 'listening_tts',
-      articleId: _activeArticleContextId,
-    );
-    if (handle == null) {
+    final articleId = _activeArticleContextId;
+    final handles = articleId == null
+        ? const <TtsFileHandle>[]
+        : await ListeningAudioMaterialService.cachedFileHandles(
+            articleId: articleId,
+            text: text,
+          );
+    if (handles.isEmpty) {
       return {
         'prepared': false,
         'reason': 'missing_audio_material',
         'message': ListeningAudioMaterialService.missingMaterialMessage,
       };
     }
-    return {'prepared': true, 'path': handle.filePath};
+    return {
+      'prepared': true,
+      'path': handles.first.filePath,
+      'paths': handles.map((handle) => handle.filePath).toList(),
+    };
   }
 
   Future<Map<String, dynamic>> _handleListeningPreloadChinese(
@@ -8568,14 +8569,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     await _disposeListeningPlayer();
 
     try {
-      final handle = await TtsMemoryCacheService.cachedFileHandle(
-        text: text,
-        voiceType: TtsService.defaultVoiceType,
-        preferRequestedVoice: false,
-        articleId: _activeArticleContextId,
-        cachePurpose: 'listening_tts',
-      );
-      if (handle == null) {
+      final articleId = _activeArticleContextId;
+      final handles = articleId == null
+          ? const <TtsFileHandle>[]
+          : await ListeningAudioMaterialService.cachedFileHandles(
+              articleId: articleId,
+              text: text,
+            );
+      if (handles.isEmpty) {
         throw const TtsException(
           ListeningAudioMaterialService.missingMaterialMessage,
         );
@@ -8587,11 +8588,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final player = AudioPlayer();
       _listeningPlayer = player;
       try {
-        await _playAudioFileToEnd(
-          player: player,
-          path: handle.filePath,
-          isActive: () => _isActiveListeningPlayback(token),
-        );
+        for (final handle in handles) {
+          if (!_isActiveListeningPlayback(token)) {
+            return;
+          }
+          await _playAudioFileToEnd(
+            player: player,
+            path: handle.filePath,
+            isActive: () => _isActiveListeningPlayback(token),
+          );
+        }
       } on TimeoutException {
         if (_isActiveListeningPlayback(token)) {
           throw const TtsException('播放超时，请重试');
@@ -8643,24 +8649,21 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final player = AudioPlayer();
     _listeningPlayer = player;
     var currentPlaybackIndex = safeStart;
-    final pendingHandles = <int, Future<TtsFileHandle>>{};
+    final pendingHandles = <int, Future<List<TtsFileHandle>>>{};
 
-    Future<TtsFileHandle> loadHandleAt(int itemIndex) async {
+    Future<List<TtsFileHandle>> loadHandlesAt(int itemIndex) async {
       final item = cleanItems[itemIndex];
       final english = (item['english'] ?? '').toString().trim();
-      final handle = await TtsMemoryCacheService.cachedFileHandle(
-        text: english,
-        voiceType: TtsService.defaultVoiceType,
-        preferRequestedVoice: false,
+      final handles = await ListeningAudioMaterialService.cachedFileHandles(
         articleId: articleId,
-        cachePurpose: 'listening_tts',
+        text: english,
       );
-      if (handle == null) {
+      if (handles.isEmpty) {
         throw const TtsException(
           ListeningAudioMaterialService.missingMaterialMessage,
         );
       }
-      return handle;
+      return handles;
     }
 
     void warmHandleAt(int itemIndex) {
@@ -8670,7 +8673,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (pendingHandles.containsKey(itemIndex)) {
         return;
       }
-      final future = loadHandleAt(itemIndex);
+      final future = loadHandlesAt(itemIndex);
       pendingHandles[itemIndex] = future;
       unawaited(future.then<void>((_) {}, onError: (_, __) {}));
     }
@@ -8693,19 +8696,24 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           'part': 'english',
           'state': 'partStart',
         });
-        final englishHandle =
-            await (pendingHandles.remove(index) ?? loadHandleAt(index));
+        final englishHandles =
+            await (pendingHandles.remove(index) ?? loadHandlesAt(index));
         if (!_isActiveListeningPlayback(token)) {
           return;
         }
         if (!singleItem) {
           warmHandleAt(index + 1);
         }
-        await _playAudioFileToEnd(
-          player: player,
-          path: englishHandle.filePath,
-          isActive: () => _isActiveListeningPlayback(token),
-        );
+        for (final englishHandle in englishHandles) {
+          if (!_isActiveListeningPlayback(token)) {
+            return;
+          }
+          await _playAudioFileToEnd(
+            player: player,
+            path: englishHandle.filePath,
+            isActive: () => _isActiveListeningPlayback(token),
+          );
+        }
       }
       if (_isActiveListeningPlayback(token)) {
         await _pushEvent('listening.playback', {
