@@ -5688,10 +5688,15 @@ function ListeningPage({
     }
   };
 
-  const playSongVersion = async (versionId?: string) => {
+  const playSongVersion = async (versionId?: string, startLineIndex = currentIndex) => {
     if (!songState || (songState.status !== 'ready' && songState.status !== 'playing')) return;
+    const safeStartLineIndex = Math.max(0, Math.min(startLineIndex, Math.max(items.length - 1, 0)));
     try {
-      await sendNative('listening.songPlay', { articleId, versionId });
+      await sendNative('listening.songPlay', {
+        articleId,
+        versionId,
+        startLineIndex: safeStartLineIndex,
+      });
       setSongState((current) => (current ? { ...current, status: 'playing' } : current));
     } catch (songError) {
       setSongState((current) => ({
@@ -6256,7 +6261,7 @@ function ListeningPage({
                   ) : (
                     <button
                       className={`primary-action song-action ${songGenerating && !songWaitingConfirm ? 'loading' : ''}`}
-                      onClick={() => void playSongVersion(selectedSongVersion?.id)}
+                      onClick={() => void playSongVersion(selectedSongVersion?.id, currentIndex)}
                       disabled={busy || items.length === 0 || !selectedSongVersion || songGenerating}
                       title={songState?.status === 'error' ? songState.errorMessage?.trim() || '歌曲播放失败' : undefined}
                     >
@@ -6389,13 +6394,20 @@ function ListeningPage({
                   className={`listening-row ${active ? 'active' : ''}`}
                   key={`${item.index}-${item.english}`}
                   onClick={() => {
-                    if (!busy) setCurrentIndex(item.index);
+                    if (busy) return;
+                    setCurrentIndex(item.index);
+                    if (mode === 'song' && songPlaying && selectedSongVersion?.id) {
+                      void playSongVersion(selectedSongVersion.id, item.index);
+                    }
                   }}
                   onKeyDown={(event) => {
                     if (busy) return;
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       setCurrentIndex(item.index);
+                      if (mode === 'song' && songPlaying && selectedSongVersion?.id) {
+                        void playSongVersion(selectedSongVersion.id, item.index);
+                      }
                     }
                   }}
                   role="button"
@@ -6505,6 +6517,7 @@ function ListeningPage({
         <FullscreenSongPlayer
           article={article}
           version={selectedSongVersion}
+          startLineIndex={currentIndex}
           pictureBookState={pictureBookState}
           onPlaybackStopped={() => {
             setSongCue(null);
@@ -7160,12 +7173,14 @@ function FullscreenListeningPlayer({
 function FullscreenSongPlayer({
   article,
   version,
+  startLineIndex,
   pictureBookState,
   onPlaybackStopped,
   onClose,
 }: {
   article: Article;
   version: SongVersionPayload;
+  startLineIndex: number;
   pictureBookState: PictureBookState | null;
   onPlaybackStopped: () => void;
   onClose: () => void;
@@ -7278,13 +7293,14 @@ function FullscreenSongPlayer({
     setStatus('starting');
     setError(null);
     setCurrentCue(null);
-    setCurrentLineIndex(0);
+    setCurrentLineIndex(Math.max(0, startLineIndex));
     setPositionMs(0);
     setDurationMs(version.durationMs ?? 0);
 
     sendNative('listening.songPlay', {
       articleId,
       versionId: version.id,
+      startLineIndex: Math.max(0, startLineIndex),
     })
       .then(() => {
         if (cancelled) return;
@@ -7304,7 +7320,7 @@ function FullscreenSongPlayer({
         void sendNative('listening.songStop', { articleId }).catch(() => undefined);
       }
     };
-  }, [articleId, version.id]);
+  }, [articleId, startLineIndex, version.id]);
 
   useEffect(() => {
     if (keepControlsVisible) {

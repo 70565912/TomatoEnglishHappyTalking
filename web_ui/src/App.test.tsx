@@ -6092,6 +6092,107 @@ describe('App', () => {
     expect(within(songControls).getByRole('button', { name: '导出视频' })).toBeDisabled();
   });
 
+  it('starts song playback from the selected original line', async () => {
+    window.location.hash = '/books/7/player?articleId=1&mode=song';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+      seriesId: 7,
+      seriesTitle: 'Space Story Series',
+    };
+    const playPayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, {
+            articles: [article],
+            series: [
+              {
+                id: 7,
+                title: 'Space Story Series',
+                description: '',
+                coverImagePath: null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: article.sentences.map((english, index) => ({ index, english, chinese: '' })),
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.fullscreenReady') {
+          return ok(message.id, type, { ready: true, reasons: [] });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            source: 'suno',
+            audioPath: 'suno-v1.mp3',
+            versions: [
+              {
+                id: 'suno-v1',
+                audioPath: 'suno-v1.mp3',
+                title: 'Suno 版本 1',
+                timelineStatus: 'ready',
+                timelinePath: 'timeline-v1.json',
+                isDefault: true,
+              },
+            ],
+          });
+        }
+        if (type === 'listening.songPlay') {
+          playPayloads.push(payload);
+          return ok(message.id, type, { playbackState: 'playing' });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByText('Tom finds a bright snack box.'));
+    fireEvent.click(await screen.findByRole('button', { name: '开始播放' }));
+    await waitFor(() =>
+      expect(playPayloads[0]).toMatchObject({
+        articleId: 1,
+        versionId: 'suno-v1',
+        startLineIndex: 0,
+      }),
+    );
+    expect(await screen.findByRole('button', { name: '停止歌曲' })).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByText('He shares it with his team.'));
+    await waitFor(() =>
+      expect(playPayloads[1]).toMatchObject({
+        articleId: 1,
+        versionId: 'suno-v1',
+        startLineIndex: 1,
+      }),
+    );
+  });
+
   it('exports the selected song video from the song player action', async () => {
     window.location.hash = '/books/7/player?articleId=1&mode=song';
     const article = {

@@ -631,6 +631,21 @@ class SongSubtitleTimelineService {
     return null;
   }
 
+  static int? startMsForLineIndex(
+    SongSubtitleTimeline timeline,
+    int lineIndex,
+  ) {
+    if (lineIndex <= 0) {
+      return 0;
+    }
+    for (final cue in timeline.cues) {
+      if (cue.lineIndex == lineIndex) {
+        return cue.startMs < 0 ? 0 : cue.startMs;
+      }
+    }
+    return null;
+  }
+
   static void validateTimelineCompleteness(
     SongSubtitleTimeline timeline,
     int lyricLineCount,

@@ -152,6 +152,37 @@ void main() {
     expect(SongSubtitleTimelineService.cueAtPosition(timeline, 3200), isNull);
   });
 
+  test('startMsForLineIndex starts first line at zero and middle lines at cues',
+      () {
+    const timeline = SongSubtitleTimeline(
+      version: 1,
+      articleId: 7,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 5000,
+      source: 'suno',
+      cues: [
+        SongSubtitleCue(
+          lineIndex: 0,
+          startMs: 900,
+          endMs: 1500,
+          english: 'First line',
+        ),
+        SongSubtitleCue(
+          lineIndex: 1,
+          startMs: 2500,
+          endMs: 3000,
+          english: 'Second line',
+        ),
+      ],
+    );
+
+    expect(SongSubtitleTimelineService.startMsForLineIndex(timeline, 0), 0);
+    expect(SongSubtitleTimelineService.startMsForLineIndex(timeline, 1), 2500);
+    expect(
+        SongSubtitleTimelineService.startMsForLineIndex(timeline, 9), isNull);
+  });
+
   test('builds matched timeline from exact ASR word timings', () {
     final timeline = SongSubtitleTimelineService.buildTimeline(
       articleId: 7,

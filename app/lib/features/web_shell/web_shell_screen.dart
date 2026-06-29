@@ -2723,6 +2723,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final payload = await _songStatePayload(articleId);
     final requestedVersionId =
         _payloadString(message.payload, 'versionId').trim();
+    final startLineIndex =
+        _payloadOptionalInt(message.payload, 'startLineIndex');
     final versions = ((payload['versions'] as List?) ?? const [])
         .map(ArticleSongVersion.fromJson)
         .whereType<ArticleSongVersion>()
@@ -2774,6 +2776,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       state: state,
       versionId: selectedVersion?.id,
       timelinePath: selectedVersion?.timelinePath,
+      startLineIndex: startLineIndex,
     );
     return {'playbackState': 'playing'};
   }
@@ -8849,6 +8852,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required ArticleSongState state,
     String? versionId,
     String? timelinePath,
+    int? startLineIndex,
   }) async {
     final token = ++_songPlaybackToken;
     await _stopListeningPlayback();
@@ -8878,8 +8882,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           );
         }
       }
+      final startPosition = _songStartPositionForLine(
+        timeline: timeline,
+        startLineIndex: startLineIndex,
+      );
       await player.setFilePath(path).timeout(const Duration(seconds: 10));
-      await player.seek(Duration.zero).timeout(const Duration(seconds: 3));
+      await player.seek(startPosition).timeout(const Duration(seconds: 3));
       await player.setVolume(1.0);
       await _pushEvent(
         'listening.song.state',
@@ -8895,6 +8903,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           'durationMs': player.duration?.inMilliseconds ?? timeline?.durationMs,
           'timelinePath': timelinePath,
           'timelineCueCount': timeline?.cues.length,
+          'startLineIndex': startLineIndex,
+          'startPositionMs': startPosition.inMilliseconds,
         },
       );
 
@@ -9015,6 +9025,31 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       );
       rethrow;
     }
+  }
+
+  Duration _songStartPositionForLine({
+    required SongSubtitleTimeline? timeline,
+    required int? startLineIndex,
+  }) {
+    final lineIndex = startLineIndex;
+    if (lineIndex == null || lineIndex <= 0) {
+      return Duration.zero;
+    }
+    if (timeline == null) {
+      throw FormatException(
+        '歌曲还没有可用字幕时间线，无法从第 ${lineIndex + 1} 句开始播放',
+      );
+    }
+    final startMs = SongSubtitleTimelineService.startMsForLineIndex(
+      timeline,
+      lineIndex,
+    );
+    if (startMs == null) {
+      throw FormatException(
+        '歌曲字幕时间线中没有找到第 ${lineIndex + 1} 句歌词时间，请重新生成歌曲字幕',
+      );
+    }
+    return Duration(milliseconds: startMs);
   }
 
   Future<void> _playVoicePreview(
