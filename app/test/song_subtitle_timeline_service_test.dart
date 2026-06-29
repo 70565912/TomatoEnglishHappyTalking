@@ -33,8 +33,27 @@ List<AsrWordTiming> _e07FullAsrWords() {
   return _asrWordsFromRows(fixture['words'] as List<dynamic>);
 }
 
+Map<String, dynamic> _e13Fixture() {
+  return jsonDecode(
+    File('test/fixtures/e13_song_asr_full_20260629_152202.json')
+        .readAsStringSync(),
+  ) as Map<String, dynamic>;
+}
+
+List<AsrWordTiming> _e13FullAsrWords() {
+  final fixture = _e13Fixture();
+  return _asrWordsFromRows(fixture['words'] as List<dynamic>);
+}
+
 List<String> _e07LyricLines() {
   final fixture = _e07Fixture();
+  return (fixture['lyricLines'] as List<dynamic>)
+      .map((line) => line as String)
+      .toList(growable: false);
+}
+
+List<String> _e13LyricLines() {
+  final fixture = _e13Fixture();
   return (fixture['lyricLines'] as List<dynamic>)
       .map((line) => line as String)
       .toList(growable: false);
@@ -183,6 +202,51 @@ void main() {
         SongSubtitleTimelineService.startMsForLineIndex(timeline, 9), isNull);
   });
 
+  test('startMsForLineIndex jumps omitted parenthetical lines to next anchor',
+      () {
+    const timeline = SongSubtitleTimeline(
+      version: 1,
+      articleId: 7,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 5000,
+      source: 'suno',
+      cues: [
+        SongSubtitleCue(
+          lineIndex: 0,
+          startMs: 1000,
+          endMs: 1500,
+          english: 'First line',
+          method: 'matched',
+        ),
+        SongSubtitleCue(
+          lineIndex: 1,
+          startMs: 2500,
+          endMs: 2500,
+          english: '(Omitted stage direction.)',
+          method: 'boundary',
+        ),
+        SongSubtitleCue(
+          lineIndex: 2,
+          startMs: 2500,
+          endMs: 3200,
+          english: 'Second sung line',
+          method: 'matched',
+        ),
+      ],
+    );
+
+    expect(SongSubtitleTimelineService.startMsForLineIndex(timeline, 1), 2500);
+    expect(
+      SongSubtitleTimelineService.cueAtPosition(timeline, 2500)?.lineIndex,
+      2,
+    );
+    expect(
+      SongSubtitleTimelineService.srtForTimeline(timeline),
+      isNot(contains('Omitted stage direction')),
+    );
+  });
+
   test('builds matched timeline from exact ASR word timings', () {
     final timeline = SongSubtitleTimelineService.buildTimeline(
       articleId: 7,
@@ -242,6 +306,125 @@ void main() {
 
     expect(timeline.cues.single.method, 'matched');
     expect(timeline.cues.single.confidence, greaterThan(0.55));
+  });
+
+  test('matches pure parenthetical lyrics when the platform sings them', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 97,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 9000,
+      source: 'suno',
+      lyricLines: const [
+        'Before it starts.',
+        '(A whispered aside.)',
+        'After it ends.',
+      ],
+      translations: const {},
+      words: const [
+        AsrWordTiming(text: 'before', startMs: 1000, endMs: 1350),
+        AsrWordTiming(text: 'it', startMs: 1350, endMs: 1550),
+        AsrWordTiming(text: 'starts', startMs: 1550, endMs: 2100),
+        AsrWordTiming(text: 'a', startMs: 3000, endMs: 3180),
+        AsrWordTiming(text: 'whispered', startMs: 3180, endMs: 3700),
+        AsrWordTiming(text: 'aside', startMs: 3700, endMs: 4300),
+        AsrWordTiming(text: 'after', startMs: 5200, endMs: 5600),
+        AsrWordTiming(text: 'it', startMs: 5600, endMs: 5800),
+        AsrWordTiming(text: 'ends', startMs: 5800, endMs: 6300),
+      ],
+    );
+
+    expect(timeline.cues[1].english, '(A whispered aside.)');
+    expect(timeline.cues[1].method, 'matched');
+    expect(timeline.cues[1].startMs, inInclusiveRange(2800, 3100));
+    expect(timeline.cues[1].endMs, greaterThan(4100));
+  });
+
+  test('keeps omitted parenthetical lines from stealing the next sung cue', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 98,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 18000,
+      source: 'suno',
+      lyricLines: const [
+        '"Sure, it\'s an arm, yer honor!"',
+        '(He pronounced it "arrum.")',
+        '"An arm, you goose! Who ever saw one that size? Why, it fills the whole window!"',
+        '"Sure it does, yer honor; but it\'s an arm for all that."',
+      ],
+      translations: const {},
+      words: const [
+        AsrWordTiming(text: 'sure', startMs: 1000, endMs: 1350),
+        AsrWordTiming(text: 'it\'s', startMs: 1350, endMs: 1650),
+        AsrWordTiming(text: 'an', startMs: 1650, endMs: 1850),
+        AsrWordTiming(text: 'arm', startMs: 1850, endMs: 2250),
+        AsrWordTiming(text: 'yer', startMs: 2250, endMs: 2500),
+        AsrWordTiming(text: 'honor', startMs: 2500, endMs: 3100),
+        AsrWordTiming(text: 'an', startMs: 4500, endMs: 4700),
+        AsrWordTiming(text: 'arm', startMs: 4700, endMs: 5100),
+        AsrWordTiming(text: 'you', startMs: 5100, endMs: 5350),
+        AsrWordTiming(text: 'goose', startMs: 5350, endMs: 5900),
+        AsrWordTiming(text: 'who', startMs: 5900, endMs: 6150),
+        AsrWordTiming(text: 'ever', startMs: 6150, endMs: 6550),
+        AsrWordTiming(text: 'saw', startMs: 6550, endMs: 6850),
+        AsrWordTiming(text: 'one', startMs: 6850, endMs: 7150),
+        AsrWordTiming(text: 'that', startMs: 7150, endMs: 7420),
+        AsrWordTiming(text: 'size', startMs: 7420, endMs: 7900),
+        AsrWordTiming(text: 'why', startMs: 7900, endMs: 8300),
+        AsrWordTiming(text: 'it', startMs: 8300, endMs: 8500),
+        AsrWordTiming(text: 'fills', startMs: 8500, endMs: 8950),
+        AsrWordTiming(text: 'the', startMs: 8950, endMs: 9120),
+        AsrWordTiming(text: 'whole', startMs: 9120, endMs: 9500),
+        AsrWordTiming(text: 'window', startMs: 9500, endMs: 10100),
+        AsrWordTiming(text: 'sure', startMs: 11200, endMs: 11500),
+        AsrWordTiming(text: 'it', startMs: 11500, endMs: 11700),
+        AsrWordTiming(text: 'does', startMs: 11700, endMs: 12100),
+        AsrWordTiming(text: 'yer', startMs: 12100, endMs: 12350),
+        AsrWordTiming(text: 'honor', startMs: 12350, endMs: 12800),
+        AsrWordTiming(text: 'but', startMs: 12800, endMs: 13050),
+        AsrWordTiming(text: 'it\'s', startMs: 13050, endMs: 13350),
+        AsrWordTiming(text: 'an', startMs: 13350, endMs: 13550),
+        AsrWordTiming(text: 'arm', startMs: 13550, endMs: 13950),
+        AsrWordTiming(text: 'for', startMs: 13950, endMs: 14200),
+        AsrWordTiming(text: 'all', startMs: 14200, endMs: 14500),
+        AsrWordTiming(text: 'that', startMs: 14500, endMs: 14950),
+      ],
+    );
+
+    expect(timeline.cues, hasLength(4));
+    expect(timeline.cues[1].method, 'boundary');
+    expect(timeline.cues[1].startMs, timeline.cues[2].startMs);
+    expect(timeline.cues[1].endMs, timeline.cues[2].startMs);
+    expect(timeline.cues[2].method, 'matched');
+    expect(timeline.cues[2].endMs - timeline.cues[2].startMs,
+        greaterThanOrEqualTo(5000));
+    expect(timeline.cues[3].method, 'matched');
+    expect(SongSubtitleTimelineService.startMsForLineIndex(timeline, 1),
+        timeline.cues[2].startMs);
+  });
+
+  test('matches sung text around omitted inline parenthetical notes', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 99,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 6000,
+      source: 'suno',
+      lyricLines: const ['"I think" (she whispered), "we are safe."'],
+      translations: const {},
+      words: const [
+        AsrWordTiming(text: 'i', startMs: 1000, endMs: 1200),
+        AsrWordTiming(text: 'think', startMs: 1200, endMs: 1700),
+        AsrWordTiming(text: 'we', startMs: 2600, endMs: 2850),
+        AsrWordTiming(text: 'are', startMs: 2850, endMs: 3100),
+        AsrWordTiming(text: 'safe', startMs: 3100, endMs: 3700),
+      ],
+    );
+
+    expect(timeline.cues.single.method, 'matched');
+    expect(timeline.cues.single.startMs, lessThanOrEqualTo(1000));
+    expect(timeline.cues.single.endMs, lessThan(4500));
   });
 
   test('interpolates missing lyric lines between matched anchors', () {
@@ -502,6 +685,46 @@ void main() {
         reason: 'E07 line ${cue.lineIndex + 1} must stay readable',
       );
     }
+  });
+
+  test('builds E13 full song timeline with omitted parenthetical boundaries',
+      () {
+    final lyricLines = _e13LyricLines();
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 63,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 287568,
+      source: 'suno',
+      lyricLines: lyricLines,
+      translations: const {},
+      words: _e13FullAsrWords(),
+    );
+
+    final brokenGlass = timeline.cues[46];
+    final armPronunciation = timeline.cues[49];
+    final goose = timeline.cues[50];
+    final sureItDoes = timeline.cues[51];
+
+    expect(timeline.cues, hasLength(lyricLines.length));
+    expect(timeline.confidence, greaterThan(0.9));
+    expect(brokenGlass.english, '(Sounds of more broken glass.)');
+    expect(brokenGlass.method, 'boundary');
+    expect(brokenGlass.startMs, timeline.cues[47].startMs);
+    expect(armPronunciation.english, '(He pronounced it "arrum.")');
+    expect(armPronunciation.method, 'boundary');
+    expect(armPronunciation.startMs, goose.startMs);
+    expect(armPronunciation.endMs, goose.startMs);
+    expect(goose.english,
+        '"An arm, you goose! Who ever saw one that size? Why, it fills the whole window!"');
+    expect(goose.method, 'matched');
+    expect(goose.endMs - goose.startMs, greaterThanOrEqualTo(5000));
+    expect(sureItDoes.method, 'matched');
+    expect(sureItDoes.startMs, greaterThan(goose.endMs));
+    expect(
+      SongSubtitleTimelineService.startMsForLineIndex(timeline, 49),
+      goose.startMs,
+    );
   });
 
   test('keeps original lyrics for mismatched interpolated song subtitles', () {

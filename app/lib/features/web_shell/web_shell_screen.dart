@@ -3003,6 +3003,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final result = await SongSubtitleTimelineService.generate(
       articleId: articleId,
       audioPath: version.audioPath,
+      versionId: version.id,
       lyricLines: lyricLines,
       translations: translations,
       source: version.source,
