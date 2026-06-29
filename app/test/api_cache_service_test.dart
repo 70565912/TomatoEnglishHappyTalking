@@ -7,7 +7,6 @@ import 'package:path/path.dart' as path_lib;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
-import 'package:tomato_english_happy_talking/data/models/article_sentence_translation_model.dart';
 import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/aliyun_wanx_image_service.dart';
@@ -288,92 +287,6 @@ void main() {
     expect(status.ready, 1);
     expect(status.missing, [1]);
     expect(status.status, 'partial');
-  });
-
-  test(
-      'listening audio material keeps old platform voice and split chunks usable',
-      () async {
-    const sentence = 'Tom waves and smiles, then he runs to the garden.';
-    final articleId = await _saveArticle(sentence);
-    final firstPath = await _writeHistoricalCachedTts(
-      articleId: articleId,
-      text: 'Tom waves and smiles,',
-      purpose: ListeningAudioMaterialService.cachePurpose,
-      request: {
-        'service': 'aliyun_cosyvoice',
-        'voice': 'loongabby_v3',
-        'text': 'Tom waves and smiles,',
-      },
-      bytes: [1, 2, 3],
-    );
-    final secondPath = await _writeHistoricalCachedTts(
-      articleId: articleId,
-      text: 'then he runs to the garden.',
-      purpose: ListeningAudioMaterialService.legacyFollowCachePurpose,
-      request: {
-        'service': 'doubao_tts_2',
-        'speaker': 'zh_female_vv_uranus_bigtts',
-        'text': 'then he runs to the garden.',
-      },
-      bytes: [4, 5, 6],
-    );
-
-    final status = await ListeningAudioMaterialService.status(articleId);
-    final handles = await ListeningAudioMaterialService.cachedFileHandles(
-      articleId: articleId,
-      text: sentence,
-    );
-    final generate = await ListeningAudioMaterialService.generate(
-      articleId: articleId,
-      overwrite: false,
-    );
-
-    expect(status.total, 1);
-    expect(status.ready, 1);
-    expect(status.missing, isEmpty);
-    expect(handles.map((handle) => handle.filePath), [firstPath, secondPath]);
-    expect(generate.requested, 0);
-    expect(generate.ready, 1);
-  });
-
-  test('article translations survive sentence chunk changes', () async {
-    const sentence = 'Tom waves and smiles, then he runs to the garden.';
-    final articleId = await _saveArticle(sentence);
-    final now = DateTime(2026, 1, 1);
-    await DatabaseService.saveArticleSentenceTranslations(articleId, [
-      ArticleSentenceTranslation(
-        articleId: articleId,
-        sentenceIndex: 0,
-        englishSentence: 'Tom waves and smiles,',
-        chineseText: '汤姆挥手微笑，',
-        source: 'imported',
-        createdAt: now,
-        updatedAt: now,
-      ),
-      ArticleSentenceTranslation(
-        articleId: articleId,
-        sentenceIndex: 1,
-        englishSentence: 'then he runs to the garden.',
-        chineseText: '然后他跑向花园。',
-        source: 'imported',
-        createdAt: now,
-        updatedAt: now,
-      ),
-    ]);
-
-    final batch =
-        await DatabaseService.getArticleSentenceTranslationsForSentences(
-      articleId: articleId,
-      sentences: [sentence],
-    );
-    final single = await DatabaseService.getArticleSentenceTranslation(
-      articleId,
-      0,
-      sentence,
-    );
-
-    expect(batch, {0: '汤姆挥手微笑，然后他跑向花园。'});
-    expect(single, '汤姆挥手微笑，然后他跑向花园。');
   });
 
   test(
@@ -3331,30 +3244,6 @@ Future<String> _writeCachedListeningTts({
     kind: 'tts',
     purpose: purpose,
     request: {'service': 'unit_tts', 'text': text, 'purpose': purpose},
-    bytes: bytes,
-    subdirectory: 'tts',
-    extension: 'mp3',
-    contentType: 'audio/mpeg',
-    articleId: articleId,
-  );
-}
-
-Future<String> _writeHistoricalCachedTts({
-  required int articleId,
-  required String text,
-  required String purpose,
-  required Map<String, dynamic> request,
-  required List<int> bytes,
-}) async {
-  final cacheKey = await ApiCacheService.keyForJson('tts', request);
-  return ApiCacheService.putFileBytes(
-    cacheKey: cacheKey,
-    kind: 'tts',
-    purpose: purpose,
-    request: {
-      ...request,
-      'text': text,
-    },
     bytes: bytes,
     subdirectory: 'tts',
     extension: 'mp3',

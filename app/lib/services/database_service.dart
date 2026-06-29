@@ -750,39 +750,22 @@ class DatabaseService {
       whereArgs: [articleId, sentenceIndex],
       limit: 1,
     );
-    if (maps.isNotEmpty) {
-      final row = ArticleSentenceTranslation.fromMap(maps.first);
-      final storedSentence = _normalizeSentenceForTranslationLookup(
-        row.englishSentence,
-      );
-      final requestedSentence = _normalizeSentenceForTranslationLookup(
-        sentence,
-      );
-      if (storedSentence.isEmpty ||
-          requestedSentence.isEmpty ||
-          storedSentence == requestedSentence) {
-        final translated = row.chineseText.trim();
-        if (translated.isNotEmpty) {
-          return translated;
-        }
-      }
-    }
-
-    final allMaps = await db.query(
-      'article_sentence_translations',
-      where: 'article_id = ?',
-      whereArgs: [articleId],
-      orderBy: 'sentence_index ASC',
-    );
-    if (allMaps.isEmpty) {
+    if (maps.isEmpty) {
       return null;
     }
-    return _compatibleTranslationForSentence(
-      sentence: sentence,
-      rows: allMaps
-          .map(ArticleSentenceTranslation.fromMap)
-          .toList(growable: false),
+
+    final row = ArticleSentenceTranslation.fromMap(maps.first);
+    final storedSentence = _normalizeSentenceForTranslationLookup(
+      row.englishSentence,
     );
+    final requestedSentence = _normalizeSentenceForTranslationLookup(sentence);
+    if (storedSentence.isNotEmpty &&
+        requestedSentence.isNotEmpty &&
+        storedSentence != requestedSentence) {
+      return null;
+    }
+    final translated = row.chineseText.trim();
+    return translated.isEmpty ? null : translated;
   }
 
   static Future<Map<int, String>> getArticleSentenceTranslationsForSentences({
@@ -805,9 +788,8 @@ class DatabaseService {
     }
 
     final translations = <int, String>{};
-    final rows =
-        maps.map(ArticleSentenceTranslation.fromMap).toList(growable: false);
-    for (final row in rows) {
+    for (final map in maps) {
+      final row = ArticleSentenceTranslation.fromMap(map);
       final sentenceIndex = row.sentenceIndex;
       if (sentenceIndex < 0 || sentenceIndex >= sentences.length) {
         continue;
@@ -826,21 +808,6 @@ class DatabaseService {
       final translated = row.chineseText.trim();
       if (translated.isNotEmpty) {
         translations[sentenceIndex] = translated;
-      }
-    }
-    if (translations.length >= sentences.length) {
-      return translations;
-    }
-    for (var index = 0; index < sentences.length; index += 1) {
-      if (translations.containsKey(index)) {
-        continue;
-      }
-      final compatible = _compatibleTranslationForSentence(
-        sentence: sentences[index],
-        rows: rows,
-      );
-      if (compatible != null && compatible.trim().isNotEmpty) {
-        translations[index] = compatible.trim();
       }
     }
     return translations;
@@ -961,120 +928,6 @@ class DatabaseService {
 
   static String _normalizeSentenceForTranslationLookup(String text) =>
       text.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim();
-
-  static String? _compatibleTranslationForSentence({
-    required String sentence,
-    required List<ArticleSentenceTranslation> rows,
-  }) {
-    final requestedTokens = _translationLookupTokens(sentence);
-    if (requestedTokens.isEmpty) {
-      return null;
-    }
-    final requestedKey = requestedTokens.join(' ');
-
-    for (final row in rows) {
-      final translated = row.chineseText.trim();
-      if (translated.isEmpty) {
-        continue;
-      }
-      final rowTokens = _translationLookupTokens(row.englishSentence);
-      if (rowTokens.join(' ') == requestedKey) {
-        return translated;
-      }
-    }
-
-    final matches = <_TranslationCompatibilityMatch>[];
-    for (final row in rows) {
-      final translated = row.chineseText.trim();
-      if (translated.isEmpty) {
-        continue;
-      }
-      final rowTokens = _translationLookupTokens(row.englishSentence);
-      if (rowTokens.length < 2 || rowTokens.length > requestedTokens.length) {
-        continue;
-      }
-      for (final start in _tokenSequenceStarts(requestedTokens, rowTokens)) {
-        matches.add(_TranslationCompatibilityMatch(
-          row: row,
-          start: start,
-          end: start + rowTokens.length,
-        ));
-      }
-    }
-    if (matches.isEmpty) {
-      return null;
-    }
-    matches.sort((a, b) {
-      final startCompare = a.start.compareTo(b.start);
-      if (startCompare != 0) return startCompare;
-      final lengthCompare = b.length.compareTo(a.length);
-      if (lengthCompare != 0) return lengthCompare;
-      return a.row.sentenceIndex.compareTo(b.row.sentenceIndex);
-    });
-
-    final selected = <_TranslationCompatibilityMatch>[];
-    var cursor = 0;
-    var covered = 0;
-    for (final match in matches) {
-      if (match.end <= cursor || match.start < cursor) {
-        continue;
-      }
-      selected.add(match);
-      covered += match.length;
-      cursor = match.end;
-    }
-    if (selected.isEmpty) {
-      return null;
-    }
-
-    final coverage = covered / requestedTokens.length;
-    final allowedBoundaryGap = requestedTokens.length < 10
-        ? 1
-        : (requestedTokens.length * 0.15).ceil();
-    final leadingGap = selected.first.start;
-    final trailingGap = requestedTokens.length - selected.last.end;
-    if (coverage < 0.85 ||
-        leadingGap > allowedBoundaryGap ||
-        trailingGap > allowedBoundaryGap) {
-      return null;
-    }
-
-    return selected
-        .map((match) => match.row.chineseText.trim())
-        .where((text) => text.isNotEmpty)
-        .join('');
-  }
-
-  static List<String> _translationLookupTokens(String text) => RegExp(
-        r"[a-z0-9]+(?:'[a-z0-9]+)?",
-        caseSensitive: false,
-      )
-          .allMatches(text.toLowerCase())
-          .map((match) => match.group(0) ?? '')
-          .where((token) => token.isNotEmpty)
-          .toList(growable: false);
-
-  static Iterable<int> _tokenSequenceStarts(
-    List<String> haystack,
-    List<String> needle,
-  ) sync* {
-    if (needle.isEmpty || needle.length > haystack.length) {
-      return;
-    }
-    final maxStart = haystack.length - needle.length;
-    for (var start = 0; start <= maxStart; start += 1) {
-      var matched = true;
-      for (var offset = 0; offset < needle.length; offset += 1) {
-        if (haystack[start + offset] != needle[offset]) {
-          matched = false;
-          break;
-        }
-      }
-      if (matched) {
-        yield start;
-      }
-    }
-  }
 
   // ===== Learning Records =====
 
@@ -1270,18 +1123,4 @@ class DatabaseService {
       whereArgs: [articleId],
     );
   }
-}
-
-class _TranslationCompatibilityMatch {
-  const _TranslationCompatibilityMatch({
-    required this.row,
-    required this.start,
-    required this.end,
-  });
-
-  final ArticleSentenceTranslation row;
-  final int start;
-  final int end;
-
-  int get length => end - start;
 }
