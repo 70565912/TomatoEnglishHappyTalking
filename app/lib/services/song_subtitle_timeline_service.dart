@@ -140,6 +140,7 @@ class SongSubtitleTimelineGenerationResult {
     required this.cacheKey,
     required this.lyricsHash,
     required this.fromCache,
+    this.asrSnapshotPath,
   });
 
   final SongSubtitleTimeline timeline;
@@ -147,6 +148,7 @@ class SongSubtitleTimelineGenerationResult {
   final String cacheKey;
   final String lyricsHash;
   final bool fromCache;
+  final String? asrSnapshotPath;
 }
 
 class SongAsrDiagnosticResult {
@@ -169,17 +171,19 @@ class SongAsrDiagnosticResult {
 
 class SongSubtitleTimelineService {
   static const purpose = 'suno_song_subtitle_timeline_v1';
-  static const alignmentVersion = 10;
+  static const alignmentVersion = 11;
   static const staleTimelineMessage = '歌曲字幕时间线版本过旧，请重新生成歌曲字幕';
   static const _matchedLineLeadInMs = 180;
   static const _matchedLineTailMs = 320;
   static const _cueGapMs = 80;
+  static const _boundaryMethod = 'boundary';
 
   const SongSubtitleTimelineService._();
 
   static Future<SongSubtitleTimelineGenerationResult> generate({
     required int articleId,
     required String audioPath,
+    required String versionId,
     required List<String> lyricLines,
     required Map<int, String> translations,
     String source = 'suno',
@@ -243,6 +247,7 @@ class SongSubtitleTimelineService {
           cacheKey: cacheKey,
           lyricsHash: lyricsHash,
           fromCache: true,
+          asrSnapshotPath: null,
         );
       }
     }
@@ -255,6 +260,23 @@ class SongSubtitleTimelineService {
     );
     final estimatedDuration = _estimateDurationMs(
       audioBytes: audioBytes,
+      asr: asr,
+    );
+    final diagnostic = await _writeAsrDiagnosticSnapshot(
+      articleId: articleId,
+      versionId: versionId,
+      source: source,
+      audioPath: audioPath,
+      audioBytes: audioBytes,
+      audioHash: audioHash,
+      lyricsHash: lyricsHash,
+      asrProvider: asrProvider,
+      originalMimeType: originalMimeType,
+      submittedMimeType: asrMimeType,
+      submittedFormat: asrFormat,
+      useOriginalAudio: useOriginalAudio,
+      submittedAt: DateTime.now(),
+      estimatedDurationMs: estimatedDuration,
       asr: asr,
     );
     final timeline = buildTimeline(
@@ -288,6 +310,7 @@ class SongSubtitleTimelineService {
       cacheKey: cacheKey,
       lyricsHash: lyricsHash,
       fromCache: false,
+      asrSnapshotPath: diagnostic.outputPath,
     );
   }
 
@@ -376,6 +399,7 @@ class SongSubtitleTimelineService {
       cacheKey: cacheKey,
       lyricsHash: lyricsHash,
       fromCache: false,
+      asrSnapshotPath: null,
     );
   }
 
@@ -414,21 +438,59 @@ class SongSubtitleTimelineService {
       audioBytes: audioBytes,
       asr: asr,
     );
+    return _writeAsrDiagnosticSnapshot(
+      articleId: articleId,
+      versionId: versionId,
+      source: source,
+      audioPath: audioPath,
+      audioBytes: audioBytes,
+      audioHash: await ApiCacheService.hashBytes(audioBytes),
+      lyricsHash: null,
+      asrProvider: asrProvider,
+      originalMimeType: originalMimeType,
+      submittedMimeType: asrMimeType,
+      submittedFormat: asrFormat,
+      useOriginalAudio: useOriginalAudio,
+      submittedAt: submittedAt,
+      estimatedDurationMs: estimatedDuration,
+      asr: asr,
+    );
+  }
+
+  static Future<SongAsrDiagnosticResult> _writeAsrDiagnosticSnapshot({
+    required int articleId,
+    required String versionId,
+    required String source,
+    required String audioPath,
+    required Uint8List audioBytes,
+    required String audioHash,
+    required String? lyricsHash,
+    required String asrProvider,
+    required String originalMimeType,
+    required String submittedMimeType,
+    required String submittedFormat,
+    required bool useOriginalAudio,
+    required DateTime submittedAt,
+    required int estimatedDurationMs,
+    required AsrTimelineResult asr,
+  }) async {
     final words = asr.words;
     final payload = {
       'articleId': articleId,
       'versionId': versionId,
       'source': source,
       'audioPath': audioPath,
-      'audioHash': await ApiCacheService.hashBytes(audioBytes),
+      'audioHash': audioHash,
+      if (lyricsHash != null && lyricsHash.trim().isNotEmpty)
+        'lyricsHash': lyricsHash.trim(),
       'audioBytes': audioBytes.length,
       'asrProvider': asrProvider,
       'originalAudioMimeType': originalMimeType,
-      'submittedAudioMimeType': asrMimeType,
-      'submittedAudioFormat': asrFormat,
+      'submittedAudioMimeType': submittedMimeType,
+      'submittedAudioFormat': submittedFormat,
       if (!useOriginalAudio) 'sampleRate': 16000,
       'submittedAt': submittedAt.toIso8601String(),
-      'estimatedDurationMs': estimatedDuration,
+      'estimatedDurationMs': estimatedDurationMs,
       'asrDurationMs': asr.durationMs,
       'wordCount': words.length,
       if (words.isNotEmpty) ...{
@@ -604,6 +666,7 @@ class SongSubtitleTimelineService {
   static String srtForTimeline(SongSubtitleTimeline timeline) {
     return RecordingExportUtils.srtForCues(
       timeline.cues
+          .where((cue) => !_cueIsBoundary(cue))
           .map(
             (cue) => RecordingSubtitleCue(
               startMs: cue.startMs,
@@ -624,6 +687,9 @@ class SongSubtitleTimelineService {
       return null;
     }
     for (final cue in timeline.cues) {
+      if (_cueIsBoundary(cue)) {
+        continue;
+      }
       if (positionMs >= cue.startMs && positionMs < cue.endMs) {
         return cue;
       }
@@ -708,8 +774,11 @@ class SongSubtitleTimelineService {
         .map(_TimedToken.fromAsr)
         .where((word) => word.normalized.isNotEmpty)
         .toList(growable: false);
+    final lineProfiles = [
+      for (final line in lines) _LyricLineProfile.fromLine(line),
+    ];
     final lineTokens = [
-      for (final line in lines) _tokensForLine(line),
+      for (final profile in lineProfiles) profile.fullTokens,
     ];
     final weights = [
       for (var i = 0; i < lines.length; i += 1)
@@ -719,31 +788,42 @@ class SongSubtitleTimelineService {
     var searchStart = 0;
     for (var i = 0; i < lines.length; i += 1) {
       final match = _bestLineMatch(
-        tokens: lineTokens[i],
+        profile: lineProfiles[i],
         words: normalizedWords,
         searchStart: searchStart,
       );
       if (match != null &&
-          match.confidence >= _lineConfidenceThreshold(i, lineTokens[i])) {
+          match.confidence >=
+              _lineConfidenceThresholdForCount(match.tokenCount)) {
         matches[i] = match;
         searchStart = math.min(normalizedWords.length, match.lastWordIndex + 1);
       }
     }
     _rescueMissingLineMatches(
       matches: matches,
-      lineTokens: lineTokens,
+      lineProfiles: lineProfiles,
       words: normalizedWords,
     );
     _refineWeakLineMatches(
       matches: matches,
-      lineTokens: lineTokens,
+      lineProfiles: lineProfiles,
       words: normalizedWords,
     );
 
     final draft = <SongSubtitleCue?>[
       for (var i = 0; i < lines.length; i += 1)
         matches[i] == null
-            ? null
+            ? lineProfiles[i].isPureParenthetical
+                ? SongSubtitleCue(
+                    lineIndex: i,
+                    startMs: 0,
+                    endMs: 0,
+                    english: lines[i],
+                    chinese: translations[i]?.trim() ?? '',
+                    confidence: 0,
+                    method: _boundaryMethod,
+                  )
+                : null
             : SongSubtitleCue(
                 lineIndex: i,
                 startMs:
@@ -949,6 +1029,22 @@ class SongSubtitleTimelineService {
       .where((token) => token.isNotEmpty)
       .toList(growable: false);
 
+  static String _removeParentheticalSegments(String line) {
+    var current = line;
+    String next;
+    do {
+      next = current
+          .replaceAll(RegExp(r'\([^()]*\)'), ' ')
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
+      if (next == current) {
+        break;
+      }
+      current = next;
+    } while (true);
+    return current;
+  }
+
   static Iterable<String> _expandContractions(String line) sync* {
     final words = line
         .replaceAll(RegExp(r'[‘’]'), "'")
@@ -1019,17 +1115,85 @@ class SongSubtitleTimelineService {
     return math.max(1, weight);
   }
 
-  static double _lineConfidenceThreshold(int index, List<String> tokens) {
-    if (tokens.length <= 1) {
+  static double _lineConfidenceThresholdForCount(int tokenCount) {
+    if (tokenCount <= 1) {
       return 0.58;
     }
-    if (tokens.length <= 3) {
+    if (tokenCount <= 3) {
       return 0.5;
     }
     return 0.42;
   }
 
   static _LineMatch? _bestLineMatch({
+    required _LyricLineProfile profile,
+    required List<_TimedToken> words,
+    required int searchStart,
+    int? searchEndExclusive,
+  }) {
+    final fullMatch = _bestTokenMatch(
+      tokens: profile.fullTokens,
+      words: words,
+      searchStart: searchStart,
+      searchEndExclusive: searchEndExclusive,
+    );
+    if (!profile.hasParenthetical) {
+      return fullMatch;
+    }
+    if (profile.isPureParenthetical) {
+      return fullMatch != null &&
+              _isReliableParentheticalMatch(fullMatch, profile.fullTokens)
+          ? fullMatch
+          : null;
+    }
+    if (profile.withoutParentheticalTokens.isEmpty) {
+      return fullMatch;
+    }
+    if (fullMatch != null &&
+        !fullMatch.isWeakBoundary &&
+        !fullMatch.hasMissingBoundary) {
+      return fullMatch;
+    }
+    final strippedMatch = _bestTokenMatch(
+      tokens: profile.withoutParentheticalTokens,
+      words: words,
+      searchStart: searchStart,
+      searchEndExclusive: searchEndExclusive,
+    );
+    if (strippedMatch == null) {
+      return fullMatch;
+    }
+    if (fullMatch == null) {
+      return strippedMatch;
+    }
+    final strippedIsUsable = strippedMatch.confidence >=
+        _lineConfidenceThresholdForCount(strippedMatch.tokenCount);
+    final strippedAvoidsMissingBoundary =
+        fullMatch.hasMissingBoundary && !strippedMatch.hasMissingBoundary;
+    final strippedClearlyBetter =
+        strippedMatch.confidence > fullMatch.confidence + 0.04 ||
+            strippedMatch.coverage > fullMatch.coverage + 0.18;
+    return strippedIsUsable &&
+            (strippedAvoidsMissingBoundary || strippedClearlyBetter)
+        ? strippedMatch
+        : fullMatch;
+  }
+
+  static bool _isReliableParentheticalMatch(
+    _LineMatch match,
+    List<String> tokens,
+  ) {
+    if (tokens.isEmpty) {
+      return false;
+    }
+    final minCoverage = tokens.length <= 2 ? 1.0 : 0.72;
+    final minConfidence = tokens.length <= 2 ? 0.58 : 0.72;
+    return match.coverage >= minCoverage &&
+        match.confidence >= minConfidence &&
+        !match.hasMissingBoundary;
+  }
+
+  static _LineMatch? _bestTokenMatch({
     required List<String> tokens,
     required List<_TimedToken> words,
     required int searchStart,
@@ -1154,14 +1318,15 @@ class SongSubtitleTimelineService {
 
   static void _rescueMissingLineMatches({
     required List<_LineMatch?> matches,
-    required List<List<String>> lineTokens,
+    required List<_LyricLineProfile> lineProfiles,
     required List<_TimedToken> words,
   }) {
     if (words.isEmpty) {
       return;
     }
     for (var lineIndex = 0; lineIndex < matches.length; lineIndex += 1) {
-      if (matches[lineIndex] != null || lineTokens[lineIndex].isEmpty) {
+      if (matches[lineIndex] != null ||
+          lineProfiles[lineIndex].fullTokens.isEmpty) {
         continue;
       }
       final previous = _previousLineMatch(matches, lineIndex);
@@ -1176,7 +1341,7 @@ class SongSubtitleTimelineService {
         next == null ? words.length : next.firstWordIndex,
       );
       final match = _bestLineMatch(
-        tokens: lineTokens[lineIndex],
+        profile: lineProfiles[lineIndex],
         words: words,
         searchStart: searchStart,
         searchEndExclusive: searchEnd,
@@ -1186,7 +1351,7 @@ class SongSubtitleTimelineService {
       }
       final threshold = math.max(
         0.36,
-        _lineConfidenceThreshold(lineIndex, lineTokens[lineIndex]) - 0.04,
+        _lineConfidenceThresholdForCount(match.tokenCount) - 0.04,
       );
       if (match.confidence >= threshold && match.coverage >= 0.58) {
         matches[lineIndex] = match;
@@ -1196,7 +1361,7 @@ class SongSubtitleTimelineService {
 
   static void _refineWeakLineMatches({
     required List<_LineMatch?> matches,
-    required List<List<String>> lineTokens,
+    required List<_LyricLineProfile> lineProfiles,
     required List<_TimedToken> words,
   }) {
     if (words.isEmpty) {
@@ -1216,7 +1381,7 @@ class SongSubtitleTimelineService {
         continue;
       }
       final candidate = _bestLineMatch(
-        tokens: lineTokens[lineIndex],
+        profile: lineProfiles[lineIndex],
         words: words,
         searchStart: searchStart,
         searchEndExclusive: searchEnd,
@@ -1224,8 +1389,7 @@ class SongSubtitleTimelineService {
       if (candidate == null) {
         continue;
       }
-      final threshold =
-          _lineConfidenceThreshold(lineIndex, lineTokens[lineIndex]);
+      final threshold = _lineConfidenceThresholdForCount(candidate.tokenCount);
       final improvesCoverage =
           candidate.missingBoundaryCount < current.missingBoundaryCount ||
               candidate.coverage > current.coverage + 0.12;
@@ -1365,7 +1529,7 @@ class SongSubtitleTimelineService {
   }) {
     final matchedIndexes = <int>[
       for (var i = 0; i < draft.length; i += 1)
-        if (draft[i] != null) i,
+        if (_cueHasAsrAnchor(draft[i])) i,
     ];
     if (matchedIndexes.isEmpty) {
       _assignRange(
@@ -1454,13 +1618,22 @@ class SongSubtitleTimelineService {
     final safeStart = math.max(0, startMs);
     final safeEnd =
         math.max(safeStart + (endLine - startLine + 1) * 400, endMs);
-    final totalWeight = weights
-        .sublist(startLine, endLine + 1)
-        .fold<double>(0, (sum, weight) => sum + math.max(1, weight));
-    var cursor = safeStart.toDouble();
+    final fillIndexes = <int>[];
+    var totalWeight = 0.0;
     for (var index = startLine; index <= endLine; index += 1) {
+      if (draft[index] == null) {
+        fillIndexes.add(index);
+        totalWeight += math.max(1, weights[index]);
+      }
+    }
+    if (fillIndexes.isEmpty || totalWeight <= 0) {
+      return;
+    }
+    var cursor = safeStart.toDouble();
+    for (var offset = 0; offset < fillIndexes.length; offset += 1) {
+      final index = fillIndexes[offset];
       final share = math.max(1, weights[index]) / math.max(1, totalWeight);
-      final next = index == endLine
+      final next = offset == fillIndexes.length - 1
           ? safeEnd.toDouble()
           : cursor + (safeEnd - safeStart) * share;
       draft[index] = SongSubtitleCue(
@@ -1563,7 +1736,7 @@ class SongSubtitleTimelineService {
     var index = firstMatched + 1;
     while (index < lastMatched) {
       final cue = draft[index];
-      if (cue == null || _cueHasAsrAnchor(cue)) {
+      if (cue == null || _cueHasAsrAnchor(cue) || _cueIsBoundary(cue)) {
         index += 1;
         continue;
       }
@@ -1571,7 +1744,8 @@ class SongSubtitleTimelineService {
       var runEnd = index;
       while (runEnd + 1 < draft.length &&
           draft[runEnd + 1] != null &&
-          !_cueHasAsrAnchor(draft[runEnd + 1]!)) {
+          !_cueHasAsrAnchor(draft[runEnd + 1]!) &&
+          !_cueIsBoundary(draft[runEnd + 1]!)) {
         runEnd += 1;
       }
       final leftIndex = runStart - 1;
@@ -1635,7 +1809,7 @@ class SongSubtitleTimelineService {
     }
     for (var i = startLine; i <= endLine; i += 1) {
       final cue = draft[i];
-      if (cue == null || _cueHasAsrAnchor(cue)) {
+      if (cue == null || _cueHasAsrAnchor(cue) || _cueIsBoundary(cue)) {
         continue;
       }
       final duration = cue.endMs - cue.startMs;
@@ -1662,17 +1836,27 @@ class SongSubtitleTimelineService {
     if (startLine > endLine || endMs <= startMs) {
       return;
     }
-    final totalWeight = weights
-        .sublist(startLine, endLine + 1)
-        .fold<double>(0, (sum, weight) => sum + math.max(1, weight));
+    final fillIndexes = <int>[];
+    var totalWeight = 0.0;
+    for (var index = startLine; index <= endLine; index += 1) {
+      final cue = draft[index];
+      if (cue != null && !_cueIsBoundary(cue)) {
+        fillIndexes.add(index);
+        totalWeight += math.max(1, weights[index]);
+      }
+    }
+    if (fillIndexes.isEmpty || totalWeight <= 0) {
+      return;
+    }
     final windowMs = endMs - startMs;
     var cursor = startMs.toDouble();
-    for (var index = startLine; index <= endLine; index += 1) {
+    for (var offset = 0; offset < fillIndexes.length; offset += 1) {
+      final index = fillIndexes[offset];
       final cue = draft[index];
       if (cue == null) {
         continue;
       }
-      final next = index == endLine
+      final next = offset == fillIndexes.length - 1
           ? endMs.toDouble()
           : cursor +
               windowMs * math.max(1, weights[index]) / math.max(1, totalWeight);
@@ -1779,6 +1963,9 @@ class SongSubtitleTimelineService {
     for (var i = lastMatched + 1; i < draft.length; i += 1) {
       final cue = draft[i];
       if (cue != null) {
+        if (_cueIsBoundary(cue)) {
+          continue;
+        }
         if (_cueHasAsrAnchor(cue)) {
           return null;
         }
@@ -1824,6 +2011,43 @@ class SongSubtitleTimelineService {
       value?.toString().replaceAll(RegExp(r'\s+'), ' ').trim() ?? '';
 
   static List<SongSubtitleCue> _normalizeCueBounds(
+    List<SongSubtitleCue> cues, {
+    required int durationMs,
+  }) {
+    if (cues.isEmpty) {
+      return cues;
+    }
+    final timedCues =
+        cues.where((cue) => !_cueIsBoundary(cue)).toList(growable: false);
+    if (timedCues.length != cues.length) {
+      final normalizedTimed = _normalizeTimedCueBounds(
+        timedCues,
+        durationMs: durationMs,
+      );
+      var timedIndex = 0;
+      return [
+        for (final cue in cues)
+          _cueIsBoundary(cue)
+              ? _copyCue(
+                  cue,
+                  startMs: _boundaryStartMsForLineIndex(
+                    cue.lineIndex,
+                    normalizedTimed,
+                    durationMs,
+                  ),
+                  endMs: _boundaryStartMsForLineIndex(
+                    cue.lineIndex,
+                    normalizedTimed,
+                    durationMs,
+                  ),
+                )
+              : normalizedTimed[timedIndex++],
+      ];
+    }
+    return _normalizeTimedCueBounds(timedCues, durationMs: durationMs);
+  }
+
+  static List<SongSubtitleCue> _normalizeTimedCueBounds(
     List<SongSubtitleCue> cues, {
     required int durationMs,
   }) {
@@ -1883,6 +2107,27 @@ class SongSubtitleTimelineService {
     return normalized;
   }
 
+  static int _boundaryStartMsForLineIndex(
+    int lineIndex,
+    List<SongSubtitleCue> cues,
+    int durationMs,
+  ) {
+    for (final cue in cues) {
+      if (_cueHasAsrAnchor(cue) && cue.lineIndex > lineIndex) {
+        return cue.startMs.clamp(0, durationMs).toInt();
+      }
+    }
+    for (final cue in cues.reversed) {
+      if (_cueHasAsrAnchor(cue) && cue.lineIndex < lineIndex) {
+        return cue.startMs.clamp(0, durationMs).toInt();
+      }
+    }
+    return 0;
+  }
+
+  static bool _cueIsBoundary(SongSubtitleCue? cue) =>
+      cue != null && cue.method == _boundaryMethod;
+
   static bool _cueHasAsrAnchor(SongSubtitleCue? cue) =>
       cue != null && (cue.method == 'matched' || cue.method == 'partial');
 }
@@ -1909,6 +2154,37 @@ class _TimedToken {
   final int startMs;
   final int endMs;
   final double? confidence;
+}
+
+class _LyricLineProfile {
+  const _LyricLineProfile({
+    required this.fullTokens,
+    required this.withoutParentheticalTokens,
+    required this.hasParenthetical,
+    required this.isPureParenthetical,
+  });
+
+  factory _LyricLineProfile.fromLine(String line) {
+    final withoutParenthetical =
+        SongSubtitleTimelineService._removeParentheticalSegments(line);
+    final fullTokens = SongSubtitleTimelineService._tokensForLine(line);
+    final strippedTokens =
+        SongSubtitleTimelineService._tokensForLine(withoutParenthetical);
+    final hasParenthetical =
+        withoutParenthetical.replaceAll(RegExp(r'\s+'), ' ').trim() !=
+            line.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return _LyricLineProfile(
+      fullTokens: fullTokens,
+      withoutParentheticalTokens: strippedTokens,
+      hasParenthetical: hasParenthetical,
+      isPureParenthetical: hasParenthetical && strippedTokens.isEmpty,
+    );
+  }
+
+  final List<String> fullTokens;
+  final List<String> withoutParentheticalTokens;
+  final bool hasParenthetical;
+  final bool isPureParenthetical;
 }
 
 class _LineMatch {
