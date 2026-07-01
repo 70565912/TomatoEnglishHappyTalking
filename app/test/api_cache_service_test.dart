@@ -2751,6 +2751,86 @@ but the three were all crowded together at one corner of it.
     expect(updatedSeries?.description, contains('blue dress'));
   });
 
+  test('picture-book saved chapter plan survives article rename', () async {
+    _writeImageArkKey(tempDir, 'ark-rename-plan-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Alice And The Puppy',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    var article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+    final refreshed = await _refreshChapterPlanFromReview(review);
+    await PictureBookService.savePromptReview(
+      reviewId: refreshed['reviewId'].toString(),
+      groupPrompt: refreshed['groupPrompt'].toString(),
+      bookDescription: refreshed['bookDescription'].toString(),
+      bookCharacters: _charactersFromPayload(refreshed['bookCharacters']),
+      newCharacters: _charactersFromPayload(refreshed['newCharacters']),
+      chapterDescription: refreshed['chapterDescription'].toString(),
+      scenes: [
+        for (final scene in refreshed['scenes'] as List)
+          Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    final savedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    final savedSummary =
+        jsonDecode(savedChapter!.summaryJson) as Map<String, dynamic>;
+    expect(savedSummary.containsKey('contentHash'), isFalse);
+    savedSummary['contentHash'] = 'stale-hash-from-legacy-build';
+    await DatabaseService.updateStoryChapter(
+      savedChapter.copyWith(
+        summaryJson: jsonEncode(savedSummary),
+        updatedAt: DateTime(2026, 1, 2),
+      ),
+    );
+
+    await DatabaseService.updateArticleTitle(
+      articleId,
+      'E15 - Alice And The Puppy',
+    );
+    article = await DatabaseService.getArticleById(articleId);
+
+    final reopened = await PictureBookService.promptReviewPayload(
+      article: article!,
+      chapter: savedChapter,
+      regenerate: true,
+    );
+    final reopenedScenes = reopened['scenes'] as List;
+    expect(reopenedScenes, hasLength(2));
+    expect(
+      (reopenedScenes.first as Map)['sceneDescription'],
+      'Alice walks into the garden.',
+    );
+    expect(
+      (reopenedScenes.last as Map)['sceneDescription'],
+      'The Queen points at the croquet ground.',
+    );
+    expect(reopened['chapterDescription'], contains('Alice'));
+    expect(reopened.containsKey('contentHash'), isFalse);
+  });
+
   test('picture-book prompt review merges new characters only on confirm',
       () async {
     _writeImageArkKey(tempDir, 'ark-character-merge-key-12345678901234567890');

@@ -36,6 +36,18 @@ class BookDescriptionSuggestion {
       };
 }
 
+/// 绘本章节分镜、审核与顺序组图服务。
+///
+/// ## 章节分镜持久化规则（不要回退）
+///
+/// - `story_chapters.summary_json` 保存的是用户审核/保存过的章节分镜计划，属于显式确认产物，不是后台静默 AI 缓存。
+/// - **不要**为绘本分镜引入 `contentHash`、正文指纹或“输入变更即自动作废”机制。历史上因此导致 rename、改书籍简介后旧分镜被静默丢弃（E15）。
+/// - 下列操作**不得**自动让已保存分镜失效：`article.rename`、绘本审核里改书籍简介/角色、听力页 `listening.updateSentence` 微调字幕。
+/// - 当前产品没有整篇正文编辑；要改变文章只能删文重建，此时章节记录一并删除，无需 hash 判断。
+/// - 需要新分镜时，只能由用户显式触发：`pictureBook.refreshPromptReview(target: chapterPlan)`，或删文后重新走审核流程。
+/// - 打开 `pictureBook.promptReview` 时：优先读取 `summary_json` 中 `planKind=picture_book_chapter_scene_plan_v2` 且 `scenes[].sceneDescription` 非空的计划；读不到时才回退 `_blankPromptReviewSegments` 空占位。
+/// - **不要**在计划失效时只保留 `chapterDescription` 却清空分镜；这会让 UI 看起来像“有章节描述、没分镜”，并误导用户直接确认出图。
+/// - 对话练习提纲（`ChatChapterGuideService`）仍可使用自己的 `contentHash`；那是独立链路，不要复用到绘本分镜。
 class PictureBookService {
   static final Map<String, String> _imageUriCache = <String, String>{};
   static final Map<String, String> _thumbnailPathCache = <String, String>{};
@@ -229,16 +241,8 @@ class PictureBookService {
       article,
       currentSeries.characters,
     );
-    final contentHash = await _chapterContentHashFor(
-      articleTitle: article.title,
-      articleContent: article.content,
-      sentences: article.sentences,
-      bookDescription: currentSeries.description,
-      relevantCharacters: relevantCharacters,
-    );
     final existing = _chapterPlanFromSummary(
       chapter.summaryJson,
-      contentHash: contentHash,
       sentenceCount: article.sentences.length,
     );
     if (existing != null) {
@@ -247,7 +251,6 @@ class PictureBookService {
 
     final summaryMissReason = _chapterPlanSummaryMissReason(
       chapter.summaryJson,
-      contentHash: contentHash,
       sentenceCount: article.sentences.length,
     );
     final recovered = await _recoverChapterPlanFromPages(
@@ -260,7 +263,6 @@ class PictureBookService {
           summaryJson: ApiCacheService.canonicalJson(
             _chapterPlanSummaryJson(
               article: article,
-              contentHash: contentHash,
               plan: recovered,
             ),
           ),
@@ -304,7 +306,6 @@ class PictureBookService {
     final raw = _decodeJson(reply.text, const <String, dynamic>{});
     final plan = _chapterPlanFromJson(
       raw,
-      contentHash: contentHash,
       sentenceCount: article.sentences.length,
       source: reply.source,
     );
@@ -318,7 +319,6 @@ class PictureBookService {
         summaryJson: ApiCacheService.canonicalJson(
           _chapterPlanSummaryJson(
             article: article,
-            contentHash: contentHash,
             plan: plan,
           ),
         ),
@@ -333,20 +333,8 @@ class PictureBookService {
     required StoryChapter chapter,
     required StorySeries series,
   }) async {
-    final relevantCharacters = _relevantBookCharactersForArticle(
-      article,
-      series.characters,
-    );
-    final contentHash = await _chapterContentHashFor(
-      articleTitle: article.title,
-      articleContent: article.content,
-      sentences: article.sentences,
-      bookDescription: series.description,
-      relevantCharacters: relevantCharacters,
-    );
     return _chapterPlanFromSummary(
       chapter.summaryJson,
-      contentHash: contentHash,
       sentenceCount: article.sentences.length,
     );
   }
@@ -447,6 +435,10 @@ class PictureBookService {
     return draft.toPayload();
   }
 
+  /// 审核弹窗打开时加载本地分镜；不调用图片 API。
+  ///
+  /// 读取顺序：已保存 `summary_json` → 从既有 `picture_book_pages` 恢复 → 空占位草稿。
+  /// 不会因 rename / 改书籍元数据 / 听力字幕微调而自动作废已保存分镜。
   static Future<ChapterPicturePlan?> _storedChapterPlanForPromptReview({
     required Article article,
     required StoryChapter chapter,
@@ -456,20 +448,8 @@ class PictureBookService {
     if (articleId == null) {
       throw StateError('Article must be saved before reviewing picture book');
     }
-    final relevantCharacters = _relevantBookCharactersForArticle(
-      article,
-      series.characters,
-    );
-    final contentHash = await _chapterContentHashFor(
-      articleTitle: article.title,
-      articleContent: article.content,
-      sentences: article.sentences,
-      bookDescription: series.description,
-      relevantCharacters: relevantCharacters,
-    );
     final existing = _chapterPlanFromSummary(
       chapter.summaryJson,
-      contentHash: contentHash,
       sentenceCount: article.sentences.length,
     );
     if (existing != null) {
@@ -486,7 +466,6 @@ class PictureBookService {
           summaryJson: ApiCacheService.canonicalJson(
             _chapterPlanSummaryJson(
               article: article,
-              contentHash: contentHash,
               plan: recovered,
             ),
           ),
@@ -722,13 +701,6 @@ class PictureBookService {
         );
         final refreshedPlan = _chapterPlanFromJson(
           _decodeJson(reply.text, const <String, dynamic>{}),
-          contentHash: await _chapterContentHashFor(
-            articleTitle: draft.article.title,
-            articleContent: draft.article.content,
-            sentences: draft.article.sentences,
-            bookDescription: currentBookDescription,
-            relevantCharacters: currentRelevantCharacters,
-          ),
           sentenceCount: draft.article.sentences.length,
           source: reply.source,
         );
@@ -1985,52 +1957,29 @@ class PictureBookService {
     ].join('\n');
   }
 
-  static Future<String> _chapterContentHashFor({
-    required String articleTitle,
-    required String articleContent,
-    required List<String> sentences,
-    String bookDescription = '',
-    List<BookCharacter> relevantCharacters = const [],
-  }) {
-    return ApiCacheService.hashUtf8(
-      ApiCacheService.canonicalJson({
-        'title': articleTitle.trim(),
-        'content': articleContent.replaceAll(RegExp(r'[ \t]+'), ' ').trim(),
-        'bookDescription': _sanitizeBookDescription(bookDescription),
-        'relevantCharacters': [
-          for (final character in _sanitizeBookCharacters(relevantCharacters))
-            character.toJson(),
-        ],
-        'sentences': [
-          for (final sentence in sentences)
-            sentence.replaceAll(RegExp(r'\s+'), ' ').trim(),
-        ],
-        'planKind': _chapterPlanCachePurpose,
-      }),
-    );
-  }
-
+  /// 从 `story_chapters.summary_json` 读取已保存分镜。
+  ///
+  /// 不按标题、正文、书籍简介或句子变化做自动失效；只要 JSON 结构有效且分镜描述非空即视为可复用。
   static ChapterPicturePlan? _chapterPlanFromSummary(
     String summaryJson, {
-    required String contentHash,
     required int sentenceCount,
   }) {
     return _chapterPlanFromJson(
       _decodeJson(summaryJson, const <String, dynamic>{}),
-      contentHash: contentHash,
       sentenceCount: sentenceCount,
       source: TextGenerationReplySource.cached,
     );
   }
 
+  /// 写入 `story_chapters.summary_json` 的章节分镜结构。
+  ///
+  /// 只保存用户确认后的计划字段；不要恢复 `contentHash` 字段。
   static Map<String, dynamic> _chapterPlanSummaryJson({
     required Article article,
-    required String contentHash,
     required ChapterPicturePlan plan,
   }) =>
       {
         'planKind': _chapterPlanCachePurpose,
-        'contentHash': contentHash,
         'title': article.title,
         'chapterDescription': plan.chapterDescription,
         'scenes': plan.scenes.map((scene) => scene.toJson()).toList(),
@@ -2040,7 +1989,6 @@ class PictureBookService {
 
   static String _chapterPlanSummaryMissReason(
     String summaryJson, {
-    required String contentHash,
     required int sentenceCount,
   }) {
     final json = _decodeJson(summaryJson, const <String, dynamic>{});
@@ -2050,10 +1998,6 @@ class PictureBookService {
     final planKind = json['planKind']?.toString();
     if (planKind != _chapterPlanCachePurpose) {
       return 'plan_kind_mismatch';
-    }
-    final savedContentHash = json['contentHash']?.toString() ?? '';
-    if (savedContentHash.isNotEmpty && savedContentHash != contentHash) {
-      return 'content_hash_mismatch';
     }
     if (json['scenes'] is! List) {
       return 'missing_scenes';
@@ -2150,16 +2094,11 @@ class PictureBookService {
 
   static ChapterPicturePlan? _chapterPlanFromJson(
     Map<String, dynamic> json, {
-    required String contentHash,
     required int sentenceCount,
     required TextGenerationReplySource source,
   }) {
     final planKind = json['planKind']?.toString();
     if (planKind != _chapterPlanCachePurpose) {
-      return null;
-    }
-    final savedContentHash = json['contentHash']?.toString() ?? '';
-    if (savedContentHash.isNotEmpty && savedContentHash != contentHash) {
       return null;
     }
     final scenes = _pictureBookScenesFromJson(
@@ -2527,33 +2466,27 @@ class PictureBookService {
     required List<_PicturePageSegment> segments,
     List<BookCharacter> newCharacters = const [],
   }) async {
-    final contentHash = await _chapterContentHashFor(
-      articleTitle: article.title,
-      articleContent: article.content,
-      sentences: article.sentences,
-      bookDescription: bookDescription,
-      relevantCharacters: relevantCharacters,
-    );
     await DatabaseService.updateStoryChapter(
       chapter.copyWith(
-        summaryJson: ApiCacheService.canonicalJson({
-          'planKind': _chapterPlanCachePurpose,
-          'contentHash': contentHash,
-          'title': article.title,
-          'chapterDescription': chapterDescription,
-          'scenes': [
-            for (final segment in segments)
-              {
-                'pageIndex': segment.pageIndex,
-                'sentenceStartIndex': segment.sentenceStartIndex,
-                'sentenceEndIndex': segment.sentenceEndIndex,
-                'sceneDescription': segment.summary,
-              },
-          ],
-          'newCharacters': _sanitizeBookCharacters(newCharacters)
-              .map((item) => item.toJson())
-              .toList(),
-        }),
+        summaryJson: ApiCacheService.canonicalJson(
+          _chapterPlanSummaryJson(
+            article: article,
+            plan: ChapterPicturePlan(
+              chapterDescription: chapterDescription,
+              scenes: [
+                for (final segment in segments)
+                  PictureBookScene(
+                    pageIndex: segment.pageIndex,
+                    sentenceStartIndex: segment.sentenceStartIndex,
+                    sentenceEndIndex: segment.sentenceEndIndex,
+                    sceneDescription: segment.summary,
+                  ),
+              ],
+              newCharacters: newCharacters,
+              source: TextGenerationReplySource.cached,
+            ),
+          ),
+        ),
         updatedAt: DateTime.now(),
       ),
     );
