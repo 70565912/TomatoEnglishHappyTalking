@@ -5,10 +5,17 @@
 - 朗读块分句（`NlpService` / `sentenceSplitter.ts`）补充设计说明：输出 read-aloud chunks 而非语言学真分句；舒适上限约 20 词、硬上限 32 词；规则保持通用，回归样本不驱动特例。
 - 通用启发式优化：叙事破折号后的小写长从句不再被 merge 回卷；引号内 `!`/`?` 后短尾（≤5 词）并入同一句；逗号切分避开短介词尾句；舒适词数以上继续寻找断点。
 - `nlp_service_test.dart` 为 E12 增加 `seen—`、大厅+玻璃桌同块、`Quick, now!` 并入、≤3 词碎片等断言。
+- 创作中心绘本组图缩略图支持点击预览原图：列表仍只加载 `thumbnail`，点击后按需请求 `pictureBook.pageImage` `variant: full`（继续走 data URI，WebView 无法直接加载缓存目录 `file://` 原图；坑位记录见 `docs/build-and-release-pitfalls.md`）；预览通过 `createPortal` 固定在视口中央，遮罩与图片分层且不使用 `backdrop-filter`（避免 Windows WebView2 大图花屏）；`<img onLoad>` 后再显示，仅点击大图关闭。
+- 创作中心「覆盖听力材料」确认框改为 `createPortal` 挂到 `document.body`，避免页面滚动后弹窗出现在可视区域外。
 
 验证：
 
 - `flutter test test/nlp_service_test.dart`
+- `npm --prefix web_ui test -- --run`
+- `npm --prefix web_ui test -- --run -t "full-size preview"`
+- `npm --prefix web_ui test -- --run -t "confirms before overwriting"`
+- `.\tools\build_windows.ps1 -Release`
+- Release + `TOMATO_QA_REMOTE=true`：`pictureBook.pageImage` full 返回 `data:image/`，E10 听力与创作中心预览 `brokenImages=0`
 
 ## 2026-06-30
 

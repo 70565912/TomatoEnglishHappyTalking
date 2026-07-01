@@ -410,6 +410,25 @@ D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe analyze <files>
 - 先关闭正在运行的 Windows App，再重新执行发布脚本。
 - 这是发布目录中的本地数据库被旧 EXE 占用，不是 Web UI 构建失败。
 
+## WebView 绘本图不要用 `file://` 原图路径
+
+症状：
+
+- 听力页、全屏播放或创作中心绘本预览出现裂图、破图，或点击缩略图后提示「原图加载失败 / 显示失败」。
+- QA `/snapshot` 的 `brokenImages` 增多；`pictureBook.pageImage` 若返回 `file:///.../tomato_api_cache/...`，Web UI `<img>` 无法加载。
+
+原因：
+
+- 内置 WebView 页面从 `assets/web/index.html` 加载，即使开启 `allowFileAccessFromFileURLs`，也**不能**把 `release\...\tomato_api_cache\` 等运行目录下的绝对路径直接交给 `<img src>`。
+- 2026-07-01 曾尝试让 `pictureBook.pageImage` `variant: full` 返回 `file://` 以绕开大 base64，结果听力与预览同时失效；已回退为 bridge data URI。
+- 创作中心大图预览若在大图父层使用 `backdrop-filter: blur()`，Windows WebView2 还可能出现「先正常后花屏」的 GPU 合成问题；预览层应使用纯色遮罩分层，且不要用 `backdrop-filter` 叠在原图上。
+
+处理：
+
+- `PictureBookService.pageImagePayload` 的 `full` / `thumbnail` 继续通过 `_imageUriForPath` 返回 `data:image/...;base64,...`；不要把磁盘 `imagePath` 转成 `file://` 给 Web UI。
+- Web UI `directImageSource` 只接受 `data:` / `blob:` / `http(s):` / bundled `assets/`；创作中心预览可先把 data URI 转成 Blob URL 再显示，并在 `onLoad` 后再露出图片。
+- 修改绘本图片加载或预览层样式后，用 Release + `TOMATO_QA_REMOTE=true` 验证：`pictureBook.pageImage` 前缀为 `data:image/`，`/listening/<id>` 与创作中心缩略图预览 `brokenImages=0`。详见 `docs/qa-remote-control.md`。
+
 ## 自动化实测限制
 
 有时 Codex 的 Windows 窗口捕获或 in-app browser 访问本地地址会被环境策略拦截。遇到这种情况时：

@@ -2464,6 +2464,7 @@ function PictureBookCreationPanel({
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [picturePreview, setPicturePreview] = useState<PictureBookPagePreviewState | null>(null);
   const {
     audioStatus,
     audioStatusLoading,
@@ -2484,6 +2485,9 @@ function PictureBookCreationPanel({
   };
 
   useEffect(loadState, [article.id]);
+  useEffect(() => {
+    setPicturePreview(null);
+  }, [article.id]);
   useEffect(() => {
     return onNativeEvent<PictureBookState>('pictureBook.state', (payload) => {
       if (payload.articleId !== article.id) {
@@ -2516,6 +2520,41 @@ function PictureBookCreationPanel({
       onNotice('全文已复制到剪贴板');
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '全文复制失败');
+    }
+  };
+
+  const openPicturePreview = async (page: PictureBookPage, pageIndex: number) => {
+    if (!directImageSource(page.imageUri)) {
+      return;
+    }
+
+    setPicturePreview({ pageIndex, imageUri: null, loading: true });
+
+    try {
+      let imageUri = pageHasPictureBookImageVariant(page, 'full')
+        ? directImageSource(page.imageUri)
+        : null;
+      if (!imageUri) {
+        const payload = await sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
+          articleId: article.id,
+          pageIndex,
+          variant: 'full',
+        });
+        imageUri = directImageSource(payload.imageUri);
+      }
+      if (!imageUri) {
+        onNotice('绘本原图加载失败');
+        setPicturePreview(null);
+        return;
+      }
+      setPicturePreview({
+        pageIndex,
+        imageUri: preferBlobImageUrl(imageUri),
+        loading: false,
+      });
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '绘本原图加载失败');
+      setPicturePreview(null);
     }
   };
 
@@ -2583,13 +2622,20 @@ function PictureBookCreationPanel({
               const retrying = pictureBookRetryGate.isRetrying(article.id, safePageIndex);
               return (
                 <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
-                  <div className={`picture-creation-media ${imageSource ? '' : 'is-empty'}`}>
-                    {imageSource ? (
+                  {imageSource ? (
+                    <button
+                      type="button"
+                      className="picture-creation-media is-clickable"
+                      onClick={() => void openPicturePreview(page, safePageIndex)}
+                      aria-label={`查看第 ${safePageIndex + 1} 页大图`}
+                    >
                       <img src={imageSource} alt="" />
-                    ) : (
+                    </button>
+                  ) : (
+                    <div className="picture-creation-media is-empty">
                       <span>{page.status === 'error' ? '生成失败' : pictureBookStatusLabel(page.status)}</span>
-                    )}
-                  </div>
+                    </div>
+                  )}
                   <div className="picture-creation-copy">
                     <b>第 {safePageIndex + 1} 页</b>
                     <small>句子 {page.sentenceStartIndex + 1} - {page.sentenceEndIndex + 1}</small>
@@ -2611,7 +2657,86 @@ function PictureBookCreationPanel({
           )}
         </div>
       )}
+      {picturePreview && (
+        <PictureBookPagePreviewOverlay
+          state={picturePreview}
+          onClose={() => {
+            if (picturePreview.imageUri) {
+              releaseBlobImageUrl(picturePreview.imageUri);
+            }
+            setPicturePreview(null);
+          }}
+          onDisplayError={() => {
+            if (picturePreview.imageUri) {
+              releaseBlobImageUrl(picturePreview.imageUri);
+            }
+            onNotice('绘本原图显示失败');
+            setPicturePreview(null);
+          }}
+        />
+      )}
     </section>
+  );
+}
+
+type PictureBookPagePreviewState = {
+  pageIndex: number;
+  imageUri: string | null;
+  loading: boolean;
+};
+
+function PictureBookPagePreviewOverlay({
+  state,
+  onClose,
+  onDisplayError,
+}: {
+  state: PictureBookPagePreviewState;
+  onClose: () => void;
+  onDisplayError: () => void;
+}) {
+  // Keep backdrop-filter off this overlay: WebView2 can corrupt large images underneath.
+  const [imageReady, setImageReady] = useState(false);
+
+  useEffect(() => {
+    setImageReady(false);
+  }, [state.imageUri, state.loading]);
+
+  const waitingForImage = Boolean(state.imageUri) && !state.loading && !imageReady;
+
+  return createPortal(
+    <div className="picture-book-preview-overlay" role="presentation">
+      <div className="picture-book-preview-backdrop" aria-hidden="true" />
+      <div
+        className="picture-book-preview-stage"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`第 ${state.pageIndex + 1} 页绘本大图`}
+      >
+        {(state.loading || waitingForImage) && (
+          <div className="picture-book-preview-loading" aria-live="polite">
+            <Icon name="refresh" />
+            <span>正在加载原图</span>
+          </div>
+        )}
+        {state.imageUri && !state.loading ? (
+          <button
+            type="button"
+            className={`picture-book-preview-image-button${imageReady ? ' is-ready' : ''}`}
+            onClick={onClose}
+            aria-label="关闭大图预览"
+          >
+            <img
+              src={state.imageUri}
+              alt=""
+              className="picture-book-preview-image"
+              onLoad={() => setImageReady(true)}
+              onError={() => onDisplayError()}
+            />
+          </button>
+        ) : null}
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -3959,7 +4084,7 @@ function AudioMaterialOverwriteConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  return (
+  return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
       <section className="edit-dialog confirm-dialog" role="dialog" aria-modal="true" aria-label="覆盖听力材料确认">
         <div className="edit-dialog-heading">
@@ -3978,7 +4103,8 @@ function AudioMaterialOverwriteConfirmDialog({
           </button>
         </div>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -10821,12 +10947,42 @@ function articleCoverSource(article: Article, index: number): string {
 }
 
 function directImageSource(source?: string | null): string | null {
+  // Do not accept file:// cache paths: WebView cannot load tomato_api_cache files
+  // as <img src>. pictureBook.pageImage must return data: URIs instead.
   const trimmed = source?.trim() ?? '';
   if (!trimmed) return null;
   if (/^(data:image\/|blob:|https?:\/\/|assets\/|\.\/|\/assets\/)/i.test(trimmed)) {
     return trimmed;
   }
   return null;
+}
+
+function preferBlobImageUrl(source: string): string {
+  if (!/^data:image\//i.test(source)) {
+    return source;
+  }
+  const match = /^data:([^;]+);base64,(.+)$/i.exec(source.trim());
+  if (!match) {
+    return source;
+  }
+  try {
+    const mime = match[1];
+    const binary = atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return URL.createObjectURL(new Blob([bytes], { type: mime }));
+  } catch {
+    return source;
+  }
+}
+
+function releaseBlobImageUrl(source?: string | null): void {
+  const trimmed = source?.trim() ?? '';
+  if (trimmed.startsWith('blob:')) {
+    URL.revokeObjectURL(trimmed);
+  }
 }
 
 function displayVoiceLanguage(lang: string): string {

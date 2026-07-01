@@ -1518,6 +1518,100 @@ describe('App', () => {
     });
   });
 
+  it('opens a blocking full-size preview when clicking a creation picture thumbnail', async () => {
+    window.location.hash = '/creation?articleId=1&seriesId=1';
+    const article = {
+      id: 1,
+      title: 'E01 - The Bright Gate',
+      content: 'Alice finds a bright gate.',
+      sentences: ['Alice finds a bright gate.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 40,
+      pictureBookEnabled: true,
+      seriesId: 1,
+      seriesTitle: 'Alice Book',
+      chapterOrder: 1,
+    };
+    const series = [{
+      id: 1,
+      title: 'Alice Book',
+      description: '',
+      coverImagePath: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }];
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [{
+              articleId: article.id,
+              pageIndex: 0,
+              sentenceStartIndex: 0,
+              sentenceEndIndex: 0,
+              paragraphText: article.content,
+              imagePath: 'page-0.png',
+              imageUri: 'data:image/png;base64,THUMB',
+              imageVariant: 'thumbnail',
+              status: 'ready',
+            }],
+          });
+        }
+        if (type === 'pictureBook.pageImage') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            pageIndex: Number(payload.pageIndex ?? 0),
+            variant: payload.variant,
+            imageUri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAD0lEQVR42mP8z5QBDwAFhQZYgOy/0wAAAABJRU5ErkJggg==',
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('绘本组图')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '查看第 1 页大图' }));
+
+    const previewDialog = await screen.findByRole('dialog', { name: '第 1 页绘本大图' });
+    expect(previewDialog.closest('.picture-book-preview-overlay')?.parentElement).toBe(document.body);
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'pictureBook.pageImage')?.payload).toMatchObject({
+        articleId: 1,
+        pageIndex: 0,
+        variant: 'full',
+      });
+    });
+    const previewButton = await within(previewDialog).findByRole('button', { name: '关闭大图预览' });
+    const previewImage = previewButton.querySelector('img');
+    expect(previewImage?.getAttribute('src')).toMatch(/^(blob:|data:image\/)/);
+    if (previewImage) {
+      fireEvent.load(previewImage);
+    }
+
+    fireEvent.click(previewButton);
+    expect(screen.queryByRole('dialog', { name: '第 1 页绘本大图' })).not.toBeInTheDocument();
+  });
+
   it('edits book info from the creation center without showing book descriptions in the book card', async () => {
     window.location.hash = '/creation?articleId=42';
     const now = new Date().toISOString();
@@ -1947,7 +2041,7 @@ describe('App', () => {
       fireEvent.click(await screen.findByRole('button', { name: /生成听力/ }));
 
       const confirmDialog = await screen.findByRole('dialog', { name: '覆盖听力材料确认' });
-      expect(confirmDialog.closest('.edit-dialog-backdrop')).toBeTruthy();
+      expect(confirmDialog.closest('.edit-dialog-backdrop')?.parentElement).toBe(document.body);
       expect(within(confirmDialog).getByText('听力材料已经生成 2 / 2。是否覆盖原内容并重新提交远程语音合成？')).toBeInTheDocument();
       expect(confirmSpy).not.toHaveBeenCalled();
       expect(calls.some((call) => call.type === 'listening.audioGenerate')).toBe(false);

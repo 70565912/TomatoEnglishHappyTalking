@@ -1729,6 +1729,9 @@ class PictureBookService {
     required int pageIndex,
     String variant = 'full',
   }) async {
+    // Web UI <img> cannot load arbitrary cache-directory file:// URIs from the
+    // embedded WebView origin. Always return data:image/...;base64,... here.
+    // See docs/build-and-release-pitfalls.md (WebView 绘本图不要用 file:// 原图路径).
     final pages = await DatabaseService.getPictureBookPages(articleId);
     PictureBookPage? targetPage;
     for (final page in pages) {
