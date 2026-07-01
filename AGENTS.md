@@ -298,7 +298,7 @@ Alice 回归测试用例：
 - 文本生成处理：`app/lib/services/practice_text_service.dart` / `app/lib/services/text_generation_service.dart`，只用于非标准 mixed、纯中文和必要标题生成。
 - 持久缓存：`app/lib/services/api_cache_service.dart`。
 - 内容安全规则：`app/lib/services/content_safety_service.dart`，负责提交前替换、疑似安全失败记录和用户成功修正规则学习。
-- 分句：`app/lib/services/nlp_service.dart` 与 `web_ui/src/sentenceSplitter.ts`。
+- 分句：`app/lib/services/nlp_service.dart` 与 `web_ui/src/sentenceSplitter.ts`。这是 **朗读块（read-aloud chunk）** 生成器，不是语言学“真分句”；目标块长约 10–20 词（硬上限 32），避免过短碎片与悬挂尾句，规则必须通用，不得为单篇文章写死特例。E10/E11/E12 等只作回归样本。保存后 `articles.sentences` 为听力/跟读/歌曲字幕/绘本的持久化边界；改算法后须重建文章才会更新句库。
 - 绘本段落和提示词：`app/lib/services/picture_book_service.dart`。
 - Web UI 只能通过 `web_bridge_protocol.dart` / `bridge.ts` 协议提交原始内容，不要绕过 Flutter 直接访问云 API。
 

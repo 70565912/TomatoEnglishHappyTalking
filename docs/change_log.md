@@ -1,5 +1,15 @@
 # 修改日志
 
+## 2026-07-01
+
+- 朗读块分句（`NlpService` / `sentenceSplitter.ts`）补充设计说明：输出 read-aloud chunks 而非语言学真分句；舒适上限约 20 词、硬上限 32 词；规则保持通用，回归样本不驱动特例。
+- 通用启发式优化：叙事破折号后的小写长从句不再被 merge 回卷；引号内 `!`/`?` 后短尾（≤5 词）并入同一句；逗号切分避开短介词尾句；舒适词数以上继续寻找断点。
+- `nlp_service_test.dart` 为 E12 增加 `seen—`、大厅+玻璃桌同块、`Quick, now!` 并入、≤3 词碎片等断言。
+
+验证：
+
+- `flutter test test/nlp_service_test.dart`
+
 ## 2026-06-30
 
 - 修复旧章节听力材料读取和播放卡住：`articles.sentences` 继续作为已保存文章的生成素材边界，按持久化句子文本复用历史 `listening_tts` / `follow_tts` 本地音频，不做重新分句兼容。

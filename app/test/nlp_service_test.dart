@@ -163,6 +163,24 @@ void main() {
         ),
         isTrue,
       );
+      expect(
+        e12.any((chunk) => chunk.trimRight().endsWith('to be seen—')),
+        isTrue,
+      );
+      expect(
+        e12.any(
+          (chunk) =>
+              chunk.contains('great hall, with the glass table') &&
+              chunk.contains('had vanished completely.'),
+        ),
+        isTrue,
+      );
+      expect(
+        e12.any((chunk) => RegExp(r'^with the glass table').hasMatch(chunk.trim())),
+        isFalse,
+      );
+      expect(e12.any((chunk) => chunk.contains('fan! Quick, now!"')), isTrue);
+      expect(_hasTinyFragment(e12, maxWords: 3), isFalse);
     });
 
     test('splits direct speech when a quote follows a phrase without colon',
@@ -207,6 +225,12 @@ int _wordCount(String text) =>
 
 bool _hasOneWordFragment(List<String> chunks) =>
     chunks.any((chunk) => _wordCount(chunk) == 1);
+
+bool _hasTinyFragment(List<String> chunks, {int maxWords = 4}) => chunks.any(
+      (chunk) =>
+          _wordCount(chunk) <= maxWords &&
+          !RegExp(r'[.!?。！？]["”’)\]}》]*$').hasMatch(chunk.trim()),
+    );
 
 bool _hasDanglingBreak(List<String> chunks) {
   final danglingEnd = RegExp(

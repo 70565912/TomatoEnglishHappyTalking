@@ -1,3 +1,12 @@
+/**
+ * Web UI read-aloud chunk splitter — must stay aligned with `NlpService.splitSentences`.
+ *
+ * Design goals:
+ * - Output practice/listening/song lyric chunks, not linguistic sentence boundaries.
+ * - Keep chunks readable: not too short (no 1–3 word fragments or orphan preposition tails),
+ *   not too long (comfort ~20 words, hard max 32).
+ * - Use generic punctuation/quote/dash/word-window rules only; never hard-code story titles or chapter ids.
+ */
 const ABBREVIATIONS = new Set([
   'mr',
   'mrs',
@@ -192,8 +201,11 @@ type PhraseBreak = {
 const TARGET_PHRASE_MIN_WORDS = 10;
 const TARGET_PHRASE_MAX_WORDS = 24;
 const HARD_PHRASE_MAX_WORDS = 32;
+const COMFORT_PHRASE_MAX_WORDS = 20;
 const SHORT_CONNECTOR_MIN_WORDS = 6;
 const QUOTE_CONTINUATION_MIN_WORDS = 14;
+const TINY_FRAGMENT_MAX_WORDS = 5;
+const ORPHAN_TAIL_MAX_WORDS = 12;
 
 function splitLongReadAloudChunk(sentence: string): string[] {
   const trimmed = sentence.trim();
@@ -209,7 +221,7 @@ function splitLongReadAloudChunk(sentence: string): string[] {
 
     const restWordCount = words(rest).length;
     const requiredBreak = requiredPhraseBreak(trimmed, start);
-    if (restWordCount <= TARGET_PHRASE_MAX_WORDS && requiredBreak == null) {
+    if (restWordCount <= COMFORT_PHRASE_MAX_WORDS && requiredBreak == null) {
       chunks.push(rest);
       break;
     }
@@ -246,8 +258,10 @@ function choosePhraseBreak(text: string, start: number): number {
       }
     }
 
-    const remaining = words(text.slice(phraseBreak.index).trim()).length;
+    const remainingText = text.slice(phraseBreak.index).trim();
+    const remaining = words(remainingText).length;
     if (remaining < 4) continue;
+    if (wouldCreateOrphanTail(remainingText)) continue;
     if (count >= TARGET_PHRASE_MIN_WORDS && count <= TARGET_PHRASE_MAX_WORDS) {
       if (phraseBreak.kind === 'strong') {
         if (!bestStrong || words(text.slice(start, bestStrong.index).trim()).length < count) {
@@ -390,6 +404,8 @@ function shouldKeepReadingThroughSentenceEnd(current: string, text: string, look
     const next = nextNonWhitespace(text, lookahead);
     if (next >= text.length) return true;
     if (/[a-z]/.test(text[next])) return true;
+    const tail = text.slice(lookahead).trim();
+    if (isSameQuoteShortTail(tail)) return true;
     return words(current).length < QUOTE_CONTINUATION_MIN_WORDS;
   }
 
@@ -447,6 +463,28 @@ function mergeReadAloudContinuations(chunks: string[]): string[] {
       merged.push(chunk);
     }
   }
+  return mergeTinyQuoteTails(merged);
+}
+
+function mergeTinyQuoteTails(chunks: string[]): string[] {
+  const merged: string[] = [];
+  for (const rawChunk of chunks) {
+    const chunk = rawChunk.trim();
+    if (!chunk) continue;
+    const previous = merged.at(-1);
+    if (
+      previous &&
+      endsWithFinalSentencePunctuation(previous) &&
+      hasUnclosedDoubleQuote(previous) &&
+      words(chunk).length <= TINY_FRAGMENT_MAX_WORDS &&
+      isSameQuoteShortTail(chunk) &&
+      words(`${previous} ${chunk}`).length <= HARD_PHRASE_MAX_WORDS
+    ) {
+      merged[merged.length - 1] = `${previous} ${chunk}`.replace(/\s+/g, ' ').trim();
+      continue;
+    }
+    merged.push(chunk);
+  }
   return merged;
 }
 
@@ -454,7 +492,17 @@ function shouldMergeWithPrevious(previous: string, current: string): boolean {
   const combinedWords = words(`${previous} ${current}`).length;
   if (combinedWords > HARD_PHRASE_MAX_WORDS) return false;
   if (hasUnclosedDoubleQuote(previous)) {
+    if (
+      words(current).length <= TINY_FRAGMENT_MAX_WORDS &&
+      isSameQuoteShortTail(current) &&
+      combinedWords <= HARD_PHRASE_MAX_WORDS
+    ) {
+      return true;
+    }
     return combinedWords <= TARGET_PHRASE_MAX_WORDS;
+  }
+  if (endsWithEmDash(previous)) {
+    return shouldMergeEmDashContinuation(current);
   }
   if (endsWithDanglingReadAloudPhrase(previous)) return true;
   if (endsWithShortCommaPhrase(previous)) {
@@ -476,9 +524,64 @@ function startsWithLowercaseConnector(text: string): boolean {
   return /^(?:and|but|or|so|for|yet|then|because|while|when|as|though|although|which|who|that)\b/.test(text.trim());
 }
 
+function endsWithEmDash(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.endsWith('—') || trimmed.endsWith('–');
+}
+
+function shouldMergeEmDashContinuation(current: string): boolean {
+  const currentTrim = current.trim();
+  if (!currentTrim) return false;
+  if (/^["“]/.test(currentTrim)) return true;
+  const firstLetter = leadingContentLetter(currentTrim);
+  if (firstLetter && /[a-z]/.test(firstLetter)) {
+    return words(currentTrim).length < TARGET_PHRASE_MIN_WORDS;
+  }
+  if (words(currentTrim).length <= TINY_FRAGMENT_MAX_WORDS) return true;
+  return false;
+}
+
+function leadingContentLetter(text: string): string | null {
+  const match = text.match(/[A-Za-z]/);
+  return match?.[0] ?? null;
+}
+
+function isSameQuoteShortTail(text: string): boolean {
+  const fragment = sameUtteranceTailPrefix(text);
+  if (!fragment || words(fragment).length > TINY_FRAGMENT_MAX_WORDS || startsWithNewSpeakerAttribution(fragment)) {
+    return false;
+  }
+  return true;
+}
+
+function sameUtteranceTailPrefix(text: string): string {
+  const trimmed = text.trim();
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const ch = trimmed[i];
+    if (ch === '"' || ch === '”') {
+      return trimmed.slice(0, i + 1).trim();
+    }
+  }
+  return trimmed;
+}
+
+function startsWithNewSpeakerAttribution(text: string): boolean {
+  return /^(?:said|cried|shouted|asked|thought|answered|replied|muttered|whispered|called|went on)\b/i.test(
+    text.trim(),
+  );
+}
+
+function wouldCreateOrphanTail(remaining: string): boolean {
+  const remainingWords = words(remaining).length;
+  if (remainingWords >= ORPHAN_TAIL_MAX_WORDS) return false;
+  return /^(?:with|and|in|on|at|to|for|from|into|upon|about|like|as|but|or|so|yet|nor|that|which|who)\s+/i.test(
+    remaining.trim(),
+  );
+}
+
 function endsWithDanglingReadAloudPhrase(text: string): boolean {
   const trimmed = text.trim();
-  if (trimmed.endsWith('—') || trimmed.endsWith('–') || trimmed.endsWith('-')) {
+  if (trimmed.endsWith('-') && !trimmed.endsWith('—') && !trimmed.endsWith('–')) {
     return true;
   }
   return /\b(?:a|an|the|and|or|but|as|if|to|of|for|with|from|into|upon|about|like|than|that|which|who|what|how|why|where|when|me|my|your|his|her|their|our)\s*["”’)\]}》]*$/i.test(trimmed);

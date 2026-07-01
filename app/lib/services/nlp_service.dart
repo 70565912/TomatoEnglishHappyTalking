@@ -1,5 +1,13 @@
-// NLP 服务 — Dart 本地分句处理
-// 无需网络请求，直接在本地通过正则处理英文文章朗读块
+// NLP 服务 — Dart 本地朗读块分句
+//
+// ## 设计目标（朗读块，不是语言学“真分句”）
+//
+// - 输出供听力、跟读、歌曲字幕、绘本句段使用的 **read-aloud chunks**，不是语法分析意义上的句子。
+// - 块长度应适合朗读：不过短（避免 1–3 词碎片、悬挂介词尾句），不过长（默认舒适上限约 20 词，硬上限 32 词）。
+// - 规则必须 **通用**（引号、破折号、逗号、词数窗口、合并/切分启发式），不得写死单篇文章、章节号或故事专有名词。
+// - Web UI `sentenceSplitter.ts` 须与本文件保持同一套常量与行为；回归样本（E10/E11/E12 等）只用于验证，不反向驱动特例逻辑。
+//
+// 流水线：段落归一化 → 句末标点候选 → 超长块切分 → 续读合并。
 
 class NlpService {
   // Common abbreviations that end with a period (should NOT trigger sentence split)
@@ -39,16 +47,31 @@ class NlpService {
     'st',
   };
 
+  /// Preferred read-aloud chunk size window (words).
   static const _targetPhraseMinWords = 10;
+
+  /// Upper bound when choosing a phrase break inside one sentence candidate.
   static const _targetPhraseMaxWords = 24;
+
+  /// Hard ceiling for any merged chunk; never exceed in merge pass.
   static const _hardPhraseMaxWords = 32;
+
+  /// Comfortable ceiling; chunks longer than this keep looking for a break.
+  static const _comfortPhraseMaxWords = 20;
+
+  /// Minimum words before treating a connector-led break as valid.
   static const _shortConnectorMinWords = 6;
+
+  /// Inside an open quote, keep reading past `.!?` until at least this many words.
   static const _quoteContinuationMinWords = 14;
 
-  /// Split [text] into natural read-aloud sentences.
-  ///
-  /// Keep sentence-end boundaries first, then split long Alice-style compound
-  /// sentences into shorter read-aloud phrase chunks.
+  /// Same-utterance tails after `!`/`?` inside quotes (e.g. `Quick, now!`).
+  static const _tinyFragmentMaxWords = 5;
+
+  /// Do not break if the remainder is a short preposition-led tail.
+  static const _orphanTailMaxWords = 12;
+
+  /// Split [text] into read-aloud chunks for practice, listening, and song lyrics.
   static List<String> splitSentences(String text) {
     final paragraphs = _normalizeArticleParagraphs(text);
     if (paragraphs.isEmpty) return [];
@@ -290,7 +313,7 @@ class NlpService {
 
       final restWordCount = _wordCount(rest);
       final requiredBreak = _requiredPhraseBreak(trimmed, start);
-      if (restWordCount <= _targetPhraseMaxWords && requiredBreak == null) {
+      if (restWordCount <= _comfortPhraseMaxWords && requiredBreak == null) {
         chunks.add(rest);
         break;
       }
@@ -332,8 +355,12 @@ class NlpService {
         }
       }
 
-      final remaining = _wordCount(text.substring(phraseBreak.index).trim());
+      final remainingText = text.substring(phraseBreak.index).trim();
+      final remaining = _wordCount(remainingText);
       if (remaining < 4) {
+        continue;
+      }
+      if (_wouldCreateOrphanTail(remainingText)) {
         continue;
       }
       if (count >= _targetPhraseMinWords && count <= _targetPhraseMaxWords) {
@@ -558,6 +585,10 @@ class NlpService {
       if (RegExp(r'[a-z]').hasMatch(text[next])) {
         return true;
       }
+      final tail = text.substring(lookahead).trim();
+      if (_isSameQuoteShortTail(tail)) {
+        return true;
+      }
       return _wordCount(current) < _quoteContinuationMinWords;
     }
 
@@ -622,6 +653,30 @@ class NlpService {
         merged.add(chunk);
       }
     }
+    return _mergeTinyQuoteTails(merged);
+  }
+
+  static List<String> _mergeTinyQuoteTails(List<String> chunks) {
+    final merged = <String>[];
+    for (final rawChunk in chunks) {
+      final chunk = rawChunk.trim();
+      if (chunk.isEmpty) {
+        continue;
+      }
+      if (merged.isNotEmpty) {
+        final previous = merged.last;
+        if (_endsWithFinalSentencePunctuation(previous) &&
+            _hasUnclosedDoubleQuote(previous) &&
+            _wordCount(chunk) <= _tinyFragmentMaxWords &&
+            _isSameQuoteShortTail(chunk) &&
+            _wordCount('$previous $chunk') <= _hardPhraseMaxWords) {
+          merged[merged.length - 1] =
+              '$previous $chunk'.replaceAll(RegExp(r'\s+'), ' ').trim();
+          continue;
+        }
+      }
+      merged.add(chunk);
+    }
     return merged;
   }
 
@@ -631,7 +686,15 @@ class NlpService {
       return false;
     }
     if (_hasUnclosedDoubleQuote(previous)) {
+      if (_wordCount(current) <= _tinyFragmentMaxWords &&
+          _isSameQuoteShortTail(current) &&
+          combinedWords <= _hardPhraseMaxWords) {
+        return true;
+      }
       return combinedWords <= _targetPhraseMaxWords;
+    }
+    if (_endsWithEmDash(previous)) {
+      return _shouldMergeEmDashContinuation(current);
     }
     if (_endsWithDanglingReadAloudPhrase(previous)) {
       return true;
@@ -659,11 +722,78 @@ class NlpService {
     ).hasMatch(text.trim());
   }
 
+  static bool _endsWithEmDash(String text) {
+    final trimmed = text.trim();
+    return trimmed.endsWith('—') || trimmed.endsWith('–');
+  }
+
+  static bool _shouldMergeEmDashContinuation(String current) {
+    final currentTrim = current.trim();
+    if (currentTrim.isEmpty) {
+      return false;
+    }
+    if (RegExp(r'^["“]').hasMatch(currentTrim)) {
+      return true;
+    }
+    final firstLetter = _leadingContentLetter(currentTrim);
+    if (firstLetter != null && RegExp(r'[a-z]').hasMatch(firstLetter)) {
+      return _wordCount(currentTrim) < _targetPhraseMinWords;
+    }
+    if (_wordCount(currentTrim) <= _tinyFragmentMaxWords) {
+      return true;
+    }
+    return false;
+  }
+
+  static String? _leadingContentLetter(String text) {
+    final match = RegExp(r'[A-Za-z]').firstMatch(text);
+    return match?.group(0);
+  }
+
+  static bool _isSameQuoteShortTail(String text) {
+    final fragment = _sameUtteranceTailPrefix(text);
+    if (fragment.isEmpty ||
+        _wordCount(fragment) > _tinyFragmentMaxWords ||
+        _startsWithNewSpeakerAttribution(fragment)) {
+      return false;
+    }
+    return true;
+  }
+
+  static String _sameUtteranceTailPrefix(String text) {
+    final trimmed = text.trim();
+    for (var i = 0; i < trimmed.length; i++) {
+      final ch = trimmed[i];
+      if (ch == '"' || ch == '”') {
+        return trimmed.substring(0, i + 1).trim();
+      }
+    }
+    return trimmed;
+  }
+
+  static bool _startsWithNewSpeakerAttribution(String text) {
+    return RegExp(
+      r'^(?:said|cried|shouted|asked|thought|answered|replied|muttered|whispered|called|went on)\b',
+      caseSensitive: false,
+    ).hasMatch(text.trim());
+  }
+
+  static bool _wouldCreateOrphanTail(String remaining) {
+    final remainingWords = _wordCount(remaining);
+    if (remainingWords >= _orphanTailMaxWords) {
+      return false;
+    }
+    return RegExp(
+      r'^(?:with|and|in|on|at|to|for|from|into|upon|about|like|as|but|or|so|yet|nor|that|which|who)\s+',
+      caseSensitive: false,
+    ).hasMatch(remaining.trim());
+  }
+
   static bool _endsWithDanglingReadAloudPhrase(String text) {
     final trimmed = text.trim();
-    if (trimmed.endsWith('—') ||
-        trimmed.endsWith('–') ||
-        trimmed.endsWith('-')) {
+    if (trimmed.endsWith('-') &&
+        !trimmed.endsWith('—') &&
+        !trimmed.endsWith('–')) {
       return true;
     }
     return RegExp(
