@@ -2,10 +2,11 @@
 
 本文记录给 Suno 下载歌曲生成字幕时间线的方案。目标是在听力页播放 Suno 歌曲时，按歌曲进度切换原始英文字幕；后续也可导出同名 SRT/VTT，用于歌曲版绘本视频。
 
-## 当前落地状态（2026-06）
+## 当前落地状态（2026-07）
 
-- `SongSubtitleTimelineService` 已负责生成和缓存 `song-subtitle-timelines/*.json`，缓存 key 包含 `audioHash`、`lyricsHash`、BigASR 请求参数和 `alignmentVersion`。
-- 当前 `alignmentVersion=10`；旧版本 timeline 会被视为过期，歌曲版视频导出前需要重新生成。
+- `SongSubtitleTimelineService` 已负责生成和缓存 `song-subtitle-timelines/*.json`，缓存 key 包含 `audioHash`、`lyricsHash` 和 BigASR 请求参数。
+- 行级对齐使用**单次全局单调 DP（Needleman–Wunsch）**：把全部歌词 token 拍平成一条序列，与 ASR 词流做一次全局最优对齐，再折回每行。相比旧的贪心逐行游标，重复短语（如 "said the Caterpillar"）不会再跳到远处的重复出现导致“弱锚级联”（某行拉长几十秒、尾部若干行塌缩成零点几秒）。
+- 已移除 `alignmentVersion` 版本位与“版本过旧”闸门。timeline 是否可用只看文件是否存在且含 cue（`timelineFileIsCurrent`）；算法升级后不再自动作废旧缓存，需要时由用户重新生成对应歌曲字幕。
 - `StreamingAsrService.recognizeWithTimeline` 使用 BigASR `show_utterances=true` 获取词级时间；ASR 结果只作为时间锚点，前端展示文本仍来自原歌词。
 - 听力页歌曲弹窗中，每个本地歌曲版本可触发“生成歌曲字幕”；生成完成后版本 payload 会带 `timelinePath`、`timelineStatus`、`timelineConfidence`。
 - 歌曲播放时 native 通过 `listening.song.position` 推送当前 cue，Web UI 用 cue 更新绘本字幕和当前句索引。
@@ -108,9 +109,9 @@ ASR words -> 每个发音片段的大致时间
 2. 计算 `audioHash` 和 `lyricsHash`，先查本地缓存；命中则直接复用时间线。
 3. 用程序目录下的 `ffmpeg.exe` 将音频转为 BigASR 友好的 `wav pcm_s16le 16000Hz mono`。
 4. 调用 BigASR，开启 `show_utterances: true`，读取 `utterances[].words[].start_time/end_time`。
-5. 对原歌词和 ASR 词流做归一化与模糊发音匹配。
-6. 根据匹配锚点生成逐行 cue。
-7. 对只有局部匹配的行标记为 `partial`，按缺失 token 数补齐行尾或行首时间。
+5. 对原歌词和 ASR 词流做归一化与模糊发音相似度评分。
+6. 把全部歌词 token 拍平成一条序列，与 ASR 词流做一次**全局单调 DP 对齐**（歌词 token gap 与 ASR 词 gap 分别计费），得到每个歌词 token 的时间锚点。
+7. 把 token 锚点折回每行：按覆盖率与平均相似度算 `confidence`，达到阈值的行取首/尾匹配词时间为 `matched`（缺前后 token 时为 `partial`）；纯括注行只有被完整演唱时才接受，否则退回 boundary。
 8. 对未匹配行按前后锚点和歌唱速度插值；如果推断行被前后锚点挤得过短，按歌词权重重新分配局部窗口，保证字幕可读。
 9. 后处理所有 cue，让字幕时间单调递增、首尾相接、无负时长。
 10. 保存 `song_lyrics_timeline.json`，并在播放歌曲时随 `just_audio` position 更新当前字幕。
@@ -192,26 +193,36 @@ ASR words -> 每个发音片段的大致时间
 - 首尾辅音接近且元音弱化后接近：中低分。
 - 常见弱读或连读：中低分，例如 `going to` / `gonna`、`want to` / `wanna`。
 
-匹配必须满足顺序约束：第 N 行的匹配位置必须在第 N-1 行之后。这样可以避免局部相似词把字幕拉回前面。
+匹配必须满足顺序约束：第 N 行的匹配位置必须在第 N-1 行之后。全局 DP 对齐天然保证这一点——它对整条 token/词序列求单调最优，不需要靠逐行游标硬性前推。
 
 ## 行级对齐
 
-推荐两阶段：
+采用**全局单调 DP（Needleman–Wunsch）+ 折回每行**：
 
-### 阶段一：找可靠锚点
+### 阶段一：全局 token 对齐
 
-对每一行歌词，在 ASR 词流中做局部模糊匹配。匹配窗口从上一行锚点之后开始，并根据预估歌唱速度给一个宽松上限。
+把所有歌词行的 token 按顺序拍平成一条序列（纯括注行也进入序列，能唱到才会被接受），与 ASR 词流做一次全局最优对齐：
 
-一行被判定为 `matched` 需要同时满足：
+- 对角线：把一个歌词 token 与一个 ASR 词对齐，得分 = 相似度减去偏置（相似度高于偏置得正分、低于则负分）。
+- 向下（歌词 token gap）：该歌词 token 没被唱到 / 没被识别，计一个较大的负惩罚。
+- 向左（ASR 词 gap）：多出来的 ASR 词（前奏、拖音、即兴、重复），计一个很小的负惩罚。
 
-- 匹配到的有效 token 数达到阈值，例如至少 2 个，短句可放宽到 1 个强匹配。
-- 匹配 token 覆盖该行 `singingWeight` 的比例达到阈值。
-- 匹配位置保持单调，不与前后已匹配行交叉。
-- 生成的行时长在合理范围内，不能明显过短或过长。
+因为是全局最优，一行想匹配到远处的重复短语，必须把中间所有 token 和词都 gap 掉，代价太高而被淘汰。这从根上避免了旧贪心游标的“弱锚级联”。
 
-行开始时间取第一个可靠匹配词的 `start_time`，结束时间先取最后一个可靠匹配词的 `end_time`，后续再做首尾相接处理。
+回溯对齐路径，记录每个歌词 token 对应的 ASR 词下标（相似度不足则视为未对齐）。
 
-### 阶段二：补齐缺失行
+### 阶段二：折回每行并判定
+
+按拍平顺序把 token 锚点归回各自的行：
+
+- 覆盖率 = 该行被对齐的 token 数 / 该行 token 数；`confidence = 覆盖率*0.62 + 平均相似度*0.38`。
+- 达到 `_lineConfidenceThresholdForCount` 阈值的行取首/尾匹配词的 `start_time`/`end_time`；缺失行首或行尾 token 时标 `partial`，其余为 `matched`。
+- 纯括注行（舞台提示）需被从头到尾清晰唱出才接受，否则退回 boundary，避免偷走相邻行的锚点。
+- 未达阈值的普通行留空，进入阶段三插值。
+
+因为每个 ASR 词至多对齐一个歌词 token，行与行的匹配区间天然不重叠、单调递增。
+
+### 阶段三：补齐缺失行
 
 如果某行没有可靠锚点，但前后行都有锚点：
 
@@ -337,7 +348,8 @@ BigASR 调用会产生费用，必须缓存成功结果。
 - `sampleRate: 16000`
 - `language: en-US`
 - `showUtterances: true`
-- `alignmentVersion`
+
+缓存 key 不再包含 `alignmentVersion`。这意味着**升级对齐算法不会自动作废旧缓存**：同一 `audioHash` + `lyricsHash` 会命中旧结果。需要让已生成的歌曲用上新算法时，删除该歌曲的 `song-subtitle-timelines/*.json`（`ApiCacheService.getEntry` 会在文件缺失时自动清理对应 DB 记录）或在 App 内重新生成字幕即可。
 
 只缓存成功的 ASR 时间线和对齐结果。失败、空结果、mock fallback 不写成功缓存。
 

@@ -68,7 +68,6 @@ class SongSubtitleCue {
 class SongSubtitleTimeline {
   const SongSubtitleTimeline({
     required this.version,
-    this.alignmentVersion = 0,
     required this.articleId,
     required this.audioHash,
     required this.lyricsHash,
@@ -79,7 +78,6 @@ class SongSubtitleTimeline {
   });
 
   final int version;
-  final int alignmentVersion;
   final int articleId;
   final String audioHash;
   final String lyricsHash;
@@ -99,7 +97,6 @@ class SongSubtitleTimeline {
 
   Map<String, dynamic> toJson() => {
         'version': version,
-        'alignmentVersion': alignmentVersion,
         'articleId': articleId,
         'audioHash': audioHash,
         'lyricsHash': lyricsHash,
@@ -115,7 +112,6 @@ class SongSubtitleTimeline {
     final rawCues = map['cues'];
     return SongSubtitleTimeline(
       version: (map['version'] as num?)?.toInt() ?? 1,
-      alignmentVersion: (map['alignmentVersion'] as num?)?.toInt() ?? 0,
       articleId: (map['articleId'] as num?)?.toInt() ?? 0,
       audioHash: map['audioHash']?.toString() ?? '',
       lyricsHash: map['lyricsHash']?.toString() ?? '',
@@ -171,8 +167,7 @@ class SongAsrDiagnosticResult {
 
 class SongSubtitleTimelineService {
   static const purpose = 'suno_song_subtitle_timeline_v1';
-  static const alignmentVersion = 11;
-  static const staleTimelineMessage = '歌曲字幕时间线版本过旧，请重新生成歌曲字幕';
+  static const staleTimelineMessage = '歌曲字幕时间线缺失或不可用，请重新生成歌曲字幕';
   static const _matchedLineLeadInMs = 180;
   static const _matchedLineTailMs = 320;
   static const _cueGapMs = 80;
@@ -226,7 +221,6 @@ class SongSubtitleTimelineService {
       if (!useOriginalAudio) 'sampleRate': 16000,
       'language': 'en-US',
       'showUtterances': asrProvider != AppConfig.aiProviderAliyunBailian,
-      'alignmentVersion': alignmentVersion,
     };
     final cacheKey = await ApiCacheService.keyForJson(
         'suno_song_subtitle_timeline', request);
@@ -239,17 +233,15 @@ class SongSubtitleTimelineService {
       final cachedTimeline = SongSubtitleTimeline.fromJson(
         jsonDecode(await File(cachedPath).readAsString()),
       );
-      if (isCurrentTimeline(cachedTimeline)) {
-        validateTimelineCompleteness(cachedTimeline, lines.length);
-        return SongSubtitleTimelineGenerationResult(
-          timeline: cachedTimeline,
-          timelinePath: cachedPath,
-          cacheKey: cacheKey,
-          lyricsHash: lyricsHash,
-          fromCache: true,
-          asrSnapshotPath: null,
-        );
-      }
+      validateTimelineCompleteness(cachedTimeline, lines.length);
+      return SongSubtitleTimelineGenerationResult(
+        timeline: cachedTimeline,
+        timelinePath: cachedPath,
+        cacheKey: cacheKey,
+        lyricsHash: lyricsHash,
+        fromCache: true,
+        asrSnapshotPath: null,
+      );
     }
 
     final asrBytes =
@@ -365,7 +357,6 @@ class SongSubtitleTimelineService {
       'lyricsHash': lyricsHash,
       'asrSnapshotHash': snapshotHash,
       'language': 'en-US',
-      'alignmentVersion': alignmentVersion,
     };
     final cacheKey = await ApiCacheService.keyForJson(
         'suno_song_subtitle_timeline', request);
@@ -531,28 +522,18 @@ class SongSubtitleTimelineService {
     return SongSubtitleTimeline.fromJson(jsonDecode(await file.readAsString()));
   }
 
-  static Future<SongSubtitleTimeline> readCurrentTimeline(String path) async {
-    final timeline = await readTimeline(path);
-    if (!isCurrentTimeline(timeline)) {
-      throw const SongSubtitleTimelineException(staleTimelineMessage);
-    }
-    return timeline;
-  }
-
   static Future<bool> timelineFileIsCurrent(String path) async {
     final normalized = path.trim();
     if (normalized.isEmpty) {
       return false;
     }
     try {
-      return isCurrentTimeline(await readTimeline(normalized));
+      final timeline = await readTimeline(normalized);
+      return timeline.cues.isNotEmpty;
     } catch (_) {
       return false;
     }
   }
-
-  static bool isCurrentTimeline(SongSubtitleTimeline timeline) =>
-      timeline.alignmentVersion == alignmentVersion;
 
   static String _diagnosticTimestamp(DateTime value) {
     String two(int number) => number.toString().padLeft(2, '0');
@@ -759,7 +740,6 @@ class SongSubtitleTimelineService {
     if (lines.isEmpty) {
       return SongSubtitleTimeline(
         version: 1,
-        alignmentVersion: alignmentVersion,
         articleId: articleId,
         audioHash: audioHash,
         lyricsHash: lyricsHash,
@@ -784,28 +764,7 @@ class SongSubtitleTimelineService {
       for (var i = 0; i < lines.length; i += 1)
         _singingWeight(lineTokens[i], lines[i]),
     ];
-    final matches = List<_LineMatch?>.filled(lines.length, null);
-    var searchStart = 0;
-    for (var i = 0; i < lines.length; i += 1) {
-      final match = _bestLineMatch(
-        profile: lineProfiles[i],
-        words: normalizedWords,
-        searchStart: searchStart,
-      );
-      if (match != null &&
-          match.confidence >=
-              _lineConfidenceThresholdForCount(match.tokenCount)) {
-        matches[i] = match;
-        searchStart = math.min(normalizedWords.length, match.lastWordIndex + 1);
-      }
-    }
-    _rescueMissingLineMatches(
-      matches: matches,
-      lineProfiles: lineProfiles,
-      words: normalizedWords,
-    );
-    _refineWeakLineMatches(
-      matches: matches,
+    final matches = _alignLinesGlobally(
       lineProfiles: lineProfiles,
       words: normalizedWords,
     );
@@ -880,7 +839,6 @@ class SongSubtitleTimelineService {
     ];
     return SongSubtitleTimeline(
       version: 1,
-      alignmentVersion: alignmentVersion,
       articleId: articleId,
       audioHash: audioHash,
       lyricsHash: lyricsHash,
@@ -1125,281 +1083,173 @@ class SongSubtitleTimelineService {
     return 0.42;
   }
 
-  static _LineMatch? _bestLineMatch({
-    required _LyricLineProfile profile,
+  /// Aligns every sung lyric token against the ASR word stream with a single
+  /// global, monotonic Needleman-Wunsch pass, then folds the token anchors back
+  /// into per-line matches.
+  ///
+  /// This replaces the old greedy line-by-line cursor. Because the alignment is
+  /// globally optimal, a repeated phrase (e.g. "said the Caterpillar") can no
+  /// longer jump to a far duplicate: doing so would force gapping every token
+  /// and word in between, which loses globally. That removes the cascade where
+  /// one line ballooned across a huge span while the trailing lines collapsed.
+  static List<_LineMatch?> _alignLinesGlobally({
+    required List<_LyricLineProfile> lineProfiles,
     required List<_TimedToken> words,
-    required int searchStart,
-    int? searchEndExclusive,
   }) {
-    final fullMatch = _bestTokenMatch(
-      tokens: profile.fullTokens,
-      words: words,
-      searchStart: searchStart,
-      searchEndExclusive: searchEndExclusive,
-    );
-    if (!profile.hasParenthetical) {
-      return fullMatch;
+    final lineCount = lineProfiles.length;
+    final matches = List<_LineMatch?>.filled(lineCount, null);
+    if (words.isEmpty || lineCount == 0) {
+      return matches;
     }
-    if (profile.isPureParenthetical) {
-      return fullMatch != null &&
-              _isReliableParentheticalMatch(fullMatch, profile.fullTokens)
-          ? fullMatch
-          : null;
-    }
-    if (profile.withoutParentheticalTokens.isEmpty) {
-      return fullMatch;
-    }
-    if (fullMatch != null &&
-        !fullMatch.isWeakBoundary &&
-        !fullMatch.hasMissingBoundary) {
-      return fullMatch;
-    }
-    final strippedMatch = _bestTokenMatch(
-      tokens: profile.withoutParentheticalTokens,
-      words: words,
-      searchStart: searchStart,
-      searchEndExclusive: searchEndExclusive,
-    );
-    if (strippedMatch == null) {
-      return fullMatch;
-    }
-    if (fullMatch == null) {
-      return strippedMatch;
-    }
-    final strippedIsUsable = strippedMatch.confidence >=
-        _lineConfidenceThresholdForCount(strippedMatch.tokenCount);
-    final strippedAvoidsMissingBoundary =
-        fullMatch.hasMissingBoundary && !strippedMatch.hasMissingBoundary;
-    final strippedClearlyBetter =
-        strippedMatch.confidence > fullMatch.confidence + 0.04 ||
-            strippedMatch.coverage > fullMatch.coverage + 0.18;
-    return strippedIsUsable &&
-            (strippedAvoidsMissingBoundary || strippedClearlyBetter)
-        ? strippedMatch
-        : fullMatch;
-  }
 
-  static bool _isReliableParentheticalMatch(
-    _LineMatch match,
-    List<String> tokens,
-  ) {
-    if (tokens.isEmpty) {
-      return false;
+    // Flatten every lyric token into one monotonic sequence. Pure parenthetical
+    // lines (stage directions) are included too, but only accepted later if the
+    // vocalist actually sang them; otherwise they stay null and become boundary
+    // cues instead of stealing a neighbour's ASR anchor.
+    final flatTokens = <String>[];
+    final tokenSlot = <int>[];
+    for (var i = 0; i < lineCount; i += 1) {
+      final tokens = lineProfiles[i].fullTokens;
+      for (var slot = 0; slot < tokens.length; slot += 1) {
+        flatTokens.add(tokens[slot]);
+        tokenSlot.add(slot);
+      }
     }
-    final minCoverage = tokens.length <= 2 ? 1.0 : 0.72;
-    final minConfidence = tokens.length <= 2 ? 0.58 : 0.72;
-    return match.coverage >= minCoverage &&
-        match.confidence >= minConfidence &&
-        !match.hasMissingBoundary;
-  }
+    final p = flatTokens.length;
+    final m = words.length;
+    if (p == 0) {
+      return matches;
+    }
 
-  static _LineMatch? _bestTokenMatch({
-    required List<String> tokens,
-    required List<_TimedToken> words,
-    required int searchStart,
-    int? searchEndExclusive,
-  }) {
-    final searchEnd =
-        math.min(searchEndExclusive ?? words.length, words.length);
-    if (tokens.isEmpty ||
-        words.isEmpty ||
-        searchStart >= words.length ||
-        searchStart >= searchEnd) {
-      return null;
+    const matchBias = 0.5; // similarity above this rewards, below penalizes
+    const lyricGap = -0.34; // lyric token not sung / not recognized
+    const wordGap = -0.06; // extra ASR word (instrumental, ad-lib, repeat)
+    const matchAccept = 0.5; // record a token->word anchor at/above this
+    const dirDiag = 0;
+    const dirUp = 1; // consume lyric token
+    const dirLeft = 2; // consume ASR word
+
+    final directions =
+        List<Uint8List>.generate(p + 1, (_) => Uint8List(m + 1));
+    var prev = List<double>.filled(m + 1, 0);
+    for (var w = 1; w <= m; w += 1) {
+      prev[w] = prev[w - 1] + wordGap;
+      directions[0][w] = dirLeft;
     }
-    _LineMatch? best;
-    for (var start = searchStart; start < searchEnd; start += 1) {
-      final match = _lineMatchAtStart(
-        tokens: tokens,
-        words: words,
-        start: start,
-        searchStart: searchStart,
-        searchEndExclusive: searchEnd,
-      );
-      if (match == null) {
+    for (var a = 1; a <= p; a += 1) {
+      final cur = List<double>.filled(m + 1, 0);
+      cur[0] = prev[0] + lyricGap;
+      directions[a][0] = dirUp;
+      final token = flatTokens[a - 1];
+      final row = directions[a];
+      for (var w = 1; w <= m; w += 1) {
+        final sim = _tokenSimilarity(token, words[w - 1].normalized);
+        var best = prev[w - 1] + (sim - matchBias);
+        var dir = dirDiag;
+        final up = prev[w] + lyricGap;
+        if (up > best) {
+          best = up;
+          dir = dirUp;
+        }
+        final left = cur[w - 1] + wordGap;
+        if (left > best) {
+          best = left;
+          dir = dirLeft;
+        }
+        cur[w] = best;
+        row[w] = dir;
+      }
+      prev = cur;
+    }
+
+    // Traceback: record which ASR word each lyric token aligned to (or -1).
+    final tokenWord = List<int>.filled(p, -1);
+    final tokenScore = List<double>.filled(p, 0);
+    var a = p;
+    var w = m;
+    while (a > 0 || w > 0) {
+      final dir = directions[a][w];
+      if (a > 0 && w > 0 && dir == dirDiag) {
+        final sim = _tokenSimilarity(flatTokens[a - 1], words[w - 1].normalized);
+        if (sim >= matchAccept) {
+          tokenWord[a - 1] = w - 1;
+          tokenScore[a - 1] = sim;
+        }
+        a -= 1;
+        w -= 1;
+      } else if (a > 0 && (w == 0 || dir == dirUp)) {
+        a -= 1;
+      } else {
+        w -= 1;
+      }
+    }
+
+    // Fold token anchors back into per-line matches, walking the flattened
+    // sequence in the same order it was built.
+    var cursor = 0;
+    for (var i = 0; i < lineCount; i += 1) {
+      final tokenCount = lineProfiles[i].fullTokens.length;
+      if (tokenCount == 0) {
         continue;
       }
-      if (best == null || match.confidence > best.confidence) {
-        best = match;
-      }
-      if (match.confidence > 0.92) {
-        break;
-      }
-    }
-    return best;
-  }
-
-  static _LineMatch? _lineMatchAtStart({
-    required List<String> tokens,
-    required List<_TimedToken> words,
-    required int start,
-    required int searchStart,
-    required int searchEndExclusive,
-  }) {
-    var cursor = start;
-    var score = 0.0;
-    var matched = 0;
-    int? first;
-    int? last;
-    int? firstMatchedTokenIndex;
-    int? lastMatchedTokenIndex;
-    for (var tokenIndex = 0; tokenIndex < tokens.length; tokenIndex += 1) {
-      final token = tokens[tokenIndex];
-      var bestWordIndex = -1;
-      var bestScore = 0.0;
-      final lookahead = math.min(searchEndExclusive, cursor + 8);
-      for (var wordIndex = cursor; wordIndex < lookahead; wordIndex += 1) {
-        final candidateScore =
-            _tokenSimilarity(token, words[wordIndex].normalized);
-        if (candidateScore > bestScore) {
-          bestScore = candidateScore;
-          bestWordIndex = wordIndex;
-        }
-      }
-      if (bestWordIndex >= 0 && bestScore >= 0.54) {
-        // ASR often drops light lyric tokens such as "and", "but", or "the".
-        // If a low-information token jumps across several recognized words, it
-        // can steal a later lyric line's anchor and cascade into very long or
-        // squeezed subtitles. Treat that weak token as missing; the surrounding
-        // stronger words are better anchors for the line.
-        final allowedWeakTokenGap = tokenIndex == 0 ? 1 : 2;
-        if (_isSkippableLowInformationToken(token) &&
-            bestWordIndex - cursor > allowedWeakTokenGap) {
-          score -= 0.08;
+      final start = cursor;
+      cursor += tokenCount;
+      int? firstWord;
+      int? lastWord;
+      int? firstSlot;
+      int? lastSlot;
+      var matched = 0;
+      var scoreSum = 0.0;
+      for (var k = start; k < start + tokenCount; k += 1) {
+        final wordIndex = tokenWord[k];
+        if (wordIndex < 0) {
           continue;
         }
-        first ??= bestWordIndex;
-        last = bestWordIndex;
-        firstMatchedTokenIndex ??= tokenIndex;
-        lastMatchedTokenIndex = tokenIndex;
+        firstWord ??= wordIndex;
+        lastWord = wordIndex;
+        firstSlot ??= tokenSlot[k];
+        lastSlot = tokenSlot[k];
         matched += 1;
-        score += bestScore;
-        cursor = bestWordIndex + 1;
+        scoreSum += tokenScore[k];
+      }
+      if (matched == 0 || firstWord == null || lastWord == null) {
+        continue;
+      }
+      final coverage = matched / tokenCount;
+      final avgScore = scoreSum / matched;
+      final confidence =
+          (coverage * 0.62 + avgScore * 0.38).clamp(0.0, 1.0).toDouble();
+      final bool accept;
+      if (lineProfiles[i].isPureParenthetical) {
+        // Stage directions must be clearly sung end-to-end before we anchor
+        // them; otherwise they stay boundary cues.
+        final minCoverage = tokenCount <= 2 ? 1.0 : 0.72;
+        accept = coverage >= minCoverage &&
+            confidence >= 0.72 &&
+            (firstSlot ?? 0) == 0 &&
+            (lastSlot ?? (tokenCount - 1)) == tokenCount - 1;
       } else {
-        score -= 0.08;
+        final enoughTokens = tokenCount <= 3 ? matched >= 1 : matched >= 2;
+        accept = enoughTokens &&
+            coverage >= 0.34 &&
+            confidence >= _lineConfidenceThresholdForCount(tokenCount);
       }
-    }
-    if (first == null || last == null || matched == 0) {
-      return null;
-    }
-    final coverage = matched / tokens.length;
-    final averageScore = score / tokens.length;
-    final distancePenalty = math.min(0.18, (start - searchStart) * 0.006);
-    final confidence = (coverage * 0.62 + averageScore * 0.38 - distancePenalty)
-        .clamp(0.0, 1.0);
-    return _LineMatch(
-      firstWordIndex: first,
-      lastWordIndex: last,
-      startMs: words[first].startMs,
-      endMs: words[last].endMs,
-      confidence: confidence,
-      matchedTokenCount: matched,
-      tokenCount: tokens.length,
-      firstMatchedTokenIndex: firstMatchedTokenIndex ?? 0,
-      lastMatchedTokenIndex: lastMatchedTokenIndex ?? tokens.length - 1,
-    );
-  }
-
-  static bool _isSkippableLowInformationToken(String token) {
-    switch (token) {
-      case 'and':
-      case 'but':
-      case 'or':
-      case 'so':
-      case 'for':
-      case 'the':
-      case 'a':
-      case 'an':
-        return true;
-      default:
-        return false;
-    }
-  }
-
-  static void _rescueMissingLineMatches({
-    required List<_LineMatch?> matches,
-    required List<_LyricLineProfile> lineProfiles,
-    required List<_TimedToken> words,
-  }) {
-    if (words.isEmpty) {
-      return;
-    }
-    for (var lineIndex = 0; lineIndex < matches.length; lineIndex += 1) {
-      if (matches[lineIndex] != null ||
-          lineProfiles[lineIndex].fullTokens.isEmpty) {
+      if (!accept) {
         continue;
       }
-      final previous = _previousLineMatch(matches, lineIndex);
-      final next = _nextLineMatch(matches, lineIndex);
-      final searchStart = previous == null
-          ? 0
-          : previous.isWeakBoundary
-              ? math.max(0, previous.firstWordIndex + 1)
-              : math.max(0, previous.lastWordIndex + 1 - 6);
-      final searchEnd = math.max(
-        searchStart + 1,
-        next == null ? words.length : next.firstWordIndex,
+      matches[i] = _LineMatch(
+        firstWordIndex: firstWord,
+        lastWordIndex: lastWord,
+        startMs: words[firstWord].startMs,
+        endMs: words[lastWord].endMs,
+        confidence: confidence,
+        matchedTokenCount: matched,
+        tokenCount: tokenCount,
+        firstMatchedTokenIndex: firstSlot ?? 0,
+        lastMatchedTokenIndex: lastSlot ?? (tokenCount - 1),
       );
-      final match = _bestLineMatch(
-        profile: lineProfiles[lineIndex],
-        words: words,
-        searchStart: searchStart,
-        searchEndExclusive: searchEnd,
-      );
-      if (match == null) {
-        continue;
-      }
-      final threshold = math.max(
-        0.36,
-        _lineConfidenceThresholdForCount(match.tokenCount) - 0.04,
-      );
-      if (match.confidence >= threshold && match.coverage >= 0.58) {
-        matches[lineIndex] = match;
-      }
     }
-  }
-
-  static void _refineWeakLineMatches({
-    required List<_LineMatch?> matches,
-    required List<_LyricLineProfile> lineProfiles,
-    required List<_TimedToken> words,
-  }) {
-    if (words.isEmpty) {
-      return;
-    }
-    for (var lineIndex = 0; lineIndex < matches.length; lineIndex += 1) {
-      final current = matches[lineIndex];
-      if (current == null ||
-          (!current.hasMissingBoundary && !current.isWeakBoundary)) {
-        continue;
-      }
-      final previous = _previousLineMatch(matches, lineIndex);
-      final next = _nextLineMatch(matches, lineIndex);
-      final searchStart = previous == null ? 0 : previous.lastWordIndex + 1;
-      final searchEnd = next == null ? words.length : next.firstWordIndex;
-      if (searchStart >= searchEnd) {
-        continue;
-      }
-      final candidate = _bestLineMatch(
-        profile: lineProfiles[lineIndex],
-        words: words,
-        searchStart: searchStart,
-        searchEndExclusive: searchEnd,
-      );
-      if (candidate == null) {
-        continue;
-      }
-      final threshold = _lineConfidenceThresholdForCount(candidate.tokenCount);
-      final improvesCoverage =
-          candidate.missingBoundaryCount < current.missingBoundaryCount ||
-              candidate.coverage > current.coverage + 0.12;
-      final improvesConfidence =
-          candidate.confidence > current.confidence + 0.04;
-      if (candidate.confidence >= threshold &&
-          (improvesCoverage || improvesConfidence)) {
-        matches[lineIndex] = candidate;
-      }
-    }
+    return matches;
   }
 
   static _LineMatch? _previousLineMatch(
@@ -2159,8 +2009,6 @@ class _TimedToken {
 class _LyricLineProfile {
   const _LyricLineProfile({
     required this.fullTokens,
-    required this.withoutParentheticalTokens,
-    required this.hasParenthetical,
     required this.isPureParenthetical,
   });
 
@@ -2175,15 +2023,11 @@ class _LyricLineProfile {
             line.replaceAll(RegExp(r'\s+'), ' ').trim();
     return _LyricLineProfile(
       fullTokens: fullTokens,
-      withoutParentheticalTokens: strippedTokens,
-      hasParenthetical: hasParenthetical,
       isPureParenthetical: hasParenthetical && strippedTokens.isEmpty,
     );
   }
 
   final List<String> fullTokens;
-  final List<String> withoutParentheticalTokens;
-  final bool hasParenthetical;
   final bool isPureParenthetical;
 }
 
@@ -2210,9 +2054,6 @@ class _LineMatch {
   final int firstMatchedTokenIndex;
   final int lastMatchedTokenIndex;
 
-  double get coverage =>
-      tokenCount <= 0 ? 0 : matchedTokenCount / math.max(1, tokenCount);
-
   int get missingPrefixTokenCount => math.max(0, firstMatchedTokenIndex);
 
   int get missingSuffixTokenCount =>
@@ -2220,9 +2061,4 @@ class _LineMatch {
 
   bool get hasMissingBoundary =>
       missingPrefixTokenCount >= 2 || missingSuffixTokenCount >= 2;
-
-  int get missingBoundaryCount =>
-      missingPrefixTokenCount + missingSuffixTokenCount;
-
-  bool get isWeakBoundary => confidence < 0.78 || coverage < 0.86;
 }

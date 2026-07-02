@@ -4475,6 +4475,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (controller == null || _sunoArticleId == null) {
       return;
     }
+    if (_sunoAutomationBusy) {
+      return;
+    }
+    _sunoAutomationBusy = true;
     try {
       try {
         final currentUrl = (await controller.getUrl())?.toString() ?? '';
@@ -4532,6 +4536,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         return;
       }
       await _failSunoAutomation(_displayError(error));
+    } finally {
+      _sunoAutomationBusy = false;
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
@@ -8869,7 +8878,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final normalizedTimelinePath = (timelinePath ?? '').trim();
       if (normalizedTimelinePath.isNotEmpty) {
         try {
-          timeline = await SongSubtitleTimelineService.readCurrentTimeline(
+          timeline = await SongSubtitleTimelineService.readTimeline(
             normalizedTimelinePath,
           );
         } catch (error) {

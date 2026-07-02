@@ -2,6 +2,16 @@
 
 ## 2026-07-02
 
+- 重构歌曲字幕对齐内核：`SongSubtitleTimelineService` 的行级匹配从“贪心逐行游标 + 多层补丁（rescue/refine/低信息词跳过/括注回退）”改为**单次全局单调 DP（Needleman–Wunsch）**。把全部歌词 token 拍平与 ASR 词流做一次全局最优对齐（歌词 token gap 与 ASR 词 gap 分别计费），再按覆盖率/相似度折回每行判定 `matched`/`partial`/boundary。全局最优保证匹配单调不重叠，从根上消除重复短语（如 "said the Caterpillar"）导致的“弱锚级联”——旧算法下 E16 第 16 行拉长到约 94 秒、第 27–51 行塌缩到末尾约 11 秒，字幕完全错位。
+- 删除 `alignmentVersion` 版本位与“版本过旧”闸门（`isCurrentTimeline` / `readCurrentTimeline` / `staleTimelineMessage` 语义调整）：timeline 是否可用只看文件是否存在且含 cue；缓存 key 不再含 `alignmentVersion`。算法升级不再自动作废旧缓存，需要时删除对应 `song-subtitle-timelines/*.json`（`getEntry` 会自动清理缺失文件的 DB 记录）或在 App 内重新生成。
+- 新增 E16（`Alice Meets The Caterpillar`）真实 ASR 回归 fixture 与用例：断言无单行 cue 吞掉大段、cue 单调不重叠、关键行锚点落在真值时间、Father William 长诗段不塌缩。E16 重构后 54 行全部 `matched`、整体置信度 0.98。
+- 相关文档同步：`docs/suno_song_subtitle_timeline_design.md`（对齐算法、生成流程、缓存 key）。
+
+验证：
+
+- `flutter test test/song_subtitle_timeline_service_test.dart`（27 passed，含 E03/E07/E13/E16）
+- `.\tools\build_windows.ps1 -Release`
+
 - 修复绘本图 WebView2 花屏（彩色小方块噪点）：新增 `display`（`1280x720`）图片变体，介于列表 `thumbnail`（`640x360`）与原始 `full`（`2560x1440`）之间，本地对已下载原图缩放缓存（`picture_book_display`），不重新调用生成 API。根因是 Windows WebView2/ANGLE 在部分 GPU 上把 2560x1440 大纹理降采样进窗口内展示区域时出现纹理合成损坏，与此前排查过的 `backdrop-filter` 无关。
 - 第一次修复只把内嵌场景图（`PictureBookScene`）换成 `display`，用户实测创作中心大图预览/全屏播放仍花屏；随后把 WebView 全部展示路径统一为 `display`：内嵌场景视图、`usePredecodePictureBookImages` 预解码、`FullscreenListeningPlayer` / `FullscreenSongPlayer`（当前页+下一页显式 ensure）、创作中心大图预览（`openPicturePreview`）。`full` 原图不再交给 WebView `<img>`，只保留在磁盘供视频导出等原生链路使用。
 - `pageHasPictureBookImageVariant` / `mergePictureBookPageImage` 改为按 `thumbnail < display < full` 分辨率等级比较，避免低分辨率请求覆盖已加载的高分辨率图片。详见 `docs/build-and-release-pitfalls.md`。

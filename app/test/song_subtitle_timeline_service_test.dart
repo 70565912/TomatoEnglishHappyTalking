@@ -45,6 +45,25 @@ List<AsrWordTiming> _e13FullAsrWords() {
   return _asrWordsFromRows(fixture['words'] as List<dynamic>);
 }
 
+Map<String, dynamic> _e16Fixture() {
+  return jsonDecode(
+    File('test/fixtures/e16_song_asr_full_20260702_223148.json')
+        .readAsStringSync(),
+  ) as Map<String, dynamic>;
+}
+
+List<AsrWordTiming> _e16FullAsrWords() {
+  final fixture = _e16Fixture();
+  return _asrWordsFromRows(fixture['words'] as List<dynamic>);
+}
+
+List<String> _e16LyricLines() {
+  final fixture = _e16Fixture();
+  return (fixture['lyricLines'] as List<dynamic>)
+      .map((line) => line as String)
+      .toList(growable: false);
+}
+
 List<String> _e07LyricLines() {
   final fixture = _e07Fixture();
   return (fixture['lyricLines'] as List<dynamic>)
@@ -727,6 +746,88 @@ void main() {
     );
   });
 
+  test('keeps E16 caterpillar subtitles in sync despite repeated phrases', () {
+    // Regression fixture: "E16 - Alice Meets The Caterpillar" (article 66,
+    // external-audio import). The narration reuses many short anchors such as
+    // "said the Caterpillar" (x15), "Who are you", "You are old" and
+    // "In my youth". The old greedy monotonic matcher
+    // grabbed a far-away occurrence of one of these repeated phrases, ratcheted
+    // the search cursor ~90-140s ahead of the true position, and cascaded:
+    // line 16 ballooned to ~94s (01:35-03:09) while lines 27-51 collapsed into
+    // ~11s of 0.2-0.7s slivers at the very end, even though the ASR words cover
+    // the whole song continuously (max inter-word gap 1.8s). These assertions
+    // encode the ground-truth ASR timings the alignment must respect.
+    final lyricLines = _e16LyricLines();
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 66,
+      audioHash: 'audio',
+      lyricsHash: 'lyrics',
+      durationMs: 310776,
+      source: 'external_audio',
+      lyricLines: lyricLines,
+      translations: const {},
+      words: _e16FullAsrWords(),
+    );
+
+    expect(timeline.cues, hasLength(lyricLines.length));
+
+    // No single non-boundary cue may swallow a huge span of the song. The bug
+    // produced a 94s cue for line 16.
+    for (final cue in timeline.cues) {
+      if (cue.method == 'boundary') {
+        continue;
+      }
+      expect(
+        cue.endMs - cue.startMs,
+        lessThan(45000),
+        reason: 'E16 line ${cue.lineIndex + 1} must not swallow the song: '
+            '${cue.startMs}-${cue.endMs} (${cue.english})',
+      );
+    }
+
+    // Cues must stay ordered and non-overlapping.
+    for (var i = 1; i < timeline.cues.length; i += 1) {
+      expect(
+        timeline.cues[i].startMs,
+        greaterThanOrEqualTo(timeline.cues[i - 1].startMs),
+        reason: 'E16 cue ${i + 1} started before its predecessor',
+      );
+    }
+
+    // "You?" ... "Who are you?" is sung at ~94-97s in the ASR, not at 03:09.
+    final youWhoAreYou = timeline.cues[17];
+    expect(youWhoAreYou.english,
+        '"You?" said the Caterpillar contemptuously. "Who are you?"');
+    expect(
+      youWhoAreYou.startMs,
+      lessThan(130000),
+      reason: 'E16 line 18 mis-anchored ~90s late (ground truth ~94s)',
+    );
+
+    // "No," said the Caterpillar is sung at ~146s, not squeezed to ~288s.
+    final noSaidCaterpillar = timeline.cues[26];
+    expect(noSaidCaterpillar.english, '"No," said the Caterpillar.');
+    expect(
+      noSaidCaterpillar.startMs,
+      lessThan(200000),
+      reason: 'E16 line 27 mis-anchored ~140s late (ground truth ~146s)',
+    );
+
+    // The whole trailing "Father William" block (lines 27-51) must stay
+    // readable instead of collapsing into sub-second slivers.
+    for (var i = 26; i <= 51; i += 1) {
+      final cue = timeline.cues[i];
+      if (cue.method == 'boundary') {
+        continue;
+      }
+      expect(
+        cue.endMs - cue.startMs,
+        greaterThanOrEqualTo(700),
+        reason: 'E16 line ${i + 1} collapsed to ${cue.endMs - cue.startMs}ms',
+      );
+    }
+  });
+
   test('keeps original lyrics for mismatched interpolated song subtitles', () {
     final timeline = SongSubtitleTimelineService.buildTimeline(
       articleId: 90,
@@ -1116,8 +1217,7 @@ void main() {
     );
   });
 
-  test('rejects stale timeline files without current alignment version',
-      () async {
+  test('treats empty-cue timeline files as unusable', () async {
     final directory = await Directory.systemTemp.createTemp(
       'tomato_stale_song_timeline_',
     );
@@ -1126,8 +1226,8 @@ void main() {
         await directory.delete(recursive: true);
       }
     });
-    final file = File('${directory.path}/timeline.json');
-    await file.writeAsString(jsonEncode({
+    final emptyFile = File('${directory.path}/empty.json');
+    await emptyFile.writeAsString(jsonEncode({
       'version': 1,
       'articleId': 1,
       'audioHash': 'audio',
@@ -1136,19 +1236,39 @@ void main() {
       'source': 'suno',
       'cues': const [],
     }));
+    final populatedFile = File('${directory.path}/populated.json');
+    await populatedFile.writeAsString(jsonEncode({
+      'version': 1,
+      'articleId': 1,
+      'audioHash': 'audio',
+      'lyricsHash': 'lyrics',
+      'durationMs': 1000,
+      'source': 'suno',
+      'cues': [
+        {
+          'lineIndex': 0,
+          'startMs': 0,
+          'endMs': 1000,
+          'english': 'Line one.',
+          'chinese': '',
+          'confidence': 0.9,
+          'method': 'matched',
+        },
+      ],
+    }));
 
-    final raw = await SongSubtitleTimelineService.readTimeline(file.path);
-    expect(raw.alignmentVersion, 0);
-    expect(SongSubtitleTimelineService.isCurrentTimeline(raw), isFalse);
-    await expectLater(
-      SongSubtitleTimelineService.readCurrentTimeline(file.path),
-      throwsA(
-        isA<SongSubtitleTimelineException>().having(
-          (error) => error.message,
-          'message',
-          SongSubtitleTimelineService.staleTimelineMessage,
-        ),
-      ),
+    expect(
+      await SongSubtitleTimelineService.timelineFileIsCurrent(emptyFile.path),
+      isFalse,
     );
+    expect(
+      await SongSubtitleTimelineService.timelineFileIsCurrent(
+        populatedFile.path,
+      ),
+      isTrue,
+    );
+    final populated =
+        await SongSubtitleTimelineService.readTimeline(populatedFile.path);
+    expect(populated.cues, hasLength(1));
   });
 }

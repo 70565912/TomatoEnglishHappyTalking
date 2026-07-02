@@ -1828,7 +1828,7 @@ class RecordingExportService {
     }
     SongSubtitleTimeline timeline;
     try {
-      timeline = await SongSubtitleTimelineService.readCurrentTimeline(
+      timeline = await SongSubtitleTimelineService.readTimeline(
         request.timelinePath,
       );
     } catch (error) {
