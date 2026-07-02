@@ -324,7 +324,9 @@ function mergePictureBookPageImage(
     }
 
     if (imageUri) {
-      if (imageVariant === 'thumbnail' && pageHasPictureBookImageVariant(page, 'full')) {
+      const incomingRank = PICTURE_BOOK_IMAGE_VARIANT_RANK[imageVariant];
+      const currentRank = PICTURE_BOOK_IMAGE_VARIANT_RANK[normalizedPictureBookImageVariant(page.imageVariant)];
+      if (incomingRank < currentRank && page.imageUri?.trim()) {
         return page;
       }
       if (
@@ -361,15 +363,27 @@ function mergePictureBookPageImage(
   return normalizePictureBookState(changed ? { ...current, pages } : current);
 }
 
+type PictureBookImageVariant = 'thumbnail' | 'display' | 'full';
+
+// Rank order matters: never let a lower-resolution fetch (e.g. thumbnail) overwrite
+// an already-loaded higher-resolution image (display/full) for the same page.
+const PICTURE_BOOK_IMAGE_VARIANT_RANK: Record<PictureBookImageVariant, number> = {
+  thumbnail: 0,
+  display: 1,
+  full: 2,
+};
+
 function normalizedPictureBookImageVariant(
   variant?: PictureBookPage['imageVariant'] | PictureBookPageImagePayload['variant'] | null,
-): 'full' | 'thumbnail' {
-  return variant === 'thumbnail' ? 'thumbnail' : 'full';
+): PictureBookImageVariant {
+  if (variant === 'thumbnail') return 'thumbnail';
+  if (variant === 'display') return 'display';
+  return 'full';
 }
 
 function pageHasPictureBookImageVariant(
   page: PictureBookPage | null | undefined,
-  requiredVariant: 'full' | 'thumbnail',
+  requiredVariant: PictureBookImageVariant,
 ): boolean {
   if (!page?.imageUri?.trim()) {
     return false;
@@ -377,7 +391,8 @@ function pageHasPictureBookImageVariant(
   if (requiredVariant === 'thumbnail') {
     return true;
   }
-  return normalizedPictureBookImageVariant(page.imageVariant) === 'full';
+  const currentRank = PICTURE_BOOK_IMAGE_VARIANT_RANK[normalizedPictureBookImageVariant(page.imageVariant)];
+  return currentRank >= PICTURE_BOOK_IMAGE_VARIANT_RANK[requiredVariant];
 }
 
 function normalizePictureBookState(state: PictureBookState): PictureBookState {
@@ -5978,12 +5993,14 @@ function ListeningPage({
     articleId,
     state: pictureBookState,
     page: picturePage,
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
   useEnsurePictureBookPageImage({
     articleId,
     state: pictureBookState,
     page: nextPicturePage,
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
 
@@ -6457,6 +6474,7 @@ function ListeningPage({
           article={article}
           items={items}
           pictureBookState={pictureBookState}
+          onPictureBookLoaded={onPictureBookLoaded}
           onClose={() => setFullscreenPlayerOpen(false)}
         />
       )}
@@ -6466,6 +6484,7 @@ function ListeningPage({
           version={selectedSongVersion}
           startLineIndex={currentIndex}
           pictureBookState={pictureBookState}
+          onPictureBookLoaded={onPictureBookLoaded}
           onPlaybackStopped={() => {
             setSongCue(null);
             setSongState((current) =>
@@ -6836,11 +6855,13 @@ function FullscreenListeningPlayer({
   article,
   items,
   pictureBookState,
+  onPictureBookLoaded,
   onClose,
 }: {
   article: Article;
   items: ListeningItem[];
   pictureBookState: PictureBookState | null;
+  onPictureBookLoaded: PictureBookStateSetter;
   onClose: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -6857,6 +6878,23 @@ function FullscreenListeningPlayer({
   const articleId = article.id ?? 0;
   const currentItem = items.find((item) => item.index === currentIndex) ?? items[0];
   const currentPage = currentPictureBookPage(pictureBookState, currentIndex);
+  const nextFullscreenPage = nextPictureBookPage(pictureBookState, currentPage);
+  // Fullscreen playback fills most of the screen, so it needs the true "full" resolution
+  // image (the inline scene view below only ever ensures the smaller "display" variant).
+  useEnsurePictureBookPageImage({
+    articleId,
+    state: pictureBookState,
+    page: currentPage,
+    imageVariant: 'full',
+    onPictureBookLoaded,
+  });
+  useEnsurePictureBookPageImage({
+    articleId,
+    state: pictureBookState,
+    page: nextFullscreenPage,
+    imageVariant: 'full',
+    onPictureBookLoaded,
+  });
   const imageSrc = pageHasPictureBookImageVariant(currentPage, 'full')
     ? directImageSource(currentPage?.imageUri) ?? ''
     : '';
@@ -7122,6 +7160,7 @@ function FullscreenSongPlayer({
   version,
   startLineIndex,
   pictureBookState,
+  onPictureBookLoaded,
   onPlaybackStopped,
   onClose,
 }: {
@@ -7129,6 +7168,7 @@ function FullscreenSongPlayer({
   version: SongVersionPayload;
   startLineIndex: number;
   pictureBookState: PictureBookState | null;
+  onPictureBookLoaded: PictureBookStateSetter;
   onPlaybackStopped: () => void;
   onClose: () => void;
 }) {
@@ -7149,6 +7189,23 @@ function FullscreenSongPlayer({
   const onPlaybackStoppedRef = useRef(onPlaybackStopped);
   const articleId = article.id ?? 0;
   const currentPage = currentPictureBookPage(pictureBookState, currentLineIndex);
+  const nextFullscreenPage = nextPictureBookPage(pictureBookState, currentPage);
+  // Fullscreen playback fills most of the screen, so it needs the true "full" resolution
+  // image (the inline scene view only ever ensures the smaller "display" variant).
+  useEnsurePictureBookPageImage({
+    articleId,
+    state: pictureBookState,
+    page: currentPage,
+    imageVariant: 'full',
+    onPictureBookLoaded,
+  });
+  useEnsurePictureBookPageImage({
+    articleId,
+    state: pictureBookState,
+    page: nextFullscreenPage,
+    imageVariant: 'full',
+    onPictureBookLoaded,
+  });
   const imageSrc = pageHasPictureBookImageVariant(currentPage, 'full')
     ? directImageSource(currentPage?.imageUri) ?? ''
     : '';
@@ -7792,6 +7849,7 @@ function FollowPage({
     articleId,
     state: pictureBookState,
     page: picturePage,
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
 
@@ -8266,7 +8324,7 @@ function useEnsurePictureBookPageImage({
   articleId: number;
   state: PictureBookState | null;
   page: PictureBookPage | null;
-  imageVariant?: 'full' | 'thumbnail';
+  imageVariant?: PictureBookImageVariant;
   onPictureBookLoaded: PictureBookStateSetter;
 }) {
   const requestKeyRef = useRef('');
@@ -8443,11 +8501,11 @@ function usePredecodePictureBookImages(
   const imageItems = readyPages
     .map((page) => ({
       pageIndex: page.pageIndex,
-      src: pageHasPictureBookImageVariant(page, 'full') ? directImageSource(page.imageUri) ?? '' : '',
+      src: pageHasPictureBookImageVariant(page, 'display') ? directImageSource(page.imageUri) ?? '' : '',
     }))
     .filter((item) => item.src);
   const missingImagePages = readyPages
-    .filter((page) => !pageHasPictureBookImageVariant(page, 'full') || !directImageSource(page.imageUri))
+    .filter((page) => !pageHasPictureBookImageVariant(page, 'display') || !directImageSource(page.imageUri))
     .map((page) => page.pageIndex);
   const pending = imageItems.filter((item) => {
     const key = `${item.pageIndex}:${item.src}`;
@@ -8582,6 +8640,7 @@ function ChatPictureSceneBlock({
     articleId,
     state,
     page,
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
 
@@ -8904,7 +8963,11 @@ function PictureBookScene({
   onRetry: (page: PictureBookPage) => void;
   isRetrying?: boolean;
 }) {
-  const imageSrc = pageHasPictureBookImageVariant(page, 'full')
+  // Inline scene viewers render inside a small box (<= ~1120px wide) via CSS `object-fit: cover`.
+  // Feeding the raw 2560x1440 "full" original through that heavy downscale triggers WebView2/ANGLE
+  // GPU texture corruption (blocky color-noise artifacts) on some Windows GPU drivers. Use the
+  // pre-resized "display" bitmap here instead; only true fullscreen playback needs "full".
+  const imageSrc = pageHasPictureBookImageVariant(page, 'display')
     ? directImageSource(page?.imageUri) ?? directImageSource(page?.imagePath) ?? ''
     : '';
   const isReady = page?.status === 'ready' && imageSrc;

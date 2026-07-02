@@ -51,6 +51,7 @@ class BookDescriptionSuggestion {
 class PictureBookService {
   static final Map<String, String> _imageUriCache = <String, String>{};
   static final Map<String, String> _thumbnailPathCache = <String, String>{};
+  static final Map<String, String> _displayPathCache = <String, String>{};
   static final Queue<_PictureBookGenerationJob> _generationQueue =
       Queue<_PictureBookGenerationJob>();
   static final Map<String, _PictureBookPromptReviewDraft> _promptReviewDrafts =
@@ -60,6 +61,14 @@ class PictureBookService {
   static int _promptReviewSequence = 0;
   static const int _creationThumbnailMaxWidth = 640;
   static const int _creationThumbnailMaxHeight = 360;
+  // "display" sits between the small list thumbnail and the raw remote original (up to
+  // 2560x1440). Inline scene viewers (listening/follow/chat) render into a box no wider than
+  // ~1120px via CSS `object-fit: cover`; feeding them the raw original there caused WebView2/
+  // ANGLE GPU texture corruption (blocky color-noise artifacts) on some Windows GPU drivers
+  // because of the very heavy downscale ratio. Only true fullscreen playback and the
+  // creation-center lightbox preview should request the raw "full" original.
+  static const int _creationDisplayMaxWidth = 1280;
+  static const int _creationDisplayMaxHeight = 720;
   static const String _promptPolicyVersion =
       'picture_book_group_prompt_scene_description_v2';
   static const String _chapterPlanCachePurpose =
@@ -938,6 +947,7 @@ class PictureBookService {
       );
       _imageUriCache.clear();
       _thumbnailPathCache.clear();
+      _displayPathCache.clear();
     }
 
     final promptedSegments = <_PromptedSegment>[];
@@ -1157,6 +1167,7 @@ class PictureBookService {
     );
     _imageUriCache.clear();
     _thumbnailPathCache.clear();
+    _displayPathCache.clear();
     await _emit(articleId, onProgress);
 
     final results = await PictureBookImageService.generatePictureBookImageGroup(
@@ -1200,6 +1211,7 @@ class PictureBookService {
     );
     _imageUriCache.clear();
     _thumbnailPathCache.clear();
+    _displayPathCache.clear();
     await _emit(articleId, onProgress);
 
     _promptReviewDrafts.remove(reviewId);
@@ -1751,20 +1763,26 @@ class PictureBookService {
 
     final normalizedVariant = variant.trim().toLowerCase();
     final useThumbnail = normalizedVariant == 'thumbnail';
+    final useDisplay = normalizedVariant == 'display';
     final imageUri = useThumbnail
         ? await _thumbnailImageUriForPath(targetPage.imagePath)
-        : await _imageUriForPath(targetPage.imagePath);
+        : useDisplay
+            ? await _displayImageUriForPath(targetPage.imagePath)
+            : await _imageUriForPath(targetPage.imagePath);
     final imagePath = targetPage.imagePath?.trim() ?? '';
+    final resolvedVariant = useThumbnail ? 'thumbnail' : (useDisplay ? 'display' : 'full');
     return {
       'articleId': articleId,
       'pageIndex': pageIndex,
-      'variant': useThumbnail ? 'thumbnail' : 'full',
+      'variant': resolvedVariant,
       'imageUri': imageUri,
       'missing': imageUri == null && imagePath.isNotEmpty,
       'errorMessage': imageUri == null && imagePath.isNotEmpty
           ? useThumbnail
               ? '绘本缩略图缓存生成失败，请重试'
-              : '绘本缓存文件丢失，请重试生成'
+              : useDisplay
+                  ? '绘本预览图缓存生成失败，请重试'
+                  : '绘本缓存文件丢失，请重试生成'
           : null,
     };
   }
@@ -2913,14 +2931,43 @@ class PictureBookService {
   }
 
   static Future<String?> _thumbnailImageUriForPath(String? rawPath) async {
-    final thumbnailPath = await _thumbnailPathForImage(rawPath);
+    final thumbnailPath = await _resizedPathForImage(
+      rawPath,
+      cache: _thumbnailPathCache,
+      cacheDirectoryName: 'picture_book_thumbnails',
+      maxWidth: _creationThumbnailMaxWidth,
+      maxHeight: _creationThumbnailMaxHeight,
+      label: 'thumbnail',
+    );
     if (thumbnailPath == null || thumbnailPath.trim().isEmpty) {
       return null;
     }
     return _imageUriForPath(thumbnailPath);
   }
 
-  static Future<String?> _thumbnailPathForImage(String? rawPath) async {
+  static Future<String?> _displayImageUriForPath(String? rawPath) async {
+    final displayPath = await _resizedPathForImage(
+      rawPath,
+      cache: _displayPathCache,
+      cacheDirectoryName: 'picture_book_display',
+      maxWidth: _creationDisplayMaxWidth,
+      maxHeight: _creationDisplayMaxHeight,
+      label: 'display',
+    );
+    if (displayPath == null || displayPath.trim().isEmpty) {
+      return null;
+    }
+    return _imageUriForPath(displayPath);
+  }
+
+  static Future<String?> _resizedPathForImage(
+    String? rawPath, {
+    required Map<String, String> cache,
+    required String cacheDirectoryName,
+    required int maxWidth,
+    required int maxHeight,
+    required String label,
+  }) async {
     final imagePath = rawPath?.trim() ?? '';
     if (imagePath.isEmpty) {
       return null;
@@ -2937,44 +2984,43 @@ class PictureBookService {
       'sourcePath': path_lib.normalize(path_lib.absolute(source.path)),
       'sourceLength': stat.size,
       'sourceModifiedMs': stat.modified.millisecondsSinceEpoch,
-      'maxWidth': _creationThumbnailMaxWidth,
-      'maxHeight': _creationThumbnailMaxHeight,
+      'maxWidth': maxWidth,
+      'maxHeight': maxHeight,
     });
-    final cachedPath = _thumbnailPathCache[cacheIdentity];
+    final cachedPath = cache[cacheIdentity];
     if (cachedPath != null && await File(cachedPath).exists()) {
       return cachedPath;
     }
 
     final cacheKey = await ApiCacheService.hashUtf8(cacheIdentity);
-    final directory =
-        await ApiCacheService.cacheDirectory('picture_book_thumbnails');
+    final directory = await ApiCacheService.cacheDirectory(cacheDirectoryName);
     final target = File(path_lib.join(directory.path, '$cacheKey.png'));
     if (await target.exists() && await target.length() > 0) {
-      _thumbnailPathCache[cacheIdentity] = target.path;
+      cache[cacheIdentity] = target.path;
       return target.path;
     }
 
     try {
       final bytes = await source.readAsBytes();
-      final thumbnail = await _resizeImageToPng(
+      final resized = await _resizeImageToPng(
         bytes,
-        maxWidth: _creationThumbnailMaxWidth,
-        maxHeight: _creationThumbnailMaxHeight,
+        maxWidth: maxWidth,
+        maxHeight: maxHeight,
       );
-      if (thumbnail.isEmpty) {
+      if (resized.isEmpty) {
         return null;
       }
-      await target.writeAsBytes(thumbnail, flush: true);
-      _thumbnailPathCache[cacheIdentity] = target.path;
+      await target.writeAsBytes(resized, flush: true);
+      cache[cacheIdentity] = target.path;
       return target.path;
     } catch (error, stackTrace) {
-      debugPrint('PictureBook thumbnail generation failed: $error');
+      debugPrint('PictureBook $label generation failed: $error');
       FlutterError.reportError(
         FlutterErrorDetails(
           exception: error,
           stack: stackTrace,
           library: 'picture_book_service',
-          context: ErrorDescription('generating picture-book thumbnail'),
+          context: ErrorDescription('generating picture-book $label'),
         ),
       );
       return null;

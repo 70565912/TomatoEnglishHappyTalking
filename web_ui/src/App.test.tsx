@@ -3276,10 +3276,13 @@ describe('App', () => {
     await waitFor(() => expect(fullscreenButton).toBeDisabled());
     expect(await screen.findByText('当前和下一句英文音频文件还没有预热完成')).toBeInTheDocument();
     await waitFor(() => {
+      // The inline (non-fullscreen) scene view only ever requests the "display" resolution;
+      // the raw "full" original is reserved for true fullscreen playback to avoid WebView2
+      // GPU downscale artifacts when a large image is squeezed into a small on-screen box.
       expect(calls.find((call) => call.type === 'pictureBook.pageImage')?.payload).toMatchObject({
         articleId: 1,
         pageIndex: 0,
-        variant: 'full',
+        variant: 'display',
       });
     });
 
@@ -3318,6 +3321,17 @@ describe('App', () => {
         mode: 'english',
         singleItem: false,
       });
+    });
+
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.type === 'pictureBook.pageImage' &&
+            call.payload.pageIndex === 0 &&
+            call.payload.variant === 'full',
+        ),
+      ).toBe(true);
     });
 
     vi.useFakeTimers();

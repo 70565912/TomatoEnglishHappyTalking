@@ -90,7 +90,7 @@ export interface PictureBookPage {
   prompt?: Record<string, unknown> | null;
   imagePath?: string | null;
   imageUri?: string | null;
-  imageVariant?: 'full' | 'thumbnail' | string;
+  imageVariant?: 'full' | 'display' | 'thumbnail' | string;
   status: 'queued' | 'prompting' | 'generating' | 'ready' | 'skipped' | 'error' | string;
   errorMessage?: string | null;
 }
@@ -107,7 +107,7 @@ export interface PictureBookState {
 export interface PictureBookPageImagePayload {
   articleId: number;
   pageIndex: number;
-  variant?: 'full' | 'thumbnail' | string;
+  variant?: 'full' | 'display' | 'thumbnail' | string;
   imageUri?: string | null;
   missing?: boolean;
   errorMessage?: string | null;

@@ -429,6 +429,28 @@ D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe analyze <files>
 - Web UI `directImageSource` 只接受 `data:` / `blob:` / `http(s):` / bundled `assets/`；创作中心预览可先把 data URI 转成 Blob URL 再显示，并在 `onLoad` 后再露出图片。
 - 修改绘本图片加载或预览层样式后，用 Release + `TOMATO_QA_REMOTE=true` 验证：`pictureBook.pageImage` 前缀为 `data:image/`，`/listening/<id>` 与创作中心缩略图预览 `brokenImages=0`。详见 `docs/qa-remote-control.md`。
 
+## WebView2 大图 CSS 缩放花屏（听力/跟读/对话内嵌绘本图）
+
+症状：
+
+- 听力页、跟读页、对话页内嵌的绘本场景图（`.picture-book-scene img`）开始显示正常，几秒或切换后画面出现大量彩色小方块噪点（马赛克），刷新/重新打开可能复现或不复现。
+- 只发生在**内嵌小尺寸**场景图（页面里 `.picture-book-scene` 容器最大约 1120px 宽，用 `object-fit: cover` 铺满）；创作中心大图预览（`pictureBook.pageImage` `variant: full` 弹层，接近原图尺寸展示）和全屏播放（`FullscreenListeningPlayer` / `FullscreenSongPlayer`，接近屏幕分辨率展示）通常不受影响。
+- 已确认与 `backdrop-filter` 无关：此前怀疑并移除了预览层的 `backdrop-filter`（见上一节），但花屏仍在内嵌场景图复现。
+
+原因：
+
+- 绘本远程原图固定为 16:9 `2560x1440`（见 `docs/volc_ark_seedream_image_api_notes.md` 及本文件顶部说明），此前 `pictureBook.pageImage` 的 `full` 变体在监听/跟读/对话场景里也被直接拿来当 `<img src>` 使用。
+- 把 2560x1440 的纹理通过 CSS `object-fit: cover` 大幅降采样塞进一个仅 ~700-1120px 宽的容器，是一次很重的 GPU 缩放；Windows WebView2（Chromium + ANGLE D3D11 后端）在部分 GPU 驱动上，对这种“大纹理 + 大幅降采样 + 有独立合成层的兄弟元素（如绝对定位的字幕 `.picture-book-subtitles`）”组合，会出现纹理采样/合成损坏，表现为随机彩色小方块噪点。
+- 全屏播放和创作中心大图预览之所以没有复现，是因为展示区域接近或等于原图分辨率，降采样比例很小，没有触发这个 GPU 缺陷。
+
+处理：
+
+- 新增第三档图片变体 `display`（`PictureBookService._displayImageUriForPath`，本地缓存目录 `picture_book_display`，上限 `1280x720`），介于列表 `thumbnail`（`640x360`，`picture_book_thumbnails`）和原始 `full` 之间；生成方式与缩略图一致，都是本地对已下载原图做 `_resizeImageToPng`，不重新调用生成 API。
+- Web UI 内嵌场景视图（`PictureBookScene` 组件，供 `ListeningPage`、`FollowReadPage`、`ChatPictureSceneBlock` 复用）改为只请求/展示 `display` 变体：`useEnsurePictureBookPageImage({ ..., imageVariant: 'display' })`；`usePredecodePictureBookImages` 的预解码判定也同步改成 `display`。
+- 真正需要原图分辨率的两个场景改为显式请求 `full`：`FullscreenListeningPlayer`、`FullscreenSongPlayer` 各自新增 `useEnsurePictureBookPageImage({ imageVariant: 'full' })`（当前页 + 下一页），不再依赖父级内嵌视图“顺带”把 `full` 加载进 `pictureBookState`。创作中心大图预览（`openPicturePreview`）本来就显式请求 `full`，保持不变。
+- `pageHasPictureBookImageVariant` / `mergePictureBookPageImage` 改成按 `thumbnail(0) < display(1) < full(2)` 的分辨率等级比较，避免低分辨率请求覆盖已加载的高分辨率图片，也避免高分辨率请求被误判为「已满足」。
+- 修改绘本图片分辨率分级或内嵌/全屏取图逻辑后，必须用 Release + `TOMATO_QA_REMOTE=true` 打开真实听力页做视觉复核（`/screenshot` 截图确认无噪点），并检查 `/snapshot` 中该 `<img>` 的 `naturalWidth/naturalHeight` 确实是 `1280x720`（display）而不是原图尺寸；不要只看 `brokenImages` 计数，花屏图片不会被判定为 broken。
+
 ## 自动化实测限制
 
 有时 Codex 的 Windows 窗口捕获或 in-app browser 访问本地地址会被环境策略拦截。遇到这种情况时：

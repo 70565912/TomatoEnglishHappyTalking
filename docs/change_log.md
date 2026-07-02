@@ -1,5 +1,18 @@
 # 修改日志
 
+## 2026-07-02
+
+- 修复听力/跟读/对话内嵌绘本场景图花屏：新增 `display`（`1280x720`）图片变体，介于列表 `thumbnail`（`640x360`）与原始 `full`（`2560x1440`）之间，本地对已下载原图缩放缓存，不重新调用生成 API。`PictureBookScene`（`ListeningPage`/`FollowReadPage`/`ChatPictureSceneBlock` 共用）改为只请求/展示 `display`；根因是把 2560x1440 原图通过 CSS `object-fit: cover` 大幅降采样塞进仅 ~700-1120px 宽的内嵌容器时，Windows WebView2/ANGLE 在部分 GPU 上出现纹理合成损坏（彩色小方块噪点），与此前排查过的 `backdrop-filter` 无关。
+- `FullscreenListeningPlayer` / `FullscreenSongPlayer` 新增各自的 `useEnsurePictureBookPageImage({ imageVariant: 'full' })`（当前页+下一页），不再依赖内嵌视图顺带把 `full` 加载进 `pictureBookState`；创作中心大图预览继续显式请求 `full`，不受影响。`pageHasPictureBookImageVariant` / `mergePictureBookPageImage` 改为按 `thumbnail < display < full` 分辨率等级比较，避免互相覆盖。详见 `docs/build-and-release-pitfalls.md`。
+
+验证：
+
+- `npx tsc --noEmit`（web_ui）
+- `npm --prefix web_ui test -- --run`（127 passed）
+- `flutter analyze lib/services/picture_book_service.dart`
+- `.\tools\build_windows.ps1 -Release`
+- Release + `TOMATO_QA_REMOTE=true`：导航到 `Alice Meets The Caterpillar`（此前会花屏的页面）听力页，`/screenshot` 确认画面清晰无噪点，`/snapshot` 确认场景图 `naturalWidth/naturalHeight` 为 `1280x720`
+
 ## 2026-07-01
 
 - 朗读块分句（`NlpService` / `sentenceSplitter.ts`）补充设计说明：输出 read-aloud chunks 而非语言学真分句；舒适上限约 20 词、硬上限 32 词；规则保持通用，回归样本不驱动特例。
