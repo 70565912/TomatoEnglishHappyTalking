@@ -433,23 +433,22 @@ D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe analyze <files>
 
 症状：
 
-- 听力页、跟读页、对话页内嵌的绘本场景图（`.picture-book-scene img`）开始显示正常，几秒或切换后画面出现大量彩色小方块噪点（马赛克），刷新/重新打开可能复现或不复现。
-- 只发生在**内嵌小尺寸**场景图（页面里 `.picture-book-scene` 容器最大约 1120px 宽，用 `object-fit: cover` 铺满）；创作中心大图预览（`pictureBook.pageImage` `variant: full` 弹层，接近原图尺寸展示）和全屏播放（`FullscreenListeningPlayer` / `FullscreenSongPlayer`，接近屏幕分辨率展示）通常不受影响。
-- 已确认与 `backdrop-filter` 无关：此前怀疑并移除了预览层的 `backdrop-filter`（见上一节），但花屏仍在内嵌场景图复现。
+- 听力页、跟读页、对话页内嵌绘本场景图（`.picture-book-scene img`）、创作中心缩略图点开的大图预览、全屏听力/歌曲播放的绘本图，开始显示正常，几秒或切换后画面出现大量彩色小方块噪点（马赛克），刷新/重新打开可能复现或不复现。
+- 已确认与 `backdrop-filter` 无关：此前怀疑并移除了预览层的 `backdrop-filter`（见上一节），花屏仍复现。
+- 花屏图片不会被 QA `/snapshot` 判定为 broken，`brokenImages=0` 不能证明没问题。
 
 原因：
 
-- 绘本远程原图固定为 16:9 `2560x1440`（见 `docs/volc_ark_seedream_image_api_notes.md` 及本文件顶部说明），此前 `pictureBook.pageImage` 的 `full` 变体在监听/跟读/对话场景里也被直接拿来当 `<img src>` 使用。
-- 把 2560x1440 的纹理通过 CSS `object-fit: cover` 大幅降采样塞进一个仅 ~700-1120px 宽的容器，是一次很重的 GPU 缩放；Windows WebView2（Chromium + ANGLE D3D11 后端）在部分 GPU 驱动上，对这种“大纹理 + 大幅降采样 + 有独立合成层的兄弟元素（如绝对定位的字幕 `.picture-book-subtitles`）”组合，会出现纹理采样/合成损坏，表现为随机彩色小方块噪点。
-- 全屏播放和创作中心大图预览之所以没有复现，是因为展示区域接近或等于原图分辨率，降采样比例很小，没有触发这个 GPU 缺陷。
+- 绘本远程原图固定为 16:9 `2560x1440`（方舟最小像素限制导致，见 `docs/volc_ark_seedream_image_api_notes.md`），此前 `pictureBook.pageImage` 的 `full` 变体被直接拿来当 `<img src>` 在各展示场景使用。
+- 把 2560x1440 的大纹理通过 CSS（`object-fit: cover` 或 `max-width/max-height` 缩放）降采样进窗口内的展示区域（内嵌容器 ~700-1120px 宽，弹层/全屏也只是窗口尺寸），Windows WebView2（Chromium + ANGLE D3D11 后端）在部分 GPU 驱动上会出现纹理采样/合成损坏，表现为随机彩色小方块噪点。降采样比例越大越容易触发，但窗口化的大图预览/全屏播放（2560 -> ~1000px）同样复现，**不能**假设“接近原图尺寸展示就安全”。
+- 2026-07-02 第一次修复只把内嵌场景图换成 1280x720，保留大图预览/全屏用原图，用户实测预览/全屏仍花屏；第二次修复才把 WebView 全部展示路径统一到 1280x720，问题消失。
 
 处理：
 
-- 新增第三档图片变体 `display`（`PictureBookService._displayImageUriForPath`，本地缓存目录 `picture_book_display`，上限 `1280x720`），介于列表 `thumbnail`（`640x360`，`picture_book_thumbnails`）和原始 `full` 之间；生成方式与缩略图一致，都是本地对已下载原图做 `_resizeImageToPng`，不重新调用生成 API。
-- Web UI 内嵌场景视图（`PictureBookScene` 组件，供 `ListeningPage`、`FollowReadPage`、`ChatPictureSceneBlock` 复用）改为只请求/展示 `display` 变体：`useEnsurePictureBookPageImage({ ..., imageVariant: 'display' })`；`usePredecodePictureBookImages` 的预解码判定也同步改成 `display`。
-- 真正需要原图分辨率的两个场景改为显式请求 `full`：`FullscreenListeningPlayer`、`FullscreenSongPlayer` 各自新增 `useEnsurePictureBookPageImage({ imageVariant: 'full' })`（当前页 + 下一页），不再依赖父级内嵌视图“顺带”把 `full` 加载进 `pictureBookState`。创作中心大图预览（`openPicturePreview`）本来就显式请求 `full`，保持不变。
-- `pageHasPictureBookImageVariant` / `mergePictureBookPageImage` 改成按 `thumbnail(0) < display(1) < full(2)` 的分辨率等级比较，避免低分辨率请求覆盖已加载的高分辨率图片，也避免高分辨率请求被误判为「已满足」。
-- 修改绘本图片分辨率分级或内嵌/全屏取图逻辑后，必须用 Release + `TOMATO_QA_REMOTE=true` 打开真实听力页做视觉复核（`/screenshot` 截图确认无噪点），并检查 `/snapshot` 中该 `<img>` 的 `naturalWidth/naturalHeight` 确实是 `1280x720`（display）而不是原图尺寸；不要只看 `brokenImages` 计数，花屏图片不会被判定为 broken。
+- 新增第三档图片变体 `display`（`PictureBookService._displayImageUriForPath`，本地缓存目录 `picture_book_display`，上限 `1280x720`，与产品定义的用户侧 16:9 `1280x720` 体验一致），介于列表 `thumbnail`（`640x360`，`picture_book_thumbnails`）和原始 `full` 之间；生成方式与缩略图一致，都是本地对已下载原图做 `_resizeImageToPng`，不重新调用生成 API。
+- WebView 内**所有**大图展示一律用 `display`：内嵌场景视图（`PictureBookScene`，供 `ListeningPage`、`FollowReadPage`、`ChatPictureSceneBlock` 复用）、`usePredecodePictureBookImages` 预解码、`FullscreenListeningPlayer` / `FullscreenSongPlayer` 全屏播放、创作中心大图预览（`openPicturePreview`）。`full` 原图**永远不要**交给 WebView `<img>`，只保留在磁盘供视频导出等原生链路读取 `imagePath`。
+- `pageHasPictureBookImageVariant` / `mergePictureBookPageImage` 按 `thumbnail(0) < display(1) < full(2)` 的分辨率等级比较，避免低分辨率请求覆盖已加载的高分辨率图片。
+- 修改绘本图片分辨率分级或取图逻辑后，必须用 Release + `TOMATO_QA_REMOTE=true` 做视觉复核：打开听力页和创作中心缩略图预览，`/screenshot` 截图确认无噪点，并检查 `/snapshot` 中相应 `<img>` 的 `naturalWidth/naturalHeight` 是 `1280x720`（display）而不是 `2560x1440`；不要只看 `brokenImages` 计数。
 
 ## 自动化实测限制
 

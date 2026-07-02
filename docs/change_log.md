@@ -2,8 +2,9 @@
 
 ## 2026-07-02
 
-- 修复听力/跟读/对话内嵌绘本场景图花屏：新增 `display`（`1280x720`）图片变体，介于列表 `thumbnail`（`640x360`）与原始 `full`（`2560x1440`）之间，本地对已下载原图缩放缓存，不重新调用生成 API。`PictureBookScene`（`ListeningPage`/`FollowReadPage`/`ChatPictureSceneBlock` 共用）改为只请求/展示 `display`；根因是把 2560x1440 原图通过 CSS `object-fit: cover` 大幅降采样塞进仅 ~700-1120px 宽的内嵌容器时，Windows WebView2/ANGLE 在部分 GPU 上出现纹理合成损坏（彩色小方块噪点），与此前排查过的 `backdrop-filter` 无关。
-- `FullscreenListeningPlayer` / `FullscreenSongPlayer` 新增各自的 `useEnsurePictureBookPageImage({ imageVariant: 'full' })`（当前页+下一页），不再依赖内嵌视图顺带把 `full` 加载进 `pictureBookState`；创作中心大图预览继续显式请求 `full`，不受影响。`pageHasPictureBookImageVariant` / `mergePictureBookPageImage` 改为按 `thumbnail < display < full` 分辨率等级比较，避免互相覆盖。详见 `docs/build-and-release-pitfalls.md`。
+- 修复绘本图 WebView2 花屏（彩色小方块噪点）：新增 `display`（`1280x720`）图片变体，介于列表 `thumbnail`（`640x360`）与原始 `full`（`2560x1440`）之间，本地对已下载原图缩放缓存（`picture_book_display`），不重新调用生成 API。根因是 Windows WebView2/ANGLE 在部分 GPU 上把 2560x1440 大纹理降采样进窗口内展示区域时出现纹理合成损坏，与此前排查过的 `backdrop-filter` 无关。
+- 第一次修复只把内嵌场景图（`PictureBookScene`）换成 `display`，用户实测创作中心大图预览/全屏播放仍花屏；随后把 WebView 全部展示路径统一为 `display`：内嵌场景视图、`usePredecodePictureBookImages` 预解码、`FullscreenListeningPlayer` / `FullscreenSongPlayer`（当前页+下一页显式 ensure）、创作中心大图预览（`openPicturePreview`）。`full` 原图不再交给 WebView `<img>`，只保留在磁盘供视频导出等原生链路使用。
+- `pageHasPictureBookImageVariant` / `mergePictureBookPageImage` 改为按 `thumbnail < display < full` 分辨率等级比较，避免低分辨率请求覆盖已加载的高分辨率图片。详见 `docs/build-and-release-pitfalls.md`。
 
 验证：
 
@@ -11,7 +12,7 @@
 - `npm --prefix web_ui test -- --run`（127 passed）
 - `flutter analyze lib/services/picture_book_service.dart`
 - `.\tools\build_windows.ps1 -Release`
-- Release + `TOMATO_QA_REMOTE=true`：导航到 `Alice Meets The Caterpillar`（此前会花屏的页面）听力页，`/screenshot` 确认画面清晰无噪点，`/snapshot` 确认场景图 `naturalWidth/naturalHeight` 为 `1280x720`
+- Release + `TOMATO_QA_REMOTE=true`：`Alice Meets The Caterpillar`（此前花屏页面）听力页与创作中心「查看第 1 页大图」预览，`/screenshot` 均清晰无噪点；`/snapshot` 确认预览大图 `naturalWidth/naturalHeight` 为 `1280x720`（blob URL）、缩略图为 `640x360`，`brokenImages=0`
 
 ## 2026-07-01
 

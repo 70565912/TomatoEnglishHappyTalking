@@ -2546,14 +2546,20 @@ function PictureBookCreationPanel({
     setPicturePreview({ pageIndex, imageUri: null, loading: true });
 
     try {
-      let imageUri = pageHasPictureBookImageVariant(page, 'full')
-        ? directImageSource(page.imageUri)
-        : null;
+      // Never feed the raw 2560x1440 original into a WebView <img>: downscaling that
+      // texture into the window-sized preview stage corrupts on some Windows GPU
+      // drivers (blocky color noise). The product-facing resolution is 1280x720, so
+      // the "display" variant is the largest bitmap the WebView should ever render.
+      let imageUri =
+        normalizedPictureBookImageVariant(page.imageVariant) === 'display' &&
+        pageHasPictureBookImageVariant(page, 'display')
+          ? directImageSource(page.imageUri)
+          : null;
       if (!imageUri) {
         const payload = await sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
           articleId: article.id,
           pageIndex,
-          variant: 'full',
+          variant: 'display',
         });
         imageUri = directImageSource(payload.imageUri);
       }
@@ -6879,23 +6885,24 @@ function FullscreenListeningPlayer({
   const currentItem = items.find((item) => item.index === currentIndex) ?? items[0];
   const currentPage = currentPictureBookPage(pictureBookState, currentIndex);
   const nextFullscreenPage = nextPictureBookPage(pictureBookState, currentPage);
-  // Fullscreen playback fills most of the screen, so it needs the true "full" resolution
-  // image (the inline scene view below only ever ensures the smaller "display" variant).
+  // "display" (1280x720) is the largest bitmap the WebView should ever render; the raw
+  // 2560x1440 original corrupts on some Windows GPU drivers when downscaled into the
+  // window (blocky color noise). 1280x720 is also the product-facing resolution.
   useEnsurePictureBookPageImage({
     articleId,
     state: pictureBookState,
     page: currentPage,
-    imageVariant: 'full',
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
   useEnsurePictureBookPageImage({
     articleId,
     state: pictureBookState,
     page: nextFullscreenPage,
-    imageVariant: 'full',
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
-  const imageSrc = pageHasPictureBookImageVariant(currentPage, 'full')
+  const imageSrc = pageHasPictureBookImageVariant(currentPage, 'display')
     ? directImageSource(currentPage?.imageUri) ?? ''
     : '';
   const progress = items.length === 0 ? 0 : Math.round(((currentIndex + 1) / items.length) * 100);
@@ -7190,23 +7197,24 @@ function FullscreenSongPlayer({
   const articleId = article.id ?? 0;
   const currentPage = currentPictureBookPage(pictureBookState, currentLineIndex);
   const nextFullscreenPage = nextPictureBookPage(pictureBookState, currentPage);
-  // Fullscreen playback fills most of the screen, so it needs the true "full" resolution
-  // image (the inline scene view only ever ensures the smaller "display" variant).
+  // "display" (1280x720) is the largest bitmap the WebView should ever render; the raw
+  // 2560x1440 original corrupts on some Windows GPU drivers when downscaled into the
+  // window (blocky color noise). 1280x720 is also the product-facing resolution.
   useEnsurePictureBookPageImage({
     articleId,
     state: pictureBookState,
     page: currentPage,
-    imageVariant: 'full',
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
   useEnsurePictureBookPageImage({
     articleId,
     state: pictureBookState,
     page: nextFullscreenPage,
-    imageVariant: 'full',
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
-  const imageSrc = pageHasPictureBookImageVariant(currentPage, 'full')
+  const imageSrc = pageHasPictureBookImageVariant(currentPage, 'display')
     ? directImageSource(currentPage?.imageUri) ?? ''
     : '';
   const safeDurationMs = Math.max(0, durationMs || version.durationMs || 0);

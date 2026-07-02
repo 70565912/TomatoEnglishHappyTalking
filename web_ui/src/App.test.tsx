@@ -1595,10 +1595,12 @@ describe('App', () => {
     const previewDialog = await screen.findByRole('dialog', { name: '第 1 页绘本大图' });
     expect(previewDialog.closest('.picture-book-preview-overlay')?.parentElement).toBe(document.body);
     await waitFor(() => {
+      // The lightbox requests "display" (1280x720), never the raw 2560x1440 original:
+      // the WebView must not render the original (GPU downscale corruption on Windows).
       expect(calls.find((call) => call.type === 'pictureBook.pageImage')?.payload).toMatchObject({
         articleId: 1,
         pageIndex: 0,
-        variant: 'full',
+        variant: 'display',
       });
     });
     const previewButton = await within(previewDialog).findByRole('button', { name: '关闭大图预览' });
@@ -3323,16 +3325,13 @@ describe('App', () => {
       });
     });
 
-    await waitFor(() => {
-      expect(
-        calls.some(
-          (call) =>
-            call.type === 'pictureBook.pageImage' &&
-            call.payload.pageIndex === 0 &&
-            call.payload.variant === 'full',
-        ),
-      ).toBe(true);
-    });
+    // Fullscreen playback reuses the already-loaded "display" bitmap; the WebView must
+    // never request the raw "full" original (GPU downscale corruption on Windows).
+    expect(
+      calls.some(
+        (call) => call.type === 'pictureBook.pageImage' && call.payload.variant === 'full',
+      ),
+    ).toBe(false);
 
     vi.useFakeTimers();
     fireEvent.pointerMove(fullscreenDialog);
