@@ -549,7 +549,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (!path.startsWith('/chat')) {
       _closeChatSession();
     }
-    if (!path.startsWith('/listen')) {
+    if (!_pathIsListeningContext(path)) {
       final articleId = _activeListeningArticleId;
       unawaited(_stopListeningPlayback());
       unawaited(_stopSongPlayback());
@@ -560,6 +560,16 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       _activeListeningArticleId = null;
     }
     return {'path': path};
+  }
+
+  static final RegExp _bookPlayerPathPattern = RegExp(r'^/books/\d+/player');
+
+  /// 听力上下文包括旧的 `/listen/<id>` 路由，以及书籍播放器 `/books/<id>/player`
+  /// （听力/歌曲子模式）。书籍播放器切换听力/歌曲模式只会改变 `mode` query，不会
+  /// 重新触发 Web UI 的 `listening.open`，因此这里不能因为路径不是 `/listen` 就把
+  /// `_activeListeningArticleId` 清空，否则从歌曲切回听力播放会报“听力任务尚未打开”。
+  bool _pathIsListeningContext(String path) {
+    return path.startsWith('/listen') || _bookPlayerPathPattern.hasMatch(path);
   }
 
   Future<Map<String, dynamic>> _handleAppBack(BridgeMessage message) async {
@@ -4509,6 +4519,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           stackTrace: stackTrace,
         );
       }
+      await _snapshotSunoPreCreateSongUrls(controller);
       final result = await _evaluateSunoJson(controller, _sunoCreateScript);
       if (result['ok'] == true) {
         _sunoCreateBaselineVersionCount = _sunoVersions.length;
@@ -4541,6 +4552,59 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (mounted) {
         setState(() {});
       }
+    }
+  }
+
+  /// 点击 Suno Create 之前，先把 Create 页面上已经存在的所有 /song/ 链接记为
+  /// “非本次生成”。Suno 只有在真人审核通过后才会把新歌加入右侧列表，期间页面
+  /// 上仍然只有这些旧歌。如果不先记下它们，创建后的第一轮 completion 探针会把
+  /// 这些旧歌当成候选、立刻 loadUrl 跳到旧歌详情页——这会中断真人审核+生成，
+  /// 还会触发 Suno 登录握手，把状态机拖回“重新打开 Create → 重填歌词 → 重点
+  /// 魔法棒 → 等待生成风格”的死循环。记下基线后，只有真正新出现的歌曲才会被
+  /// 当作候选，从而停留在 Create 页面等待右侧歌曲列表出现。
+  Future<void> _snapshotSunoPreCreateSongUrls(
+    InAppWebViewController controller,
+  ) async {
+    try {
+      final probe = await _evaluateSunoJson(
+        controller,
+        _sunoCompletionScript(
+          expectedStylePrompt: _sunoStylePrompt,
+          expectedLyrics: _sunoLyrics,
+          requireExpectedMatch: false,
+          trustedSongUrls: _trustedSunoSongUrls(),
+        ),
+      );
+      final preExisting = _mergeSunoSongUrls([
+        ((probe['candidateSongUrls'] as List?) ?? const [])
+            .map((value) => value.toString()),
+        ((probe['songUrls'] as List?) ?? const [])
+            .map((value) => value.toString()),
+      ])
+          .map((value) => _canonicalSunoSongUrl(value))
+          .whereType<String>()
+          .where((value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value))
+          .toList();
+      _sunoRejectedCandidateSongUrls.addAll(preExisting);
+      TomatoLogger.info(
+        category: 'suno',
+        event: 'create.pre_submit_snapshot',
+        articleId: _sunoArticleId,
+        status: _sunoAutomationStatus,
+        data: {
+          'preExistingSongUrls': preExisting.length,
+          'rejectedTotal': _sunoRejectedCandidateSongUrls.length,
+        },
+      );
+    } catch (error, stackTrace) {
+      TomatoLogger.warn(
+        category: 'suno',
+        event: 'create.pre_submit_snapshot_skipped',
+        articleId: _sunoArticleId,
+        status: _sunoAutomationStatus,
+        message: _displayError(error),
+        stackTrace: stackTrace,
+      );
     }
   }
 

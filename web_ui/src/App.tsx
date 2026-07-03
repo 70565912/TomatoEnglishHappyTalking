@@ -4892,6 +4892,7 @@ function ListeningPage({
   const [fullscreenReadyLoading, setFullscreenReadyLoading] = useState(false);
   const [fullscreenPlayerOpen, setFullscreenPlayerOpen] = useState(false);
   const [songFullscreenPlayerOpen, setSongFullscreenPlayerOpen] = useState(false);
+  const [songFullscreenStartIndex, setSongFullscreenStartIndex] = useState(0);
   const [recordingReady, setRecordingReady] = useState<ListeningRecordingReadyPayload | null>(null);
   const [recordingReadyLoading, setRecordingReadyLoading] = useState(false);
   const [recordingProgress, setRecordingProgress] = useState<ListeningRecordingProgressPayload | null>(null);
@@ -6241,7 +6242,10 @@ function ListeningPage({
                   <button
                     className="ghost-action fullscreen-start-button"
                     type="button"
-                    onClick={() => setSongFullscreenPlayerOpen(true)}
+                    onClick={() => {
+                      setSongFullscreenStartIndex(currentIndex);
+                      setSongFullscreenPlayerOpen(true);
+                    }}
                     disabled={!canOpenSongFullscreen}
                     title={songFullscreenReadiness.reason}
                   >
@@ -6488,7 +6492,7 @@ function ListeningPage({
         <FullscreenSongPlayer
           article={article}
           version={selectedSongVersion}
-          startLineIndex={currentIndex}
+          startLineIndex={songFullscreenStartIndex}
           pictureBookState={pictureBookState}
           onPictureBookLoaded={onPictureBookLoaded}
           onPlaybackStopped={() => {

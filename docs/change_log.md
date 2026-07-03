@@ -1,5 +1,16 @@
 # 修改日志
 
+## 2026-07-03
+
+- 修复歌曲全屏播放「每一句都停顿并闪显歌曲文件名」：根因是 `FullscreenSongPlayer` 的播放 effect 依赖 `startLineIndex`，而父层监听 `listening.song.position` 会在每个 cue 执行 `setCurrentIndex(cue.lineIndex)`，并把 `currentIndex` 直接透传成 `startLineIndex`。于是每换一行 effect 都重建：先 `setCurrentCue(null)`（字幕回退成 `version.title` 文件名），再重发 `listening.songPlay` 触发原生 `_playSongFile` 重新 `setFilePath`+`seek`（听感上的卡顿）。改为在打开全屏时用新增的 `songFullscreenStartIndex` 冻结起始行，播放中不再变化，effect 不再中途重启；行内字幕列表仍用实时 `currentIndex`。
+- 修复「播放歌曲后切回听力，点击播放提示『听力任务尚未打开』」：根因是 `_handleAppNavigate` 只把 `/listen` 前缀视作听力上下文，而书籍播放器路由是 `/books/<id>/player?...&mode=listening`，切换听力/歌曲子模式只改 `mode` query、不会重跑 Web UI 的 `listening.open`（其 effect 仅依赖 `[articleId, onPictureBookLoaded]`）。旧逻辑因此在模式切换时把 `_activeListeningArticleId` 清空，导致 `listening.playSequence` 报错。新增 `_pathIsListeningContext`（匹配 `/listen` 或 `/books/<id>/player`），只有真正离开播放器时才停止播放并清空监听任务；切到别的文章播放器仍会因 `articleId` 变化重跑 `listening.open` 覆盖 id。
+
+验证：
+
+- `npx tsc --noEmit -p tsconfig.json`（web_ui，通过）
+- `.\tools\build_windows.ps1`（web UI tsc+vite 与 Windows Debug 构建通过，产物已同步发布目录）
+- 启动冒烟：运行发布目录 EXE，`logs/*.ndjson` 无 error/fatal，startup 序列正常
+
 ## 2026-07-02
 
 - 重构歌曲字幕对齐内核：`SongSubtitleTimelineService` 的行级匹配从“贪心逐行游标 + 多层补丁（rescue/refine/低信息词跳过/括注回退）”改为**单次全局单调 DP（Needleman–Wunsch）**。把全部歌词 token 拍平与 ASR 词流做一次全局最优对齐（歌词 token gap 与 ASR 词 gap 分别计费），再按覆盖率/相似度折回每行判定 `matched`/`partial`/boundary。全局最优保证匹配单调不重叠，从根上消除重复短语（如 "said the Caterpillar"）导致的“弱锚级联”——旧算法下 E16 第 16 行拉长到约 94 秒、第 27–51 行塌缩到末尾约 11 秒，字幕完全错位。
