@@ -2802,6 +2802,12 @@ function PictureBookPromptReviewDialog({
   const [error, setError] = useState<string | null>(null);
   const busy = savingPrompt || submitting || refreshingPrompt !== null;
   const isSinglePageReview = review.mode === 'singlePage';
+  const referenceOptions = isSinglePageReview ? (review.referenceOptions ?? []) : [];
+  const maxReferenceSelections = Math.min(referenceOptions.length, 14);
+  const [selectedReferencePageIndexes, setSelectedReferencePageIndexes] = useState<number[]>(
+    () => resolveInitialReferencePageIndexes(review, referenceOptions),
+  );
+  const [referencePictureBookState, setReferencePictureBookState] = useState<PictureBookState | null>(null);
   const reviewBookTitle = review.bookTitle?.trim() || '书籍信息';
   const targetPageNumber = Math.max(
     1,
@@ -2826,7 +2832,37 @@ function PictureBookPromptReviewDialog({
     setSavingPrompt(false);
     setSubmitting(false);
     setRefreshingPrompt(null);
+    setSelectedReferencePageIndexes(resolveInitialReferencePageIndexes(review, review.referenceOptions ?? []));
+    setReferencePictureBookState(null);
   }, [review]);
+
+  useEffect(() => {
+    if (!isSinglePageReview || !review.articleId || referenceOptions.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    void sendNative<PictureBookState>('pictureBook.state', {
+      articleId: review.articleId,
+      includeImageUris: false,
+    })
+      .then((payload) => {
+        if (!cancelled) {
+          setReferencePictureBookState((current) => mergePictureBookState(current, payload));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [isSinglePageReview, referenceOptions.length, review.articleId, review.reviewId]);
+
+  useEnsureAllPictureBookPageImages({
+    articleId: review.articleId,
+    state: referencePictureBookState,
+    enabled: isSinglePageReview && referenceOptions.length > 0,
+    imageVariant: 'thumbnail',
+    onPictureBookLoaded: setReferencePictureBookState,
+  });
 
   useEffect(() => {
     if (groupPromptTouched || groupPromptTouchedRef.current) return;
@@ -2889,6 +2925,25 @@ function PictureBookPromptReviewDialog({
     }
   };
 
+  const toggleReferencePageIndex = (pageIndex: number) => {
+    setSelectedReferencePageIndexes((current) => {
+      if (current.includes(pageIndex)) {
+        if (current.length <= 1) {
+          setError('请至少保留一张参考图片');
+          return current;
+        }
+        setError(null);
+        return current.filter((item) => item !== pageIndex);
+      }
+      if (current.length >= maxReferenceSelections) {
+        setError(`参考图最多选择 ${maxReferenceSelections} 张`);
+        return current;
+      }
+      setError(null);
+      return [...current, pageIndex].sort((a, b) => a - b);
+    });
+  };
+
   const reviewSubmissionPayload = (currentGroupPrompt = groupPromptRef.current) => ({
     reviewId: review.reviewId,
     groupPrompt: currentGroupPrompt,
@@ -2897,6 +2952,12 @@ function PictureBookPromptReviewDialog({
     newCharacters: normalizeBookCharacters(newCharacters),
     chapterDescription,
     scenes,
+    ...(isSinglePageReview && selectedReferencePageIndexes.length > 0
+      ? {
+          referencePageIndexes: [...selectedReferencePageIndexes].sort((a, b) => a - b),
+          referencePageIndex: [...selectedReferencePageIndexes].sort((a, b) => a - b)[0],
+        }
+      : {}),
   });
 
   const savePrompt = async () => {
@@ -2927,6 +2988,10 @@ function PictureBookPromptReviewDialog({
     const currentGroupPrompt = groupPromptRef.current;
     if (!currentGroupPrompt.trim()) {
       setError(isSinglePageReview ? '单张生成提示词不能为空' : '组图总提示词不能为空');
+      return;
+    }
+    if (isSinglePageReview && referenceOptions.length > 0 && selectedReferencePageIndexes.length === 0) {
+      setError('请至少选择一张参考图片');
       return;
     }
     setSubmitting(true);
@@ -3124,6 +3189,50 @@ function PictureBookPromptReviewDialog({
               <p className="picture-prompt-note">后续每页 prompt 修改不会自动覆盖组图总 prompt，最终以当前组图总 prompt 为准。</p>
             )}
           </section>
+
+          {isSinglePageReview && referenceOptions.length > 0 && (
+            <section className="picture-prompt-section full">
+              <div className="picture-prompt-section-heading reference-toggle-row">
+                <div>
+                  <h3>参考图片</h3>
+                  <small>点选一张或多张已生成图片作为风格参考（不含当前重生成页）</small>
+                </div>
+                <small>已选 {selectedReferencePageIndexes.length} 张</small>
+              </div>
+              <div
+                className="picture-reference-picker"
+                role="listbox"
+                aria-label="参考图片选择"
+                aria-multiselectable="true"
+              >
+                {referenceOptions.map((pageIndex) => {
+                  const page = referencePictureBookState?.pages.find((item) => item.pageIndex === pageIndex);
+                  const selected = selectedReferencePageIndexes.includes(pageIndex);
+                  return (
+                    <button
+                      key={pageIndex}
+                      type="button"
+                      className={`picture-reference-option${selected ? ' is-selected' : ''}`}
+                      role="option"
+                      aria-selected={selected}
+                      aria-label={`第 ${pageIndex + 1} 张参考图`}
+                      disabled={busy}
+                      onClick={() => toggleReferencePageIndex(pageIndex)}
+                    >
+                      <span className="picture-reference-option-label">第 {pageIndex + 1} 张</span>
+                      <span className="picture-reference-option-media">
+                        {page?.imageUri ? (
+                          <img src={page.imageUri} alt={`第 ${pageIndex + 1} 张参考图`} />
+                        ) : (
+                          <span>加载中</span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </div>
 
         {error && <p className="edit-dialog-error">{error}</p>}
@@ -3151,6 +3260,25 @@ function PictureBookPromptReviewDialog({
     </div>,
     document.body,
   );
+}
+
+function resolveInitialReferencePageIndexes(
+  review: Pick<PictureBookPromptReview, 'referencePageIndexes' | 'referencePageIndex'>,
+  referenceOptions: number[],
+): number[] {
+  const fromReview = Array.isArray(review.referencePageIndexes)
+    ? review.referencePageIndexes.filter((pageIndex) => referenceOptions.includes(pageIndex))
+    : [];
+  if (fromReview.length > 0) {
+    return [...fromReview].sort((a, b) => a - b);
+  }
+  if (
+    review.referencePageIndex != null &&
+    referenceOptions.includes(review.referencePageIndex)
+  ) {
+    return [review.referencePageIndex];
+  }
+  return referenceOptions.length > 0 ? [referenceOptions[0]] : [];
 }
 
 function normalizeBookCharacters(characters?: BookCharacter[] | null): BookCharacter[] {
@@ -3281,7 +3409,7 @@ function composePictureBookPromptForReview(
     '',
     `Chapter description: ${review.chapterDescription ?? ''}`,
     '',
-    `Generate exactly one picture for Image ${imageNumber}. Use the reference image only for visual consistency.`,
+    `Generate exactly one picture for Image ${imageNumber}. Use the reference images only for visual consistency.`,
     'Do not generate other scenes, a collage, comic panels, or a multi-image sheet.',
   );
   if (scene) {

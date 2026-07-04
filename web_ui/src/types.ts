@@ -130,6 +130,8 @@ export interface PictureBookPromptReview {
   mode?: 'group' | 'singlePage' | string;
   targetPageIndex?: number | null;
   referencePageIndex?: number | null;
+  referencePageIndexes?: number[];
+  referenceOptions?: number[];
   regenerate: boolean;
   bookDescription: string;
   bookCharacters?: BookCharacter[];

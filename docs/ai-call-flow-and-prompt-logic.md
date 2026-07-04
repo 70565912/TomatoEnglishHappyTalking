@@ -373,6 +373,14 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - savePromptReview 使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
 - confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。
 
+### 单页重生成与参考图
+
+- 创作中心单页「重新生成」走 `pictureBook.pagePromptReview` → `pictureBook.confirmPagePromptReview`，只替换目标页，不删除其它页。
+- 若其它页已有 `ready` 且本地图片文件存在，审核弹窗在「单张生成 Prompt」下方展示可选参考图缩略图（不含当前重生成页）；默认预选最近邻 1 张，用户可 toggle 多选（至少 1 张、最多 14 张）。
+- 确认时 bridge 提交 `referencePageIndexes`（按 `pageIndex` 升序）；Flutter 解析为 `referenceImagePaths` 传给图片 API。整章 `confirmPromptReview` 仍使用 `referenceImagePaths: []`。
+- 单页 prompt 固定写 “Use the reference images only for visual consistency.”；`prompt_json` 持久化 `referencePageIndexes` 与首项 `referencePageIndex`。
+- 没有可用参考图时，单页审核回退为整章 `promptReview(regenerate: true)`。
+
 调优记录：2026-06-27 使用 `E10 - The Caucus Race` 作为人工评审样例，确认简单长度约束、固定数量目标或故事特例词都会让通用 prompt 变脆。正式 prompt 不写入 E10 专用词，也不按章节字数/句子数决定分镜数量；只保留可迁移的视觉构图判断：弱边界、同一直接视觉结果、不可组合视觉变化，以及“先拆内部混场，再合并弱边界”的最终审核顺序。后续继续调优时，应先用真实章节计划评审是否过度拆分或过度合并，再修改通用规则。
 
 ### 计划中的书籍角色数组流程

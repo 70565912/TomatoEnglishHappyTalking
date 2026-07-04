@@ -1,5 +1,23 @@
 # 修改日志
 
+## 2026-07-04
+
+- 绘本单页重生成支持用户多选参考图：创作中心「重新生成」进入 `pictureBook.pagePromptReview` 后，在「单张生成 Prompt」下方展示其它已生成页缩略图（不含当前重生成页），默认预选最近邻 1 张，可 toggle 多选（至少 1 张、最多 14 张）；确认时提交 `referencePageIndexes`，Flutter 解析为多张本地 `imagePath` 传给火山/万相 `referenceImagePaths`；`prompt_json` 记录 `referencePageIndexes`。整章组图仍不传参考图。
+- 相关文档同步：`docs/ai-call-flow-and-prompt-logic.md`（单页重生成与参考图选择）、`AGENTS.md`（单页参考图规则）。
+
+验证：
+
+- `flutter test test/api_cache_service_test.dart --name "picture-book single-page"`（4 passed）
+- `npm --prefix web_ui test -- --run -t "single-page prompt review|submits multiple selected reference"`（2 passed）
+
+- 修复 Suno Create 提交并过真人审核后，Tomato 进入新歌详情页又立刻跳回 Create 填风格的问题。根因一：`_continueSunoAutomation` 里 Create 填表分支（`manualAction`/`failed`）排在 post-create 下载分支之前，且未排除 `_sunoCreateSubmitted`，一旦详情页歌词尚未就绪被误判为 `manualAction`，下一轮就会 `loadUrl(/create)` 并重跑魔法棒/Styles。根因二：post-create 打开候选详情页后，页面 settled 但歌词未 exact match（歌曲仍在 generating）时过早 reject 并 cancel 定时器，触发上述回跳。修复：Create 已提交后不再进入填表分支；打开 sidebar 新候选时 `_trustSunoSongUrls`；详情页 post-create 阶段改为等待生成/歌词匹配；下载入口未就绪时继续 polling 而非 `manualAction`+cancel；completion script 新增 `currentPageGenerating`。
+- 相关文档同步：`docs/suno_song_download_rules.md`（Post-create 阶段规则）。
+
+验证：
+
+- `flutter analyze lib/features/web_shell/web_shell_screen.dart`（通过）
+- `.\tools\build_windows.ps1`（Windows Debug 构建通过）
+
 ## 2026-07-03
 
 - 修复歌曲全屏播放「每一句都停顿并闪显歌曲文件名」：根因是 `FullscreenSongPlayer` 的播放 effect 依赖 `startLineIndex`，而父层监听 `listening.song.position` 会在每个 cue 执行 `setCurrentIndex(cue.lineIndex)`，并把 `currentIndex` 直接透传成 `startLineIndex`。于是每换一行 effect 都重建：先 `setCurrentCue(null)`（字幕回退成 `version.title` 文件名），再重发 `listening.songPlay` 触发原生 `_playSongFile` 重新 `setFilePath`+`seek`（听感上的卡顿）。改为在打开全屏时用新增的 `songFullscreenStartIndex` 冻结起始行，播放中不再变化，effect 不再中途重启；行内字幕列表仍用实时 `currentIndex`。

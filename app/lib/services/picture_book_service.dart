@@ -61,6 +61,7 @@ class PictureBookService {
   static int _promptReviewSequence = 0;
   static const int _creationThumbnailMaxWidth = 640;
   static const int _creationThumbnailMaxHeight = 360;
+  static const int _maxSinglePageReferenceImages = 14;
   // "display" sits between the small list thumbnail and the raw remote original (up to
   // 2560x1440). Inline scene viewers (listening/follow/chat) render into a box no wider than
   // ~1120px via CSS `object-fit: cover`; feeding them the raw original there caused WebView2/
@@ -518,11 +519,32 @@ class PictureBookService {
       throw const TextGenerationException('文本提交处理失败：书籍信息不存在，请重试。');
     }
 
+    final referenceOptions = await _referencePageOptions(
+      articleId: articleId,
+      targetPageIndex: pageIndex,
+    );
+    if (referenceOptions.isEmpty) {
+      return promptReviewPayload(
+        article: article,
+        chapter: currentChapter,
+        regenerate: true,
+      );
+    }
+
     final referencePage = await _nearestReferencePage(
       articleId: articleId,
       targetPageIndex: pageIndex,
     );
-    if (referencePage == null) {
+    final defaultReferencePageIndex = referencePage != null &&
+            referenceOptions.contains(referencePage.pageIndex)
+        ? referencePage.pageIndex
+        : referenceOptions.first;
+    final defaultReferenceImagePath =
+        await _referenceImagePathForPageIndex(
+      articleId: articleId,
+      pageIndex: defaultReferencePageIndex,
+    );
+    if (defaultReferenceImagePath == null) {
       return promptReviewPayload(
         article: article,
         chapter: currentChapter,
@@ -615,8 +637,9 @@ class PictureBookService {
       createdAt: DateTime.now(),
       mode: 'singlePage',
       targetPageIndex: pageIndex,
-      referencePageIndex: referencePage.pageIndex,
-      referenceImagePath: referencePage.imagePath,
+      referencePageIndex: defaultReferencePageIndex,
+      referenceImagePath: defaultReferenceImagePath,
+      referenceOptions: referenceOptions,
     );
     _promptReviewDrafts[reviewId] = draft;
     _prunePromptReviewDrafts();
@@ -1072,6 +1095,8 @@ class PictureBookService {
     required List<BookCharacter> newCharacters,
     required String chapterDescription,
     required List<Map<String, dynamic>> scenes,
+    List<int>? referencePageIndexes,
+    int? referencePageIndex,
     PictureBookProgressCallback? onProgress,
   }) async {
     final draft = _promptReviewDrafts[reviewId];
@@ -1083,12 +1108,42 @@ class PictureBookService {
     }
     final articleId = draft.article.id;
     final seriesId = draft.series.id;
-    final referenceImagePath = draft.referenceImagePath?.trim() ?? '';
-    if (articleId == null || seriesId == null) {
+    final targetPageIndex = draft.targetPageIndex;
+    if (articleId == null || seriesId == null || targetPageIndex == null) {
       throw const FormatException('绘本提示词审核缺少文章或书籍信息。');
     }
-    if (referenceImagePath.isEmpty ||
-        !(await File(referenceImagePath).exists())) {
+
+    final referenceOptions = await _referencePageOptions(
+      articleId: articleId,
+      targetPageIndex: targetPageIndex,
+    );
+    if (referenceOptions.isEmpty) {
+      throw const FormatException('没有可用的参考图，请重新打开单页重生成。');
+    }
+
+    final requestedReferencePageIndexes = _resolveRequestedReferencePageIndexes(
+      referencePageIndexes: referencePageIndexes,
+      referencePageIndex: referencePageIndex,
+      draftReferencePageIndex: draft.referencePageIndex,
+    );
+    if (requestedReferencePageIndexes.isEmpty) {
+      throw const FormatException('请至少选择一张参考图片。');
+    }
+    if (requestedReferencePageIndexes.length > _maxSinglePageReferenceImages) {
+      throw FormatException(
+        '参考图最多选择 $_maxSinglePageReferenceImages 张，请减少选择后重试。',
+      );
+    }
+    for (final pageIndex in requestedReferencePageIndexes) {
+      if (!referenceOptions.contains(pageIndex)) {
+        throw const FormatException('所选参考图无效，请重新选择参考图片。');
+      }
+    }
+    final referenceImagePaths = await _referenceImagePathsForPageIndexes(
+      articleId: articleId,
+      pageIndexes: requestedReferencePageIndexes,
+    );
+    if (referenceImagePaths.length != requestedReferencePageIndexes.length) {
       throw const FormatException('参考图文件不存在，请重新打开单页重生成。');
     }
 
@@ -1155,7 +1210,8 @@ class PictureBookService {
       ),
       'mode': 'singlePage',
       'targetPageIndex': targetSegment.pageIndex,
-      'referencePageIndex': draft.referencePageIndex,
+      'referencePageIndex': requestedReferencePageIndexes.first,
+      'referencePageIndexes': requestedReferencePageIndexes,
     };
     final generatingPage = await _markPage(
       targetSegment,
@@ -1180,7 +1236,7 @@ class PictureBookService {
       ],
       articleId: articleId,
       seriesId: seriesId,
-      referenceImagePaths: [referenceImagePath],
+      referenceImagePaths: referenceImagePaths,
       groupPromptOverride: confirmedSinglePrompt,
       useSequential: false,
       reusePartialCache: false,
@@ -1573,6 +1629,86 @@ class PictureBookService {
         : error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '');
     final trimmed = message.trim();
     return trimmed.isEmpty ? '文本提交处理失败，请重试。' : trimmed;
+  }
+
+  static Future<List<int>> _referencePageOptions({
+    required int articleId,
+    required int targetPageIndex,
+  }) async {
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    final options = <int>[];
+    for (final page in pages) {
+      if (page.pageIndex == targetPageIndex) {
+        continue;
+      }
+      if (await _hasUsableReferenceImage(page)) {
+        options.add(page.pageIndex);
+      }
+    }
+    options.sort();
+    return options;
+  }
+
+  static Future<String?> _referenceImagePathForPageIndex({
+    required int articleId,
+    required int pageIndex,
+  }) =>
+      _referenceImagePathForPageIndexLookup(
+        articleId: articleId,
+        pageIndex: pageIndex,
+      );
+
+  static Future<List<String>> _referenceImagePathsForPageIndexes({
+    required int articleId,
+    required List<int> pageIndexes,
+  }) async {
+    final sortedIndexes = pageIndexes.toSet().toList(growable: false)..sort();
+    final paths = <String>[];
+    for (final pageIndex in sortedIndexes) {
+      final imagePath = await _referenceImagePathForPageIndexLookup(
+        articleId: articleId,
+        pageIndex: pageIndex,
+      );
+      if (imagePath == null || imagePath.isEmpty) {
+        return const [];
+      }
+      paths.add(imagePath);
+    }
+    return paths;
+  }
+
+  static List<int> _resolveRequestedReferencePageIndexes({
+    List<int>? referencePageIndexes,
+    int? referencePageIndex,
+    int? draftReferencePageIndex,
+  }) {
+    if (referencePageIndexes != null && referencePageIndexes.isNotEmpty) {
+      return referencePageIndexes.toSet().toList(growable: false)..sort();
+    }
+    if (referencePageIndex != null) {
+      return [referencePageIndex];
+    }
+    if (draftReferencePageIndex != null) {
+      return [draftReferencePageIndex];
+    }
+    return const [];
+  }
+
+  static Future<String?> _referenceImagePathForPageIndexLookup({
+    required int articleId,
+    required int pageIndex,
+  }) async {
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    for (final page in pages) {
+      if (page.pageIndex != pageIndex) {
+        continue;
+      }
+      if (!await _hasUsableReferenceImage(page)) {
+        return null;
+      }
+      return page.imagePath?.trim();
+    }
+    return null;
   }
 
   static Future<PictureBookPage?> _nearestReferencePage({
@@ -2424,7 +2560,7 @@ class PictureBookService {
           'Chapter description: ${_sanitizeForImagePrompt(chapterDescription)}')
       ..writeln()
       ..writeln(
-        'Generate exactly one picture for Image ${segment.pageIndex + 1}. Use the reference image only for visual consistency.',
+        'Generate exactly one picture for Image ${segment.pageIndex + 1}. Use the reference images only for visual consistency.',
       )
       ..writeln(
         'Do not generate other scenes, a collage, comic panels, or a multi-image sheet.',
@@ -3530,6 +3666,7 @@ class _PictureBookPromptReviewDraft {
     this.targetPageIndex,
     this.referencePageIndex,
     this.referenceImagePath,
+    this.referenceOptions = const [],
   });
 
   final String reviewId;
@@ -3549,6 +3686,7 @@ class _PictureBookPromptReviewDraft {
   final int? targetPageIndex;
   final int? referencePageIndex;
   final String? referenceImagePath;
+  final List<int> referenceOptions;
 
   _PictureBookPromptReviewDraft copyWith({
     StorySeries? series,
@@ -3578,6 +3716,7 @@ class _PictureBookPromptReviewDraft {
         targetPageIndex: targetPageIndex,
         referencePageIndex: referencePageIndex,
         referenceImagePath: referenceImagePath,
+        referenceOptions: referenceOptions,
       );
 
   Map<String, dynamic> toPayload() => {
@@ -3590,6 +3729,9 @@ class _PictureBookPromptReviewDraft {
         if (targetPageIndex != null) 'targetPageIndex': targetPageIndex,
         if (referencePageIndex != null)
           'referencePageIndex': referencePageIndex,
+        if (referencePageIndex != null)
+          'referencePageIndexes': [referencePageIndex],
+        if (referenceOptions.isNotEmpty) 'referenceOptions': referenceOptions,
         'regenerate': regenerate,
         'bookDescription': bookDescription,
         'bookCharacters':

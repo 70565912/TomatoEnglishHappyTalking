@@ -1165,6 +1165,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final newCharacters =
         _payloadBookCharacters(message.payload, 'newCharacters');
     final scenes = _payloadMapList(message.payload, 'scenes');
+    final referencePageIndexes =
+        _payloadIntList(message.payload, 'referencePageIndexes');
+    final referencePageIndex =
+        _payloadOptionalInt(message.payload, 'referencePageIndex');
     final state = await PictureBookService.confirmPagePromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
@@ -1173,6 +1177,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       newCharacters: newCharacters,
       chapterDescription: chapterDescription,
       scenes: scenes,
+      referencePageIndexes: referencePageIndexes,
+      referencePageIndex: referencePageIndex,
       onProgress: (payload) => _pushEvent('pictureBook.state', payload),
     );
     unawaited(_pushEvent('pictureBook.state', state));
@@ -3881,6 +3887,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         return;
       }
       if (!_sunoExistingDownloadOnly &&
+          !_sunoCreateSubmitted &&
           (_sunoAutomationStatus == 'waitingLogin' ||
               _sunoAutomationStatus == 'manualAction' ||
               _sunoAutomationStatus == 'failed')) {
@@ -4011,6 +4018,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'currentPageExpectedScore': result['currentPageExpectedScore'],
             'currentPageLyricsExactMatch':
                 result['currentPageLyricsExactMatch'],
+            'currentPageGenerating': result['currentPageGenerating'],
           },
         );
         var songUrl = _canonicalSunoSongUrl(result['songUrl']) ?? '';
@@ -4019,6 +4027,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         final knownSongUrl = _canonicalSunoSongUrl(_sunoSongUrl) ?? '';
         final currentPageLyricsExactMatch =
             result['currentPageLyricsExactMatch'] == true;
+        final currentPageGenerating =
+            result['currentPageGenerating'] == true;
         final currentUrlMatchesKnown =
             knownSongUrl.isNotEmpty && currentUrl.startsWith(knownSongUrl);
         if (_sunoExistingDownloadOnly &&
@@ -4068,6 +4078,27 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               currentUrl.startsWith(pendingCandidate) &&
               _isSunoPageSettled(currentUrl) &&
               !currentPageLyricsExactMatch) {
+            if (!_sunoExistingDownloadOnly && _sunoCreateSubmitted) {
+              if (_hasNewSunoVersionsSinceCreate()) {
+                await _saveSunoMetadata();
+                await _setSunoStatus(
+                  'complete',
+                  '已下载本次 Create 生成的匹配歌曲；下一个候选详情页歌词不匹配，已停止继续扫描以避免保存旧歌。',
+                );
+                _sunoAutomationTimer?.cancel();
+              } else {
+                await _setSunoStatus(
+                  currentPageGenerating ||
+                          _sunoAutomationStatus == 'creating'
+                      ? 'creating'
+                      : 'downloading',
+                  currentPageGenerating
+                      ? '正在歌曲详情页等待 Suno 生成完成并核对歌词...'
+                      : '正在歌曲详情页等待歌词匹配后下载...',
+                );
+              }
+              return;
+            }
             _sunoRejectedCandidateSongUrls.add(pendingCandidate);
             _sunoPendingDownloadSongUrl = null;
             if (_sunoExistingDownloadOnly) {
@@ -4109,6 +4140,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           if (candidateSongUrls.isNotEmpty && canOpenCandidate) {
             final candidateUrl = candidateSongUrls.first;
             _sunoPendingDownloadSongUrl = candidateUrl;
+            _trustSunoSongUrls([candidateUrl]);
             await controller.loadUrl(
               urlRequest: URLRequest(url: WebUri(candidateUrl)),
             );
@@ -4430,6 +4462,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             await _setSunoStatus(
               'downloading',
               '歌曲详情页没有露出下载入口，正在打开 Suno Library 查找对应完整歌曲...',
+            );
+            return;
+          }
+          if (_sunoCreateSubmitted && currentPageKind == 'song') {
+            await _setSunoStatus(
+              'downloading',
+              'Suno 歌曲还在生成或音频未就绪，Tomato 会继续等待...',
             );
             return;
           }
@@ -7422,6 +7461,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
   const currentPageExpectedScore = expectedScore(document.body?.innerText || document.body?.textContent || '');
   const currentPageLyricsExactMatch = lyricsExactMatch(document.body?.innerText || document.body?.textContent || '');
+  const currentPageBodyText = normalize(document.body?.innerText || document.body?.textContent || '');
+  const currentPageGenerating = /\\/song\\//i.test(location.href) &&
+    incomplete.test(currentPageBodyText);
   const canonicalCurrentUrl = canonicalSongUrl(location.href);
   const currentSongUrl = /\\/song\\//i.test(location.href) &&
     (!requireExpectedMatch ||
@@ -7465,6 +7507,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     mediaBySongUrl,
     currentPageExpectedScore,
     currentPageLyricsExactMatch,
+    currentPageGenerating,
     linkCount: songCandidates.length
   });
 })()
@@ -10916,6 +10959,25 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return int.tryParse(value);
     }
     return null;
+  }
+
+  List<int>? _payloadIntList(Map<String, dynamic> payload, String key) {
+    final value = payload[key];
+    if (value == null) {
+      return null;
+    }
+    if (value is! List) {
+      return null;
+    }
+    final items = <int>[];
+    for (final item in value) {
+      final parsed = _intFromDynamic(item);
+      if (parsed == null) {
+        return null;
+      }
+      items.add(parsed);
+    }
+    return items;
   }
 
   int? _intFromDynamic(Object? value) {

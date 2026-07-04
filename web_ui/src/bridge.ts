@@ -687,12 +687,23 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const pageIndex = Number(payload.pageIndex ?? 0);
     const review = mockPictureBookPromptReview(articleId, true);
     const scene = review.scenes.find((item) => item.pageIndex === pageIndex) ?? review.scenes[0];
+    const targetPageIndex = scene?.pageIndex ?? pageIndex;
+    const referenceOptions = review.scenes
+      .map((item) => item.pageIndex)
+      .filter((item) => item !== targetPageIndex);
+    const defaultReferencePageIndex =
+      targetPageIndex > 0
+        ? targetPageIndex - 1
+        : referenceOptions[0] ?? null;
     return {
       ...review,
       reviewId: `mock-page-review-${articleId}-${pageIndex}`,
       mode: 'singlePage',
-      targetPageIndex: scene?.pageIndex ?? pageIndex,
-      referencePageIndex: (scene?.pageIndex ?? pageIndex) > 0 ? (scene?.pageIndex ?? pageIndex) - 1 : 1,
+      targetPageIndex,
+      referencePageIndex: defaultReferencePageIndex,
+      referencePageIndexes:
+        defaultReferencePageIndex == null ? [] : [defaultReferencePageIndex],
+      referenceOptions,
       scenes: scene ? [scene] : [],
       groupPrompt: mockSinglePagePrompt(scene, review.bookCharacters ?? []),
     };
