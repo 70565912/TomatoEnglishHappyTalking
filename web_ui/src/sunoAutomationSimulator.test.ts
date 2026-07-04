@@ -198,6 +198,34 @@ describe('suno automation simulator', () => {
     expect(decision.candidate?.label).toBe('Download');
   });
 
+  it('clicks the new-UI Download menu item that is not detected as inOpenMenu', () => {
+    // 2026-07 Suno 改版后 More 菜单容器不带 role="menu"/radix 标记，
+    // 打开后的 Download 菜单项 inOpenMenu=false；不识别它会反复点 More 死循环。
+    const decision = selectSunoDownloadCandidate({
+      currentUrl: targetSongUrl,
+      allowedSongUrls: [targetSongUrl],
+      pendingSongUrl: targetSongUrl,
+      currentPageExpectedScore: 5,
+      controls: [
+        {
+          label: 'More menu contents',
+          context: 'Playbar More menu contents 猫头摘帽令 0:00 2:04',
+          rect: { x: 624, width: 40 },
+          expectedScore: 0,
+        },
+        {
+          label: 'Download Download',
+          context: 'Download Download',
+          rect: { x: 518, width: 138 },
+          expectedScore: 0,
+        },
+      ],
+      requireExpectedMatch: true,
+    });
+    expect(decision.action).toBe('openMenu');
+    expect(decision.candidate?.label).toBe('Download Download');
+  });
+
   it('prefers an opened Download menu item over the playbar More button', () => {
     const decision = selectSunoDownloadCandidate({
       currentUrl: targetSongUrl,

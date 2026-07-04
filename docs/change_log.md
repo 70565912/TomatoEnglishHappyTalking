@@ -11,12 +11,15 @@
 - `npm --prefix web_ui test -- --run -t "single-page prompt review|submits multiple selected reference"`（2 passed）
 
 - 修复 Suno Create 提交并过真人审核后，Tomato 进入新歌详情页又立刻跳回 Create 填风格的问题。根因一：`_continueSunoAutomation` 里 Create 填表分支（`manualAction`/`failed`）排在 post-create 下载分支之前，且未排除 `_sunoCreateSubmitted`，一旦详情页歌词尚未就绪被误判为 `manualAction`，下一轮就会 `loadUrl(/create)` 并重跑魔法棒/Styles。根因二：post-create 打开候选详情页后，页面 settled 但歌词未 exact match（歌曲仍在 generating）时过早 reject 并 cancel 定时器，触发上述回跳。修复：Create 已提交后不再进入填表分支；打开 sidebar 新候选时 `_trustSunoSongUrls`；详情页 post-create 阶段改为等待生成/歌词匹配；下载入口未就绪时继续 polling 而非 `manualAction`+cancel；completion script 新增 `currentPageGenerating`。
+- 修复上述改动联调时发现的歌曲详情页“下载死循环”：`_sunoDownloadScript` 每轮都点播放条 `More menu contents` 反复开/关菜单，永远点不到菜单里的 Download。根因是 2026-07 Suno 改版后（`hxc-btn` 设计系统）More 菜单容器不再带 `role="menu"`/radix popper/floating-ui 标记，打开后的 `Download` 菜单项 `inOpenMenu` 探测不到，且纯 `Download` 标签不满足 `download audio|mp3` 的 direct 规则，菜单查找只能回落到 More 触发器。修复：新增 `isDownloadAdvanceItem`——已核对歌词（或 trusted）的歌曲详情页上，纯 `Download` 标签按钮优先于 More 触发器被点击；点开后的 `MP3 Audio` 等子项走既有 direct 规则。`sunoAutomationSimulator.ts` 同步同一优先级并新增回归用例。
 - 相关文档同步：`docs/suno_song_download_rules.md`（Post-create 阶段规则）。
 
 验证：
 
 - `flutter analyze lib/features/web_shell/web_shell_screen.dart`（通过）
+- `npm test -- --run sunoAutomationSimulator`（42 passed）
 - `.\tools\build_windows.ps1`（Windows Debug 构建通过）
+- 真实联调（QA 远程接口 + 真实 Suno 登录态，article 79）：修复前 `download.probe` 每 18 秒 `stage=menu` 点 More 死循环约 35 分钟无产出；修复后自动点中 Download 菜单项，两个版本 mp3（5.3MB / 9.1MB）经 `direct_media.saved` 落盘 `suno-music/`，最终 `status=ready`、`downloadComplete=true`。
 
 ## 2026-07-03
 

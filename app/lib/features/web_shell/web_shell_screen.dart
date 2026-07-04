@@ -7948,6 +7948,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       [item.label, item.context].join(' ')
     ) &&
     canUseCurrentSongDetail;
+  // 新版 Suno 歌曲详情 More 菜单不再带 role="menu"/radix/floating-ui 标记，
+  // 打开后的“Download”菜单项 inOpenMenu 探测不到，也不含 audio/mp3 字样。
+  // 在已核对歌词的详情页上，把纯 Download 标签按钮当作下一步推进项点击，
+  // 否则查找器会一直回落到 More 触发器，反复开关菜单形成下载死循环。
+  const isDownloadAdvanceItem = (item) =>
+    canUseCurrentSongDetail &&
+    !/more menu contents|more options/i.test(item.label) &&
+    /^(?:download\\s*)+\$/i.test(item.label);
   const direct = augmentedControls.find(isDownloadMenuItem);
   const openMenuText = normalize(Array.from(document.querySelectorAll(menuLayerSelector))
     .filter(visible)
@@ -7980,7 +7988,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     item.inOpenMenu &&
     !/more menu contents/i.test(item.label) &&
     isDownloadMenuItem(item)
-  ) || augmentedControls.find(isSongMenuTrigger);
+  ) || augmentedControls.find(isDownloadAdvanceItem)
+    || augmentedControls.find(isSongMenuTrigger);
   const target = direct || menu;
   if (!target) {
     return JSON.stringify({

@@ -525,6 +525,15 @@ export function selectSunoDownloadCandidate(params: {
 
   const direct = scored.find((item) => item.directDownload && item.score >= 28);
   if (direct) return { action: 'download', candidate: direct.candidate };
+  // 新版 Suno 歌曲详情 More 菜单不带 role="menu"/radix 标记，打开后的
+  // “Download”菜单项 inOpenMenu 探测不到；在已核对歌词的详情页上把纯
+  // Download 标签按钮当作下一步推进项，避免反复点 More 触发器开关菜单。
+  const downloadAdvance =
+    onSongDetail && isExpectedMatch(currentPageExpectedScore)
+      ? scored.find((item) =>
+          /^(?:download\s*)+$/i.test(normalize(item.candidate.label || item.candidate.text)))
+      : undefined;
+  if (downloadAdvance) return { action: 'openMenu', candidate: downloadAdvance.candidate };
   const menu =
     scored.find((item) => item.inOpenMenu && item.score >= 10 && !/more menu contents/i.test(normalize(item.candidate.label || item.candidate.text))) ??
     scored.find((item) => item.score >= 10);

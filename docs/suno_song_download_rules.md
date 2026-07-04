@@ -23,6 +23,14 @@
 - 详情页 settled 但歌词尚未 exact match 时：若歌曲仍在 generating（completion 返回 `currentPageGenerating`）或 post-create 首轮候选，**等待**而非 reject；只有非 post-create 的 Library 补下载流程才在确认不匹配后 reject 并换候选。
 - 详情页歌词已匹配但下载菜单/媒体地址尚未就绪时，保持 `downloading`/`creating` 继续 polling，不要过早 `manualAction` 并 cancel 自动化。
 
+## 详情页下载菜单（2026-07 新版 UI）
+
+- 新版 Suno（`hxc-btn` 设计系统）的歌曲详情页 More 菜单容器不带 `role="menu"`、radix popper 或 floating-ui portal 标记，打开后的 `Download` 菜单项无法通过 `menuLayerSelector` 判定为 `inOpenMenu`。
+- 已核对歌词（或 trusted）的歌曲详情页上，纯 `Download` 标签按钮（`isDownloadAdvanceItem`）优先于 `More menu contents` 触发器被点击；否则查找器会一直回落到 More 触发器，反复开/关菜单形成下载死循环。
+- 点开 `Download` 后出现的 `MP3 Audio` 等具体格式项由既有 direct 规则（`download audio|mp3`）命中并触发真实下载。
+- `Download Cover Image` 按钮含 `image`，会被 reject 规则过滤，不会被误点。
+- 该优先级在 `web_ui/src/sunoAutomationSimulator.ts` 有同构实现和回归测试（`clicks the new-UI Download menu item that is not detected as inOpenMenu`）。
+
 ## 字幕与导出联动
 
 - 歌曲字幕时间线要记录当前对齐算法版本；旧版本时间线只显示为 `stale`，不能直接用于歌曲视频录制。
