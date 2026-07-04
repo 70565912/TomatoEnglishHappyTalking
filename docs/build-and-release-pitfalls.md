@@ -636,8 +636,24 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 
 验证：
 
-- `.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true","TOMATO_QA_PORT=39317"` 能发布并启动 release 目录下的 Windows 程序。
+- `.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317"` 或逗号拆成两个字符串参数，都能发布并启动 release 目录下的 Windows 程序。
 - QA `/health` 返回 `ok: true`、`webReady: true`。
+
+## `-DartDefine` 逗号写在一个字符串里时 QA 不生效
+
+症状：
+
+- 使用 `.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317"` 构建后，App 能启动，但 `http://127.0.0.1:39317/health` 连接被拒绝。
+- 旧版脚本把整个逗号串当成一个 `--dart-define`，Flutter 只收到名为 `TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317` 的无效键，QA 远程接口不会打开。
+
+处理：
+
+- `tools/build_windows.ps1` 与 `tools/build_android.ps1` 的 `Expand-DartDefineValues` 会按逗号拆成多个 `KEY=VALUE`，再分别生成 `--dart-define`。
+- 仍可使用 PowerShell 数组写法：`-DartDefine "TOMATO_QA_REMOTE=true","TOMATO_QA_PORT=39317"`。
+
+验证：
+
+- 构建后 `Invoke-RestMethod http://127.0.0.1:39317/health` 返回 `ok: true`。
 
 ## 阿里云百聆（Fun-Music）拒绝歌词内容
 

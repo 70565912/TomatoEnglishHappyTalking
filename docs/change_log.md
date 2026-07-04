@@ -20,6 +20,15 @@
 - `npm test -- --run sunoAutomationSimulator`（42 passed）
 - `.\tools\build_windows.ps1`（Windows Debug 构建通过）
 - 真实联调（QA 远程接口 + 真实 Suno 登录态，article 79）：修复前 `download.probe` 每 18 秒 `stage=menu` 点 More 死循环约 35 分钟无产出；修复后自动点中 Download 菜单项，两个版本 mp3（5.3MB / 9.1MB）经 `direct_media.saved` 落盘 `suno-music/`，最终 `status=ready`、`downloadComplete=true`。
+- 歌曲详情页下载：优先 CDN 直链 `cdn1.suno.ai/{uuid}.mp3`；点 MP3 后 45 秒内不再重复点菜单；More 按钮改用原生 click 减少右键菜单。
+- 撤销错误的「检测下载早退」：`missingSongUrls` 为空时不得跳过 Suno；每次点击检测下载必须进 WebView。产品意图与实现锚点写入 `docs/suno_song_download_rules.md`「检测下载」、`AGENTS.md`、`_startExistingSunoDownload` 文档注释。
+- 修复检测下载跳过 Library 顶部新歌：Library 召回不再要求 `expectedScore>0`/`sameTitle`（检测下载 `_sunoExistingDownloadOnly` 时按 DOM 自上而下广召回），避免只打开标题更像旧版的「Alice's Croquet Game」而跳过新歌「The Croquet Game」。新增 `library.candidate_open` 诊断日志（`broadRecall` / `candidateCount` / `candidateUrl`）。
+- 修复 `build_windows.ps1` / `build_android.ps1` 的 `-DartDefine` 逗号拆分：单个参数 `TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317` 现在会正确展开为多个 `--dart-define`，与脚本头部注释和 `docs/qa-remote-control.md` 示例一致。
+
+验证（检测下载广召回 + QA 参数）：
+
+- `.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317"`（Release 构建通过，QA `/health` 一次可用）
+- QA `listening.songDownloadSunoExisting` article 81：`library.candidate_open` 带 `broadRecall=true`；打开 `32e775b4-708c-44e8-950d-94f634fe4da6` 详情页 `currentPageLyricsExactMatch=true`；`direct_media.saved` 6.4MB mp3 落盘为 v2；扫描结束后 `manualAction` 但本地版本 1→2。
 
 ## 2026-07-03
 

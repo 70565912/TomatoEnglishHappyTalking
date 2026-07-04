@@ -115,6 +115,8 @@ web_ui/
 - Suno 填表只能在 `https://suno.com/create` 执行；字段定位应排除 Search / Current page / Song Title / Enhance lyrics 等工具输入框，但不要用 textarea 正文参与工具框判断，避免歌词里的普通单词 `search` 误伤真正的 Lyrics / Styles。
 - Suno 下载阶段必须要求当前歌曲详情页、Library 行或已打开菜单与本篇文章的歌词达到高匹配；不要仅凭旧 `songUrl`、页面级 `Audio` 文本或低匹配详情页下载。缓存状态恢复时，如果只有 `metadataPath` 且文件已不存在、也没有本地音频版本，应视为空状态。
 - Suno 歌曲缓存和下载唯一性按当前歌词与 `songUrl` 判断：缓存组使用 `lyricsHash` / `contentHash`，`versions` 可保留旧 `stylePrompt` / `styleKey` metadata 但不再按风格分组，`detectedSongUrls` 记录当前歌词已检测到的完整歌曲链接，`downloadComplete=true` 只表示这些链接都有本地音频版本。重新检测下载时只下载缺失链接，不要重复下载已存在的同一 `songUrl`；用户再次选择生成新歌时仍应重新生成 Suno 风格并进入 Create 确认流程。
+- 创作中心「检测下载」（`listening.songDownloadSunoExisting`）**每次点击都必须打开 Suno WebView 并执行 Library/详情页扫描**，不得因 `downloadComplete=true` 或 `missingSongUrls` 为空在入口跳过。用户可在 Suno 用不同风格多次 Create 后再回 App 检测下载；详见 `docs/suno_song_download_rules.md`「检测下载」。
+- 检测下载在 Suno Library 必须**广召回 + DOM 自上而下**打开未下载的 `/song/` 行，不能在 Library 行要求 `expectedScore>0` 才进详情页（否则新生成、标题不同的歌会被跳过）；歌词 exact match 只在详情页做。
 - 歌曲字幕时间轴使用歌曲版本记录的 `submittedLyrics` 作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；如果 `submittedLyrics` 与文章原歌词不同，不要复用文章逐句中文翻译。不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
 - Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
 - 听力播放、全屏播放和普通录制只播放英文 TTS；中文翻译只作为字幕/对照文本显示，不再触发听力中文 TTS 预加载或播放。`listening.fullscreenReady` 只检查当前和下一句英文音频，绘本图片只预取当前和下一张；文章保存时应优先保存导入译文，缺失时可用 `PracticeTextService.translateToChinese` 生成逐句字幕，后续听力/跟读只读库中译文，不在打开页面时批量翻译。

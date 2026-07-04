@@ -3687,6 +3687,8 @@ function SongCreationPanel({
   const versions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
   const groupedVersions = groupSongVersionsForDisplay(versions);
   const waitingConfirm = isSunoWaitingConfirm(songState);
+  // 检测下载：每次点击都进 Suno 扫描（含用户在外站用新风格 Create 后的补拉）。
+  // 不因 downloadComplete / 本地已有版本隐藏或跳过；见 docs/suno_song_download_rules.md。
   const canDownloadMissing =
     songState?.source === 'suno' &&
     songState.status !== 'generating' &&

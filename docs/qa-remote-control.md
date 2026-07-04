@@ -7,6 +7,7 @@
 Debug 运行：
 
 ```powershell
+# 逗号可写在一个字符串里，脚本会拆成多个 --dart-define
 .\tools\build_windows.ps1 -Run -DartDefine TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317
 ```
 

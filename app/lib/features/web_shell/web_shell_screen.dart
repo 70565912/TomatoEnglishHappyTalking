@@ -105,6 +105,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   DateTime? _sunoExistingDownloadStartedAt;
   int _sunoExistingDownloadMenuRetries = 0;
   bool _sunoExistingDownloadLibraryTried = false;
+  DateTime? _sunoMenuDownloadClickedAt;
   String? _sunoLastLoadStopUrl;
   DateTime? _sunoLastLoadStopAt;
   bool _sunoVisible = false;
@@ -2578,6 +2579,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       throw const FormatException('听力任务尚未打开');
     }
     final article = await _songArticle(articleId);
+    // 检测下载：每次用户点击都必须进入 Suno 页面重新扫描，见
+    // docs/suno_song_download_rules.md「检测下载」；不得因本地已完整而跳过。
     return _startExistingSunoDownload(article);
   }
 
@@ -3582,6 +3585,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return _songStatePayload(articleId);
   }
 
+  /// 启动「检测下载」自动化：用户可在 Suno 用不同风格多次生成后，
+  /// 通过创作中心「检测下载」拉回新歌。
+  ///
+  /// **不得**因 `downloadComplete`、`missingSongUrls` 为空或已有本地版本
+  /// 而跳过打开 Suno；每次点击都必须进入 WebView 执行 Library/详情页扫描。
+  /// 详见 [docs/suno_song_download_rules.md]「检测下载」。
   Future<Map<String, dynamic>> _startExistingSunoDownload(
       Article article) async {
     final articleId = article.id;
@@ -3712,6 +3721,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _sunoExistingDownloadMenuRetries = 0;
     _sunoLastLoadStopUrl = null;
     _sunoLastLoadStopAt = null;
+    _sunoMenuDownloadClickedAt = null;
     _sunoCreateBaselineVersionCount = 0;
     _sunoDownloadInFlightKeys.clear();
     _sunoRejectedCandidateSongUrls.clear();
@@ -4044,7 +4054,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             currentPageLyricsExactMatch) {
           songUrl = knownSongUrl;
         }
-        final libraryCandidateSongUrls = _sunoLibraryCandidateSongUrls(result);
+        final libraryCandidateSongUrls = _sunoLibraryCandidateSongUrls(
+          result,
+          detectDownloadBroadRecall: _sunoExistingDownloadOnly,
+        );
         if (_sunoExistingDownloadOnly &&
             currentPageKind == 'library' &&
             libraryCandidateSongUrls.isNotEmpty) {
@@ -4053,6 +4066,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           _sunoSongUrl = candidateUrl;
           await controller.loadUrl(
             urlRequest: URLRequest(url: WebUri(candidateUrl)),
+          );
+          TomatoLogger.info(
+            category: 'suno',
+            event: 'library.candidate_open',
+            articleId: _sunoArticleId,
+            status: _sunoAutomationStatus,
+            data: {
+              'broadRecall': _sunoExistingDownloadOnly,
+              'candidateUrl': candidateUrl,
+              'candidateCount': libraryCandidateSongUrls.length,
+            },
           );
           await _setSunoStatus(
             'downloading',
@@ -4137,8 +4161,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               .toList();
           final canOpenCandidate = currentPageKind == 'library' ||
               (!_sunoExistingDownloadOnly && currentPageKind == 'create');
-          if (candidateSongUrls.isNotEmpty && canOpenCandidate) {
-            final candidateUrl = candidateSongUrls.first;
+          final openFromLibrary = _sunoExistingDownloadOnly &&
+              currentPageKind == 'library' &&
+              libraryCandidateSongUrls.isNotEmpty;
+          final nextCandidateUrls = openFromLibrary
+              ? libraryCandidateSongUrls
+              : candidateSongUrls;
+          if (nextCandidateUrls.isNotEmpty && canOpenCandidate) {
+            final candidateUrl = nextCandidateUrls.first;
             _sunoPendingDownloadSongUrl = candidateUrl;
             _trustSunoSongUrls([candidateUrl]);
             await controller.loadUrl(
@@ -4359,9 +4389,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                   !_sunoDownloadedSongUrls.contains(value) &&
                   !_hasSunoVersionForSongUrl(value))
               .toList(growable: false);
-          if (_sunoExistingDownloadOnly &&
+          if (_isAwaitingSunoMenuDownload() &&
               unresolvedDirectUrls.isNotEmpty &&
               _sunoPageKind(currentUrl) == 'song') {
+            await _setSunoStatus(
+              'downloading',
+              '已点击 Suno 下载菜单，正在等待 WebView 接收音频文件...',
+            );
+            return;
+          }
+          if (_sunoExistingDownloadOnly &&
+              unresolvedDirectUrls.isNotEmpty &&
+              _sunoPageKind(currentUrl) == 'song' &&
+              !_isAwaitingSunoMenuDownload()) {
             // Pitfall: clicking Suno's native "Download Anyway" confirmation
             // in Windows WebView can crash flutter_inappwebview_windows_plugin.
             // Keep this path on Dart-side media downloads or stop safely.
@@ -4407,6 +4447,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           }
           if (download['ok'] == true || download['retry'] == true) {
             final downloadStage = (download['stage'] ?? '').toString();
+            if (download['ok'] == true && downloadStage == 'download') {
+              _sunoMenuDownloadClickedAt = DateTime.now();
+            }
             if (download['retry'] == true && downloadStage == 'menu') {
               _sunoExistingDownloadMenuRetries += 1;
               if (_sunoExistingDownloadOnly &&
@@ -4770,6 +4813,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       );
       _sunoPendingDownloadSongUrl = null;
       _sunoPendingDownloadTitle = null;
+      _sunoMenuDownloadClickedAt = null;
       await _saveSunoMetadata();
       await _setSunoStatus(
         'downloading',
@@ -5129,6 +5173,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                 fallbackMediaUrl,
                 songUrl,
               ) ??
+              _sunoCanonicalCdnMediaUrl(songUrl) ??
               '')
           .trim();
       if (mediaUrl.isEmpty) {
@@ -5215,12 +5260,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (downloadedCount > 0) {
       _sunoPendingDownloadSongUrl = null;
       _sunoPendingDownloadTitle = null;
+      _sunoMenuDownloadClickedAt = null;
       await _saveSunoMetadata();
     }
     return downloadedCount;
   }
 
-  List<String> _sunoLibraryCandidateSongUrls(Map<String, dynamic> result) {
+  /// Library 行候选召回。默认要求行内 token 分数或同标题才打开详情页；
+  /// [detectDownloadBroadRecall] 为 true 时（检测下载）按 Library DOM 自上而下
+  /// 依次打开未下载/未拒绝的 `/song/` 行，在详情页再做歌词 exact match。
+  List<String> _sunoLibraryCandidateSongUrls(
+    Map<String, dynamic> result, {
+    bool detectDownloadBroadRecall = false,
+  }) {
     final rawCandidates = result['candidateSongs'];
     if (rawCandidates is! List) {
       return const <String>[];
@@ -5261,11 +5313,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final title = _sunoCandidateTitle(candidate);
       final score = (candidate['expectedScore'] as num?)?.toInt() ?? 0;
       final sameTitle = title.isNotEmpty && knownTitles.contains(title);
-      // A Suno Library row does not expose full lyrics. Treat Library matching
-      // as a broad recall step only: same lyrics, even with a different style,
-      // belongs to this article, and the detail page must verify the lyrics
-      // before any audio is saved.
-      if (score > 0 || sameTitle) {
+      // Library 行通常只有标题 + 风格，不含全文歌词。检测下载时不能要求
+      // expectedScore>0，否则 Suno 新生成、标题与旧歌不同的条目（如
+      // "The Croquet Game"）会被跳过，反而先打开标题更贴近旧版本的行。
+      if (detectDownloadBroadRecall || score > 0 || sameTitle) {
         matches.add((
           url: href,
           score: score,
@@ -5275,6 +5326,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
     matches.sort((left, right) {
+      if (detectDownloadBroadRecall) {
+        return left.index.compareTo(right.index);
+      }
       if (left.score != right.score) {
         return right.score.compareTo(left.score);
       }
@@ -5330,6 +5384,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       r'/song/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})',
     ).firstMatch(songUrl);
     return match?.group(1)?.toLowerCase();
+  }
+
+  String? _sunoCanonicalCdnMediaUrl(String songUrl) {
+    final songId = _sunoSongId(songUrl);
+    if (songId == null || songId.isEmpty) {
+      return null;
+    }
+    return 'https://cdn1.suno.ai/$songId.mp3';
+  }
+
+  bool _isAwaitingSunoMenuDownload() {
+    final clickedAt = _sunoMenuDownloadClickedAt;
+    if (clickedAt == null) {
+      return false;
+    }
+    return DateTime.now().difference(clickedAt) <
+        const Duration(seconds: 45);
   }
 
   String? _canonicalSunoSongUrl(Object? value) {
@@ -7660,9 +7731,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   };
   const menuLayerSelector = '[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper],[data-floating-ui-portal],[data-side][data-align]';
   const menuLayerFor = (el) => el?.closest?.(menuLayerSelector) || null;
-  const clickLikeUser = (el) => {
+  const clickLikeUser = (el, options = {}) => {
     if (!el) return;
+    const label = textOf(el);
+    const nativeOnly =
+      options.nativeOnly === true ||
+      /more menu contents|more options/i.test(label);
     el.scrollIntoView({ block: 'center', inline: 'center' });
+    if (nativeOnly) {
+      el.focus?.();
+      el.click?.();
+      return;
+    }
     el.focus?.();
     const rect = el.getBoundingClientRect();
     const x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
@@ -7944,6 +8024,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     (!pendingSongUrl || location.href.startsWith(pendingSongUrl));
   const isSongMenuTrigger = (item) =>
     !item.inOpenMenu &&
+    !hasDownloadAdvanceStep &&
     /more menu contents|more options|actions|ellipsis|更多|菜单|選單|操作/i.test(
       [item.label, item.context].join(' ')
     ) &&
@@ -7954,8 +8035,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   // 否则查找器会一直回落到 More 触发器，反复开关菜单形成下载死循环。
   const isDownloadAdvanceItem = (item) =>
     canUseCurrentSongDetail &&
-    !/more menu contents|more options/i.test(item.label) &&
-    /^(?:download\\s*)+\$/i.test(item.label);
+    !/more menu contents|more options/i.test(item.label) && (
+      /^(?:download\\s*)+\$/i.test(item.label) ||
+      /mp3|audio/i.test(item.label)
+    );
+  const hasDownloadAdvanceStep = augmentedControls.some(isDownloadAdvanceItem);
   const direct = augmentedControls.find(isDownloadMenuItem);
   const openMenuText = normalize(Array.from(document.querySelectorAll(menuLayerSelector))
     .filter(visible)
@@ -8032,7 +8116,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       currentPageLyricsExactMatch
     });
   }
-  clickLikeUser(target.clickable);
+  clickLikeUser(target.clickable, {
+    nativeOnly: /more menu contents|more options/i.test(target.label)
+  });
   return JSON.stringify({
     ok: Boolean(direct),
     retry: !direct,

@@ -98,12 +98,12 @@ Flutter tool can hang at the Windows build step until the outer command times ou
 Initialize-FlutterGitTrust
 Initialize-FlutterToolEnvironment
 
-function Get-FlutterDartDefineArgs {
+function Expand-DartDefineValues {
     param(
         [string[]]$Values
     )
 
-    $dartDefineOptions = @()
+    $expanded = @()
     foreach ($value in @($Values)) {
         if ([string]::IsNullOrWhiteSpace($value)) {
             continue
@@ -111,10 +111,28 @@ function Get-FlutterDartDefineArgs {
 
         $trimmedValue = $value.Trim()
         if ($trimmedValue.StartsWith("--dart-define=")) {
-            $dartDefineOptions += $trimmedValue
-        } else {
-            $dartDefineOptions += "--dart-define=$trimmedValue"
+            $trimmedValue = $trimmedValue.Substring("--dart-define=".Length)
         }
+
+        foreach ($part in $trimmedValue.Split(',')) {
+            $partTrimmed = $part.Trim()
+            if (-not [string]::IsNullOrWhiteSpace($partTrimmed)) {
+                $expanded += $partTrimmed
+            }
+        }
+    }
+
+    return $expanded
+}
+
+function Get-FlutterDartDefineArgs {
+    param(
+        [string[]]$Values
+    )
+
+    $dartDefineOptions = @()
+    foreach ($value in (Expand-DartDefineValues -Values $Values)) {
+        $dartDefineOptions += "--dart-define=$value"
     }
 
     return $dartDefineOptions
@@ -127,18 +145,8 @@ function Test-DartDefineKeyPresent {
         [string]$Key
     )
 
-    foreach ($value in @($Values)) {
-        if ([string]::IsNullOrWhiteSpace($value)) {
-            continue
-        }
-
-        $trimmedValue = $value.Trim()
-        $normalizedValue = $trimmedValue
-        if ($normalizedValue.StartsWith("--dart-define=")) {
-            $normalizedValue = $normalizedValue.Substring("--dart-define=".Length)
-        }
-
-        if ($normalizedValue.StartsWith("$Key=", [System.StringComparison]::OrdinalIgnoreCase)) {
+    foreach ($value in (Expand-DartDefineValues -Values $Values)) {
+        if ($value.StartsWith("$Key=", [System.StringComparison]::OrdinalIgnoreCase)) {
             return $true
         }
     }

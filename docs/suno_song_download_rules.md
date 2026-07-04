@@ -14,6 +14,18 @@
 - 候选详情页歌词不匹配时，把该 `songUrl` 加入本次 rejected 集合，回到 Library 继续找下一个候选。
 - 已下载版本和未下载候选要分别处理：已下载的 `songUrl` 不能让检测提前完成，除非 Library 没有可核对的其它候选。
 
+## 检测下载（`listening.songDownloadSunoExisting`）
+
+创作中心「检测下载」与 Create 提交后的自动下载是两条入口，但检测下载有独立产品约束：
+
+- **每次**用户点击「检测下载」，都必须打开 Suno WebView 并执行完整扫描流程（Library 召回 → 详情页歌词核对 → 下载缺失版本）。
+- **禁止**因本地 `downloadComplete=true`、`missingSongUrls` 为空、或已有本地 `versions` 而在 `_startExistingSunoDownload` 入口直接返回 `ready`、不打开 Suno。用户常见工作流是：在 Suno 网站用不同风格多次 Create → 回到 App 点「检测下载」拉回新歌。
+- `downloadComplete` / `missingSongUrls` / `detectedSongUrls` 只描述**当前缓存里已知链接的落盘状态**；不能代替「重新进 Suno 扫描 Library 是否有同歌词的新 `songUrl`」。
+- 同一 `songUrl` 已有本地音频时，本轮**跳过该链接的重复下载**，但自动化仍应继续 Library 扫描，直到没有新的歌词匹配候选、或达到超时 / `manualAction` 安全停止。
+- 若已知 `missingSongUrls` 非空，可优先打开第一个缺失链接；若为空，默认从 `https://suno.com/me` Library 开始扫描。
+- **Library 广召回（检测下载专用）**：Suno Library 行通常只有标题 + 风格描述，不含全文歌词。检测下载（`_sunoExistingDownloadOnly`）时，**不得**要求 Library 行 `expectedScore > 0` 或 `sameTitle` 才打开详情页；否则用户新生成、标题与旧版本不同的歌曲（例如列表顶部的 `The Croquet Game`，而旧版本叫 `Alice's Croquet Game`）会被跳过，自动化反而先打开标题更“像”旧歌的行并在详情页失败。检测下载应按 Library **DOM 自上而下**依次打开未下载/未拒绝的 `/song/` 行，在详情页做歌词 exact match 后再下载。
+- 实现锚点：`web_shell_screen.dart` 的 `_handleListeningSongDownloadSunoExisting`、`_startExistingSunoDownload`（`_sunoExistingDownloadOnly == true` 分支）。修改这些路径前必须先读本节，避免把「检测下载」优化成「本地状态够好就不进 Suno」的功能回退。
+
 ## Post-create 阶段（Create 已提交后）
 
 - 用户确认 Create 并通过 Suno 真人审核后，Create 页右侧会出现新的 `/song/` 条目；Tomato 应打开候选**歌曲详情页**，在页面上等待生成完成、核对歌词，再进入下载流程。

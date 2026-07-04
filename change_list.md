@@ -1,3 +1,19 @@
+## 2026-07-04 Suno 检测下载与构建脚本
+
+- [x] 检测下载跳过 Library 顶部新歌
+
+  原计划：Suno Library 列表顶部新生成的「The Croquet Game」未被打开检查，自动化从下方标题更贴近旧版的「Alice's Croquet Game」开始，详情页歌词不匹配后停止，无法下载新歌。
+
+  处理记录：检测下载（`_sunoExistingDownloadOnly`）启用 Library 广召回：不再要求 Library 行 `expectedScore>0` 或 `sameTitle` 才进详情页，按 DOM 自上而下打开未下载/未拒绝的 `/song/` 行，歌词 exact match 只在详情页做。新增 `library.candidate_open` 日志。同步更新 `docs/suno_song_download_rules.md`、`AGENTS.md`、`sunoAutomationSimulator.ts`。
+
+  验证记录：`.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317"` 通过；QA 触发 article 81 检测下载，`broadRecall=true`，新歌 `32e775b4...` 歌词匹配后经 CDN 保存 6.4MB v2。
+
+- [x] `-DartDefine` 逗号参数未拆分导致 QA 不生效
+
+  处理记录：`build_windows.ps1` / `build_android.ps1` 增加 `Expand-DartDefineValues`，单个 `-DartDefine "A=1,B=2"` 会展开为多个 `--dart-define`。
+
+  验证记录：同上构建命令下 QA `/health` 一次可用。
+
 ## 2026-06-16 新需求处理状态
 
 - [x] Windows 最小化后隐藏窗口阻挡桌面点击

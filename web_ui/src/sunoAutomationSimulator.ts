@@ -531,12 +531,20 @@ export function selectSunoDownloadCandidate(params: {
   const downloadAdvance =
     onSongDetail && isExpectedMatch(currentPageExpectedScore)
       ? scored.find((item) =>
-          /^(?:download\s*)+$/i.test(normalize(item.candidate.label || item.candidate.text)))
+          /^(?:download\s*)+$/i.test(normalize(item.candidate.label || item.candidate.text)) ||
+          /mp3|audio/i.test(normalize(item.candidate.label || item.candidate.text)))
       : undefined;
   if (downloadAdvance) return { action: 'openMenu', candidate: downloadAdvance.candidate };
+  const hasDownloadAdvanceStep = scored.some(
+    (item) =>
+      /^(?:download\s*)+$/i.test(normalize(item.candidate.label || item.candidate.text)) ||
+      /mp3|audio/i.test(normalize(item.candidate.label || item.candidate.text)),
+  );
   const menu =
     scored.find((item) => item.inOpenMenu && item.score >= 10 && !/more menu contents/i.test(normalize(item.candidate.label || item.candidate.text))) ??
-    scored.find((item) => item.score >= 10);
+    (!hasDownloadAdvanceStep
+        ? scored.find((item) => item.score >= 10)
+        : undefined);
   if (menu) return { action: 'openMenu', candidate: menu.candidate };
   return { action: 'none', reason: 'no-safe-candidate' };
 }
