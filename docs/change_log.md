@@ -1,5 +1,22 @@
 # 修改日志
 
+## 2026-07-05
+
+- 绘本单页重生成参考图：可选列表含当前重生成页已有图片（默认仍预选最近邻页）；UI 标注「当前页」。
+- **文章歌曲历史版本**：改原文或软隐藏后，已下载歌曲仍出现在创作中心/听力列表；`lyricsHash` 不再用于过滤列表；删除/更新就地改 `api_cache` 与 metadata，避免磁盘孤儿文件。规则见 `docs/article_song_version_retention.md`。
+- 听力字幕**软隐藏**：练习中心编辑字幕时清空英文并保存，将该槽位存为 `""`（index 不变、不顺位删除）。听力列表显示「（已隐藏）」并可恢复；播放/跟读/听力材料生成/视频导出跳过隐藏句；歌曲 metadata 不重算；绘本分镜不因软隐藏失效。规则见 `docs/listening_sentence_hide_rules.md`。
+- 修复听力字幕编辑框 z-index（`edit-dialog-backdrop` 100）与编辑时关闭单词卡，避免 WebView 无法输入。
+- 修复 Windows WebView2 **输入框偶发失焦**：Web UI 增加 `webViewFocusGuard` 自动 refocus；单词卡 dismiss 改为非 button；编辑弹窗取消 `select()` 全选；Windows 构建 patch `flutter_inappwebview_windows` 延迟 focus。联调 `node tools/qa_input_focus_probe.mjs`；坑位见 `docs/build-and-release-pitfalls.md`。
+- 绘本组图/单页/刷新提交改用 App 级 `AiBlockingOverlay`（`pictureBookBlockingOverlay.ts`），组图确认时显示预计超时倒计时（`max(180, 分镜数 × 150)` 秒、上限 2700）；`ai-blocking-backdrop` z-index 115，避免被审核弹窗遮挡。
+
+验证：
+
+- `flutter test test/api_cache_service_test.dart --name "picture-book single-page"`（5 passed，含当前页作参考图）
+- `flutter test test/article_song_version_retention_test.dart`（3 passed）
+- `flutter test test/listening_sentence_hide_test.dart test/listening_sentence_visibility_test.dart`
+- `npx vitest run src/App.test.tsx -t "opens single-page picture prompt review|submits multiple selected reference"`（2 passed）
+- `npx vitest run src/webViewFocusGuard.test.ts`
+
 ## 2026-07-04
 
 - 绘本单页重生成支持用户多选参考图：创作中心「重新生成」进入 `pictureBook.pagePromptReview` 后，在「单张生成 Prompt」下方展示其它已生成页缩略图（不含当前重生成页），默认预选最近邻 1 张，可 toggle 多选（至少 1 张、最多 14 张）；确认时提交 `referencePageIndexes`，Flutter 解析为多张本地 `imagePath` 传给火山/万相 `referenceImagePaths`；`prompt_json` 记录 `referencePageIndexes`。整章组图仍不传参考图。
@@ -23,6 +40,8 @@
 - 歌曲详情页下载：优先 CDN 直链 `cdn1.suno.ai/{uuid}.mp3`；点 MP3 后 45 秒内不再重复点菜单；More 按钮改用原生 click 减少右键菜单。
 - 撤销错误的「检测下载早退」：`missingSongUrls` 为空时不得跳过 Suno；每次点击检测下载必须进 WebView。产品意图与实现锚点写入 `docs/suno_song_download_rules.md`「检测下载」、`AGENTS.md`、`_startExistingSunoDownload` 文档注释。
 - 修复检测下载跳过 Library 顶部新歌：Library 召回不再要求 `expectedScore>0`/`sameTitle`（检测下载 `_sunoExistingDownloadOnly` 时按 DOM 自上而下广召回），避免只打开标题更像旧版的「Alice's Croquet Game」而跳过新歌「The Croquet Game」。新增 `library.candidate_open` 诊断日志（`broadRecall` / `candidateCount` / `candidateUrl`）。
+- 修复 Create 提交后只下载一首就 `complete` 关闭 Suno：post-create downloading 阶段与检测下载共用 `_sunoUseLibraryBroadRecall`（Library 广召回 + 回到 Library 继续扫描），移除「已下载一首且下一候选歌词不匹配就停止扫描」的早退 `complete`。
+- 审核补修：Library 懒加载未 settle 时不提前 `complete`；已在 Library 且广召回仍有候选时不走 `completedUrls` 空分支早退；Create 页 sidebar 仍有未下载候选时优先打开下一首详情页；检测到新 post-create URL 时重置 `_sunoExistingDownloadLibraryTried`。
 - 修复 `build_windows.ps1` / `build_android.ps1` 的 `-DartDefine` 逗号拆分：单个参数 `TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317` 现在会正确展开为多个 `--dart-define`，与脚本头部注释和 `docs/qa-remote-control.md` 示例一致。
 
 验证（检测下载广召回 + QA 参数）：

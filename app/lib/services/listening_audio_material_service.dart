@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import 'api_cache_service.dart';
 import 'database_service.dart';
+import '../core/practice/listening_sentence_visibility.dart';
 import 'nlp_service.dart';
 import 'tts_memory_cache_service.dart';
 import 'tts_service.dart';
@@ -84,8 +85,12 @@ class ListeningAudioMaterialService {
     var ready = 0;
 
     for (var index = 0; index < sentences.length; index += 1) {
+      final sentence = sentences[index];
+      if (isHiddenListeningSentence(sentence)) {
+        continue;
+      }
       final handle = cachedFileHandleFromArticleMap(
-        text: sentences[index],
+        text: sentence,
         handlesByText: handlesByText,
       );
       if (handle == null) {
@@ -96,7 +101,7 @@ class ListeningAudioMaterialService {
     }
     return ListeningAudioMaterialStatus(
       articleId: articleId,
-      total: sentences.length,
+      total: visibleSentenceCount(sentences),
       ready: ready,
       missing: missing,
     );
@@ -122,6 +127,9 @@ class ListeningAudioMaterialService {
         : await cachedFileHandlesByTextForArticle(articleId: articleId);
     for (var index = 0; index < sentences.length; index += 1) {
       final sentence = sentences[index];
+      if (isHiddenListeningSentence(sentence)) {
+        continue;
+      }
       if (!overwrite) {
         final cached = cachedFileHandleFromArticleMap(
           text: sentence,
@@ -261,7 +269,6 @@ class ListeningAudioMaterialService {
     // and translations; sentence changes must happen by rebuilding the article.
     final storedSentences = rawArticle.sentences
         .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
         .toList(growable: false);
     if (storedSentences.isNotEmpty) {
       return storedSentences;

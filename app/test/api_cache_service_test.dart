@@ -3147,7 +3147,7 @@ but the three were all crowded together at one corner of it.
     expect(review['targetPageIndex'], 1);
     expect(review['referencePageIndex'], 0);
     expect(review['referencePageIndexes'], [0]);
-    expect(review['referenceOptions'], [0]);
+    expect(review['referenceOptions'], [0, 1]);
     expect(review['chapterDescription'], 'A royal garden croquet chapter.');
     expect(review['scenes'], hasLength(1));
     expect((review['scenes'] as List).single['sceneDescription'],
@@ -3230,7 +3230,7 @@ but the three were all crowded together at one corner of it.
     expect(review['targetPageIndex'], 1);
     expect(review['referencePageIndex'], 0);
     expect(review['referencePageIndexes'], [0]);
-    expect(review['referenceOptions'], [0]);
+    expect(review['referenceOptions'], [0, 1]);
     expect(review['scenes'], hasLength(1));
     expect((review['scenes'] as List).single['pageIndex'], 1);
     expect(review['groupPrompt'], contains('Generate exactly one picture'));
@@ -3354,7 +3354,7 @@ but the three were all crowded together at one corner of it.
 
     expect(review['mode'], 'singlePage');
     expect(review['targetPageIndex'], 2);
-    expect(review['referenceOptions'], [0, 1]);
+    expect(review['referenceOptions'], [0, 1, 2]);
     expect(review['referencePageIndex'], 1);
     expect(review['referencePageIndexes'], [1]);
 
@@ -3400,6 +3400,101 @@ but the three were all crowded together at one corner of it.
     final savedPrompt = jsonDecode(pages[2].promptJson) as Map<String, dynamic>;
     expect(savedPrompt['referencePageIndexes'], [0, 1]);
     expect(savedPrompt['referencePageIndex'], 0);
+  });
+
+  test('picture-book single-page confirm accepts target page as reference',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-page-self-ref-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Single Page Self Reference Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground. Alice leaves the garden.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+          'Alice leaves the garden.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    final page2File = File(
+      '${tempDir.path}${Platform.pathSeparator}page-2-self-ref.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 50]);
+    final now = DateTime(2026, 1, 1);
+    for (final entry in [
+      (0, 0, 0, 'Alice walks into the garden.', null),
+      (1, 1, 1, 'The Queen points at the croquet ground.', null),
+      (2, 2, 2, 'Alice leaves the garden.', page2File.path),
+    ]) {
+      await DatabaseService.upsertPictureBookPage(
+        PictureBookPage(
+          articleId: articleId,
+          seriesId: series.id,
+          pageIndex: entry.$1,
+          sentenceStartIndex: entry.$2,
+          sentenceEndIndex: entry.$3,
+          paragraphText: entry.$4,
+          promptJson: '{}',
+          imagePath: entry.$5,
+          status: entry.$5 == null ? 'pending' : 'ready',
+          createdAt: now,
+          updatedAt: now,
+        ),
+      );
+    }
+
+    final review = await PictureBookService.pagePromptReviewPayload(
+      article: article,
+      chapter: chapter,
+      pageIndex: 2,
+    );
+
+    expect(review['referenceOptions'], [2]);
+
+    Map<String, dynamic>? imageBody;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageBody = body;
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 51])
+            },
+          ],
+        };
+      },
+    );
+
+    await PictureBookService.confirmPagePromptReview(
+      reviewId: review['reviewId'].toString(),
+      groupPrompt: 'Edited single-page prompt for Image 3 only.',
+      bookDescription: review['bookDescription'].toString(),
+      bookCharacters: const [],
+      newCharacters: const [],
+      chapterDescription: review['chapterDescription'].toString(),
+      referencePageIndexes: [2],
+      scenes: [
+        for (final scene in review['scenes'] as List)
+          Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    final referenceDataUris = (imageBody?['image'] as List).cast<String>();
+    expect(referenceDataUris, hasLength(1));
+    expect(
+      referenceDataUris.single,
+      contains(base64Encode([137, 80, 78, 71, 50])),
+    );
   });
 
   test('picture-book single-page review falls back to group when no reference',

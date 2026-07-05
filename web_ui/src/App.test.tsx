@@ -2142,6 +2142,7 @@ describe('App', () => {
   it('sends picture-book series choices when saving a new chapter', async () => {
     window.location.hash = '/article/new';
     const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    let resolveConfirm: (() => void) | null = null;
     const series = [
       {
         id: 7,
@@ -2212,11 +2213,17 @@ describe('App', () => {
           });
         }
         if (type === 'pictureBook.confirmPromptReview') {
-          return ok(message.id, type, {
-            articleId: 42,
-            enabled: true,
-            status: 'generating',
-            pages: [],
+          return new Promise<BridgeResponse>((resolve) => {
+            resolveConfirm = () => {
+              resolve(
+                ok(message.id, type, {
+                  articleId: 42,
+                  enabled: true,
+                  status: 'ready',
+                  pages: [],
+                }),
+              );
+            };
           });
         }
         return ok(message.id, type, {});
@@ -2292,6 +2299,11 @@ describe('App', () => {
     fireEvent.click(within(reviewDialog).getByRole('button', { name: '生成组图' }));
 
     await waitFor(() => {
+      expect(screen.getByText('正在提交绘本组图')).toBeInTheDocument();
+      expect(screen.getByText(/预计超时倒计时/)).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
       const confirmCall = calls.find((call) => call.type === 'pictureBook.confirmPromptReview');
       expect(confirmCall?.payload).toMatchObject({
         reviewId: 'review-42',
@@ -2304,6 +2316,13 @@ describe('App', () => {
           }),
         ]),
       );
+    });
+
+    await act(async () => {
+      resolveConfirm?.();
+    });
+    await waitFor(() => {
+      expect(screen.queryByText('正在提交绘本组图')).not.toBeInTheDocument();
     });
   });
 
@@ -3162,6 +3181,105 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.queryByText('TTS 内容安全拒绝')).not.toBeInTheDocument();
     });
+  });
+
+  it('hides a listening sentence when english is cleared after confirmation', async () => {
+    window.location.hash = '/listen/1';
+
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'First line. Second line. Third line.',
+      sentences: ['First line.', 'Second line.', 'Third line.'],
+      sentenceCount: 3,
+      visibleSentenceCount: 3,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [
+              { index: 0, english: article.sentences[0], chinese: '第一句。' },
+              { index: 1, english: article.sentences[1], chinese: '第二句。' },
+              { index: 2, english: article.sentences[2], chinese: '第三句。' },
+            ],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: false,
+            status: 'empty',
+            pages: [],
+          });
+        }
+        if (type === 'listening.updateSentence') {
+          const hiddenIndex = Number(payload.index ?? 1);
+          const updatedArticle = {
+            ...article,
+            content: 'First line. Third line.',
+            sentences: ['First line.', '', 'Third line.'],
+            visibleSentenceCount: 2,
+          };
+          return ok(message.id, type, {
+            article: updatedArticle,
+            item: {
+              index: hiddenIndex,
+              english: '',
+              chinese: '',
+              hidden: true,
+            },
+            items: [
+              { index: 0, english: 'First line.', chinese: '第一句。' },
+              { index: 1, english: '', chinese: '', hidden: true },
+              { index: 2, english: 'Third line.', chinese: '第三句。' },
+            ],
+            synthesis: { status: 'ready', english: 'cleared', chinese: 'cleared', error: '' },
+            articles: [updatedArticle],
+            series: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'First line.' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '修改第 2 句字幕' }));
+    expect(await screen.findByRole('dialog', { name: '修改字幕' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('英文'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('中文'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: '隐藏本句' }));
+    expect(await screen.findByRole('dialog', { name: '隐藏字幕确认' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '确定隐藏' }));
+
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'listening.updateSentence')?.payload).toMatchObject({
+        articleId: 1,
+        index: 1,
+        english: '',
+        chinese: '',
+      });
+    });
+    expect(await screen.findByText('（已隐藏）')).toBeInTheDocument();
   });
 
   it('enables fullscreen listening only after audio and picture preloading are ready', async () => {
@@ -4101,7 +4219,7 @@ describe('App', () => {
       targetPageIndex: 1,
       referencePageIndex: 0,
       referencePageIndexes: [0],
-      referenceOptions: [0],
+      referenceOptions: [0, 1],
       chapterDescription: 'Tom finds a snack box and shares it with the team.',
       groupPrompt:
         'Book name: Single Retry Book\nBook description: A warm space picture book with stable character design.\nChapter description: Tom finds a snack box and shares it with the team.\n\nGenerate exactly one picture for Image 2. Use the reference image only for visual consistency.\nDo not generate other scenes, a collage, comic panels, or a multi-image sheet.\n\nImage 2:\nScene description: Tom shares the snack box with his team.',
@@ -4191,8 +4309,9 @@ describe('App', () => {
     expect(promptInput.value).toContain('Image 2:');
     expect(promptInput.value).not.toContain('Image 1:');
     expect(within(dialog).getByRole('heading', { name: '参考图片' })).toBeInTheDocument();
-    expect(within(dialog).getByRole('option', { name: '第 1 张参考图' })).toHaveClass('is-selected');
-    expect(within(dialog).getByAltText('第 1 张参考图')).toHaveAttribute('src', 'data:image/png;base64,THUMBNAIL_0');
+    expect(within(dialog).getByRole('option', { name: '第 1 张' })).toHaveClass('is-selected');
+    expect(within(dialog).getByRole('option', { name: '第 2 张（当前页）' })).toBeInTheDocument();
+    expect(within(dialog).getByAltText('第 1 张')).toHaveAttribute('src', 'data:image/png;base64,THUMBNAIL_0');
     fireEvent.change(promptInput, {
       target: {
         value:
@@ -4270,7 +4389,7 @@ describe('App', () => {
       targetPageIndex: 2,
       referencePageIndex: 1,
       referencePageIndexes: [1],
-      referenceOptions: [0, 1],
+      referenceOptions: [0, 1, 2],
       chapterDescription: 'Tom shares snacks and celebrates with his team.',
       scenes: [
         {
@@ -4337,8 +4456,9 @@ describe('App', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '绘本单页提示词审核' });
     expect(within(dialog).getByText('已选 1 张')).toBeInTheDocument();
-    expect(within(dialog).getByRole('option', { name: '第 2 张参考图' })).toHaveClass('is-selected');
-    fireEvent.click(within(dialog).getByRole('option', { name: '第 1 张参考图' }));
+    expect(within(dialog).getByRole('option', { name: '第 2 张' })).toHaveClass('is-selected');
+    expect(within(dialog).getByRole('option', { name: '第 3 张（当前页）' })).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('option', { name: '第 1 张' }));
     expect(within(dialog).getByText('已选 2 张')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: '生成这一张' }));
 

@@ -2,7 +2,24 @@ import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } fro
 import type { TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { onNativeEvent, sendNative } from './bridge';
+import {
+  firstVisibleSlotIndex,
+  isHiddenListeningItem,
+  isHiddenListeningSentence,
+  resolveListeningItemBySlotIndex,
+  visibleItemPosition,
+  visibleListeningItems,
+  visiblePositionForSlotIndex,
+  visibleSentenceCountFromItems,
+} from './listeningSentenceVisibility';
 import { splitSentences } from './sentenceSplitter';
+import {
+  pictureBookGroupSubmitOverlay,
+  pictureBookPromptRefreshOverlay,
+  pictureBookSinglePageSubmitOverlay,
+  type BlockingOverlayConfig,
+  type PictureBookPromptRefreshTarget,
+} from './pictureBookBlockingOverlay';
 import type {
   Article,
   ArticleFullTextPayload,
@@ -58,12 +75,6 @@ type ChapterOrder = 'asc' | 'desc';
 type SelectOption = {
   value: string;
   label: string;
-};
-
-type BlockingOverlayConfig = {
-  title: string;
-  detail: string;
-  timeoutSeconds: number;
 };
 
 function normalizeChapterOrder(value: unknown): ChapterOrder {
@@ -143,7 +154,6 @@ const fallbackCards = [
 
 type StateSetter<T> = (value: T | ((current: T) => T)) => void;
 type PictureBookStateSetter = StateSetter<PictureBookState | null>;
-type PictureBookPromptRefreshTarget = 'bookDescription' | 'chapterPlan';
 
 type PictureBookRetryGate = {
   begin: (articleId: number, pageIndex: number) => boolean;
@@ -936,6 +946,7 @@ function App() {
             );
           }}
           onNotice={setNotice}
+          onBlockingOverlayChange={setAppBlockingOverlay}
         />
       )}
       {picturePromptReviewLoadingArticleId !== null && (
@@ -2766,11 +2777,13 @@ function PictureBookPromptReviewDialog({
   onClose,
   onConfirmed,
   onNotice,
+  onBlockingOverlayChange,
 }: {
   review: PictureBookPromptReview;
   onClose: () => void;
   onConfirmed: (payload: PictureBookState) => void;
   onNotice: (message: string) => void;
+  onBlockingOverlayChange: (overlay: BlockingOverlayConfig | null) => void;
 }) {
   const [bookDescription, setBookDescription] = useState(review.bookDescription ?? '');
   const [bookCharacters, setBookCharacters] = useState<BookCharacter[]>(
@@ -2902,6 +2915,7 @@ function PictureBookPromptReviewDialog({
   const refreshPrompt = async (target: PictureBookPromptRefreshTarget) => {
     setRefreshingPrompt(target);
     setError(null);
+    onBlockingOverlayChange(pictureBookPromptRefreshOverlay(target));
     try {
       const payload = await sendNative<PictureBookPromptReview>('pictureBook.refreshPromptReview', {
         reviewId: review.reviewId,
@@ -2922,6 +2936,7 @@ function PictureBookPromptReviewDialog({
       onNotice(message);
     } finally {
       setRefreshingPrompt(null);
+      onBlockingOverlayChange(null);
     }
   };
 
@@ -2996,6 +3011,11 @@ function PictureBookPromptReviewDialog({
     }
     setSubmitting(true);
     setError(null);
+    onBlockingOverlayChange(
+      isSinglePageReview
+        ? pictureBookSinglePageSubmitOverlay(targetPageNumber)
+        : pictureBookGroupSubmitOverlay(scenes.length),
+    );
     try {
       const payload = await sendNative<PictureBookState>(
         isSinglePageReview ? 'pictureBook.confirmPagePromptReview' : 'pictureBook.confirmPromptReview',
@@ -3010,34 +3030,12 @@ function PictureBookPromptReviewDialog({
       onNotice(message);
     } finally {
       setSubmitting(false);
+      onBlockingOverlayChange(null);
     }
   };
 
   const savePromptLabel = savingPrompt ? '保存中' : '保存提示词';
   const confirmLabel = submitting ? '生成中' : isSinglePageReview ? '生成这一张' : '生成组图';
-  const aiBlockingState =
-    submitting
-      ? isSinglePageReview
-        ? {
-            title: '正在提交单张绘本图',
-            detail: `正在重新生成第 ${targetPageNumber} 页绘本图，请等待服务返回。`,
-            timeoutSeconds: 180,
-          }
-        : {
-            title: '正在提交绘本组图',
-            detail: `正在按 ${Math.max(1, scenes.length)} 个分镜生成连续组图，请等待服务返回。`,
-            timeoutSeconds: Math.min(2700, Math.max(180, Math.max(1, scenes.length) * 150)),
-          }
-      : refreshingPrompt
-        ? {
-            title: '正在刷新绘本提示词',
-            detail:
-              refreshingPrompt === 'chapterPlan'
-                ? 'AI 正在生成章节描述和分镜描述。'
-                : 'AI 正在生成书籍简介。',
-            timeoutSeconds: refreshingPrompt === 'chapterPlan' ? 180 : 90,
-          }
-        : null;
   const renderRefreshButton = (
     target: PictureBookPromptRefreshTarget,
     label: string,
@@ -3195,7 +3193,7 @@ function PictureBookPromptReviewDialog({
               <div className="picture-prompt-section-heading reference-toggle-row">
                 <div>
                   <h3>参考图片</h3>
-                  <small>点选一张或多张已生成图片作为风格参考（不含当前重生成页）</small>
+                  <small>点选一张或多张已生成图片作为风格参考（含当前重生成页）</small>
                 </div>
                 <small>已选 {selectedReferencePageIndexes.length} 张</small>
               </div>
@@ -3208,6 +3206,11 @@ function PictureBookPromptReviewDialog({
                 {referenceOptions.map((pageIndex) => {
                   const page = referencePictureBookState?.pages.find((item) => item.pageIndex === pageIndex);
                   const selected = selectedReferencePageIndexes.includes(pageIndex);
+                  const isTargetPage =
+                    review.targetPageIndex != null && pageIndex === review.targetPageIndex;
+                  const pageLabel = isTargetPage
+                    ? `第 ${pageIndex + 1} 张（当前页）`
+                    : `第 ${pageIndex + 1} 张`;
                   return (
                     <button
                       key={pageIndex}
@@ -3215,14 +3218,14 @@ function PictureBookPromptReviewDialog({
                       className={`picture-reference-option${selected ? ' is-selected' : ''}`}
                       role="option"
                       aria-selected={selected}
-                      aria-label={`第 ${pageIndex + 1} 张参考图`}
+                      aria-label={pageLabel}
                       disabled={busy}
                       onClick={() => toggleReferencePageIndex(pageIndex)}
                     >
-                      <span className="picture-reference-option-label">第 {pageIndex + 1} 张</span>
+                      <span className="picture-reference-option-label">{pageLabel}</span>
                       <span className="picture-reference-option-media">
                         {page?.imageUri ? (
-                          <img src={page.imageUri} alt={`第 ${pageIndex + 1} 张参考图`} />
+                          <img src={page.imageUri} alt={pageLabel} />
                         ) : (
                           <span>加载中</span>
                         )}
@@ -3249,13 +3252,6 @@ function PictureBookPromptReviewDialog({
             <Icon name={submitting ? 'refresh' : 'wand'} /> {confirmLabel}
           </button>
         </div>
-        {aiBlockingState && (
-          <AiBlockingOverlay
-            title={aiBlockingState.title}
-            detail={aiBlockingState.detail}
-            timeoutSeconds={aiBlockingState.timeoutSeconds}
-          />
-        )}
       </section>
     </div>,
     document.body,
@@ -4235,22 +4231,65 @@ function AudioMaterialOverwriteConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  return (
+    <ConfirmDialog
+      ariaLabel="覆盖听力材料确认"
+      title="覆盖听力材料"
+      subtitle="远程语音合成将重新提交"
+      message={`听力材料已经生成 ${status.ready} / ${status.total}。是否覆盖原内容并重新提交远程语音合成？`}
+      confirmLabel="覆盖生成"
+      confirmIcon="sound"
+      busy={busy}
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+function ConfirmDialog({
+  ariaLabel,
+  title,
+  subtitle,
+  message,
+  confirmLabel = '确定',
+  cancelLabel = '取消',
+  confirmIcon,
+  busy = false,
+  onCancel,
+  onConfirm,
+}: {
+  ariaLabel: string;
+  title: string;
+  subtitle?: string;
+  message: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  confirmIcon?: string;
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
   return createPortal(
-    <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog confirm-dialog" role="dialog" aria-modal="true" aria-label="覆盖听力材料确认">
+    <div className="edit-dialog-backdrop confirm-dialog-backdrop" role="presentation">
+      <section
+        className="edit-dialog confirm-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="edit-dialog-heading">
-          <b>覆盖听力材料</b>
-          <small>远程语音合成将重新提交</small>
+          <b>{title}</b>
+          {subtitle ? <small>{subtitle}</small> : null}
         </div>
-        <p>
-          听力材料已经生成 {status.ready} / {status.total}。是否覆盖原内容并重新提交远程语音合成？
-        </p>
+        <p>{message}</p>
         <div className="edit-dialog-actions">
           <button className="ghost-action" type="button" onClick={onCancel} disabled={busy}>
-            取消
+            {cancelLabel}
           </button>
           <button className="primary-action" type="button" onClick={onConfirm} disabled={busy}>
-            <Icon name={busy ? 'refresh' : 'sound'} /> 覆盖生成
+            {confirmIcon ? <Icon name={busy ? 'refresh' : confirmIcon} /> : null}
+            {confirmLabel}
           </button>
         </div>
       </section>
@@ -4444,6 +4483,7 @@ function formatArticleFullText(payload: ArticleFullTextPayload): string {
   }
   lines.push('');
   payload.items.forEach((item) => {
+    if (isHiddenListeningItem(item)) return;
     const english = item.english.trim();
     const chinese = item.chinese.trim();
     if (!english && !chinese) return;
@@ -4931,6 +4971,7 @@ type SentenceEditState = {
   chinese: string;
   saving: boolean;
   error: string | null;
+  confirmingHide?: boolean;
 };
 type SongDialogTab = 'play' | 'settings';
 type SongDialogState = {
@@ -5101,8 +5142,10 @@ function ListeningPage({
         if (!isMounted) return;
         setArticle(payload.article);
         setItems(payload.items);
-        setStatus(payload.items.length > 0 ? 'ready' : 'error');
-        if (payload.items.length === 0) {
+        const visibleCount = visibleSentenceCountFromItems(payload.items);
+        setCurrentIndex(firstVisibleSlotIndex(payload.items) ?? 0);
+        setStatus(visibleCount > 0 ? 'ready' : 'error');
+        if (visibleCount === 0) {
           setError('这篇文章还没有可朗读的英文句子。');
         }
       })
@@ -5463,10 +5506,17 @@ function ListeningPage({
   }, [wordCard]);
 
   const playFrom = async (startIndex: number, singleItem = false) => {
-    if (items.length === 0 || isListeningBusy(status)) return;
+    if (visibleListeningItems(items).length === 0 || isListeningBusy(status)) return;
+
+    let slotIndex = startIndex;
+    const target = resolveListeningItemBySlotIndex(items, startIndex);
+    if (!target || isHiddenListeningItem(target)) {
+      const fallback = firstVisibleSlotIndex(items);
+      if (fallback == null) return;
+      slotIndex = fallback;
+    }
 
     const token = ++playbackTokenRef.current;
-    const safeStart = Math.max(0, Math.min(startIndex, items.length - 1));
 
     setStatus('playing');
     setError(null);
@@ -5474,7 +5524,7 @@ function ListeningPage({
 
     try {
       await sendNative('listening.playSequence', {
-        startIndex: safeStart,
+        startIndex: slotIndex,
         mode: 'english',
         singleItem,
         items,
@@ -5955,6 +6005,8 @@ function ListeningPage({
   };
 
   const openWordCard = async (word: string, sentence: string, anchor: DOMRect) => {
+    if (sentenceEdit) return;
+    if (isHiddenListeningSentence(sentence)) return;
     const normalizedWord = normalizeLookupWord(word);
     if (!normalizedWord) return;
 
@@ -6033,6 +6085,9 @@ function ListeningPage({
 
   const openSentenceEdit = (item: ListeningItem) => {
     if (busy) return;
+    if (wordCard) {
+      void closeWordCard();
+    }
     setSentenceEdit({
       item,
       english: item.english,
@@ -6045,7 +6100,7 @@ function ListeningPage({
   const applySentenceUpdatePayload = (payload: ListeningSentenceUpdatePayload) => {
     setArticle((current) => payload.article ?? current);
     setItems((current) => payload.items ?? current.map((item) => (item.index === payload.item.index ? payload.item : item)));
-    if (payload.item.chinese.trim()) {
+    if (payload.item.chinese.trim() && !isHiddenListeningItem(payload.item)) {
       manualTranslationIndexesRef.current.add(payload.item.index);
     }
     if (payload.articles || payload.series) {
@@ -6065,23 +6120,24 @@ function ListeningPage({
     }
   };
 
-  const saveSentenceEdit = async () => {
+  const saveSentenceEdit = async (skipHideConfirm = false) => {
     if (!sentenceEdit) return;
     const english = sentenceEdit.english.trim();
     const chinese = sentenceEdit.chinese.trim();
-    if (!english) {
-      setSentenceEdit((current) => (current ? { ...current, error: '英文字幕不能为空。' } : current));
+    const isHiding = !english;
+    if (isHiding && !skipHideConfirm) {
+      setSentenceEdit((current) => (current ? { ...current, confirmingHide: true, error: null } : current));
       return;
     }
 
-    setSentenceEdit((current) => (current ? { ...current, saving: true, error: null } : current));
+    setSentenceEdit((current) => (current ? { ...current, saving: true, error: null, confirmingHide: false } : current));
     try {
       await sendNative('listening.stop').catch(() => undefined);
       const payload = await sendNative<ListeningSentenceUpdatePayload>('listening.updateSentence', {
         articleId,
         index: sentenceEdit.item.index,
         english,
-        chinese,
+        chinese: isHiding ? '' : chinese,
         previousEnglish: sentenceEdit.item.english,
         previousChinese: sentenceEdit.item.chinese,
       });
@@ -6170,16 +6226,25 @@ function ListeningPage({
     );
   }
 
-  const currentItem = items[currentIndex] ?? items[0];
-  const sceneEnglish = songCue?.english?.trim() || currentItem?.english || '正在准备句子...';
-  const sceneChinese = songCue?.chinese?.trim() || currentItem?.chinese;
+  const visibleItems = visibleListeningItems(items);
+  const currentItem =
+    resolveListeningItemBySlotIndex(items, currentIndex) ?? visibleItems[0] ?? null;
+  const currentItemHidden = currentItem ? isHiddenListeningItem(currentItem) : false;
+  const currentVisiblePosition = visibleItemPosition(items, currentIndex);
+  const sceneEnglish =
+    songCue?.english?.trim() ||
+    (currentItemHidden ? '本句已隐藏' : currentItem?.english) ||
+    '正在准备句子...';
+  const sceneChinese = currentItemHidden ? undefined : songCue?.chinese?.trim() || currentItem?.chinese;
   const busy = isListeningBusy(status);
   const progress =
-    items.length === 0
+    visibleItems.length === 0
       ? 0
       : status === 'done'
         ? 100
-        : Math.round(((currentIndex + (busy ? 0.5 : 0)) / items.length) * 100);
+        : Math.round(
+            ((Math.max(currentVisiblePosition, 0) + (busy ? 0.5 : 0)) / visibleItems.length) * 100,
+          );
   const playbackError = status === 'error' ? error : null;
   const startLabel = status === 'done' ? '重新播放' : '开始播放';
   const titleParts = storyTitlePartsFor(
@@ -6202,7 +6267,7 @@ function ListeningPage({
     fullscreenAudioReadiness,
     fullscreenPictureReadiness,
   );
-  const canOpenFullscreen = fullscreenReadiness.ready && !busy && items.length > 0;
+  const canOpenFullscreen = fullscreenReadiness.ready && !busy && visibleItems.length > 0;
   const recordingPictureReadiness = pictureBookFullscreenReadiness(
     pictureBookState,
     items,
@@ -6224,7 +6289,7 @@ function ListeningPage({
     recordingNativeReadiness,
     recordingPictureReadiness,
   );
-  const canRecordVideo = recordingReadiness.ready && !busy && !recordingBusy && items.length > 0;
+  const canRecordVideo = recordingReadiness.ready && !busy && !recordingBusy && visibleItems.length > 0;
   const songWaitingConfirm = isSunoWaitingConfirm(songState);
   const songGenerating = songState?.status === 'generating';
   const songPlaying = songState?.status === 'playing';
@@ -6326,7 +6391,11 @@ function ListeningPage({
         <div className="listening-progress-summary">
           <ProgressLine
             value={progress}
-            label={`${mode === 'song' ? '歌曲字幕' : '听力进度'} ${Math.min(currentIndex + 1, Math.max(items.length, 1))} / ${Math.max(items.length, 1)}`}
+            label={`${mode === 'song' ? '歌曲字幕' : '听力进度'} ${
+              currentItemHidden
+                ? `第 ${currentIndex + 1} 句已隐藏`
+                : `${Math.max(currentVisiblePosition + 1, 1)} / ${Math.max(visibleItems.length, 1)}`
+            }`}
             compact
           />
         </div>
@@ -6493,14 +6562,15 @@ function ListeningPage({
           <div className="listening-list" aria-label="听力句子列表">
             {items.map((item) => {
               const active = item.index === currentIndex;
+              const hidden = isHiddenListeningItem(item);
               return (
                 <div
-                  className={`listening-row ${active ? 'active' : ''}`}
-                  key={`${item.index}-${item.english}`}
+                  className={`listening-row ${active ? 'active' : ''} ${hidden ? 'hidden' : ''}`}
+                  key={`${item.index}-${hidden ? 'hidden' : item.english}`}
                   onClick={() => {
                     if (busy) return;
                     setCurrentIndex(item.index);
-                    if (mode === 'song' && songPlaying && selectedSongVersion?.id) {
+                    if (mode === 'song' && songPlaying && selectedSongVersion?.id && !hidden) {
                       void playSongVersion(selectedSongVersion.id, item.index);
                     }
                   }}
@@ -6509,7 +6579,7 @@ function ListeningPage({
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault();
                       setCurrentIndex(item.index);
-                      if (mode === 'song' && songPlaying && selectedSongVersion?.id) {
+                      if (mode === 'song' && songPlaying && selectedSongVersion?.id && !hidden) {
                         void playSongVersion(selectedSongVersion.id, item.index);
                       }
                     }
@@ -6522,12 +6592,12 @@ function ListeningPage({
                   <b>{item.index + 1}</b>
                   <span className="listening-row-copy">
                     <strong className={active && activePart === 'english' ? 'playing-text' : undefined}>
-                      {item.english}
+                      {hidden ? '（已隐藏）' : item.english}
                     </strong>
                     <small className={active && activePart === 'chinese' ? 'playing-text' : undefined}>
-                      {item.chinese}
+                      {hidden ? '重新填入英文即可恢复' : item.chinese}
                     </small>
-                    {sentenceSynthesisErrors[item.index] && (
+                    {!hidden && sentenceSynthesisErrors[item.index] && (
                       <em className="sentence-synthesis-error">
                         {sentenceSynthesisErrors[item.index]}
                         <button
@@ -6575,6 +6645,19 @@ function ListeningPage({
           onChineseChange={(chinese) => setSentenceEdit((current) => (current ? { ...current, chinese, error: null } : current))}
           onCancel={() => setSentenceEdit(null)}
           onSave={() => void saveSentenceEdit()}
+        />
+      )}
+      {sentenceEdit?.confirmingHide && (
+        <ConfirmDialog
+          ariaLabel="隐藏字幕确认"
+          title={`隐藏第 ${sentenceEdit.item.index + 1} 句字幕`}
+          message="槽位编号不变，歌曲字幕不变。稍后重新填入英文即可恢复。"
+          confirmLabel="确定隐藏"
+          busy={sentenceEdit.saving}
+          onCancel={() =>
+            setSentenceEdit((current) => (current ? { ...current, confirmingHide: false } : current))
+          }
+          onConfirm={() => void saveSentenceEdit(true)}
         />
       )}
       {songDialog && (
@@ -6681,12 +6764,17 @@ function SentenceEditDialog({
 
   useEffect(() => {
     englishRef.current?.focus({ preventScroll: true });
-    englishRef.current?.select();
   }, []);
 
   return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog sentence-edit-dialog" role="dialog" aria-modal="true" aria-label="修改字幕">
+      <section
+        className="edit-dialog sentence-edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="修改字幕"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="edit-dialog-heading">
           <b>修改第 {state.item.index + 1} 句字幕</b>
           <button className="icon-button small" type="button" onClick={onCancel} disabled={state.saving} aria-label="关闭">
@@ -6717,8 +6805,8 @@ function SentenceEditDialog({
           <button className="ghost-action" type="button" onClick={onCancel} disabled={state.saving}>
             取消
           </button>
-          <button className="primary-action" type="button" onClick={onSave} disabled={state.saving || !state.english.trim()}>
-            <Icon name="save" /> {state.saving ? '保存中' : '保存'}
+          <button className="primary-action" type="button" onClick={onSave} disabled={state.saving}>
+            <Icon name="save" /> {state.saving ? '保存中' : state.english.trim() ? '保存' : '隐藏本句'}
           </button>
         </div>
       </section>
@@ -7674,11 +7762,13 @@ function WordTranslationCard({
 
   return (
     <>
-      <button
+      <div
         className="word-card-dismiss-layer"
-        type="button"
-        aria-label="关闭单词翻译浮层"
-        onClick={() => void onClose()}
+        role="presentation"
+        onMouseDown={(event) => {
+          event.preventDefault();
+          void onClose();
+        }}
       />
       <section
         className={`word-card ${state.position.placement}`}
@@ -8029,6 +8119,11 @@ function FollowPage({
   const currentTranslation = state?.currentTranslation ?? '';
   const result = state?.result;
   const totalSentences = state?.totalSentences ?? 0;
+  const visibleSentenceTotal = state?.visibleSentenceCount ?? totalSentences;
+  const visibleCurrentPosition = visiblePositionForSlotIndex(
+    state?.article?.sentences ?? [],
+    currentIndex,
+  );
   const canInterruptRecordingPlayback =
     commandBusy &&
     activeFollowControl === 'recording' &&
@@ -8039,7 +8134,9 @@ function FollowPage({
   const canPlaySource = !bottomActionsDisabled && step !== 'completed';
   const canPlayRecording = !bottomActionsDisabled && step !== 'completed' && Boolean(state?.hasRecording);
   const canAdvanceSentence =
-    (!bottomActionsDisabled || canInterruptRecordingPlayback) && step !== 'completed' && totalSentences > 0;
+    (!bottomActionsDisabled || canInterruptRecordingPlayback) &&
+    step !== 'completed' &&
+    visibleSentenceTotal > 0;
   const advanceLabel = state?.isLastSentence ? '完成' : '下一句';
   const canRecordCurrent =
     !commandBusy &&
@@ -8070,7 +8167,7 @@ function FollowPage({
   return (
     <section className="page follow-page">
       <TopBar title={<StoryTitle parts={titleParts} />} onBack={() => onNavigate('/')}>
-        <Pager current={currentIndex + 1} total={totalSentences || 2} />
+        <Pager current={visibleCurrentPosition || 1} total={visibleSentenceTotal || 2} />
         <button className="ghost-action" onClick={() => onNavigate('/')}>
           <Icon name="exit" /> 退出
         </button>
@@ -8223,7 +8320,8 @@ function pictureBookFullscreenReadiness(
   decodeState: PictureBookDecodeState,
   options: { requireDecodedImages?: boolean } = {},
 ): FullscreenReadiness {
-  if (items.length === 0) {
+  const visibleItems = visibleListeningItems(items);
+  if (visibleItems.length === 0) {
     return { ready: false, reason: '这篇文章还没有可播放的句子' };
   }
   if (!state || state.status === 'loading') {
@@ -8249,7 +8347,7 @@ function pictureBookFullscreenReadiness(
   if (notReady) {
     return { ready: false, reason: '绘本图还没有全部生成完成' };
   }
-  const missingSentence = items.find(
+  const missingSentence = visibleItems.find(
     (item) =>
       !state.pages.some(
         (page) =>
@@ -10421,12 +10519,17 @@ function EditTitleDialog({
 
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
-    inputRef.current?.select();
   }, []);
 
   return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog" role="dialog" aria-modal="true" aria-label="修改文章标题">
+      <section
+        className="edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="修改文章标题"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="edit-dialog-heading">
           <b>修改文章标题</b>
           <button className="icon-button small" type="button" onClick={onCancel} disabled={saving} aria-label="关闭">
@@ -10572,12 +10675,17 @@ function BookEditDialog({
 
   useEffect(() => {
     inputRef.current?.focus({ preventScroll: true });
-    inputRef.current?.select();
   }, []);
 
   return createPortal(
     <div className="edit-dialog-backdrop" role="presentation">
-      <section className="edit-dialog book-edit-dialog" role="dialog" aria-modal="true" aria-label="编辑书籍信息">
+      <section
+        className="edit-dialog book-edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label="编辑书籍信息"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="edit-dialog-heading">
           <b>编辑书籍信息</b>
           <button className="icon-button small" type="button" onClick={onCancel} disabled={busy} aria-label="关闭">

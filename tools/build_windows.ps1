@@ -712,6 +712,11 @@ try {
     Write-Host "=== 检查 Flutter 环境 ===" -ForegroundColor Cyan
     Write-Host "Flutter SDK: $flutterExe" -ForegroundColor DarkGray
     Invoke-WebUiBuild
+    $focusPatchScript = Join-Path $workspaceRoot "tools\patch_inappwebview_windows_focus.ps1"
+    if (Test-Path $focusPatchScript) {
+        Write-Host "`n=== Patch WebView focus (Windows) ===" -ForegroundColor Cyan
+        & $focusPatchScript
+    }
     Clear-StaleWindowsBuildCache -AppRoot (Get-Location).Path -ExpectedBinaryName "tomato_english_happy_talking"
 
     if ($Release) {

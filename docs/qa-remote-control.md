@@ -208,6 +208,33 @@ Invoke-RestMethod http://127.0.0.1:39317/bridge `
   -Body '{"type":"follow.play","payload":{}}'
 ```
 
+## 听力字幕软隐藏 QA
+
+隐藏 E20 第 45/46 句（0-based index 44、45）示例：
+
+```powershell
+.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317"
+node tools/qa_listening_hide_sentences.mjs --articleId 72 --bookId 23 --indexes 44,45
+```
+
+可选恢复第一句隐藏槽：
+
+```powershell
+node tools/qa_listening_hide_sentences.mjs --articleId 72 --indexes 44,45 --restore 44 --restoreEnglish "Restored for QA."
+```
+
+规则见 `docs/listening_sentence_hide_rules.md`。
+
+## 输入框焦点 QA
+
+验证 WebView 内 input/textarea 点击后仍保持焦点：
+
+```powershell
+node tools/qa_input_focus_probe.mjs --port 39317
+```
+
+`/snapshot` 会返回 `activeElement` 与 `focusGuardInstalled`。
+
 ## 安全约束
 
 - 该接口只用于开发和 QA，不要在普通发布包中默认开启。

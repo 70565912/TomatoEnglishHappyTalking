@@ -1638,9 +1638,6 @@ class PictureBookService {
     final pages = await DatabaseService.getPictureBookPages(articleId);
     final options = <int>[];
     for (final page in pages) {
-      if (page.pageIndex == targetPageIndex) {
-        continue;
-      }
       if (await _hasUsableReferenceImage(page)) {
         options.add(page.pageIndex);
       }

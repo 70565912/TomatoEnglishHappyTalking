@@ -28,6 +28,7 @@ export interface Article {
   content: string;
   sentences: string[];
   sentenceCount: number;
+  visibleSentenceCount?: number;
   createdAt: string;
   averageScore: number;
   coverImagePath?: string | null;
@@ -166,6 +167,7 @@ export interface FollowState {
   article?: Article;
   currentIndex?: number;
   totalSentences?: number;
+  visibleSentenceCount?: number;
   currentSentence?: string;
   currentTranslation?: string;
   isLastSentence?: boolean;
@@ -185,6 +187,7 @@ export interface ListeningItem {
   index: number;
   english: string;
   chinese: string;
+  hidden?: boolean;
 }
 
 export interface ListeningOpenPayload {

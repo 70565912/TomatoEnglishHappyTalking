@@ -10,6 +10,7 @@ import 'package:record/record.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import '../../../core/logging/tomato_logger.dart';
+import '../../../core/practice/listening_sentence_visibility.dart';
 import '../../../data/models/article_model.dart';
 import '../../../data/models/learning_record_model.dart';
 import '../../../shared/models/playback_visual_state.dart';
@@ -71,8 +72,10 @@ class FollowReadState {
   });
 
   String get currentSentence => article.sentences[currentIndex];
-  bool get isLastSentence => currentIndex >= article.sentences.length - 1;
+  bool get isLastSentence =>
+      nextVisibleSentenceIndex(article.sentences, currentIndex) == null;
   int get totalSentences => article.sentences.length;
+  int get visibleSentenceTotal => visibleSentenceCount(article.sentences);
 
   FollowReadState copyWith({
     int? currentIndex,
@@ -401,20 +404,21 @@ class FollowRead extends _$FollowRead {
     final rawArticle = await DatabaseService.getArticleById(articleId);
     if (rawArticle == null) throw Exception('文章不存在（id=$articleId）');
     final article = await _articleWithPersistedSentences(rawArticle);
-    final initialSentence = article.sentences.first;
+    final initialIndex = firstVisibleSentenceIndex(article.sentences) ?? 0;
+    final initialSentence = article.sentences[initialIndex];
     final initialTranslation = await _savedTranslationFor(
       articleId: article.id,
-      sentenceIndex: 0,
+      sentenceIndex: initialIndex,
       sentence: initialSentence,
     );
     final initialRecording =
-        await _latestRecordingFor(index: 0, sentence: initialSentence);
+        await _latestRecordingFor(index: initialIndex, sentence: initialSentence);
 
     _recorder = AudioRecorder();
 
     return FollowReadState(
       article: article,
-      currentIndex: 0,
+      currentIndex: initialIndex,
       step: FollowReadStep.idle,
       playbackState: PlaybackVisualState.idle,
       currentTranslation: initialTranslation,
@@ -481,8 +485,18 @@ class FollowRead extends _$FollowRead {
 
     final token = ++_playbackToken;
     _pausedForWord = false;
-    final index = _s.currentIndex;
-    final sentence = _s.currentSentence;
+    var index = _s.currentIndex;
+    var sentence = _s.currentSentence;
+    if (isHiddenListeningSentence(sentence)) {
+      final visibleIndex = nextVisibleSentenceIndex(_s.article.sentences, index - 1) ??
+          firstVisibleSentenceIndex(_s.article.sentences);
+      if (visibleIndex == null) {
+        return;
+      }
+      index = visibleIndex;
+      sentence = _s.article.sentences[index];
+      state = AsyncValue.data(_s.copyWith(currentIndex: index));
+    }
     _trace(
         'playCurrent start idx=$index chars=${sentence.length} token=$token');
     _set(
@@ -549,7 +563,6 @@ class FollowRead extends _$FollowRead {
   Future<Article> _articleWithPersistedSentences(Article article) async {
     final storedSentences = article.sentences
         .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
         .toList(growable: false);
     if (storedSentences.isNotEmpty) {
       return article.copyWith(sentences: storedSentences);
@@ -1119,10 +1132,10 @@ class FollowRead extends _$FollowRead {
   Future<void> nextSentence() async {
     _playbackToken++;
     unawaited(_disposePlayer());
-    if (_s.isLastSentence) {
+    final nextIndex = nextVisibleSentenceIndex(_s.article.sentences, _s.currentIndex);
+    if (nextIndex == null) {
       _set(step: FollowReadStep.completed, clearResult: true);
     } else {
-      final nextIndex = _s.currentIndex + 1;
       final nextSentence = _s.article.sentences[nextIndex];
       final nextTranslation = await _savedTranslationFor(
         articleId: _s.article.id,

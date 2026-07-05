@@ -371,12 +371,12 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - 无章节计划时的分镜行只是审核框占位行，不是章节场景规划：正文有多个段落时按段落生成占位分镜并最多保留 12 行；正文只有一个段落时按句子数生成，占位行数为 `min(12, sentenceCount)`；单段超过 12 句时按句子范围均分成 12 行。占位行的 `sceneDescription` 必须为空，不能本地伪造章节描述或分镜描述。
 - 审核弹窗可刷新书籍简介，或同次刷新章节规划（`chapterDescription` + `scenes[]`）。`pictureBook.refreshPromptReview` 只更新审核草稿，不调用图片 API，不删除旧图。
 - savePromptReview 使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt 更新审核草稿并保存书籍简介，不调用图片 API，不删除旧图，适合用户分步保存提示词。
-- confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。
+- confirmPromptReview 的确认按钮文案为“保存提示词并生成组图”；它使用用户编辑后的书籍简介、章节描述、分镜描述和 groupPrompt，先保存审核后的章节场景计划，确认后才删除旧页/旧图片引用并提交顺序组图。提交期间 Web UI 使用 App 级 `AiBlockingOverlay` 显示预计超时倒计时，估算规则为 `max(180, 分镜数 × 150)` 秒、上限 2700 秒。
 
 ### 单页重生成与参考图
 
 - 创作中心单页「重新生成」走 `pictureBook.pagePromptReview` → `pictureBook.confirmPagePromptReview`，只替换目标页，不删除其它页。
-- 若其它页已有 `ready` 且本地图片文件存在，审核弹窗在「单张生成 Prompt」下方展示可选参考图缩略图（不含当前重生成页）；默认预选最近邻 1 张，用户可 toggle 多选（至少 1 张、最多 14 张）。
+- 若已有 `ready` 且本地图片文件存在（含当前重生成页），审核弹窗在「单张生成 Prompt」下方展示可选参考图缩略图；默认预选最近邻 1 张，用户可 toggle 多选（至少 1 张、最多 14 张）。
 - 确认时 bridge 提交 `referencePageIndexes`（按 `pageIndex` 升序）；Flutter 解析为 `referenceImagePaths` 传给图片 API。整章 `confirmPromptReview` 仍使用 `referenceImagePaths: []`。
 - 单页 prompt 固定写 “Use the reference images only for visual consistency.”；`prompt_json` 持久化 `referencePageIndexes` 与首项 `referencePageIndex`。
 - 没有可用参考图时，单页审核回退为整章 `promptReview(regenerate: true)`。

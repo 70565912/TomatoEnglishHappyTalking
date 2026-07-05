@@ -1,4 +1,5 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
+import '../../../core/practice/listening_sentence_visibility.dart';
 import '../../../data/models/article_model.dart';
 import '../../../services/database_service.dart';
 import '../../../services/nlp_service.dart';
@@ -11,9 +12,13 @@ Future<List<Article>> articleList(ArticleListRef ref) async {
   return articles.map((article) {
     final storedSentences = article.sentences
         .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
         .toList(growable: false);
-    if (storedSentences.isNotEmpty) {
+    final hasAnyStored = storedSentences.isNotEmpty;
+    final hasVisible = visibleSentenceCount(storedSentences) > 0;
+    if (hasVisible) {
+      return article.copyWith(sentences: storedSentences);
+    }
+    if (hasAnyStored) {
       return article.copyWith(sentences: storedSentences);
     }
     // Saved sentences are the material boundary. Only synthesize an in-memory

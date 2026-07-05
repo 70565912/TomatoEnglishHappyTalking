@@ -2051,11 +2051,15 @@ img {
 .edit-dialog-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 100;
   display: grid;
   place-items: center;
   padding: 18px;
   background: rgba(15, 23, 42, 0.34);
+}
+
+.confirm-dialog-backdrop {
+  z-index: 110;
 }
 
 .edit-dialog {
@@ -2228,7 +2232,7 @@ img {
 }
 
 .picture-prompt-backdrop {
-  z-index: 32;
+  z-index: 100;
 }
 
 .picture-prompt-dialog {
@@ -2596,7 +2600,7 @@ img {
 .ai-blocking-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: 115;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -3662,6 +3666,21 @@ select:disabled {
 .listening-row.active b {
   color: white;
   background: var(--tomato);
+}
+
+.listening-row.hidden {
+  opacity: 0.62;
+  background: #f4f6f8;
+}
+
+.listening-row.hidden strong {
+  color: #64748b;
+  font-style: italic;
+  font-weight: 800;
+}
+
+.listening-row.hidden small {
+  color: #94a3b8;
 }
 
 .fullscreen-listening {

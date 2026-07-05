@@ -690,7 +690,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const targetPageIndex = scene?.pageIndex ?? pageIndex;
     const referenceOptions = review.scenes
       .map((item) => item.pageIndex)
-      .filter((item) => item !== targetPageIndex);
+      .sort((a, b) => a - b);
     const defaultReferencePageIndex =
       targetPageIndex > 0
         ? targetPageIndex - 1
@@ -1225,25 +1225,39 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'listening.updateSentence') {
     const index = Number(payload.index ?? 0);
+    const english = String(payload.english ?? mockListening.items[0].english).trim();
+    const chinese = String(payload.chinese ?? mockListening.items[0].chinese).trim();
+    const hidden = english.length === 0;
     const item = {
       index,
-      english: String(payload.english ?? mockListening.items[0].english),
-      chinese: String(payload.chinese ?? mockListening.items[0].chinese),
+      english,
+      chinese: hidden ? '' : chinese,
+      hidden,
     };
+    const sentences = [...mockListening.article.sentences];
+    if (index >= 0 && index < sentences.length) {
+      sentences[index] = english;
+    }
     const items = mockListening.items.map((current) =>
       current.index === index ? item : current,
     );
     const article: Article = {
       ...mockListening.article,
-      sentences: items.map((current) => current.english),
-      content: items.map((current) => current.english).join(' '),
-      sentenceCount: items.length,
+      sentences,
+      content: sentences.filter((sentence) => sentence.trim()).join(' '),
+      sentenceCount: sentences.length,
+      visibleSentenceCount: sentences.filter((sentence) => sentence.trim()).length,
     };
     return {
       article,
       item,
       items,
-      synthesis: { status: 'ready', english: 'ready', chinese: item.chinese ? 'ready' : 'unchanged', error: '' },
+      synthesis: {
+        status: hidden ? 'ready' : 'ready',
+        english: hidden ? 'cleared' : 'ready',
+        chinese: hidden ? 'unchanged' : item.chinese ? 'ready' : 'unchanged',
+        error: '',
+      },
       articles: mockArticles.map((current) => (current.id === article.id ? article : current)),
       series: mockSeries,
     };

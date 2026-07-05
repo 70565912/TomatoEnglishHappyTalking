@@ -429,6 +429,26 @@ D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe analyze <files>
 - Web UI `directImageSource` 只接受 `data:` / `blob:` / `http(s):` / bundled `assets/`；创作中心预览可先把 data URI 转成 Blob URL 再显示，并在 `onLoad` 后再露出图片。
 - 修改绘本图片加载或预览层样式后，用 Release + `TOMATO_QA_REMOTE=true` 验证：`pictureBook.pageImage` 前缀为 `data:image/`，`/listening/<id>` 与创作中心缩略图预览 `brokenImages=0`。详见 `docs/qa-remote-control.md`。
 
+## WebView2 输入框点击后失焦（偶发无法输入）
+
+症状：
+
+- 设置页 API Key、新增章节正文、听力字幕编辑等 **任意 HTML 输入框**，点击后文本有时会被选中一下，随即失去焦点，键盘输入无效；再点一次有时才能输入。
+- QA `/fill` 程序化赋值通常正常，物理鼠标/键盘更容易复现。
+- 打开单词卡后，透明 dismiss 层也可能抢走焦点，叠加在编辑框上方时同样无法输入（2026-07 已提高编辑框 z-index 并在打开编辑时关闭单词卡）。
+
+原因：
+
+- Windows 桌面 App 使用 `flutter_inappwebview` + WebView2 时，Flutter 窗口与 WebView 会在每次 pointer down 时 **交替争夺焦点**（`flutter_inappwebview_windows` 的 `custom_platform_view.dart` 在 `onPointerDown` 里延迟 50ms 再次 `FocusNode.requestFocus()`，会触发 HTML `blur/focus` 连锁）。详见 [flutter_inappwebview#2736](https://github.com/pichillilorenzo/flutter_inappwebview/issues/2736)。
+- 全屏 `<button>` 透明 dismiss 层（单词卡）也会在 mousedown 时获得焦点，加剧“点一下选中又失焦”。
+
+处理：
+
+- Web UI 启动时安装 `webViewFocusGuard`（`web_ui/src/webViewFocusGuard.ts`）：若 editable 控件在 pointer down 后 300ms 内被意外 blur，则自动 refocus。
+- 字幕/标题编辑弹窗去掉 `select()` 自动全选，仅 `focus()`；弹窗内容 `onMouseDown` 阻止冒泡；单词卡 dismiss 改为 `div` + `preventDefault()`。
+- Windows 构建脚本 `tools/build_windows.ps1` 会调用 `tools/patch_inappwebview_windows_focus.ps1`，移除插件里 50ms 延迟二次 `requestFocus()`（需在本机 pub cache 中 patch，已 patch 则跳过）。
+- 联调：`node tools/qa_input_focus_probe.mjs`；`/snapshot` 返回 `activeElement` 与 `focusGuardInstalled`。
+
 ## WebView2 大图 CSS 缩放花屏（听力/跟读/对话内嵌绘本图）
 
 症状：

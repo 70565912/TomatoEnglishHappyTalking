@@ -9,6 +9,7 @@ import 'package:flutter/painting.dart';
 import 'package:path/path.dart' as path_lib;
 
 import '../core/config/app_config.dart';
+import '../core/practice/listening_sentence_visibility.dart';
 import '../data/models/article_model.dart';
 import '../data/models/article_song_model.dart';
 import '../data/models/picture_book_model.dart';
@@ -1679,9 +1680,8 @@ class RecordingExportService {
     }
     final sentences = article.sentences
         .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
         .toList(growable: false);
-    if (sentences.isEmpty) {
+    if (visibleSentenceCount(sentences) == 0) {
       reasons.add('文章没有可导出的英文句子');
     }
     final chapter =
@@ -1732,6 +1732,9 @@ class RecordingExportService {
       }
     }
     for (var i = 0; i < sentences.length; i += 1) {
+      if (isHiddenListeningSentence(sentences[i])) {
+        continue;
+      }
       if (!covered.contains(i)) {
         reasons.add('绘本页未覆盖第 ${i + 1} 句');
         break;
@@ -1750,6 +1753,9 @@ class RecordingExportService {
     );
     for (var index = 0; index < sentences.length; index += 1) {
       final english = sentences[index];
+      if (isHiddenListeningSentence(english)) {
+        continue;
+      }
       final overrideChinese = request.subtitleTranslations[index]?.trim() ?? '';
       final chinese = overrideChinese.isNotEmpty
           ? overrideChinese
