@@ -321,6 +321,74 @@ The Queen said—
       expect(sentences.last, contains('what they said.'));
     });
 
+    test('extracts E20 Duchess story without original poem or vocab examples',
+        () {
+      final raw = File(
+        'test/fixtures/e20_duchess_raw_input.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(parsed.englishContent,
+          contains('"Please would you tell me," said Alice'));
+      expect(parsed.englishContent,
+          contains('"Speak roughly to your little boy,'));
+      expect(parsed.englishContent,
+          contains('"Here! you may nurse it a bit, if you like!"'));
+      expect(parsed.englishContent, contains('Alice caught the baby'));
+      expect(
+          parsed.englishContent, isNot(contains("'Tis full of anxious care!")));
+      expect(parsed.englishContent,
+          isNot(contains('3.it would be as well to do something')));
+      expect(
+          parsed.englishContent,
+          isNot(contains(
+              'It would be as well to call and say we might be late.')));
+      expect(
+          parsed.englishContent, isNot(contains('I cannot abide hypocrites.')));
+      expect(parsed.englishContent,
+          isNot(contains('It was as much as I could do to not cry out loud.')));
+      expect(parsed.englishContent, isNot(contains('文化卡片')));
+      expect(parsed.englishContent, isNot(contains('生词好句')));
+      expect(sentences, isNotEmpty);
+      expect(sentences.last,
+          contains('it was as much as she could do to hold it.'));
+    });
+
+    test('extracts E29 Cat head dispute story before learning sections', () {
+      final raw = File(
+        'test/fixtures/e29_cat_head_dispute_raw_input.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(parsed.englishContent, contains("The executioner's argument was"));
+      expect(parsed.englishContent,
+          contains('"How fond she is of finding morals in things!"'));
+      expect(parsed.englishContent, isNot(contains('See you in a bit!')));
+      expect(parsed.englishContent,
+          isNot(contains("We'll get back to that in a bit.")));
+      expect(parsed.englishContent,
+          isNot(contains('They spent the whole evening tut-tutting')));
+      expect(parsed.englishContent, isNot(contains('She dug her fingernails')));
+      expect(parsed.englishContent, isNot(contains('文化卡片')));
+      expect(parsed.englishContent, isNot(contains('生词好句')));
+      expect(sentences, isNotEmpty);
+      expect(
+        parsed.englishContent.trim(),
+        endsWith(
+          '"How fond she is of finding morals in things!" Alice thought to herself.',
+        ),
+      );
+      expect(sentences.last, contains('Alice thought to herself.'));
+    });
+
     test('extracts E01 preface poem from raw lesson input', () {
       final raw = File(
         'test/fixtures/e01_preface_poem_raw_input.txt',

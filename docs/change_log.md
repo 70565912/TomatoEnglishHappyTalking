@@ -1,5 +1,14 @@
 # 修改日志
 
+## 2026-07-06
+
+- 修正英文原文课程稿正文边界解析：`【文化卡片】` / `生词好句` / `重点词汇` 等学习材料 heading 现在即使处于 `【拓展】` soft interruption 内也会直接结束故事正文；`【拓展】` 后恢复正文不再仅凭引号或撇号开头，而是要求明确故事叙事信号或已有故事诗歌续行规则，避免把原诗、词汇例句误收进文章。
+- 新增 Alice 课程稿回归样本：E20 公爵夫人厨房/婴儿段、E29 柴郡猫头争执段使用用户原始输入 fixture 覆盖。E20 不再混入 `’Tis full of anxious care!`、`it would be as well...` 词条例句等非故事英文；E29 在文化卡片前以 `"How fond she is of finding morals in things!" Alice thought to herself.` 正确结束。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\practice_input_parser_test.dart`
+
 ## 2026-07-05
 
 - **Suno 创建/下载全量重构**：逻辑迁至 `app/lib/features/web_shell/suno/`（`SunoAutomationController`、`SunoCreateBatch`、`SunoCompletionPolicy`、`SunoWebScripts`）。修复 Create 页表单歌词导致 `currentPageLyricsExactMatch` 假阳性、首首落盘后 batch 未跟踪第二首、CDN 403 记 `direct_media.not_ready` 等待、导航期 login 假阳性抑制。统一 `complete.blocked` / `complete.allowed` / `batch.sidebar_detected` 诊断日志。

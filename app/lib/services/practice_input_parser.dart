@@ -321,7 +321,9 @@ class PracticeInputParser {
         }
         continue;
       }
-      if (!insideSoftInterruption && _isEnglishOriginalSectionHardStop(line)) {
+      if (_isEnglishOriginalSectionTerminalStop(line) ||
+          (!insideSoftInterruption &&
+              _isEnglishOriginalSectionHardStop(line))) {
         break;
       }
       if (_isEnglishOriginalSectionSoftInterruption(line)) {
@@ -402,20 +404,23 @@ class PracticeInputParser {
 
   static bool _isEnglishOriginalSectionHardStop(String line) {
     final compact = line.replaceAll(RegExp(r'\s+'), '');
-    final bareHeading = _bareChineseBracketHeading(compact);
-    if (_isEnglishOriginalTerminalHeading(bareHeading)) {
+    if (_isEnglishOriginalSectionTerminalStop(line)) {
       return true;
     }
     if (compact.startsWith('【') || compact.endsWith('】')) {
       return !_isEnglishOriginalSectionSoftInterruption(line);
     }
-    if (_isEnglishOriginalTerminalHeading(compact)) {
-      return true;
-    }
     if (RegExp(r'^\d+[.、]').hasMatch(line)) {
       return true;
     }
     return false;
+  }
+
+  static bool _isEnglishOriginalSectionTerminalStop(String line) {
+    final compact = line.replaceAll(RegExp(r'\s+'), '');
+    final bareHeading = _bareChineseBracketHeading(compact);
+    return _isEnglishOriginalTerminalHeading(bareHeading) ||
+        _isEnglishOriginalTerminalHeading(compact);
   }
 
   static String _bareChineseBracketHeading(String compact) {
@@ -539,6 +544,9 @@ class PracticeInputParser {
 
   static bool _isEnglishOriginalSectionSoftInterruption(String line) {
     final compact = line.replaceAll(RegExp(r'\s+'), '');
+    if (_isEnglishOriginalSectionTerminalStop(line)) {
+      return false;
+    }
     if (compact.startsWith('【') && compact.endsWith('】')) {
       return true;
     }
@@ -697,30 +705,36 @@ class PracticeInputParser {
     }
     final lower = trimmed.toLowerCase();
     if (_looksLikeEnglishTitle(trimmed) &&
-        !trimmed.startsWith('"') &&
-        !RegExp(
-          r"\b(said|asked|replied|remarked|cried|shouted|thought|looked|went|came|was|were|had|did|could|would|should|began|heard|found|appeared)\b",
-          caseSensitive: false,
-        ).hasMatch(lower)) {
+        !_startsWithEnglishQuote(trimmed) &&
+        !_hasStoryNarrationSignal(lower)) {
       return false;
     }
-    if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
-      return true;
-    }
-    if (RegExp(
-      r"\b(said|asked|replied|remarked|cried|shouted|thought|looked|went|came|was|were|had|did|could|would|should|began|heard|found|appeared|collected|hurried|tucked|caught)\b",
-      caseSensitive: false,
-    ).hasMatch(lower)) {
+    if (_hasStoryNarrationSignal(lower)) {
       return true;
     }
     return false;
+  }
+
+  static bool _hasStoryNarrationSignal(String lowerLine) {
+    return RegExp(
+      r"\b(said|asked|answered|replied|remarked|cried|shouted|whispered|called|sighed|pleaded|ventured|growled|thought|looked|glanced|heard|found|appeared|noticed|began|went|came|hurried|tucked|caught|flung|threw|walked|spoke|added)\b",
+      caseSensitive: false,
+    ).hasMatch(lowerLine);
+  }
+
+  static bool _startsWithEnglishQuote(String line) {
+    return line.startsWith('"') ||
+        line.startsWith("'") ||
+        line.startsWith('“') ||
+        line.startsWith('‘') ||
+        line.startsWith('’');
   }
 
   static bool _isIndentedEnglishVerseLine(String rawLine, String line) {
     final leadingSpaces = rawLine.length - rawLine.trimLeft().length;
     return leadingSpaces >= 2 &&
         _isLikelyStoryVerseLine(line) &&
-        (line.startsWith('"') || line.startsWith("'"));
+        _startsWithEnglishQuote(line);
   }
 
   static bool _isLikelyStoryVerseLine(String line) {
@@ -763,8 +777,7 @@ class PracticeInputParser {
     String line,
     List<String> englishLines,
   ) {
-    if (!(line.startsWith('"') || line.startsWith("'")) ||
-        !_isLikelyStoryVerseLine(line)) {
+    if (!_startsWithEnglishQuote(line) || !_isLikelyStoryVerseLine(line)) {
       return false;
     }
     for (var index = englishLines.length - 1; index >= 0; index -= 1) {
