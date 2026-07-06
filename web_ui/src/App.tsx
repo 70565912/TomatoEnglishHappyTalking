@@ -216,7 +216,11 @@ function AiBlockingOverlay({
     <div className="ai-blocking-backdrop" role="presentation">
       <section className="ai-blocking-panel" role="status" aria-live="polite">
         <div className="ai-blocking-spinner" aria-hidden="true">
-          <Icon name="refresh" />
+          <span className="blocking-dots">
+            <span />
+            <span />
+            <span />
+          </span>
         </div>
         <div>
           <b>{title}</b>
@@ -794,7 +798,6 @@ function App() {
             englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={applyRecordingSettings}
-            songSettings={settings?.song ?? null}
             onNotice={setNotice}
             onArticlesUpdated={(payload) => {
               if (payload.articles) setArticles(payload.articles);
@@ -815,7 +818,6 @@ function App() {
             englishPreloadState={preloadStates[preloadKey('listening', parsedRoute.articleId, 'english')]}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={applyRecordingSettings}
-            songSettings={settings?.song ?? null}
             onNotice={setNotice}
             onArticlesUpdated={(payload) => {
               if (payload.articles) setArticles(payload.articles);
@@ -1387,7 +1389,6 @@ function BookPlayerPage({
   englishPreloadState,
   recordingSettings,
   onRecordingSettingsLoaded,
-  songSettings,
   onNotice,
   onArticlesUpdated,
 }: {
@@ -1405,7 +1406,6 @@ function BookPlayerPage({
   englishPreloadState?: PreloadState;
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
-  songSettings: SettingsState['song'] | null;
   onNotice: (message: string) => void;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
@@ -1473,7 +1473,6 @@ function BookPlayerPage({
             englishPreloadState={englishPreloadState}
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={onRecordingSettingsLoaded}
-            songSettings={songSettings}
             onNotice={onNotice}
             onArticlesUpdated={onArticlesUpdated}
           />
@@ -1988,6 +1987,8 @@ function CreationCenterPage({
   const [bookEditGeneratingDescription, setBookEditGeneratingDescription] = useState(false);
   const [bookEditError, setBookEditError] = useState<string | null>(null);
   const [bookTransferBusy, setBookTransferBusy] = useState<'export' | 'import' | null>(null);
+  const [pendingChapterDelete, setPendingChapterDelete] = useState<{ articleId: number; title: string } | null>(null);
+  const [pendingChapterDeleteBusy, setPendingChapterDeleteBusy] = useState(false);
   const resolvedSelectedBookKey =
     selectedBookKey && books.some((book) => book.key === selectedBookKey)
       ? selectedBookKey
@@ -2117,6 +2118,20 @@ function CreationCenterPage({
     }
   };
 
+  const confirmChapterDelete = async () => {
+    if (!pendingChapterDelete || pendingChapterDeleteBusy) return;
+    const { articleId } = pendingChapterDelete;
+    setPendingChapterDeleteBusy(true);
+    try {
+      await onDelete(articleId);
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '章节删除失败');
+    } finally {
+      setPendingChapterDeleteBusy(false);
+      setPendingChapterDelete(null);
+    }
+  };
+
   return (
     <section className="page creation-center-page">
       <TopBar title="创作中心" onBack={() => onNavigate('/')}>
@@ -2218,13 +2233,7 @@ function CreationCenterPage({
             }
             onDelete={() => {
               const title = article.title.trim() || '当前章节';
-              const confirmed = window.confirm(`确定删除章节“${title}”？删除后不可恢复。`);
-              if (!confirmed) {
-                return;
-              }
-              void onDelete(article.id).catch((error) => {
-                onNotice(error instanceof Error ? error.message : '章节删除失败');
-              });
+              setPendingChapterDelete({ articleId: article.id, title });
             }}
           />
         )}
@@ -2368,6 +2377,21 @@ function CreationCenterPage({
               setBookEditSaving(false);
             }
           }}
+        />
+      )}
+      {pendingChapterDelete && (
+        <ConfirmDialog
+          ariaLabel="删除章节确认"
+          title="删除章节"
+          message={`确定删除章节“${pendingChapterDelete.title}”？删除后不可恢复。`}
+          confirmLabel="删除"
+          confirmIcon="trash"
+          busy={pendingChapterDeleteBusy}
+          onCancel={() => {
+            if (pendingChapterDeleteBusy) return;
+            setPendingChapterDelete(null);
+          }}
+          onConfirm={() => void confirmChapterDelete()}
         />
       )}
     </section>
@@ -3468,6 +3492,13 @@ function SongCreationPanel({
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
   const [recordingDialogVersionId, setRecordingDialogVersionId] = useState('');
+  const [songDeleteConfirm, setSongDeleteConfirm] = useState<{
+    versionId: string;
+    title: string;
+    timelineStatus: string;
+  } | null>(null);
+  const [sunoCreateConfirmOpen, setSunoCreateConfirmOpen] = useState(false);
+  const [songGenerateConfirm, setSongGenerateConfirm] = useState<SongGenerationSource | null>(null);
 
   const loadState = () => {
     setBusy(true);
@@ -3650,18 +3681,26 @@ function SongCreationPanel({
     }
   };
 
-  const deleteSongVersionFromCreation = async (
-    versionId: string,
-    title: string,
-    timelineStatus: string,
-  ) => {
-    const deleteTimeline = timelineStatus === 'ready' || timelineStatus === 'stale';
-    const message = deleteTimeline
-      ? `确认删除歌曲「${title}」以及它的字幕时间轴？删除后不可恢复。`
-      : `确认删除歌曲「${title}」？删除后不可恢复。`;
-    if (!window.confirm(message)) {
+  const startSongGenerationFromCreation = (source: SongGenerationSource) => {
+    setSongGenerateConfirm(null);
+    if (source === 'bailian_fun_music') {
+      void runSongCommand('listening.songGenerate', {
+        source: 'bailian_fun_music',
+        lyrics: '',
+      }, '已提交阿里云百聆生成任务', {
+        title: '正在提交百聆歌曲',
+        detail: '正在向阿里云百聆 Fun-Music 提交歌曲生成，请等待服务返回。',
+        timeoutSeconds: 480,
+      });
       return;
     }
+    void runSongCommand('listening.songGenerate', {
+      source: 'suno',
+      lyrics: '',
+    }, '已打开 Suno 歌曲生成流程');
+  };
+
+  const deleteSongVersionFromCreation = async (versionId: string) => {
     setBusy(true);
     try {
       if (playingSongVersionId === versionId) {
@@ -3710,14 +3749,7 @@ function SongCreationPanel({
           className="primary-action"
           type="button"
           disabled={busy || songState?.status === 'generating'}
-          onClick={() => runSongCommand('listening.songGenerate', {
-            source: 'bailian_fun_music',
-            lyrics: '',
-          }, '已提交阿里云百聆生成任务', {
-            title: '正在提交百聆歌曲',
-            detail: '正在向阿里云百聆 Fun-Music 提交歌曲生成，请等待服务返回。',
-            timeoutSeconds: 480,
-          })}
+          onClick={() => setSongGenerateConfirm('bailian_fun_music')}
         >
           <Icon name="music" /> 生成百聆歌曲
         </button>
@@ -3725,10 +3757,7 @@ function SongCreationPanel({
           className="suno-action"
           type="button"
           disabled={busy || songState?.status === 'generating'}
-          onClick={() => runSongCommand('listening.songGenerate', {
-            source: 'suno',
-            lyrics: '',
-          }, '已打开 Suno 歌曲生成流程')}
+          onClick={() => setSongGenerateConfirm('suno')}
         >
           <Icon name="music" /> 生成 Suno 歌曲
         </button>
@@ -3738,10 +3767,7 @@ function SongCreationPanel({
             type="button"
             disabled={busy}
             onClick={() => {
-              const confirmed = window.confirm('确认消耗 Suno credits 并创建歌曲？');
-              if (confirmed) {
-                void runSongCommand('listening.songConfirmSunoCreate', {}, '已确认创建 Suno 歌曲');
-              }
+              setSunoCreateConfirmOpen(true);
             }}
           >
             <Icon name="music" /> 确认创建歌曲
@@ -3809,7 +3835,11 @@ function SongCreationPanel({
                       disabled={busy}
                       aria-label={`删除歌曲：${title}`}
                       title="删除歌曲"
-                      onClick={() => void deleteSongVersionFromCreation(version.id, title, timelineStatus)}
+                      onClick={() => setSongDeleteConfirm({
+                        versionId: version.id,
+                        title,
+                        timelineStatus,
+                      })}
                     >
                       <Icon name="trash" />
                     </button>
@@ -3868,6 +3898,57 @@ function SongCreationPanel({
           onConfirm={() => void confirmSongRecordingDialog()}
         />
       )}
+      {songDeleteConfirm && (
+        <ConfirmDialog
+          ariaLabel="删除歌曲确认"
+          title="删除歌曲"
+          message={
+            songDeleteConfirm.timelineStatus === 'ready' || songDeleteConfirm.timelineStatus === 'stale'
+              ? `确认删除歌曲「${songDeleteConfirm.title}」以及它的字幕时间轴？删除后不可恢复。`
+              : `确认删除歌曲「${songDeleteConfirm.title}」？删除后不可恢复。`
+          }
+          confirmLabel="删除"
+          confirmIcon="trash"
+          busy={busy}
+          onCancel={() => {
+            if (busy) return;
+            setSongDeleteConfirm(null);
+          }}
+          onConfirm={() => {
+            if (!songDeleteConfirm) return;
+            const target = songDeleteConfirm;
+            setSongDeleteConfirm(null);
+            void deleteSongVersionFromCreation(target.versionId);
+          }}
+        />
+      )}
+      {songGenerateConfirm && (
+        <ConfirmDialog
+          {...songGenerationConfirmCopy(songGenerateConfirm)}
+          confirmIcon="music"
+          busy={busy}
+          onCancel={() => {
+            if (busy) return;
+            setSongGenerateConfirm(null);
+          }}
+          onConfirm={() => startSongGenerationFromCreation(songGenerateConfirm)}
+        />
+      )}
+      {sunoCreateConfirmOpen && (
+        <ConfirmDialog
+          {...sunoCreateConfirmCopy()}
+          confirmIcon="music"
+          busy={busy}
+          onCancel={() => {
+            if (busy) return;
+            setSunoCreateConfirmOpen(false);
+          }}
+          onConfirm={() => {
+            setSunoCreateConfirmOpen(false);
+            void runSongCommand('listening.songConfirmSunoCreate', {}, '已确认创建 Suno 歌曲');
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -3893,6 +3974,10 @@ function VideoCreationPanel({
   const [exportingListeningVideo, setExportingListeningVideo] = useState(false);
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
+  const [videoDeleteConfirm, setVideoDeleteConfirm] = useState<{
+    version: RecordingVideoVersion;
+    title: string;
+  } | null>(null);
 
   const checkReady = () => {
     const selectedSettings = recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings);
@@ -4043,8 +4128,6 @@ function VideoCreationPanel({
   };
 
   const deleteVideo = async (version: RecordingVideoVersion, title: string) => {
-    const confirmed = window.confirm(`确定删除视频“${title}”？此操作会删除本地视频文件和字幕文件，不能撤销。`);
-    if (!confirmed) return;
     setVideoBusy(true);
     try {
       const library = await sendNative<RecordingVideoLibraryPayload>('recording.videoDelete', {
@@ -4130,7 +4213,7 @@ function VideoCreationPanel({
                   type="button"
                   disabled={videoBusy}
                   aria-label={`删除视频：${title}`}
-                  onClick={() => void deleteVideo(version, title)}
+                  onClick={() => setVideoDeleteConfirm({ version, title })}
                 >
                   <Icon name="trash" /> 删除
                 </button>
@@ -4178,6 +4261,26 @@ function VideoCreationPanel({
             setRecordingDialogDraft(null);
           }}
           onConfirm={() => void confirmRecordingDialog()}
+        />
+      )}
+      {videoDeleteConfirm && (
+        <ConfirmDialog
+          ariaLabel="删除视频确认"
+          title="删除视频"
+          message={`确定删除视频“${videoDeleteConfirm.title}”？此操作会删除本地视频文件和字幕文件，不能撤销。`}
+          confirmLabel="删除"
+          confirmIcon="trash"
+          busy={videoBusy}
+          onCancel={() => {
+            if (videoBusy) return;
+            setVideoDeleteConfirm(null);
+          }}
+          onConfirm={() => {
+            if (!videoDeleteConfirm) return;
+            const target = videoDeleteConfirm;
+            setVideoDeleteConfirm(null);
+            void deleteVideo(target.version, target.title);
+          }}
         />
       )}
     </section>
@@ -4269,9 +4372,60 @@ function ConfirmDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const cancelButtonRef = useRef<HTMLButtonElement>(null);
+  const onCancelRef = useRef(onCancel);
+  const onConfirmRef = useRef(onConfirm);
+  onCancelRef.current = onCancel;
+  onConfirmRef.current = onConfirm;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    cancelButtonRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (busy) return;
+        event.preventDefault();
+        onCancelRef.current();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const focusables = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((node) => node.offsetParent !== null);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus();
+    };
+  }, [busy]);
+
   return createPortal(
-    <div className="edit-dialog-backdrop confirm-dialog-backdrop" role="presentation">
+    <div
+      className="edit-dialog-backdrop confirm-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target !== event.currentTarget || busy) return;
+        onCancelRef.current();
+      }}
+    >
       <section
+        ref={dialogRef}
         className="edit-dialog confirm-dialog"
         role="dialog"
         aria-modal="true"
@@ -4284,7 +4438,13 @@ function ConfirmDialog({
         </div>
         <p>{message}</p>
         <div className="edit-dialog-actions">
-          <button className="ghost-action" type="button" onClick={onCancel} disabled={busy}>
+          <button
+            ref={cancelButtonRef}
+            className="ghost-action"
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+          >
             {cancelLabel}
           </button>
           <button className="primary-action" type="button" onClick={onConfirm} disabled={busy}>
@@ -4973,14 +5133,6 @@ type SentenceEditState = {
   error: string | null;
   confirmingHide?: boolean;
 };
-type SongDialogTab = 'play' | 'settings';
-type SongDialogState = {
-  activeTab: SongDialogTab;
-  source: SongGenerationSource;
-  suggesting: boolean;
-  submitting: boolean;
-  error: string | null;
-};
 type SongVersionPayload = NonNullable<ListeningSongStatePayload['versions']>[number];
 type SongVersionGroup = {
   key: string;
@@ -5024,7 +5176,6 @@ function ListeningPage({
   englishPreloadState,
   recordingSettings,
   onRecordingSettingsLoaded,
-  songSettings,
   onNotice,
   onArticlesUpdated,
 }: {
@@ -5045,7 +5196,6 @@ function ListeningPage({
   englishPreloadState?: PreloadState;
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
-  songSettings: SettingsState['song'] | null;
   onNotice: (message: string) => void;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
@@ -5075,7 +5225,6 @@ function ListeningPage({
   const [recordingDialogSongVersionId, setRecordingDialogSongVersionId] = useState('');
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
   const [songCue, setSongCue] = useState<ListeningSongPositionPayload['cue']>(null);
-  const [songDialog, setSongDialog] = useState<SongDialogState | null>(null);
   const [selectedSongVersionId, setSelectedSongVersionId] = useState('');
   const playbackTokenRef = useRef(0);
   const wordCardTokenRef = useRef(0);
@@ -5121,7 +5270,6 @@ function ListeningPage({
     setRecordingDialogSongVersionId('');
     setSongState(null);
     setSongCue(null);
-    setSongDialog(null);
     setSelectedSongVersionId('');
     wordCardTokenRef.current += 1;
     fullscreenReadyTokenRef.current += 1;
@@ -5271,32 +5419,7 @@ function ListeningPage({
         setSongCue(null);
       }
       if (payload.status === 'ready') {
-        setSongDialog((current) =>
-          current
-            ? {
-                ...current,
-                activeTab: 'play',
-                source: normalizeSongGenerationSource(payload.source ?? current.source),
-                submitting: false,
-                suggesting: false,
-                error: null,
-              }
-            : current,
-        );
         onNotice(payload.lyricsCompressed ? '歌曲生成完成，歌词已按上限改写压缩' : '歌曲生成完成');
-      } else if (isSunoWaitingConfirm(payload)) {
-        setSongDialog((current) =>
-          current
-            ? {
-                ...current,
-                activeTab: 'play',
-                source: normalizeSongGenerationSource(payload.source ?? current.source),
-                submitting: false,
-                suggesting: false,
-                error: null,
-              }
-            : current,
-        );
       }
     });
   }, [articleId, onNotice]);
@@ -5666,177 +5789,6 @@ function ListeningPage({
     }
   };
 
-  const openSongDialog = async () => {
-    if (busy) return;
-    let currentSongState = songState;
-    if (!currentSongState) {
-      try {
-        currentSongState = await sendNative<ListeningSongStatePayload>('listening.songState', { articleId });
-        setSongState(currentSongState);
-      } catch {
-        currentSongState = null;
-      }
-    }
-    const versions = currentSongState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
-    const preferredSource = normalizeSongGenerationSource(
-      songSettings?.songProvider ?? currentSongState?.source ?? 'suno',
-    );
-    setSongDialog({
-      activeTab: mode === 'song' || versions.length > 0 ? 'play' : 'settings',
-      source: preferredSource,
-      suggesting: false,
-      submitting: false,
-      error: currentSongState?.status === 'error' ? currentSongState.errorMessage?.trim() || null : null,
-    });
-  };
-
-  const generateSong = async () => {
-    if (!songDialog || songDialog.submitting || songDialog.suggesting) return;
-
-    const lyrics = songLyricsFromItems(items);
-    const selectedSource = normalizeSongGenerationSource(songDialog.source);
-    const confirmed = selectedSource === 'suno'
-      ? window.confirm(
-          '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词，并每次点击 Suno 蓝色魔法棒根据歌词重新生成风格；点击 Create 前会再次确认消耗 Suno credits。是否继续？',
-        )
-      : window.confirm('将调用阿里云百聆（Fun-Music）根据当前英文歌词生成歌曲。若 Key 未开通该能力，供应商错误会直接显示，且不会自动回退到 Suno。是否继续？');
-    if (!confirmed) return;
-
-    setSongDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
-    setSongState({
-      articleId,
-      status: 'generating',
-      errorMessage: null,
-      source: selectedSource,
-      manualActionMessage:
-        selectedSource === 'suno'
-          ? 'Suno 页面已打开，请先在页面中自行登录。'
-          : '阿里云百聆正在根据当前歌词生成歌曲。',
-    });
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songGenerate', {
-        articleId,
-        source: selectedSource,
-        lyrics,
-      });
-      setSongState(payload);
-      setSongDialog((current) =>
-        current
-            ? {
-                ...current,
-                activeTab: payload.status === 'ready' || isSunoWaitingConfirm(payload) ? 'play' : current.activeTab,
-                source: normalizeSongGenerationSource(payload.source ?? selectedSource),
-                submitting: false,
-              }
-            : current,
-      );
-    } catch (songError) {
-      const message = songError instanceof Error ? songError.message : '歌曲生成提交失败';
-      setSongState({
-        articleId,
-        status: 'error',
-        source: selectedSource,
-        errorMessage: message,
-      });
-      setSongDialog((current) =>
-        current
-          ? {
-              ...current,
-              submitting: false,
-              error: message,
-            }
-          : current,
-      );
-    }
-  };
-
-  const importExternalSong = async () => {
-    if (songDialog?.submitting || songDialog?.suggesting) return;
-    setSongDialog((current) => (current ? { ...current, submitting: true, error: null } : current));
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songImportExternal', {
-        articleId,
-        source: songState?.source ?? songDialog?.source ?? 'suno',
-      });
-      setSongState(payload);
-      if (!payload.importCancelled) {
-        const importedDefaultId = payload.versions?.find((version) => version.isDefault)?.id ?? '';
-        if (importedDefaultId) {
-          setSelectedSongVersionId(importedDefaultId);
-        }
-      }
-      setSongDialog((current) =>
-        current
-          ? {
-              ...current,
-              activeTab: 'play',
-              submitting: false,
-              error: null,
-            }
-          : current,
-      );
-      onNotice(payload.importCancelled ? '已取消导入本地音乐' : '已导入本地音乐');
-    } catch (importError) {
-      const message = importError instanceof Error ? importError.message : '本地音乐导入失败';
-      setSongDialog((current) =>
-        current
-          ? {
-              ...current,
-              submitting: false,
-              error: message,
-            }
-          : current,
-      );
-      onNotice(message);
-    }
-  };
-
-  const confirmSunoCreate = async () => {
-    if (!songState || !isSunoWaitingConfirm(songState)) return;
-    const confirmed = window.confirm('确认消耗 Suno credits 并创建歌曲？');
-    if (!confirmed) return;
-    const previousState = songState;
-    setSongState({
-      ...previousState,
-      status: 'generating',
-      automationStatus: 'creating',
-      manualActionMessage: 'Suno 正在生成歌曲...',
-      errorMessage: null,
-    });
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songConfirmSunoCreate', { articleId });
-      setSongState(payload);
-    } catch (songError) {
-      setSongState({
-        ...previousState,
-        status: 'error',
-        errorMessage: songError instanceof Error ? songError.message : 'Suno 确认创建失败',
-      });
-    }
-  };
-
-  const retrySunoDownload = async () => {
-    if (songState?.source !== 'suno') return;
-    const previousState = songState;
-    setSongState({
-      ...previousState,
-      status: 'generating',
-      automationStatus: 'downloading',
-      manualActionMessage: '正在打开 Suno 已生成歌曲并尝试下载...',
-      errorMessage: null,
-    });
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songDownloadSunoExisting', { articleId });
-      setSongState(payload);
-    } catch (songError) {
-      setSongState({
-        ...previousState,
-        status: 'error',
-        errorMessage: songError instanceof Error ? songError.message : 'Suno 歌曲下载检测失败',
-      });
-    }
-  };
-
   const playSongVersion = async (versionId?: string, startLineIndex = currentIndex) => {
     if (!songState || (songState.status !== 'ready' && songState.status !== 'playing')) return;
     const safeStartLineIndex = Math.max(0, Math.min(startLineIndex, Math.max(items.length - 1, 0)));
@@ -5881,45 +5833,6 @@ function ListeningPage({
     }
   };
 
-  const generateSongTimeline = async (versionId: string) => {
-    if (!songState) return;
-    setSongState((current) =>
-      current
-        ? {
-            ...current,
-            versions: current.versions?.map((version) =>
-              version.id === versionId
-                ? { ...version, timelineStatus: 'generating', timelineError: null }
-                : version,
-            ),
-          }
-        : current,
-    );
-    try {
-      const payload = await sendNative<ListeningSongStatePayload>('listening.songTimelineGenerate', {
-        articleId,
-        versionId,
-      });
-      setSongState((current) =>
-        current?.status === 'playing' ? { ...payload, status: 'playing' } : payload,
-      );
-    } catch (songError) {
-      const message = songError instanceof Error ? songError.message : '歌曲字幕生成失败';
-      setSongState((current) =>
-        current
-          ? {
-              ...current,
-              versions: current.versions?.map((version) =>
-                version.id === versionId
-                  ? { ...version, timelineStatus: 'error', timelineError: message }
-                  : version,
-              ),
-            }
-          : current,
-      );
-    }
-  };
-
   const recordSongVideo = async (versionId: string, selectedSettings = recordingSettings) => {
     if (!selectedSettings || recordingBusy) return;
     setRecordingBusy(true);
@@ -5947,18 +5860,6 @@ function ListeningPage({
       setRecordingError(recordError instanceof Error ? recordError.message : '录制歌曲视频失败');
     } finally {
       setRecordingBusy(false);
-    }
-  };
-
-  const exportSongAudio = async (versionId: string) => {
-    try {
-      await sendNative<ListeningSongAudioExportPayload>('listening.songExportAudio', {
-        articleId,
-        versionId,
-      });
-      onNotice('音频已导出到 recording-export/mp3');
-    } catch (exportError) {
-      onNotice(exportError instanceof Error ? exportError.message : '音频导出失败');
     }
   };
 
@@ -6322,12 +6223,6 @@ function ListeningPage({
     pictureReadiness: recordingPictureReadiness,
   });
   const canRecordSongVideo = songVideoExportReadiness.ready && !busy;
-  const canRetrySunoDownload =
-    songState?.source === 'suno' &&
-    songState?.status !== 'playing' &&
-    songState?.downloadComplete !== true &&
-    !songWaitingConfirm &&
-    !(songGenerating && songState?.automationStatus !== 'manualAction');
   const modeSwitch = onSwitchMode ? (
     <div className="segmented-control listening-mode-switch" role="tablist" aria-label="播放模式">
       <button
@@ -6660,38 +6555,6 @@ function ListeningPage({
           onConfirm={() => void saveSentenceEdit(true)}
         />
       )}
-      {songDialog && (
-        <SongDialog
-          state={songDialog}
-          songState={songState}
-          songVersions={songVersions}
-          allowGeneration={mode !== 'song'}
-          canRetrySunoDownload={canRetrySunoDownload}
-          songWaitingConfirm={songWaitingConfirm}
-          songGenerating={songGenerating}
-          songPlaying={songPlaying}
-          recordingBusy={recordingBusy}
-          onSourceChange={(source) =>
-            setSongDialog((current) => (current ? { ...current, source, error: null } : current))
-          }
-          onTabChange={(activeTab) =>
-            setSongDialog((current) => (current ? { ...current, activeTab } : current))
-          }
-          onCancel={() => {
-            setSongDialog(null);
-          }}
-          onConfirm={() => void generateSong()}
-          onImportExternal={() => void importExternalSong()}
-          onConfirmSunoCreate={() => void confirmSunoCreate()}
-          onRetrySunoDownload={() => void retrySunoDownload()}
-          onPlayVersion={(versionId) => void playSongVersion(versionId)}
-          onSetDefaultVersion={(versionId) => void setDefaultSongVersion(versionId)}
-          onGenerateTimeline={(versionId) => void generateSongTimeline(versionId)}
-          onRecordSongVideo={(versionId) => void recordSongVideo(versionId)}
-          onExportSongAudio={(versionId) => void exportSongAudio(versionId)}
-          onStopSong={() => void stopSong()}
-        />
-      )}
       {fullscreenPlayerOpen && article && (
         <FullscreenListeningPlayer
           article={article}
@@ -6811,270 +6674,6 @@ function SentenceEditDialog({
         </div>
       </section>
     </div>,
-    document.body,
-  );
-}
-
-function SongDialog({
-  state,
-  songState,
-  songVersions,
-  allowGeneration = true,
-  canRetrySunoDownload,
-  songWaitingConfirm,
-  songGenerating,
-  songPlaying,
-  recordingBusy,
-  onTabChange,
-  onSourceChange,
-  onCancel,
-  onConfirm,
-  onImportExternal,
-  onConfirmSunoCreate,
-  onRetrySunoDownload,
-  onPlayVersion,
-  onSetDefaultVersion,
-  onGenerateTimeline,
-  onRecordSongVideo,
-  onExportSongAudio,
-  onStopSong,
-}: {
-  state: SongDialogState;
-  songState: ListeningSongStatePayload | null;
-  songVersions: NonNullable<ListeningSongStatePayload['versions']>;
-  allowGeneration?: boolean;
-  canRetrySunoDownload: boolean;
-  songWaitingConfirm: boolean;
-  songGenerating: boolean;
-  songPlaying: boolean;
-  recordingBusy: boolean;
-  onTabChange: (tab: SongDialogTab) => void;
-  onSourceChange: (source: SongGenerationSource) => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-  onImportExternal: () => void;
-  onConfirmSunoCreate: () => void;
-  onRetrySunoDownload: () => void;
-  onPlayVersion: (versionId?: string) => void;
-  onSetDefaultVersion: (versionId: string) => void;
-  onGenerateTimeline: (versionId: string) => void;
-  onRecordSongVideo: (versionId: string) => void;
-  onExportSongAudio: (versionId: string) => void;
-  onStopSong: () => void;
-}) {
-  const busy = state.suggesting || state.submitting;
-  const groupedVersions = useMemo(() => groupSongVersionsForDisplay(songVersions), [songVersions]);
-  const showBailianBlocking = state.submitting && state.source === 'bailian_fun_music';
-
-  return createPortal(
-    <>
-      <div className="edit-dialog-backdrop" role="presentation">
-        <section className="edit-dialog song-style-dialog" role="dialog" aria-modal="true" aria-label="歌曲设置">
-        <div className="edit-dialog-heading">
-          <div>
-            <b>歌曲设置</b>
-            <small>{state.activeTab === 'play' ? '选择本地完整歌曲版本播放。' : '选择阿里云百聆或 Suno 网页自动化生成。'}</small>
-          </div>
-          <div className="song-style-heading-actions">
-            <button className="icon-button small" type="button" onClick={onCancel} aria-label="关闭">
-              <Icon name="exit" />
-            </button>
-          </div>
-        </div>
-
-        <div className="song-dialog-tabs" role="tablist" aria-label="歌曲面板">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={state.activeTab === 'play'}
-            className={state.activeTab === 'play' ? 'active' : ''}
-            onClick={() => onTabChange('play')}
-          >
-            播放
-          </button>
-          {allowGeneration && (
-            <button
-              type="button"
-              role="tab"
-              aria-selected={state.activeTab === 'settings'}
-              className={state.activeTab === 'settings' ? 'active' : ''}
-              onClick={() => onTabChange('settings')}
-            >
-              生成
-            </button>
-          )}
-        </div>
-
-        {state.activeTab === 'play' ? (
-          <div className="song-play-tab" role="tabpanel" aria-label="歌曲播放">
-            {songState?.status === 'error' && songState.errorMessage?.trim() && (
-              <p className="edit-dialog-error">{songState.errorMessage}</p>
-            )}
-            {songState?.manualActionMessage?.trim() && (
-              <p className="song-source-note">{songState.manualActionMessage}</p>
-            )}
-            {songGenerating && !songWaitingConfirm && (
-              <p className="song-source-note">{songAutomationStatusText(songState!)}</p>
-            )}
-            {groupedVersions.length > 0 ? (
-              <div className="song-style-groups">
-                {groupedVersions.map((group) => (
-                  <div className="song-style-group" key={group.key}>
-                    <div className="song-style-group-heading">
-                      <span>版本</span>
-                      <b>{group.label}</b>
-                    </div>
-                    <div className="song-version-row" aria-label={`${group.label} 歌曲版本`}>
-                      {group.versions.map((version, index) => {
-                        const title = version.title?.trim() || `版本 ${index + 1}`;
-                        const timelineStatus = normalizeTimelineStatus(version.timelineStatus, version.timelinePath);
-                        const timelineReady = timelineStatus === 'ready';
-                        const timelineGenerating = timelineStatus === 'generating';
-                        const timelineBlockedTitle =
-                          timelineStatus === 'stale' ? '歌曲字幕时间线版本过旧，请重新生成字幕' : '请先生成歌曲字幕';
-                        return (
-                          <div className="song-version-actions" key={version.id}>
-                            <button
-                              className={`icon-button small song-default-button ${version.isDefault ? 'active' : ''}`}
-                              type="button"
-                              disabled={busy}
-                              aria-label={version.isDefault ? `${title} 已是默认播放歌曲` : `设为默认播放歌曲：${title}`}
-                              title={version.isDefault ? '默认播放歌曲' : '设为默认播放歌曲'}
-                              onClick={() => onSetDefaultVersion(version.id)}
-                            >
-                              <Icon name="star" />
-                            </button>
-                            <button
-                              className="ghost-action small song-title-button"
-                              type="button"
-                              onClick={() => onPlayVersion(version.id)}
-                              disabled={busy || songGenerating}
-                              title={title}
-                            >
-                              <Icon name="sound" /> <span className="song-version-title">{title}{version.isDefault ? ' · 默认' : ''}</span>
-                            </button>
-                            <button
-                              className="ghost-action small"
-                              type="button"
-                              onClick={() => onGenerateTimeline(version.id)}
-                              disabled={busy || songGenerating || timelineGenerating}
-                              title={version.timelineError?.trim() || undefined}
-                            >
-                              <Icon name={timelineGenerating ? 'refresh' : 'sentence'} /> {songTimelineLabel(timelineStatus)}
-                            </button>
-                            <button
-                              className="ghost-action small"
-                              type="button"
-                              onClick={() => onRecordSongVideo(version.id)}
-                              disabled={busy || songGenerating || recordingBusy || !timelineReady}
-                              title={timelineReady ? '录制歌曲视频' : timelineBlockedTitle}
-                            >
-                              <Icon name="recordVideo" /> 录制歌曲视频
-                            </button>
-                            <button
-                              className="ghost-action small"
-                              type="button"
-                              onClick={() => onExportSongAudio(version.id)}
-                              disabled={busy || songGenerating || recordingBusy || !version.audioPath?.trim()}
-                              title="导出音频文件"
-                            >
-                              <Icon name="download" /> 导出音频文件
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="song-source-note">还没有本地完整歌曲版本。</p>
-            )}
-            <div className="song-dialog-action-row">
-              {songPlaying && (
-                <button className="danger-light small" type="button" onClick={onStopSong}>
-                  <Icon name="stop" /> 停止播放
-                </button>
-              )}
-              {state.source === 'suno' && songWaitingConfirm && (
-                <button className="primary-action small" type="button" onClick={onConfirmSunoCreate} disabled={busy}>
-                  <Icon name="music" /> 确认创建歌曲
-                </button>
-              )}
-              {state.source === 'suno' && canRetrySunoDownload && (
-                <button className="suno-download-action small" type="button" onClick={onRetrySunoDownload} disabled={busy}>
-                  <Icon name="download" /> 检测下载
-                </button>
-              )}
-              <button className="ghost-action small" type="button" onClick={onImportExternal} disabled={busy || songGenerating}>
-                <Icon name="folder" /> 导入本地音乐
-              </button>
-              {allowGeneration && (
-                <button className="ghost-action small" type="button" onClick={() => onTabChange('settings')} disabled={busy}>
-                  <Icon name="music" /> 生成新版本
-                </button>
-              )}
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="song-source-options" aria-label="生成来源">
-              <button
-                type="button"
-                className={state.source === 'bailian_fun_music' ? 'active' : ''}
-                disabled={busy}
-                onClick={() => onSourceChange('bailian_fun_music')}
-              >
-                阿里云百聆
-              </button>
-              <button
-                type="button"
-                className={state.source === 'suno' ? 'active' : ''}
-                disabled={busy}
-                onClick={() => onSourceChange('suno')}
-              >
-                Suno 网页自动化
-              </button>
-            </div>
-            <div className="song-source-note suno-style-preview">
-              {state.source === 'suno' ? (
-                <p>
-                  将打开 Suno 页面，请自行登录；登录后 Tomato 会自动填写歌词，并清空旧 Styles，让 Suno 自带魔法棒每次根据歌词重新生成风格。Tomato 不保存 Suno 用户名、密码或验证码。
-                </p>
-              ) : (
-                <p>
-                  将调用阿里云百聆（Fun-Music）生成音频，使用当前英文歌词作为 lyrics。该能力可能需要百炼账号开通权限，失败时会直接显示供应商返回错误。
-                </p>
-              )}
-            </div>
-          </>
-        )}
-        {state.error && <p className="edit-dialog-error">{state.error}</p>}
-        <div className="edit-dialog-actions">
-          <button className="ghost-action" type="button" onClick={onCancel}>
-            取消
-          </button>
-          {state.activeTab === 'settings' && (
-            <button
-              className="primary-action"
-              type="button"
-              onClick={onConfirm}
-              disabled={busy}
-            >
-              <Icon name={state.submitting ? 'refresh' : 'music'} /> {state.submitting ? '提交生成中' : '开始生成歌曲'}
-            </button>
-          )}
-        </div>
-        </section>
-      </div>
-      {showBailianBlocking && (
-        <AiBlockingOverlay
-          title="正在提交百聆歌曲"
-          detail="正在向阿里云百聆 Fun-Music 提交歌曲生成，请等待服务返回。"
-          timeoutSeconds={480}
-        />
-      )}
-    </>,
     document.body,
   );
 }
@@ -11379,14 +10978,6 @@ function formatRecordingVideoCreatedAt(value?: string | null): string {
   return `${month}-${day} ${hour}:${minute}`;
 }
 
-function songLyricsFromItems(items: ListeningItem[]): string {
-  return items
-    .map((item) => item.english.trim())
-    .filter(Boolean)
-    .join('\n')
-    .trim();
-}
-
 function normalizeSongSource(source?: string | null): SongSource {
   if (source === 'external_audio') return 'external_audio';
   return source === 'bailian_fun_music' ? 'bailian_fun_music' : 'suno';
@@ -11394,6 +10985,44 @@ function normalizeSongSource(source?: string | null): SongSource {
 
 function normalizeSongGenerationSource(source?: string | null): SongGenerationSource {
   return source === 'bailian_fun_music' ? 'bailian_fun_music' : 'suno';
+}
+
+function songGenerationConfirmCopy(source: SongGenerationSource): {
+  ariaLabel: string;
+  title: string;
+  message: string;
+  confirmLabel: string;
+} {
+  if (source === 'suno') {
+    return {
+      ariaLabel: '确认生成歌曲',
+      title: '确认生成歌曲',
+      message:
+        '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词，并每次点击 Suno 蓝色魔法棒根据歌词重新生成风格；点击 Create 前会再次确认消耗 Suno credits。是否继续？',
+      confirmLabel: '继续',
+    };
+  }
+  return {
+    ariaLabel: '确认生成歌曲',
+    title: '确认生成歌曲',
+    message:
+      '将调用阿里云百聆（Fun-Music）根据当前英文歌词生成歌曲。若 Key 未开通该能力，供应商错误会直接显示，且不会自动回退到 Suno。是否继续？',
+    confirmLabel: '继续',
+  };
+}
+
+function sunoCreateConfirmCopy(): {
+  ariaLabel: string;
+  title: string;
+  message: string;
+  confirmLabel: string;
+} {
+  return {
+    ariaLabel: '确认创建 Suno 歌曲',
+    title: '确认创建歌曲',
+    message: '确认消耗 Suno credits 并创建歌曲？',
+    confirmLabel: '确认创建',
+  };
 }
 
 function normalizeAiProvider(provider?: string | null): AiProvider {

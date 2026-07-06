@@ -1,5 +1,19 @@
 # 修改日志
 
+## 2026-07-07
+
+- 实测确认 `AiBlockingOverlay` GPU 占用降频改动后可接受；旋转图标观感不佳，改为三点跳动样式：`web_ui/src/App.tsx` 的 `.ai-blocking-spinner` 内不再渲染 `Icon name="refresh"`，改为三个 `.blocking-dots span` 圆点；`web_ui/src/styles.css` 新增 `blocking-dot-bounce` 动画（`1s steps(5, end) infinite`，5 步 × 200ms = 1s，仍是 **5fps** 节奏，配合 `animation-delay` 错开三点），移除此前的 `blocking-overlay-spin` 旋转规则；`prefers-reduced-motion: reduce` 下停止动画并固定半透明。仅作用于阻塞遮罩等待图标，不影响歌曲按钮、绘本 placeholder 等其它 `.icon-refresh` loading 图标。详见 `docs/video_export_wait_dialog_gpu_optimization.md`。
+- `AiBlockingOverlay` 等待对话框旋转图标降频：`web_ui/src/styles.css` 将 `.ai-blocking-spinner .icon-refresh` 从 `picture-spin 900ms linear` 改为专用 `blocking-overlay-spin 2.4s steps(12, end)`（5fps 分步旋转）；`prefers-reduced-motion: reduce` 下停用动画。仅作用于阻塞遮罩 spinner，不影响歌曲按钮、绘本 placeholder 等其它 loading 图标。详见 `docs/video_export_wait_dialog_gpu_optimization.md`。（同日后续改为三点跳动样式，见上条）
+- `AiBlockingOverlay` 移除全屏 `backdrop-filter`：`.ai-blocking-backdrop` 删除 `blur(2px)`，底色改为 `rgba(15, 23, 42, 0.55)`，降低 WebView2 等待期间整窗模糊重合成开销。`RecordingProgressOverlay` / `.audio-material-progress-overlay` 仍保留原 blur，待后续统一评估。
+- Web UI 统一 `ConfirmDialog`：`window.confirm` 全部替换为 `createPortal(document.body)` 的应用内确认框；`ConfirmDialog` 支持 Esc 取消、Tab 焦点陷阱、点击遮罩取消、打开时聚焦取消按钮。创作中心「生成百聆 / Suno 歌曲」与 Suno 二次确认均走同一套 `songGenerationConfirmCopy` / `sunoCreateConfirmCopy` 文案。
+- 听力页不再保留歌曲生成入口：移除未接线的 `SongDialog` / `openSongDialog` / 「歌曲管理」按钮及仅服务于该弹窗的生成、导入、检测下载逻辑；歌曲生成、导入、字幕与版本管理统一在创作中心完成，听力页仅保留 **歌曲模式** 下的播放、全屏与导出视频。
+
+验证：
+
+- `cd web_ui && npm test -- --run`（145 passed）
+
+- 新增文档 `docs/video_export_wait_dialog_gpu_optimization.md`：分析生成视频等待对话框期间 GPU 占用严重的根因（全屏 `backdrop-filter: blur` 叠加 spinner 无限动画导致 WebView2 每帧整窗口模糊重合成，底层页面未冻结继续渲染），落档分级优化方案（P0 移除等待遮罩 backdrop-filter、spinner 降频；P1 对话框期间冻结底层页面；P2 进度事件节流与进度条 transform 化）及测量验收标准。方案覆盖 `AiBlockingOverlay`、`RecordingProgressOverlay` 和 `.audio-material-progress-overlay`。
+
 ## 2026-07-06
 
 - 修正英文原文课程稿正文边界解析：`【文化卡片】` / `生词好句` / `重点词汇` 等学习材料 heading 现在即使处于 `【拓展】` soft interruption 内也会直接结束故事正文；`【拓展】` 后恢复正文不再仅凭引号或撇号开头，而是要求明确故事叙事信号或已有故事诗歌续行规则，避免把原诗、词汇例句误收进文章。

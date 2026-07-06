@@ -1,3 +1,23 @@
+## 2026-07-07 视频导出等待框与确认交互更新
+
+- [x] 文档更新：视频导出等待对话框 GPU 占用优化方案
+
+  处理记录：新增 `docs/video_export_wait_dialog_gpu_optimization.md`，落档等待对话框 GPU 占用根因（全屏 blur/backdrop-filter 与持续动画叠加），并给出 P0/P1/P2 分级优化路径与验收口径。同步更新 `docs/change_log.md`，记录 `AiBlockingOverlay` 从旋转刷新图标改为三点跳动（5fps steps）、移除其 `backdrop-filter`，以及 `prefers-reduced-motion` 退化策略。
+
+- [x] UI 交互优化：统一从 `window.confirm` 切换到应用内 `ConfirmDialog`
+
+  处理记录：`web_ui/src/App.tsx` 中章节删除、歌曲生成/确认创建、歌曲删除、视频删除等入口改为 `ConfirmDialog`；创作中心百聆/Suno 首次生成与二次确认共用 `songGenerationConfirmCopy` / `sunoCreateConfirmCopy`。`ConfirmDialog` 支持 Esc 取消、Tab 焦点陷阱、遮罩点击取消；补充 `web_ui/src/App.test.tsx` 确认/取消路径（含创作中心歌曲生成）。
+
+- [x] 听力页歌曲入口收敛
+
+  处理记录：移除听力页未接线的 `SongDialog`、`openSongDialog` 与「歌曲管理」按钮；歌曲生成、导入、字幕与版本管理仅在创作中心提供，听力页保留歌曲模式下的播放/全屏/导出视频。
+
+- [x] Web 构建产物同步
+
+  处理记录：`web_ui` 构建后同步刷新 `app/assets/web/index.html` 与 hash 资源文件。
+
+  验证记录：`cd web_ui && npm test -- --run`（145 passed）。
+
 ## 2026-07-06 文档同步与 QA 默认配置
 
 - [x] 文档同步：绘本章节规划 prompt 输出边界、Windows QA 默认开启、脚本示例命令简化

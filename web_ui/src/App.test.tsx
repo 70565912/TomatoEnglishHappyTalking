@@ -19,6 +19,31 @@ function chooseRecordingOption(dialog: HTMLElement, label: string, option: strin
   fireEvent.click(within(dialog).getByRole('option', { name: option }));
 }
 
+async function findConfirmDialog(ariaLabel: string, message?: string | RegExp) {
+  const dialog = await screen.findByRole('dialog', { name: ariaLabel });
+  if (message) {
+    expect(within(dialog).getByText(message)).toBeInTheDocument();
+  }
+  return dialog;
+}
+
+async function cancelConfirmDialog(ariaLabel: string, message?: string | RegExp) {
+  const dialog = await findConfirmDialog(ariaLabel, message);
+  fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+  await waitFor(() => {
+    expect(screen.queryByRole('dialog', { name: ariaLabel })).not.toBeInTheDocument();
+  });
+}
+
+async function confirmDialogAction(
+  ariaLabel: string,
+  confirmButtonName: string | RegExp,
+  message?: string | RegExp,
+) {
+  const dialog = await findConfirmDialog(ariaLabel, message);
+  fireEvent.click(within(dialog).getByRole('button', { name: confirmButtonName }));
+}
+
 function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
   const scenes = [
     {
@@ -1278,19 +1303,17 @@ describe('App', () => {
     const chapterDeleteButtons = container.querySelectorAll('.mission-row .delete-action');
     expect(chapterDeleteButtons).toHaveLength(1);
 
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     fireEvent.click(chapterDeleteButtons[0]);
-    expect(confirmSpy).toHaveBeenCalledWith('确定删除章节“Draft Chapter”？删除后不可恢复。');
+    await cancelConfirmDialog('删除章节确认', '确定删除章节“Draft Chapter”？删除后不可恢复。');
     expect(calls.some((call) => call.type === 'article.delete')).toBe(false);
 
-    confirmSpy.mockReturnValue(true);
     fireEvent.click(chapterDeleteButtons[0]);
+    await confirmDialogAction('删除章节确认', '删除', '确定删除章节“Draft Chapter”？删除后不可恢复。');
 
     await waitFor(() => {
       expect(calls.find((call) => call.type === 'article.delete')?.payload).toMatchObject({ articleId: 42 });
     });
     expect(await screen.findByText('章节已删除')).toBeInTheDocument();
-    confirmSpy.mockRestore();
   });
 
   it('exports and imports books from the creation center', async () => {
@@ -1962,7 +1985,6 @@ describe('App', () => {
 
   it('confirms before overwriting complete listening audio material', async () => {
     window.location.hash = '/creation?articleId=42&seriesId=9';
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const article = {
       id: 42,
       title: 'Draft Chapter',
@@ -2037,37 +2059,38 @@ describe('App', () => {
       }),
     };
 
-    try {
-      render(<App />);
-      expect(await screen.findByText('2 / 2 已生成')).toBeInTheDocument();
-      fireEvent.click(await screen.findByRole('button', { name: /生成听力/ }));
+    render(<App />);
+    expect(await screen.findByText('2 / 2 已生成')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: /生成听力/ }));
 
-      const confirmDialog = await screen.findByRole('dialog', { name: '覆盖听力材料确认' });
-      expect(confirmDialog.closest('.edit-dialog-backdrop')?.parentElement).toBe(document.body);
-      expect(within(confirmDialog).getByText('听力材料已经生成 2 / 2。是否覆盖原内容并重新提交远程语音合成？')).toBeInTheDocument();
-      expect(confirmSpy).not.toHaveBeenCalled();
-      expect(calls.some((call) => call.type === 'listening.audioGenerate')).toBe(false);
+    await cancelConfirmDialog(
+      '覆盖听力材料确认',
+      '听力材料已经生成 2 / 2。是否覆盖原内容并重新提交远程语音合成？',
+    );
+    expect(calls.some((call) => call.type === 'listening.audioGenerate')).toBe(false);
 
-      fireEvent.click(within(confirmDialog).getByRole('button', { name: /覆盖生成/ }));
-      const progressDialog = await screen.findByRole('dialog', { name: '正在生成听力材料' });
-      expect(screen.queryByRole('dialog', { name: '覆盖听力材料确认' })).not.toBeInTheDocument();
-      expect(progressDialog.closest('.audio-material-progress-overlay')).toBeTruthy();
-      expect(progressDialog.closest('.edit-dialog-backdrop')).toBeNull();
-      await waitFor(() => {
-        expect(calls.find((call) => call.type === 'listening.audioGenerate')?.payload).toMatchObject({
-          articleId: article.id,
-          overwrite: true,
-        });
+    fireEvent.click(await screen.findByRole('button', { name: /生成听力/ }));
+    const confirmDialog = await findConfirmDialog('覆盖听力材料确认', '听力材料已经生成 2 / 2。是否覆盖原内容并重新提交远程语音合成？');
+    expect(confirmDialog.closest('.edit-dialog-backdrop')?.parentElement).toBe(document.body);
+    expect(calls.some((call) => call.type === 'listening.audioGenerate')).toBe(false);
+
+    await confirmDialogAction('覆盖听力材料确认', /覆盖生成/);
+    const progressDialog = await screen.findByRole('dialog', { name: '正在生成听力材料' });
+    expect(screen.queryByRole('dialog', { name: '覆盖听力材料确认' })).not.toBeInTheDocument();
+    expect(progressDialog.closest('.audio-material-progress-overlay')).toBeTruthy();
+    expect(progressDialog.closest('.edit-dialog-backdrop')).toBeNull();
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'listening.audioGenerate')?.payload).toMatchObject({
+        articleId: article.id,
+        overwrite: true,
       });
-      await act(async () => {
-        resolveGenerate?.();
-      });
-      await waitFor(() => {
-        expect(screen.queryByRole('dialog', { name: '正在生成听力材料' })).not.toBeInTheDocument();
-      });
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    });
+    await act(async () => {
+      resolveGenerate?.();
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '正在生成听力材料' })).not.toBeInTheDocument();
+    });
   });
 
   it('keeps the creation-center chapter list expanded when selecting chapter actions', async () => {
@@ -3268,8 +3291,18 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('英文'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('中文'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: '隐藏本句' }));
-    expect(await screen.findByRole('dialog', { name: '隐藏字幕确认' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '确定隐藏' }));
+    await cancelConfirmDialog(
+      '隐藏字幕确认',
+      '槽位编号不变，歌曲字幕不变。稍后重新填入英文即可恢复。',
+    );
+    expect(calls.some((call) => call.type === 'listening.updateSentence')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '隐藏本句' }));
+    await confirmDialogAction(
+      '隐藏字幕确认',
+      '确定隐藏',
+      '槽位编号不变，歌曲字幕不变。稍后重新填入英文即可恢复。',
+    );
 
     await waitFor(() => {
       expect(calls.find((call) => call.type === 'listening.updateSentence')?.payload).toMatchObject({
@@ -3484,7 +3517,6 @@ describe('App', () => {
 
   it('exports listening video from the creation center video tab', async () => {
     window.location.hash = '/creation?articleId=1';
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const article = {
       id: 1,
       title: 'Space Snacks',
@@ -3697,7 +3729,7 @@ describe('App', () => {
       expect(calls.some((call) => call.type === 'recording.videoSetDefault' && call.payload.videoId === 'video-old')).toBe(true);
     });
     fireEvent.click(within(videoList).getAllByRole('button', { name: /删除视频：/ })[0]);
-    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('确定删除视频'));
+    await confirmDialogAction('删除视频确认', '删除', /确定删除视频“.+”？此操作会删除本地视频文件和字幕文件，不能撤销。/);
     await waitFor(() => {
       expect(calls.some((call) => call.type === 'recording.videoDelete' && call.payload.videoId === 'video-new')).toBe(true);
     });
@@ -3743,7 +3775,6 @@ describe('App', () => {
     await waitFor(() => expect(screen.queryByText('正在导出听力视频')).not.toBeInTheDocument());
     expect(await within(videoList).findByText('2 个版本')).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '录制视频设置' })).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
   });
 
   it('keeps creation-center listening video export clickable while settings and readiness are loading', async () => {
@@ -5528,6 +5559,7 @@ describe('App', () => {
     const generateButton = await screen.findByRole('button', { name: /生成 Suno 歌曲/ });
     await waitFor(() => expect(generateButton).not.toBeDisabled());
     fireEvent.click(generateButton);
+    await confirmDialogAction('确认生成歌曲', '继续', /即将打开 Suno/);
 
     await waitFor(() => {
       const generateCall = calls.find((call) => call.type === 'listening.songGenerate');
@@ -5609,6 +5641,7 @@ describe('App', () => {
     const generateButton = await screen.findByRole('button', { name: /生成百聆歌曲/ });
     await waitFor(() => expect(generateButton).not.toBeDisabled());
     fireEvent.click(generateButton);
+    await confirmDialogAction('确认生成歌曲', '继续', /百聆/);
 
     await waitFor(() => expect(generatePayloads[0]).toMatchObject({ articleId: 1, source: 'bailian_fun_music' }));
     expect(await screen.findByText('正在提交百聆歌曲')).toBeInTheDocument();
@@ -5730,7 +5763,6 @@ describe('App', () => {
 
   it('submits Suno song generation with explicit login guidance', async () => {
     window.location.hash = '/creation?articleId=1';
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const article = {
       id: 1,
       title: 'Space Snacks',
@@ -5820,26 +5852,24 @@ describe('App', () => {
     const generateButton = await screen.findByRole('button', { name: /生成 Suno 歌曲/ });
     await waitFor(() => expect(generateButton).not.toBeDisabled());
     fireEvent.click(generateButton);
+    await confirmDialogAction('确认生成歌曲', '继续', /即将打开 Suno/);
 
     await waitFor(() => expect(generatePayloads[0]?.source).toBe('suno'));
     expect(generatePayloads[0]).not.toHaveProperty('stylePrompt');
-    expect(confirmSpy).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(
         screen.getAllByText('Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。').length,
       ).toBeGreaterThan(0),
     );
     fireEvent.click(await screen.findByRole('button', { name: /确认创建歌曲/ }));
+    await confirmDialogAction('确认创建 Suno 歌曲', '确认创建', '确认消耗 Suno credits 并创建歌曲？');
 
     await waitFor(() => expect(confirmPayloads[0]).toMatchObject({ articleId: 1 }));
     await waitFor(() => expect(screen.getAllByText('Suno 正在生成歌曲...').length).toBeGreaterThan(0));
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    confirmSpy.mockRestore();
   });
 
   it('shows manual Suno action guidance in the creation center', async () => {
     window.location.hash = '/creation?articleId=1';
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const article = {
       id: 1,
       title: 'Space Snacks',
@@ -5905,6 +5935,7 @@ describe('App', () => {
     await clickSelectedCreationAction('歌曲');
     expect(await screen.findByText('歌曲生成')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: /生成 Suno 歌曲/ }));
+    await confirmDialogAction('确认生成歌曲', '继续', /即将打开 Suno/);
 
     await waitFor(() =>
       expect(
@@ -5912,7 +5943,88 @@ describe('App', () => {
       ).toBeGreaterThan(0),
     );
     expect(screen.queryByRole('dialog', { name: '歌曲设置' })).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
+  });
+
+  it('cancels creation-center song generation confirms without submitting', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const generatePayloads: Array<Record<string, unknown>> = [];
+    const confirmPayloads: Array<Record<string, unknown>> = [];
+    let songStatePayload: Record<string, unknown> = {
+      articleId: article.id,
+      status: 'empty',
+      source: 'suno',
+      stylePrompt: '',
+      audioPath: null,
+      errorMessage: '',
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, songStatePayload);
+        }
+        if (type === 'listening.songGenerate') {
+          generatePayloads.push(payload);
+          songStatePayload = {
+            articleId: article.id,
+            status: 'generating',
+            source: 'suno',
+            automationStatus: 'waitingConfirm',
+            manualActionMessage: 'Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。',
+          };
+          return ok(message.id, type, songStatePayload);
+        }
+        if (type === 'listening.songConfirmSunoCreate') {
+          confirmPayloads.push(payload);
+          return ok(message.id, type, { articleId: article.id, status: 'generating', source: 'suno' });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    await clickSelectedCreationAction('歌曲');
+    expect(await screen.findByText('歌曲生成')).toBeInTheDocument();
+
+    fireEvent.click(await screen.findByRole('button', { name: /生成百聆歌曲/ }));
+    await cancelConfirmDialog('确认生成歌曲', /百聆/);
+    expect(generatePayloads).toHaveLength(0);
+
+    fireEvent.click(await screen.findByRole('button', { name: /生成 Suno 歌曲/ }));
+    await cancelConfirmDialog('确认生成歌曲', /即将打开 Suno/);
+    expect(generatePayloads).toHaveLength(0);
+
+    fireEvent.click(await screen.findByRole('button', { name: /生成 Suno 歌曲/ }));
+    await confirmDialogAction('确认生成歌曲', '继续', /即将打开 Suno/);
+    await waitFor(() => expect(generatePayloads).toHaveLength(1));
+
+    fireEvent.click(await screen.findByRole('button', { name: /确认创建歌曲/ }));
+    await cancelConfirmDialog('确认创建 Suno 歌曲', '确认消耗 Suno credits 并创建歌曲？');
+    expect(confirmPayloads).toHaveLength(0);
   });
 
   it('retries downloading an existing Suno song link', async () => {
@@ -6009,7 +6121,6 @@ describe('App', () => {
     const playPayloads: Array<Record<string, unknown>> = [];
     const timelinePayloads: Array<Record<string, unknown>> = [];
     const deletePayloads: Array<Record<string, unknown>> = [];
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
       id: String(id),
       ok: true,
@@ -6118,17 +6229,14 @@ describe('App', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: '删除歌曲：Suno 版本 2' }));
-
-    expect(confirmSpy).toHaveBeenCalledWith('确认删除歌曲「Suno 版本 2」以及它的字幕时间轴？删除后不可恢复。');
+    await confirmDialogAction('删除歌曲确认', '删除', '确认删除歌曲「Suno 版本 2」以及它的字幕时间轴？删除后不可恢复。');
     await waitFor(() => expect(deletePayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-v2' }));
     expect(await screen.findByText('已删除歌曲')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Suno 版本 2' })).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
   }, 10000);
 
   it('marks stale song timelines as needing regeneration in the creation center', async () => {
     window.location.hash = '/creation?articleId=1';
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     const article = {
       id: 1,
       title: 'Space Snacks',
@@ -6197,10 +6305,8 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '导出音频文件' })).not.toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: '删除歌曲：旧字幕版本' }));
-
-    expect(confirmSpy).toHaveBeenCalledWith('确认删除歌曲「旧字幕版本」以及它的字幕时间轴？删除后不可恢复。');
+    await confirmDialogAction('删除歌曲确认', '删除', '确认删除歌曲「旧字幕版本」以及它的字幕时间轴？删除后不可恢复。');
     await waitFor(() => expect(deletePayloads[0]).toMatchObject({ articleId: 1, versionId: 'suno-stale' }));
-    confirmSpy.mockRestore();
   });
 
   it('plays and defaults a selected song from the book player controls', async () => {
