@@ -247,6 +247,7 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 绘本生成策略为“每篇文章/每章一组连续分镜图”：用户确认 `picture_book_chapter_scene_plan_v2` 的 `scenes[]` 后，按 scene 创建多条 `picture_book_pages`；第 1 张对应第 1 个 scene，第 N 张对应第 N 个 scene，不做候选图筛选。
 - 正常 scene 数最多 12 段，`picture_book_pages` 必须覆盖完整句子范围；超长章节在章节场景规划阶段合并相邻场景，不拆成多组图片请求。
 - 章节组图 prompt 只使用 `bookDescription` / `chapterDescription` / `scenes[].sceneDescription`，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。角色外观锚点优先只放在书籍简介；章节中新出现且书籍简介没有覆盖的视觉角色，可在章节描述里简短补充，不要在每个分镜里重复角色外貌。
+- 章节规划 AI 使用完整原文作为可见细节来源，但 `chapterDescription` / `scenes[].sceneDescription` 必须排除直接引语、对话内容、歌词/喊话文本和内心独白原句；只保留动作、物体、地点、姿态、场景状态、人物关系、情绪表现等图片可表达信息。不要新增本地对话剔除器，也不要为去对话额外增加一次文本 AI 调用；通过 `picture_book_chapter_scene_plan_v2` 的同一次规划 prompt 约束完成。分镜策略仍按 visual story beat，不因 dialogue turns 拆分。
 - Web UI 中“书籍”就是 `story_series`；书籍模型只保留 `title` / `description` / `cover_image_path`。新增章节保存后必须打开 `pictureBook.promptReview` 审核弹窗，用户确认 `pictureBook.confirmPromptReview` 后才提交顺序组图；`pictureBook.generate` / `retryPage` 只能作为打开审核流程的兼容入口，不得绕过审核直接消耗图片 API。
 - 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
 - 绘本图片 prompt 使用 `picture_book_group_prompt_scene_description_v2` / `picture_book_chapter_scene_plan_v2`：最终提交图片模型的 `groupPrompt` 只拼接书籍描述、章节描述和每张图的分镜描述。不要重新引入 series Bible、角色卡、参考图、`styleGuide`、`audience`、`safety`、`negativePrompt`、字幕留白字段或旧分镜标题/视觉方向字段。
@@ -258,7 +259,7 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 顺序组图是正式绘本链路：`PictureBookService` 通过 `PictureBookImageService.generatePictureBookImageGroup(...)` 按当前 `ai_provider` 分流，阿里云走万相异步连续组图（`enable_sequential: true`，`n` 等于已确认 scene 数），火山走 Seedream `sequential_image_generation`（`max_images` 等于已确认 scene 数）。组图失败不自动回退到另一平台或单图；失败页保存错误原因，重试按钮重新打开审核并在确认后重建整章组图。
 - 单页重生成（`pictureBook.pagePromptReview` / `confirmPagePromptReview`）在审核弹窗中让用户多选已生成页作参考图（含当前重生成页已有图片，默认最近邻 1 张，至少 1 张、最多 14 张）；确认时提交 `referencePageIndexes`，服务端按 `pageIndex` 升序解析本地图片路径并传入 `referenceImagePaths`。整章组图不传参考图。不要恢复 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 或固定全局参考图资产。
 - 整章组图 HTTP 返回可能按每张图耗时数分钟，不能再用固定 120 秒判定失败。火山 `VolcImageService` 按请求图片数动态设置接收超时，默认每张 150 秒、最小 180 秒、最大 2700 秒；可通过 `TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE`、`TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS`、`TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS` 调整。阿里云 `AliyunWanxImageService` 使用 DashScope 异步任务轮询。最终组图 prompt 按审核内容完整提交，不做压缩或上限截断；如平台限制导致失败，先暴露真实提示词再处理。
-- 绘本保存/生成/听力模式的最终联调必须跑真实 Windows App UI。外部窗口截图不可用时，开启 `TOMATO_QA_REMOTE=true`，用 `npm run qa:picture-book-live` 通过本机 QA 控制接口填表保存、打开听力、轮询异步绘本状态、检查 loading/error/ready UI、字幕和播放；不要只用 service/test harness 作为最终结论。
+- 绘本保存/生成/听力模式的最终联调必须跑真实 Windows App UI。`tools/build_windows.ps1` 默认开启本机 QA 控制接口（`127.0.0.1:39317`）；手动 Flutter 启动时再显式开启 `TOMATO_QA_REMOTE=true`。用 `npm run qa:picture-book-live` 通过 QA 控制接口填表保存、打开听力、轮询异步绘本状态、检查 loading/error/ready UI、字幕和播放；不要只用 service/test harness 作为最终结论。
 - 对话练习提纲由 `ChatChapterGuideService` 单独生成紧凑教学覆盖点；程序内部 fallback 只在无 key/远程失败时本地生成最多 8 个覆盖点，后续聊天轮次只复用提纲，不重复提交完整章节。
 
 内容安全失败与敏感词规则：

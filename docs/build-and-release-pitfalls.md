@@ -656,7 +656,7 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 
 验证：
 
-- `.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317"` 或逗号拆成两个字符串参数，都能发布并启动 release 目录下的 Windows 程序。
+- `.\tools\build_windows.ps1 -Release -Run` 能发布并启动 release 目录下的 Windows 程序；脚本默认注入 `TOMATO_QA_REMOTE=true` 和 `TOMATO_QA_PORT=39317`。
 - QA `/health` 返回 `ok: true`、`webReady: true`。
 
 ## `-DartDefine` 逗号写在一个字符串里时 QA 不生效
@@ -669,7 +669,8 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 处理：
 
 - `tools/build_windows.ps1` 与 `tools/build_android.ps1` 的 `Expand-DartDefineValues` 会按逗号拆成多个 `KEY=VALUE`，再分别生成 `--dart-define`。
-- 仍可使用 PowerShell 数组写法：`-DartDefine "TOMATO_QA_REMOTE=true","TOMATO_QA_PORT=39317"`。
+- `tools/build_windows.ps1` 现在默认启用本机 QA；只有设置 token、改端口或显式关闭时才需要继续传 `-DartDefine`。
+- 仍可使用 PowerShell 数组写法追加或覆盖参数：`-DartDefine "TOMATO_QA_PORT=39318","TOMATO_QA_TOKEN=dev-token"`。
 
 验证：
 

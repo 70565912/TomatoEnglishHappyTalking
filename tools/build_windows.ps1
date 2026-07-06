@@ -1,5 +1,7 @@
 ﻿# Tomato English Happy Talking - Windows 编译脚本
 # 用法: .\tools\build_windows.ps1 [-Release] [-Run] [-DartDefine KEY=VALUE[,KEY=VALUE...]]
+# Windows builds default to local QA remote on 127.0.0.1:39317.
+# Pass -DartDefine TOMATO_QA_REMOTE=false to disable it for a build.
 #
 # Encoding guard:
 # Keep this file saved as UTF-8 with BOM. Windows PowerShell 5.1 may parse a
@@ -152,6 +154,31 @@ function Test-DartDefineKeyPresent {
     }
 
     return $false
+}
+
+function Add-DefaultDartDefine {
+    param(
+        [string[]]$Values,
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    if (Test-DartDefineKeyPresent -Values $Values -Key $Key) {
+        return @($Values)
+    }
+
+    return @($Values) + "$Key=$Value"
+}
+
+function Add-DefaultQaDartDefines {
+    param(
+        [string[]]$Values
+    )
+
+    $withQaRemote = Add-DefaultDartDefine -Values $Values -Key "TOMATO_QA_REMOTE" -Value "true"
+    return Add-DefaultDartDefine -Values $withQaRemote -Key "TOMATO_QA_PORT" -Value "39317"
 }
 
 function Add-DebugDesktopDataRootDefine {
@@ -718,9 +745,10 @@ try {
         & $focusPatchScript
     }
     Clear-StaleWindowsBuildCache -AppRoot (Get-Location).Path -ExpectedBinaryName "tomato_english_happy_talking"
+    $effectiveDartDefine = Add-DefaultQaDartDefines -Values $DartDefine
 
     if ($Release) {
-        $dartDefineArgs = Get-FlutterDartDefineArgs -Values $DartDefine
+        $dartDefineArgs = Get-FlutterDartDefineArgs -Values $effectiveDartDefine
         Write-Host "`n=== 构建 Windows Release ===" -ForegroundColor Cyan
         $buildArgs = @("build", "windows", "--release") + $dartDefineArgs
         & $flutterExe @buildArgs
@@ -733,7 +761,7 @@ try {
             Start-Process -FilePath $releaseExePath -WorkingDirectory $releasePackageDir
         }
     } else {
-        $debugDartDefine = Add-DebugDesktopDataRootDefine -Values $DartDefine
+        $debugDartDefine = Add-DebugDesktopDataRootDefine -Values $effectiveDartDefine
         $dartDefineArgs = Get-FlutterDartDefineArgs -Values $debugDartDefine
         Write-Host "`n=== Build or run Windows Debug ===" -ForegroundColor Cyan
         $buildArgs = @("build", "windows", "--debug") + $dartDefineArgs

@@ -4,9 +4,13 @@
 
 - 修正英文原文课程稿正文边界解析：`【文化卡片】` / `生词好句` / `重点词汇` 等学习材料 heading 现在即使处于 `【拓展】` soft interruption 内也会直接结束故事正文；`【拓展】` 后恢复正文不再仅凭引号或撇号开头，而是要求明确故事叙事信号或已有故事诗歌续行规则，避免把原诗、词汇例句误收进文章。
 - 新增 Alice 课程稿回归样本：E20 公爵夫人厨房/婴儿段、E29 柴郡猫头争执段使用用户原始输入 fixture 覆盖。E20 不再混入 `’Tis full of anxious care!`、`it would be as well...` 词条例句等非故事英文；E29 在文化卡片前以 `"How fond she is of finding morals in things!" Alice thought to herself.` 正确结束。
+- 绘本章节规划 prompt 调整：`picture_book_chapter_scene_plan_v2` 仍把完整原文提交给同一次文本 AI 以保留细节，但要求 `chapterDescription` / `sceneDescription` 排除直接引语、对话内容、歌词/喊话文本和内心独白原句，只保留图片可表达的动作、物体、地点、姿态、场景状态、人物关系和情绪表现；分镜策略继续按 visual story beat，不新增本地对话剔除器或额外 AI 调用。新增 E20 对话密集样本回归，确认 groupPrompt 保留厨房、胡椒、厨具、海星状婴儿等可见细节且不含原文台词。
+- Windows 构建脚本默认开启本机 QA 调试接口：`tools/build_windows.ps1` 会自动补入 `TOMATO_QA_REMOTE=true` 与 `TOMATO_QA_PORT=39317`，日常 `-Run` / `-Release -Run` 不再需要输入冗长 `-DartDefine`；需要普通分发包时可用 `-DartDefine TOMATO_QA_REMOTE=false` 显式关闭。
 
 验证：
 
+- `git diff --check`
+- `D:\DevTools\flutter\bin\flutter.bat test test\api_cache_service_test.dart --name "picture-book"`
 - `D:\DevTools\flutter\bin\flutter.bat test test\practice_input_parser_test.dart`
 
 ## 2026-07-05

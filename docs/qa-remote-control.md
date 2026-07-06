@@ -1,32 +1,39 @@
 # 本机 QA 控制接口
 
-当外部窗口捕获或 in-app browser 无法直接操作 Windows 版时，可以临时开启 App 内置的本机 QA 控制接口。它只监听 `127.0.0.1`，默认关闭，必须通过 `--dart-define` 显式开启。
+当外部窗口捕获或 in-app browser 无法直接操作 Windows 版时，可以使用 App 内置的本机 QA 控制接口。它只监听 `127.0.0.1`。
+
+通过 `tools/build_windows.ps1` 构建或运行 Windows 版时，脚本会默认注入 `TOMATO_QA_REMOTE=true` 和 `TOMATO_QA_PORT=39317`，因此日常本机调试不再需要手写这两个 `-DartDefine`。手动 `flutter run` / `flutter build`、Android 构建脚本或其它启动路径仍按源码默认关闭，需要显式 dart-define 或环境变量开启。
 
 ## 启动方式
 
 Debug 运行：
 
 ```powershell
-# 逗号可写在一个字符串里，脚本会拆成多个 --dart-define
-.\tools\build_windows.ps1 -Run -DartDefine TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317
+.\tools\build_windows.ps1 -Run
 ```
 
 Release 构建并运行：
 
 ```powershell
-.\tools\build_windows.ps1 -Release -Run -DartDefine TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317
+.\tools\build_windows.ps1 -Release -Run
 ```
 
 可选：设置访问 token。
 
 ```powershell
-.\tools\build_windows.ps1 -Run -DartDefine TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317,TOMATO_QA_TOKEN=dev-token
+.\tools\build_windows.ps1 -Run -DartDefine TOMATO_QA_TOKEN=dev-token
 ```
 
 设置 token 后，请求需要带请求头：
 
 ```powershell
 $headers = @{ "X-Tomato-QA-Token" = "dev-token" }
+```
+
+如果要构建不启用 QA 接口的 Windows 包：
+
+```powershell
+.\tools\build_windows.ps1 -Release -DartDefine TOMATO_QA_REMOTE=false
 ```
 
 ## 接口
@@ -57,7 +64,7 @@ Invoke-RestMethod http://127.0.0.1:39317/logs/export
 
 ## 自动回归脚本
 
-当 Windows EXE 已用 `TOMATO_QA_REMOTE=true` 启动后，可以直接跑完整主流程回归：
+当 Windows EXE 已通过 `tools/build_windows.ps1` 启动后，可以直接跑完整主流程回归：
 
 ```powershell
 npm run qa:windows
@@ -213,7 +220,7 @@ Invoke-RestMethod http://127.0.0.1:39317/bridge `
 隐藏 E20 第 45/46 句（0-based index 44、45）示例：
 
 ```powershell
-.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true,TOMATO_QA_PORT=39317"
+.\tools\build_windows.ps1 -Release -Run
 node tools/qa_listening_hide_sentences.mjs --articleId 72 --bookId 23 --indexes 44,45
 ```
 
@@ -237,7 +244,7 @@ node tools/qa_input_focus_probe.mjs --port 39317
 
 ## 安全约束
 
-- 该接口只用于开发和 QA，不要在普通发布包中默认开启。
+- 该接口只用于开发和 QA；`tools/build_windows.ps1` 默认开启是为了本机联调，普通分发包请用 `-DartDefine TOMATO_QA_REMOTE=false` 关闭。
 - 该接口只绑定 `127.0.0.1`，不监听局域网地址。
 - 如果需要长时间开启，建议设置 `TOMATO_QA_TOKEN`。
 - 不要通过该接口传入 API Key、密码或其他敏感信息。

@@ -2118,6 +2118,124 @@ but the three were all crowded together at one corner of it.
     );
   });
 
+  test('picture-book chapter plan uses original prose while excluding dialogue',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-dialogue-plan-key-12345678901234567890');
+    final raw = File(
+      path_lib.join(
+        previousDirectory.path,
+        'test',
+        'fixtures',
+        'e20_duchess_raw_input.txt',
+      ),
+    ).readAsStringSync();
+    final parsed = PracticeInputParser.parse(raw);
+    final sentences = NlpService.splitSentences(parsed.englishContent);
+    final storyText = sentences.join(' ');
+
+    expect(parsed.sourceKind, PracticeInputSourceKind.english);
+    expect(storyText, contains('Please would you tell me'));
+    expect(storyText, contains("It's a Cheshire cat"));
+    expect(storyText, contains("don't bother me"));
+    expect(storyText, contains('Here! you may nurse it a bit'));
+
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'E20 Duchess Dialogue Test',
+        content: parsed.englishContent,
+        sentences: sentences,
+        createdAt: DateTime(2026, 7, 6),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    Map<String, dynamic>? textBody;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textBody = body;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_scene_plan_v2',
+                  'chapterDescription':
+                      'Alice moves through the smoky pepper-filled kitchen as flying cookware, the restless Duchess, the cook, and the strange baby create a tense comic scene that ends with Alice struggling to hold the starfish-shaped child.',
+                  'scenes': [
+                    {
+                      'pageIndex': 0,
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': sentences.length ~/ 2,
+                      'sceneDescription':
+                          'Alice stands in the smoky kitchen near the Duchess, the cook, and the grinning cat while pepper hangs in the air and cookware flies across the room.',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'sentenceStartIndex': sentences.length ~/ 2 + 1,
+                      'sentenceEndIndex': sentences.length - 1,
+                      'sceneDescription':
+                          'The Duchess flings the baby toward Alice before hurrying away, and Alice catches the queer starfish-shaped child as it snorts and wriggles in her arms.',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final refreshed = await _refreshChapterPlanFromReview(review);
+    final textMessages = (textBody?['messages'] as List?) ?? const [];
+    final planningPrompt = textMessages
+        .map((message) => (message as Map)['content']?.toString() ?? '')
+        .join('\n')
+        .toLowerCase();
+
+    expect(planningPrompt, contains('please would you tell me'));
+    expect(planningPrompt, contains("it's a cheshire cat"));
+    expect(planningPrompt, contains("don't bother me"));
+    expect(planningPrompt, contains('here! you may nurse it a bit'));
+    expect(planningPrompt, contains('must exclude direct dialogue'));
+    expect(planningPrompt, contains('spoken words'));
+    expect(planningPrompt, contains('song lyrics'));
+    expect(planningPrompt, contains('inner-monologue text'));
+    expect(planningPrompt, contains('preserve drawable prose details'));
+    expect(planningPrompt, contains('coverage anchor'));
+    expect(planningPrompt, contains('speech-only scene'));
+    expect(planningPrompt, contains('main visual story beats of the chapter'));
+    expect(planningPrompt, contains('numbered sentences are coverage anchors'));
+    expect(
+      planningPrompt,
+      contains('dialogue turns, decision steps, brief responses'),
+    );
+    expect(planningPrompt, contains('use the smallest complete scene set'));
+
+    final groupPrompt = refreshed['groupPrompt'].toString();
+    expect(groupPrompt, contains('smoky pepper-filled kitchen'));
+    expect(groupPrompt, contains('flying cookware'));
+    expect(groupPrompt, contains('starfish-shaped child'));
+    expect(groupPrompt, isNot(contains('Please would you tell me')));
+    expect(groupPrompt, isNot(contains("It's a Cheshire cat")));
+    expect(groupPrompt, isNot(contains('Pig!')));
+    expect(groupPrompt, isNot(contains("don't bother me")));
+    expect(groupPrompt, isNot(contains('Here! you may nurse it a bit')));
+  });
+
   test('picture-book prompt review draft rows follow paragraph cap without AI',
       () async {
     _writeImageArkKey(tempDir, 'ark-paragraph-draft-key-12345678901234567890');

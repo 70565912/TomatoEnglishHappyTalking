@@ -363,7 +363,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - 页面策略版本为 `picture_book_group_prompt_scene_description_v2`，章节图片计划缓存为 `picture_book_chapter_scene_plan_v2`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
-- 打开审核框只读取本地持久化章节描述/章节计划；文本规划 API 只在用户点击“自动生成章节规划”时调用，让 AI 基于 `bookDescription`、章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。
+- 打开审核框只读取本地持久化章节描述/章节计划；文本规划 API 只在用户点击“自动生成章节规划”时调用，让 AI 基于 `bookDescription`、完整章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。完整原文用于保留可见叙事细节，但输出描述必须排除直接引语、对话内容、歌词/喊话文本和内心独白原句；不要新增本地对话剔除器，也不要为去对话额外增加一次文本 AI 调用。
 - 场景数量不按章节长度或句子数量决定，而按“紧凑但完整的必要插画”与“视觉故事 beat”决定；12 只作为极端上限，不是目标值。分镜需要同时避免过度合并和过度拆分：只有相邻内容存在明确、不可组合的视觉边界理由时才拆分，例如地点变化、时间跳跃、主要角色组变化、故事目的变化、重大可见状态变化，或一个动作结果无法在同一张插画中表达；同一地点、时间、角色和故事目的的相邻句子合并为同一 scene；相邻内容如果可以用同一个前景/背景构图表达，就应保持为一个视觉 beat。不要拆分同一直接视觉结果下的叙述微阶段；当相邻内容共享设置、主要参与者、直接目的且能被同一个稳定构图表达时，这个边界就是弱边界。返回前先检查每个 scene 内部是否混入多个不可组合构图，再合并边界只是叙述微阶段的相邻 scene，同时避免为了减少数量把相隔较远的故事阶段或多个不可同时表达的可见状态塞进同一 scene。每个 scene 对应一张图片并按顺序覆盖完整句子范围。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 重新打开绘本提示词审核时优先读取 `story_chapters.summary_json` 中的 `picture_book_chapter_scene_plan_v2`。如果 summary 缺失或 hash 不匹配，但旧 `picture_book_pages` 仍有完整 prompt scene 信息，则从页面记录恢复章节计划并写回 summary。
@@ -425,13 +425,13 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - `bookDescription`：短书籍视觉世界描述，不承担角色外貌列表职责。
 - `relevantCharacters[]`：程序从书籍 `characters[]` 中筛选出本章相关角色后传入。筛选方式先用章节正文、章节描述草稿和分镜描述草稿中的角色名匹配；未命中的角色不传，避免 prompt 随全书变长。
-- 章节正文：当前章节完整故事内容。
+- 章节正文：当前章节完整故事内容。它作为可见细节来源完整提交给同一次章节规划 AI；AI 输出 `chapterDescription` 和 `sceneDescription` 时必须剔除直接引语、对话内容、歌词/喊话文本和内心独白原句，只保留动作、物体、地点、姿态、场景状态、人物关系、情绪表现等图片可表达信息。
 - 规则约束：字段结构、段落切分、角色描述边界、新角色识别和安全表达要求。
 
 生成输出为章节计划 JSON：
 
-- `chapterDescription`：只描述本章整体剧情、地点、氛围和连续动作。它可以使用 `relevantCharacters[]` 里的角色名作为上下文，但不要重复角色外貌、服装、发色等描述。
-- `scenes[]`：只做分镜场景描述，写场景、动作、物件、位置、构图、情绪和画面变化。可以使用角色名，但不要反复写 `Alice (blonde bob, blue pinafore)` 或 `White Rabbit (red waistcoat, pocket watch)` 这类已在 `relevantCharacters[]` 中出现的外貌锚点。
+- `chapterDescription`：只描述本章整体剧情、地点、氛围和连续动作。它可以使用 `relevantCharacters[]` 里的角色名作为上下文，但不要重复角色外貌、服装、发色等描述，也不要复述对话、歌词、喊话或内心独白文字。
+- `scenes[]`：只做分镜场景描述，写场景、动作、物件、位置、构图、情绪和画面变化。可以使用角色名，但不要反复写 `Alice (blonde bob, blue pinafore)` 或 `White Rabbit (red waistcoat, pocket watch)` 这类已在 `relevantCharacters[]` 中出现的外貌锚点；不要把对话内容、字幕式文字或内心独白原句写进 `sceneDescription`。以对话为主的句子仍作为覆盖锚点并入相邻可见 scene，不单独形成 speech-only scene。
 - `newCharacters[]`：本章正文中出现、但书籍角色数组没有覆盖的新视觉角色。每项包含 `name` 和 `description`。
 
 角色信息边界：

@@ -1003,7 +1003,7 @@ app/lib/services/
 推荐命令仍走项目脚本：
 
 ```powershell
-& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command '.\tools\build_windows.ps1 -Release -Run -DartDefine "TOMATO_QA_REMOTE=true","TOMATO_QA_PORT=39317"'
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command '.\tools\build_windows.ps1 -Release -Run'
 ```
 
 验证时注意：

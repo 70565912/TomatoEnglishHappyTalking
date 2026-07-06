@@ -1,3 +1,15 @@
+## 2026-07-06 文档同步与 QA 默认配置
+
+- [x] 文档同步：绘本章节规划 prompt 输出边界、Windows QA 默认开启、脚本示例命令简化
+
+  处理记录：同步更新 `docs/ai-call-flow-and-prompt-logic.md`、`docs/build-and-release-pitfalls.md`、`docs/product_ui_refactor_plan.md`、`docs/qa-remote-control.md` 与 `AGENTS.md`，明确章节规划仍提交完整正文供同次 AI 保留可见细节，但 `chapterDescription` / `sceneDescription` 需排除直接引语和内心独白原句；同时将 Windows QA 的默认启动方式改为脚本内置，文档命令统一为 `build_windows.ps1 -Run/-Release -Run`，并补充发行包关闭 QA 的显式参数。
+
+- [x] 代码与测试同步：绘本缓存引用保持、Windows 构建脚本默认 QA 定义
+
+  处理记录：`app/lib/services/picture_book_service.dart` 与 `app/test/api_cache_service_test.dart` 同步补充按 `pageIndex` 保留 `api_cache_article_refs` 的行为与回归测试；`tools/build_windows.ps1` 增加默认注入 `TOMATO_QA_REMOTE=true` / `TOMATO_QA_PORT=39317` 并保留用户参数覆盖能力。
+
+  验证记录：`git diff --check`、`D:\DevTools\flutter\bin\flutter.bat test test\api_cache_service_test.dart --name "picture-book"`、`D:\DevTools\flutter\bin\flutter.bat test test\practice_input_parser_test.dart`。
+
 ## 2026-07-04 Suno 检测下载与构建脚本
 
 - [x] 检测下载跳过 Library 顶部新歌
