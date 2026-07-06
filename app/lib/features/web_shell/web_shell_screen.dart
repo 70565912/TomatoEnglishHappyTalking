@@ -40,6 +40,10 @@ import '../../services/tts_memory_cache_service.dart';
 import '../../services/tts_service.dart';
 import '../chat/providers/chat_provider.dart';
 import '../follow_read/providers/follow_read_provider.dart';
+import 'suno/suno_automation_host.dart';
+import 'suno/suno_automation_controller.dart';
+import 'suno/suno_web_scripts.dart';
+import 'suno/suno_utilities.dart';
 import 'web_bridge_protocol.dart';
 import 'web_shell_qa_server.dart';
 
@@ -80,43 +84,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   final Map<String, Future<ArticleSongVersion>> _songTimelineTasks = {};
   final Map<String, String> _songTimelineErrors = {};
   InAppWebViewController? _sunoController;
-  Timer? _sunoAutomationTimer;
-  int _sunoWebViewInstance = 0;
-  int? _sunoArticleId;
-  String _sunoStylePrompt = '';
-  String _sunoLyrics = '';
-  String _sunoAutomationStatus = 'idle';
-  String? _sunoManualActionMessage;
-  String? _sunoErrorMessage;
-  String _sunoInitialUrl = 'https://suno.com/create';
-  String _sunoIgnoredStylePrompt = '';
-  String? _sunoSongUrl;
-  String? _sunoAudioPath;
-  String? _sunoMetadataPath;
-  int? _sunoCreditsRemaining;
-  DateTime? _sunoStyleMagicRequestedAt;
-  final List<ArticleSongVersion> _sunoVersions = <ArticleSongVersion>[];
-  final Set<String> _sunoDownloadedSongUrls = <String>{};
-  final Set<String> _sunoDownloadedDownloadKeys = <String>{};
-  final Set<String> _sunoDownloadInFlightKeys = <String>{};
-  final Set<String> _sunoDetectedSongUrls = <String>{};
-  final Set<String> _sunoTrustedSongUrls = <String>{};
-  final Set<String> _sunoRejectedCandidateSongUrls = <String>{};
-  String? _sunoPendingDownloadSongUrl;
-  String? _sunoPendingDownloadTitle;
-  DateTime? _sunoExistingDownloadStartedAt;
-  int _sunoExistingDownloadMenuRetries = 0;
-  bool _sunoExistingDownloadLibraryTried = false;
-  DateTime? _sunoMenuDownloadClickedAt;
-  String? _sunoLastLoadStopUrl;
-  DateTime? _sunoLastLoadStopAt;
-  bool _sunoVisible = false;
-  bool _sunoCreateSubmitted = false;
-  bool _sunoExistingDownloadOnly = false;
-  bool _sunoCompletedStandby = false;
-  bool _sunoCompletedStandbyFilled = false;
-  bool _sunoAutomationBusy = false;
-  int _sunoCreateBaselineVersionCount = 0;
+  late final SunoAutomationController _sunoEngine;
   RecordingCancelToken? _recordingCancelToken;
   int? _activeFollowArticleId;
   int? _activeListeningArticleId;
@@ -217,6 +185,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         'suno.debugFill': _handleSunoDebugFill,
         'suno.debugRows': _handleSunoDebugRows,
         'suno.debugSnapshot': _handleSunoDebugSnapshot,
+        'suno.continueAutomation': _handleSunoContinueAutomation,
         'listening.updateSentence': _handleListeningUpdateSentence,
         'listening.resynthesizeSentence': _handleListeningResynthesizeSentence,
         'listening.stop': _handleListeningStop,
@@ -250,6 +219,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   @override
   void initState() {
     super.initState();
+    _sunoEngine = SunoAutomationController(host: _WebShellSunoHost(this));
     if (_qaRemoteEnabled) {
       TomatoLogger.info(
         category: 'qa',
@@ -271,6 +241,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         dispatchBridge: (raw) => _bridgeRouter.dispatch(raw),
       );
       unawaited(_qaServer!.start());
+    }
+  }
+
+  void sunoRequestSetState() {
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -375,7 +351,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                 },
               ),
             ),
-            if (_sunoVisible) Positioned.fill(child: _buildSunoOverlay()),
+            if (_sunoEngine.state.visible) Positioned.fill(child: _buildSunoOverlay()),
           ],
         ),
       ),
@@ -385,8 +361,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   Widget _buildSunoOverlay() {
     final statusText = _sunoOverlayStatusText();
     final canConfirm =
-        _sunoAutomationStatus == 'waitingConfirm' && !_sunoCreateSubmitted;
-    final isComplete = _sunoAutomationStatus == 'complete';
+        _sunoEngine.state.statusKey == 'waitingConfirm' && !_sunoEngine.state.createSubmitted;
+    final isComplete = _sunoEngine.state.statusKey == 'complete';
     return Material(
       color: Colors.black.withValues(alpha: 0.42),
       child: Column(
@@ -411,7 +387,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                 ),
                 if (canConfirm)
                   ElevatedButton.icon(
-                    onPressed: _sunoAutomationBusy
+                    onPressed: _sunoEngine.state.automationBusy
                         ? null
                         : () => unawaited(_confirmSunoCreate()),
                     icon: const Icon(Icons.check_circle_outline),
@@ -436,7 +412,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                   TextButton(
                     onPressed: () {
                       setState(() {
-                        _sunoVisible = false;
+                        _sunoEngine.state.visible = false;
                       });
                     },
                     child: const Text(
@@ -447,8 +423,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                 if (!isComplete)
                   TextButton(
                     onPressed: () {
+                      final articleId = _sunoEngine.state.articleId;
                       _stopSunoAutomation(clearVisible: true);
-                      final articleId = _sunoArticleId;
+                      _sunoController = null;
                       if (articleId != null) {
                         unawaited(_pushSongState(articleId));
                       }
@@ -465,9 +442,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             child: Container(
               color: Colors.white,
               child: InAppWebView(
-                key: ValueKey('suno-webview-$_sunoWebViewInstance'),
+                key: ValueKey('suno-webview-$_sunoEngine.state.webViewInstance'),
                 initialUrlRequest: URLRequest(
-                  url: WebUri(_sunoInitialUrl),
+                  url: WebUri(_sunoEngine.state.initialUrl),
                 ),
                 initialSettings: InAppWebViewSettings(
                   javaScriptEnabled: true,
@@ -481,32 +458,33 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                   TomatoLogger.info(
                     category: 'suno',
                     event: 'webview.created',
-                    articleId: _sunoArticleId,
-                    data: {'initialUrl': _sunoInitialUrl},
+                    articleId: _sunoEngine.state.articleId,
+                    data: {'initialUrl': _sunoEngine.state.initialUrl},
                   );
                   _sunoController = controller;
+                  _sunoEngine.attachWebController(controller);
                 },
                 onLoadStop: (controller, url) {
-                  _sunoLastLoadStopUrl = url?.toString();
-                  _sunoLastLoadStopAt = DateTime.now();
+                  _sunoEngine.onLoadStop(url?.toString());
                   TomatoLogger.info(
                     category: 'suno',
                     event: 'webview.load_stop',
-                    articleId: _sunoArticleId,
+                    articleId: _sunoEngine.state.articleId,
                     data: {
                       'url': url?.toString(),
                       'pageKind':
-                          url == null ? null : _sunoPageKind(url.toString()),
+                          url == null ? null : SunoUtilities.pageKind(url.toString()),
                     },
                   );
                   _sunoController = controller;
+                  _sunoEngine.attachWebController(controller);
                   unawaited(_continueSunoAutomation());
                 },
                 onDownloadStartRequest: (controller, request) {
                   TomatoLogger.info(
                     category: 'suno',
                     event: 'download.request',
-                    articleId: _sunoArticleId,
+                    articleId: _sunoEngine.state.articleId,
                     data: {
                       'url': request.url.toString(),
                       'suggestedFilename': request.suggestedFilename,
@@ -1582,54 +1560,46 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   Future<ArticleSongState?> _activeSunoSongState(int articleId) async {
-    if (_sunoArticleId != articleId || _sunoAutomationStatus == 'idle') {
+    if (_sunoEngine.state.articleId != articleId || _sunoEngine.state.statusKey == 'idle') {
       return null;
     }
-    final hasLocalAudio = (_sunoAudioPath?.trim().isNotEmpty ?? false) ||
-        _sunoVersions.isNotEmpty;
+    final hasLocalAudio = (_sunoEngine.state.audioPath?.trim().isNotEmpty ?? false) ||
+        _sunoEngine.state.versions.isNotEmpty;
     final canPlayDownloaded = hasLocalAudio &&
-        (_sunoAutomationStatus == 'complete' ||
-            _sunoAutomationStatus == 'manualAction');
-    final status = _sunoErrorMessage != null
+        (_sunoEngine.state.statusKey == 'complete' ||
+            _sunoEngine.state.statusKey == 'manualAction');
+    final status = _sunoEngine.state.errorMessage != null
         ? 'error'
         : canPlayDownloaded
             ? 'ready'
-            : (_sunoAutomationStatus == 'manualAction'
+            : (_sunoEngine.state.statusKey == 'manualAction'
                 ? 'empty'
                 : 'generating');
     return ArticleSongState(
       articleId: articleId,
       status: status,
       stylePrompt: '',
-      audioPath: (_sunoAudioPath?.trim().isNotEmpty ?? false)
-          ? _sunoAudioPath
-          : (_sunoVersions.isNotEmpty ? _sunoVersions.first.audioPath : null),
-      errorMessage: _sunoErrorMessage,
+      audioPath: (_sunoEngine.state.audioPath?.trim().isNotEmpty ?? false)
+          ? _sunoEngine.state.audioPath
+          : (_sunoEngine.state.versions.isNotEmpty ? _sunoEngine.state.versions.first.audioPath : null),
+      errorMessage: _sunoEngine.state.errorMessage,
       source: 'suno',
-      songUrl: _canonicalSunoSongUrl(_sunoSongUrl) ??
-          (_sunoVersions.isNotEmpty
-              ? _canonicalSunoSongUrl(_sunoVersions.first.songUrl)
+      songUrl: SunoUtilities.canonicalSongUrl(_sunoEngine.state.songUrl) ??
+          (_sunoEngine.state.versions.isNotEmpty
+              ? SunoUtilities.canonicalSongUrl(_sunoEngine.state.versions.first.songUrl)
               : null),
-      metadataPath: _sunoMetadataPath,
-      manualActionMessage: _sunoManualActionMessage,
-      automationStatus: _sunoAutomationStatus,
-      creditsRemaining: _sunoCreditsRemaining,
+      metadataPath: _sunoEngine.state.metadataPath,
+      manualActionMessage: _sunoEngine.state.manualActionMessage,
+      automationStatus: _sunoEngine.state.statusKey,
+      creditsRemaining: _sunoEngine.state.creditsRemaining,
       downloadComplete: _currentSunoDownloadsComplete(),
-      detectedSongUrls: _mergeSunoSongUrls([_sunoDetectedSongUrls]),
+      detectedSongUrls: SunoUtilities.mergeSongUrls([_sunoEngine.state.detectedSongUrls]),
       versions: _songVersionsForPayload(
         articleId,
-        _sunoVersions,
+        _sunoEngine.state.versions,
         requireDefault: false,
       ),
     );
-  }
-
-  bool _isTransientSunoWebViewError(Object error) {
-    final message = error.toString();
-    return message.contains('MissingPluginException') &&
-        (message.contains('evaluateJavascript') ||
-            message.contains('loadUrl') ||
-            message.contains('getUrl'));
   }
 
   Future<List<SunoCachedSongGroup>> _cachedSunoSongGroups(
@@ -1702,20 +1672,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             id: 'suno_legacy_${articleId}_${audioPath.hashCode}',
             audioPath: audioPath,
             title: 'Suno 版本 1',
-            songUrl: _canonicalSunoSongUrl(metadata['songUrl']),
+            songUrl: SunoUtilities.canonicalSongUrl(metadata['songUrl']),
             stylePrompt: stylePrompt.isEmpty ? null : stylePrompt,
             lyricsHash: groupLyricsHash,
           ),
         ]);
       }
       builder.detectedSongUrls.addAll(
-        _sunoSongUrlList(metadata['detectedSongUrls']),
+        SunoUtilities.songUrlList(metadata['detectedSongUrls']),
       );
-      final songUrl = _canonicalSunoSongUrl(metadata['songUrl']) ??
+      final songUrl = SunoUtilities.canonicalSongUrl(metadata['songUrl']) ??
           _firstNonEmptyString(builder.detectedSongUrls) ??
           _firstNonEmptyString(
             builder.versions
-                .map((version) => _canonicalSunoSongUrl(version.songUrl)),
+                .map((version) => SunoUtilities.canonicalSongUrl(version.songUrl)),
           );
       builder.songUrl ??= songUrl;
       builder.metadataPath ??= _nonEmptyString(resolvedMetadataPath);
@@ -1939,7 +1909,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
               id: version.id,
               audioPath: audioPath,
               title: version.title,
-              songUrl: _canonicalSunoSongUrl(version.songUrl),
+              songUrl: SunoUtilities.canonicalSongUrl(version.songUrl),
               durationMs: version.durationMs,
               createdAt: version.createdAt,
               stylePrompt: version.stylePrompt ?? fallbackStylePrompt,
@@ -1962,16 +1932,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       }
     }
     return versions;
-  }
-
-  bool _hasSunoVersionForSongUrl(String songUrl) {
-    final normalized = _canonicalSunoSongUrl(songUrl);
-    if (normalized == null || normalized.isEmpty) {
-      return false;
-    }
-    return _sunoVersions.any(
-      (version) => _canonicalSunoSongUrl(version.songUrl) == normalized,
-    );
   }
 
   Future<Map<String, dynamic>> _songStatePayload(
@@ -2558,10 +2518,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (articleId == null) {
       throw const FormatException('听力任务尚未打开');
     }
-    if (_sunoArticleId != articleId) {
+    if (_sunoEngine.state.articleId != articleId) {
       throw const FormatException('当前没有等待确认的 Suno 歌曲任务');
     }
-    if (_sunoAutomationStatus != 'waitingConfirm') {
+    if (_sunoEngine.state.statusKey != 'waitingConfirm') {
       throw FormatException('Suno 当前还不能确认创建：${_sunoOverlayStatusText()}');
     }
     await _confirmSunoCreate();
@@ -2964,13 +2924,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       );
     }
     final deletedSongUrl = deletedSource == AppConfig.songProviderSuno
-        ? _canonicalSunoSongUrl(target.songUrl)
+        ? SunoUtilities.canonicalSongUrl(target.songUrl)
         : null;
     _syncActiveSunoVersions(articleId, remainingVersions);
-    if (_sunoArticleId == articleId) {
+    if (_sunoEngine.state.articleId == articleId) {
       if (deletedSongUrl != null) {
-        _sunoDownloadedSongUrls.remove(deletedSongUrl);
-        _sunoTrustedSongUrls.remove(deletedSongUrl);
+        _sunoEngine.state.downloadedSongUrls.remove(deletedSongUrl);
+        _sunoEngine.state.trustedSongUrls.remove(deletedSongUrl);
       }
     }
     _songTimelineErrors.remove(timelineKey);
@@ -3241,10 +3201,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     int articleId,
     Iterable<ArticleSongVersion> versions,
   ) {
-    if (_sunoArticleId != articleId) {
+    if (_sunoEngine.state.articleId != articleId) {
       return;
     }
-    _sunoVersions
+    _sunoEngine.state.versions
       ..clear()
       ..addAll(
         versions.where(
@@ -3270,7 +3230,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final incomingVersions = versions
         .map((version) => version.copyWith(
               source: AppConfig.songProviderSuno,
-              songUrl: _canonicalSunoSongUrl(version.songUrl),
+              songUrl: SunoUtilities.canonicalSongUrl(version.songUrl),
             ))
         .toList(growable: false);
     if (incomingVersions.isEmpty) {
@@ -3319,18 +3279,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       );
       mergedVersions = _dedupeSongVersions(incomingVersions);
     }
-    final detectedSongUrlSet = _mergeSunoSongUrls([
+    final detectedSongUrlSet = SunoUtilities.mergeSongUrls([
       if (detectedSongUrlsOverride != null) detectedSongUrlsOverride,
       mergedVersions.map((version) => version.songUrl),
-      if (_sunoArticleId == articleId) _sunoDetectedSongUrls,
+      if (_sunoEngine.state.articleId == articleId) _sunoEngine.state.detectedSongUrls,
       if (existingMetadata != null)
-        _sunoSongUrlList(existingMetadata['detectedSongUrls']),
+        SunoUtilities.songUrlList(existingMetadata['detectedSongUrls']),
     ]).toSet();
     final detectedSongUrls = detectedSongUrlSet.toList(growable: false);
     final downloadedSongUrls = mergedVersions
-        .map(_canonicalSunoSongUrl)
+        .map(SunoUtilities.canonicalSongUrl)
         .whereType<String>()
-        .where((value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value))
+        .where((value) => value.isNotEmpty && !SunoUtilities.isSyntheticSongKey(value))
         .toSet();
     final selected = _defaultSongVersion(mergedVersions) ??
         (mergedVersions.isNotEmpty ? mergedVersions.first : null);
@@ -3350,13 +3310,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'lyricsHash': lyricsHash,
       if (stylePrompt.isNotEmpty) 'stylePrompt': stylePrompt,
       'songUrl': _firstNonEmptyString([
-        _canonicalSunoSongUrl(_sunoArticleId == articleId ? _sunoSongUrl : null),
-        ...mergedVersions.map((version) => _canonicalSunoSongUrl(version.songUrl)),
+        SunoUtilities.canonicalSongUrl(_sunoEngine.state.articleId == articleId ? _sunoEngine.state.songUrl : null),
+        ...mergedVersions.map((version) => SunoUtilities.canonicalSongUrl(version.songUrl)),
       ]),
       'detectedSongUrls': detectedSongUrls,
       'downloadComplete': downloadComplete,
       'audioPath': selected?.audioPath ??
-          (_sunoArticleId == articleId ? _sunoAudioPath : null),
+          (_sunoEngine.state.articleId == articleId ? _sunoEngine.state.audioPath : null),
       'metadataPath': metadataPath,
       'versions': mergedVersions.map((version) => version.toJson()).toList(),
       'manualActionMessage': manualActionMessage,
@@ -3367,8 +3327,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       const JsonEncoder.withIndent('  ').convert(metadata),
       flush: true,
     );
-    if (_sunoArticleId == articleId) {
-      _sunoMetadataPath = metadataPath;
+    if (_sunoEngine.state.articleId == articleId) {
+      _sunoEngine.state.metadataPath = metadataPath;
     }
     final cacheKey = existingEntry?.cacheKey ??
         await ApiCacheService.keyForJson('article_suno_song', request);
@@ -3611,1397 +3571,81 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     required String lyrics,
     bool completedStandby = false,
   }) async {
+    await _sunoEngine.startAutomation(
+      article: article,
+      stylePrompt: stylePrompt,
+      lyrics: lyrics,
+      completedStandby: completedStandby,
+      loadGroups: _cachedSunoSongGroups,
+      loadCachedState: _cachedSunoSongState,
+    );
     final articleId = article.id;
     if (articleId == null) {
       throw const FormatException('文章尚未保存，不能生成歌曲');
     }
-    if (lyrics.trim().isEmpty) {
-      throw const FormatException('文章没有可用于 Suno 的英文歌词');
-    }
-    _stopSunoAutomation(clearVisible: false);
-    _sunoArticleId = articleId;
-    _sunoController = null;
-    _sunoWebViewInstance += 1;
-    _sunoStylePrompt = stylePrompt.trim();
-    _sunoLyrics = lyrics.trim();
-    _sunoInitialUrl = 'https://suno.com/create';
-    _sunoIgnoredStylePrompt = '';
-    _sunoAutomationStatus = completedStandby ? 'complete' : 'waitingLogin';
-    _sunoManualActionMessage =
-        completedStandby ? '这首歌词的 Suno 完整版已完成生成和下载。' : 'Suno 页面已打开，请先在页面中自行登录。';
-    _sunoErrorMessage = null;
-    _sunoSongUrl = null;
-    _sunoAudioPath = null;
-    _sunoMetadataPath = null;
-    _sunoCreditsRemaining = null;
-    _sunoStyleMagicRequestedAt = null;
-    _sunoVersions.clear();
-    _sunoDownloadedSongUrls.clear();
-    _sunoDownloadedDownloadKeys.clear();
-    _sunoDownloadInFlightKeys.clear();
-    _sunoDetectedSongUrls.clear();
-    _sunoTrustedSongUrls.clear();
-    _sunoRejectedCandidateSongUrls.clear();
-    _sunoPendingDownloadSongUrl = null;
-    _sunoPendingDownloadTitle = null;
-    _sunoExistingDownloadStartedAt = null;
-    _sunoExistingDownloadMenuRetries = 0;
-    _sunoExistingDownloadLibraryTried = false;
-    final cachedGroups = await _cachedSunoSongGroups(article);
-    final cachedSuno = await _cachedSunoSongState(article);
-    if (cachedSuno != null && cachedSuno.versions.isNotEmpty) {
-      _sunoVersions.addAll(cachedSuno.versions);
-      _rememberDownloadedSunoUrls();
-    }
-    final cachedDetectedSongUrls = _mergeSunoSongUrls(
-      cachedGroups.map((group) => group.detectedSongUrls),
-    );
-    _sunoDetectedSongUrls
-      ..clear()
-      ..addAll(cachedDetectedSongUrls);
-    _sunoTrustedSongUrls.addAll(cachedDetectedSongUrls);
-    _sunoTrustedSongUrls.addAll(
-      _sunoVersions
-          .map((version) => _canonicalSunoSongUrl(version.songUrl))
-          .whereType<String>()
-          .where(
-              (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
-    );
-    _syncDownloadedSunoUrlsIntoDetected();
-    _sunoCreateBaselineVersionCount = _sunoVersions.length;
-    _sunoCreateSubmitted = false;
-    _sunoExistingDownloadOnly = false;
-    _sunoCompletedStandby = completedStandby;
-    _sunoCompletedStandbyFilled = false;
-    _sunoVisible = true;
-    TomatoLogger.info(
-      category: 'suno',
-      event: 'automation.started',
-      articleId: articleId,
-      status: _sunoAutomationStatus,
-      data: {
-        'articleTitle': article.title,
-        'styleSource': 'suno_magic',
-        'styleLength': _sunoStylePrompt.length,
-        'lyricsLength': _sunoLyrics.length,
-        'cachedVersions': _sunoVersions.length,
-      },
-    );
-    if (mounted) {
-      setState(() {});
-    }
-    unawaited(_pushSongState(articleId));
-    _startSunoPolling();
     return _songStatePayload(articleId);
   }
 
-  /// 启动「检测下载」自动化：用户可在 Suno 用不同风格多次生成后，
-  /// 通过创作中心「检测下载」拉回新歌。
-  ///
-  /// **不得**因 `downloadComplete`、`missingSongUrls` 为空或已有本地版本
-  /// 而跳过打开 Suno；每次点击都必须进入 WebView 执行 Library/详情页扫描。
-  /// 详见 [docs/suno_song_download_rules.md]「检测下载」。
   Future<Map<String, dynamic>> _startExistingSunoDownload(
-      Article article) async {
+    Article article,
+  ) async {
     final articleId = article.id;
     if (articleId == null) {
       throw const FormatException('文章尚未保存，不能下载歌曲');
     }
-    final cachedSuno = await _cachedSunoSongState(article);
-    final groups = await _cachedSunoSongGroups(article);
-    final group = groups.isEmpty ? null : groups.first;
-    final missingSongUrls = group?.missingSongUrls ?? const <String>[];
-    final songUrl = _canonicalSunoSongUrl(
-          missingSongUrls.isNotEmpty ? missingSongUrls.first : '',
-        ) ??
-        '';
-
-    _stopSunoAutomation(clearVisible: false);
-    _sunoArticleId = articleId;
-    _sunoController = null;
-    _sunoWebViewInstance += 1;
-    _sunoStylePrompt = '';
-    _sunoLyrics = _articleSongLyrics(article);
-    _sunoInitialUrl = songUrl.isEmpty ? 'https://suno.com/me' : songUrl;
-    _sunoAutomationStatus = 'downloading';
-    _sunoManualActionMessage = songUrl.isEmpty
-        ? '正在打开 Suno Library，并按当前歌词查找未下载歌曲...'
-        : '正在打开 Suno 已生成歌曲并尝试下载...';
-    _sunoErrorMessage = null;
-    _sunoSongUrl = songUrl.isEmpty ? null : songUrl;
-    _sunoAudioPath = null;
-    _sunoMetadataPath = group?.metadataPath;
-    _sunoCreditsRemaining = null;
-    _sunoStyleMagicRequestedAt = null;
-    _sunoVersions
-      ..clear()
-      ..addAll(cachedSuno?.versions ?? const <ArticleSongVersion>[]);
-    _sunoDownloadedSongUrls.clear();
-    _sunoDownloadedDownloadKeys.clear();
-    _sunoDownloadInFlightKeys.clear();
-    _sunoRejectedCandidateSongUrls
-      ..clear()
-      ..addAll(await _sunoSongUrlsForOtherArticles(articleId));
-    _sunoDetectedSongUrls
-      ..clear()
-      ..addAll(
-        _mergeSunoSongUrls([
-          group?.detectedSongUrls ?? const <String>[],
-        ]),
-      );
-    _sunoTrustedSongUrls
-      ..clear()
-      ..addAll(_sunoDetectedSongUrls);
-    _sunoTrustedSongUrls.addAll(
-      _sunoVersions
-          .map((version) => _canonicalSunoSongUrl(version.songUrl))
-          .whereType<String>()
-          .where(
-              (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
+    await _sunoEngine.startExistingDownload(
+      article: article,
+      lyrics: _articleSongLyrics(article),
+      loadGroups: _cachedSunoSongGroups,
+      loadCachedState: _cachedSunoSongState,
+      otherArticleUrls: _sunoSongUrlsForOtherArticles,
     );
-    if (songUrl.isNotEmpty) {
-      _sunoTrustedSongUrls.add(songUrl);
-    }
-    _rememberDownloadedSunoUrls();
-    _syncDownloadedSunoUrlsIntoDetected();
-    _sunoCreateBaselineVersionCount = _sunoVersions.length;
-    _sunoPendingDownloadSongUrl = songUrl.isEmpty ? null : songUrl;
-    _sunoPendingDownloadTitle = article.title;
-    _sunoExistingDownloadStartedAt = DateTime.now();
-    _sunoExistingDownloadMenuRetries = 0;
-    _sunoExistingDownloadLibraryTried = false;
-    _sunoCreateSubmitted = true;
-    _sunoExistingDownloadOnly = true;
-    _sunoCompletedStandby = false;
-    _sunoCompletedStandbyFilled = false;
-    _sunoVisible = true;
-    TomatoLogger.info(
-      category: 'suno',
-      event: 'existing_download.started',
-      articleId: articleId,
-      status: _sunoAutomationStatus,
-      data: {
-        'songUrl': songUrl,
-        'lyricsHash': group?.lyricsHash,
-        'metadataPath': group?.metadataPath,
-        'detectedSongUrls': group?.detectedSongUrls.length ?? 0,
-        'cachedVersions': _sunoVersions.length,
-      },
-    );
-    if (mounted) {
-      setState(() {});
-    }
-    unawaited(_pushSongState(articleId));
-    _startSunoPolling();
     return _songStatePayload(articleId);
   }
 
-  void _startSunoPolling() {
-    _sunoAutomationTimer?.cancel();
-    _sunoAutomationTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(_continueSunoAutomation()),
-    );
-    unawaited(_continueSunoAutomation());
-  }
-
-  void _closeCompletedSunoOverlay() {
-    final articleId = _sunoArticleId;
-    _stopSunoAutomation(clearVisible: true);
-    if (articleId != null) {
-      unawaited(_pushSongState(articleId));
-    }
-  }
-
   void _stopSunoAutomation({required bool clearVisible}) {
-    final articleId = _sunoArticleId;
-    final previousStatus = _sunoAutomationStatus;
-    _sunoAutomationTimer?.cancel();
-    _sunoAutomationTimer = null;
-    _sunoAutomationBusy = false;
-    _sunoCreateSubmitted = false;
-    _sunoExistingDownloadOnly = false;
-    _sunoCompletedStandby = false;
-    _sunoCompletedStandbyFilled = false;
-    _sunoStyleMagicRequestedAt = null;
-    _sunoIgnoredStylePrompt = '';
-    _sunoPendingDownloadSongUrl = null;
-    _sunoPendingDownloadTitle = null;
-    _sunoExistingDownloadStartedAt = null;
-    _sunoExistingDownloadMenuRetries = 0;
-    _sunoLastLoadStopUrl = null;
-    _sunoLastLoadStopAt = null;
-    _sunoMenuDownloadClickedAt = null;
-    _sunoCreateBaselineVersionCount = 0;
-    _sunoDownloadInFlightKeys.clear();
-    _sunoRejectedCandidateSongUrls.clear();
-    _sunoTrustedSongUrls.clear();
-    if (clearVisible && mounted) {
-      setState(() {
-        _sunoVisible = false;
-      });
-    } else if (clearVisible) {
-      _sunoVisible = false;
-    }
-    if (clearVisible) {
-      _sunoAutomationStatus = 'idle';
-      _sunoManualActionMessage = null;
-      _sunoErrorMessage = null;
-      _sunoDetectedSongUrls.clear();
-    }
-    TomatoLogger.info(
-      category: 'suno',
-      event: 'automation.stopped',
-      articleId: articleId,
-      status: _sunoAutomationStatus,
-      data: {
-        'previousStatus': previousStatus,
-        'clearVisible': clearVisible,
-      },
-    );
+    _sunoEngine.stopAutomation(clearVisible: clearVisible);
   }
 
   Future<void> _continueSunoAutomation() async {
-    if (_sunoAutomationBusy || _sunoArticleId == null) {
-      return;
+    _sunoEngine.attachWebController(_sunoController);
+    await _sunoEngine.tick();
+  }
+
+  Future<Map<String, dynamic>> _handleSunoContinueAutomation(
+    BridgeMessage message,
+  ) async {
+    await _continueSunoAutomation();
+    final articleId = _sunoEngine.state.articleId ??
+        _payloadOptionalInt(message.payload, 'articleId');
+    if (articleId == null) {
+      return {
+        'ok': false,
+        'status': _sunoEngine.state.statusKey,
+        'message': '当前没有进行中的 Suno 自动化',
+      };
     }
-    final controller = _sunoController;
-    if (controller == null) {
-      return;
-    }
-    _sunoAutomationBusy = true;
-    try {
-      final inspect = await _evaluateSunoJson(controller, _sunoInspectScript);
-      final currentUrl = (inspect['currentUrl'] ??
-              (await controller.getUrl())?.toString() ??
-              '')
-          .toString();
-      final loginFlow =
-          inspect['loginFlow'] == true || _isSunoLoginFlowUrl(currentUrl);
-      final loggedIn = inspect['loggedIn'] == true && !loginFlow;
-      _sunoCreditsRemaining = (inspect['creditsRemaining'] as num?)?.toInt();
-      if (!loggedIn) {
-        await _setSunoStatus(
-          'waitingLogin',
-          'Suno 页面已打开，请先在页面中自行登录。',
-        );
-        return;
-      }
-      if (_sunoExistingDownloadOnly &&
-          (_sunoAutomationStatus == 'manualAction' ||
-              _sunoAutomationStatus == 'failed' ||
-              _sunoAutomationStatus == 'complete')) {
-        return;
-      }
-      if (_sunoCompletedStandby) {
-        final currentUrl = (await controller.getUrl())?.toString() ?? '';
-        var styleChanged = false;
-        if (_sunoPageKind(currentUrl) == 'create') {
-          if (!_sunoCompletedStandbyFilled) {
-            final fill = await _evaluateSunoJson(
-              controller,
-              _sunoFillScript(
-                lyrics: _sunoLyrics,
-                stylePrompt: _sunoStylePrompt,
-                ignoredStylePrompt: _sunoIgnoredStylePrompt,
-                allowMagicClick: false,
-                magicAlreadyRequested: true,
-              ),
-            );
-            final filledStyle = (fill['stylePrompt'] ?? '').toString().trim();
-            if (filledStyle.isNotEmpty) {
-              _sunoStylePrompt = filledStyle;
-            }
-            if (fill['ok'] == true) {
-              _sunoCompletedStandbyFilled = true;
-              await _setSunoStatus(
-                'complete',
-                '这首歌词的 Suno 完整版已完成生成和下载。Tomato 已填好歌词，等待你自行点击 Create 生成新版本。',
-              );
-            } else {
-              await _setSunoStatus(
-                'manualAction',
-                (fill['message'] ?? '').toString().trim().isEmpty
-                    ? 'Tomato 正在填写 Suno Create 表单，填好后会停止自动操作并等待你自行改风格或点击 Create。'
-                    : (fill['message'] ?? '').toString(),
-              );
-            }
-            return;
-          }
-          final probe = await _evaluateSunoJson(
-            controller,
-            _sunoFillScript(
-              lyrics: _sunoLyrics,
-              stylePrompt: _sunoStylePrompt,
-              ignoredStylePrompt: _sunoIgnoredStylePrompt,
-              allowMagicClick: false,
-              magicAlreadyRequested: _sunoStyleMagicRequestedAt != null,
-              readOnly: true,
-            ),
-          );
-          final currentStyle = (probe['stylePrompt'] ?? '').toString().trim();
-          if (currentStyle.isNotEmpty &&
-              currentStyle != _sunoStylePrompt.trim()) {
-            _sunoStylePrompt = currentStyle;
-            _sunoDetectedSongUrls.clear();
-            _rememberDownloadedSunoUrls();
-            styleChanged = true;
-            await _setSunoStatus(
-              'manualAction',
-              '检测到 Suno 风格已更新。请在 Suno 页面自行点击 Create；生成完成后 Tomato 会自动下载全部完整版。',
-            );
-          }
-        }
-        final result = await _evaluateSunoJson(
-          controller,
-          _sunoCompletionScript(
-            expectedStylePrompt: _sunoStylePrompt,
-            expectedLyrics: _sunoLyrics,
-            requireExpectedMatch: true,
-            trustedSongUrls: _trustedSunoSongUrls(),
-          ),
-        );
-        final resultSongUrls = (result['songUrls'] as List?)
-                ?.map((value) => value.toString().trim())
-                .where((value) => value.isNotEmpty)
-                .toList() ??
-            <String>[];
-        _trustSunoSongUrls(resultSongUrls);
-        final detectedSongUrls = _mergeSunoSongUrls([
-          resultSongUrls,
-          _sunoDetectedSongUrls,
-        ]);
-        final newUrls = detectedSongUrls
-            .where((value) =>
-                !_sunoDetectedSongUrls.contains(value) &&
-                !_sunoDownloadedSongUrls.contains(value) &&
-                !_hasSunoVersionForSongUrl(value))
-            .toList();
-        if (newUrls.isNotEmpty) {
-          _sunoDetectedSongUrls
-            ..clear()
-            ..addAll(detectedSongUrls);
-          _syncDownloadedSunoUrlsIntoDetected();
-          _sunoSongUrl = newUrls.first;
-          _sunoPendingDownloadSongUrl = newUrls.first;
-          _sunoCreateSubmitted = true;
-          _sunoExistingDownloadOnly = false;
-          _sunoExistingDownloadLibraryTried = false;
-          _sunoCompletedStandby = false;
-          await _setSunoStatus(
-            'downloading',
-            '检测到新的 Suno 完整歌曲，正在下载全部版本...',
-          );
-        } else {
-          if (!styleChanged && _currentSunoDownloadsComplete()) {
-            await _setSunoStatus(
-              'complete',
-              '这首歌词的 Suno 完整版已完成生成和下载。Tomato 已停在 Create 页面并填好歌词，等待你自行点击 Create 生成新版本。',
-            );
-          } else {
-            await _setSunoStatus(
-              'manualAction',
-              '请在 Suno 页面自行点击 Create；生成完成后 Tomato 会自动下载全部完整版。',
-            );
-          }
-        }
-        return;
-      }
-      if (!_sunoExistingDownloadOnly &&
-          !_sunoCreateSubmitted &&
-          (_sunoAutomationStatus == 'waitingLogin' ||
-              _sunoAutomationStatus == 'manualAction' ||
-              _sunoAutomationStatus == 'failed')) {
-        final currentUrl = (await controller.getUrl())?.toString() ?? '';
-        if (_isSunoLoginFlowUrl(currentUrl)) {
-          await _setSunoStatus(
-            'waitingLogin',
-            'Suno 登录流程进行中，请先在页面中完成登录。',
-          );
-          return;
-        }
-        if (_sunoPageKind(currentUrl) != 'create') {
-          await controller.loadUrl(
-            urlRequest: URLRequest(url: WebUri('https://suno.com/create')),
-          );
-          await _setSunoStatus(
-            'manualAction',
-            'Suno 当前不在 Create 页面，Tomato 正在重新打开 Create 后再填写。',
-          );
-          return;
-        }
-        final allowMagicClick = _sunoStyleMagicRequestedAt == null;
-        final fill = await _evaluateSunoJson(
-          controller,
-          _sunoFillScript(
-            lyrics: _sunoLyrics,
-            stylePrompt: _sunoStylePrompt,
-            ignoredStylePrompt: _sunoIgnoredStylePrompt,
-            allowMagicClick: allowMagicClick,
-            magicAlreadyRequested: _sunoStyleMagicRequestedAt != null,
-          ),
-        );
-        TomatoLogger.info(
-          category: 'suno',
-          event: 'create.fill_probe',
-          articleId: _sunoArticleId,
-          status: _sunoAutomationStatus,
-          data: {
-            'ok': fill['ok'],
-            'retry': fill['retry'],
-            'missing': fill['missing'],
-            'fieldCount': fill['fieldCount'],
-            'magicClicked': fill['magicClicked'],
-            'styleLength': (fill['stylePrompt'] ?? '').toString().length,
-            'magicTarget': fill['magicTarget'],
-            'magicTrigger': fill['magicTrigger'],
-            'styleExpandTarget': fill['styleExpandTarget'],
-            'stylePlaceholder': fill['stylePlaceholder'],
-            'lyricsField': fill['lyricsField'],
-            'styleField': fill['styleField'],
-          },
-        );
-        final ignoredStylePrompt =
-            (fill['ignoredStylePrompt'] ?? '').toString().trim();
-        if (ignoredStylePrompt.isNotEmpty && _sunoStylePrompt.trim().isEmpty) {
-          _sunoIgnoredStylePrompt = ignoredStylePrompt;
-        }
-        final generatedStyle = (fill['stylePrompt'] ?? '').toString().trim();
-        if (generatedStyle.isNotEmpty) {
-          _sunoStylePrompt = generatedStyle;
-          _sunoIgnoredStylePrompt = '';
-        }
-        if (fill['magicClicked'] == true) {
-          _sunoStyleMagicRequestedAt = DateTime.now();
-          await _setSunoStatus(
-            'manualAction',
-            'Tomato 已点击 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成 Styles。',
-          );
-          return;
-        }
-        if (fill['ok'] == true) {
-          await _setSunoStatus(
-            'waitingConfirm',
-            'Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。',
-          );
-          return;
-        }
-        if (fill['retry'] == true) {
-          await _setSunoStatus(
-            'manualAction',
-            (fill['message'] ?? '').toString().trim().isEmpty
-                ? 'Tomato 正在等待 Suno 页面完成当前自动操作。'
-                : (fill['message'] ?? '').toString(),
-          );
-          return;
-        }
-        final missing = (fill['missing'] as List?)
-                ?.map((value) => value.toString())
-                .where((value) => value.trim().isNotEmpty)
-                .join(', ') ??
-            '';
-        final fieldCount = (fill['fieldCount'] as num?)?.toInt();
-        final diagnostics = [
-          if (missing.isNotEmpty) '缺少：$missing',
-          if (fieldCount != null) '候选输入框：$fieldCount 个',
-        ].join('；');
-        await _setSunoStatus(
-          'manualAction',
-          diagnostics.isEmpty
-              ? 'Tomato 没能准确找到 Suno Advanced 歌词或风格输入框，请在页面中手工填写后点击“继续检测”。'
-              : 'Tomato 没能准确找到 Suno Advanced 歌词或风格输入框（$diagnostics）。请在页面中手工填写后点击“继续检测”。',
-        );
-        return;
-      }
-      if (_sunoCreateSubmitted) {
-        final result = await _evaluateSunoJson(
-          controller,
-          _sunoCompletionScript(
-            expectedStylePrompt: _sunoStylePrompt,
-            expectedLyrics: _sunoLyrics,
-            requireExpectedMatch: true,
-            trustedSongUrls: _trustedSunoSongUrls(),
-          ),
-        );
-        TomatoLogger.info(
-          category: 'suno',
-          event: 'completion.probe',
-          articleId: _sunoArticleId,
-          status: _sunoAutomationStatus,
-          data: {
-            'ok': result['ok'],
-            'songUrl': result['songUrl'],
-            'songUrlCount': (result['songUrls'] as List?)?.length ?? 0,
-            'candidateSongUrlCount':
-                (result['candidateSongUrls'] as List?)?.length ?? 0,
-            'libraryCandidateSongUrlCount':
-                _sunoLibraryCandidateSongUrls(
-                  result,
-                  detectDownloadBroadRecall: _sunoUseLibraryBroadRecall,
-                ).length,
-            'libraryBroadRecall': _sunoUseLibraryBroadRecall,
-            'currentPageExpectedScore': result['currentPageExpectedScore'],
-            'currentPageLyricsExactMatch':
-                result['currentPageLyricsExactMatch'],
-            'currentPageGenerating': result['currentPageGenerating'],
-          },
-        );
-        var songUrl = _canonicalSunoSongUrl(result['songUrl']) ?? '';
-        final currentUrl = (await controller.getUrl())?.toString() ?? '';
-        final currentPageKind = _sunoPageKind(currentUrl);
-        final knownSongUrl = _canonicalSunoSongUrl(_sunoSongUrl) ?? '';
-        final currentPageLyricsExactMatch =
-            result['currentPageLyricsExactMatch'] == true;
-        final currentPageGenerating =
-            result['currentPageGenerating'] == true;
-        final currentUrlMatchesKnown =
-            knownSongUrl.isNotEmpty && currentUrl.startsWith(knownSongUrl);
-        if (_sunoExistingDownloadOnly &&
-            knownSongUrl.isNotEmpty &&
-            currentPageKind != 'library' &&
-            currentUrlMatchesKnown &&
-            currentPageLyricsExactMatch) {
-          songUrl = knownSongUrl;
-        } else if (songUrl.isEmpty &&
-            knownSongUrl.isNotEmpty &&
-            currentPageKind != 'library' &&
-            currentUrlMatchesKnown &&
-            currentPageLyricsExactMatch) {
-          songUrl = knownSongUrl;
-        }
-        final libraryCandidateSongUrls = _sunoLibraryCandidateSongUrls(
-          result,
-          detectDownloadBroadRecall: _sunoUseLibraryBroadRecall,
-        );
-        if (_sunoUseLibraryBroadRecall &&
-            currentPageKind == 'library' &&
-            libraryCandidateSongUrls.isNotEmpty) {
-          final candidateUrl = libraryCandidateSongUrls.first;
-          _sunoPendingDownloadSongUrl = candidateUrl;
-          _sunoSongUrl = candidateUrl;
-          await controller.loadUrl(
-            urlRequest: URLRequest(url: WebUri(candidateUrl)),
-          );
-          TomatoLogger.info(
-            category: 'suno',
-            event: 'library.candidate_open',
-            articleId: _sunoArticleId,
-            status: _sunoAutomationStatus,
-            data: {
-              'broadRecall': _sunoUseLibraryBroadRecall,
-              'candidateUrl': candidateUrl,
-              'candidateCount': libraryCandidateSongUrls.length,
-            },
-          );
-          await _setSunoStatus(
-            'downloading',
-            '正在打开 Suno 候选歌曲详情页核对歌词后下载...',
-          );
-          return;
-        }
-        if (songUrl.isEmpty) {
-          final pendingCandidate =
-              _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl) ?? '';
-          if (currentPageKind == 'song' &&
-              pendingCandidate.isNotEmpty &&
-              currentUrl.startsWith(pendingCandidate) &&
-              !_isSunoPageSettled(currentUrl)) {
-            await _setSunoStatus(
-              'downloading',
-              '正在等待 Suno 候选歌曲详情页加载完成后核对歌词...',
-            );
-            return;
-          }
-          if (currentPageKind == 'song' &&
-              pendingCandidate.isNotEmpty &&
-              currentUrl.startsWith(pendingCandidate) &&
-              _isSunoPageSettled(currentUrl) &&
-              !currentPageLyricsExactMatch) {
-            if (_sunoCreateSubmitted &&
-                !_sunoExistingDownloadOnly &&
-                !_hasNewSunoVersionsSinceCreate()) {
-              await _setSunoStatus(
-                currentPageGenerating ||
-                        _sunoAutomationStatus == 'creating'
-                    ? 'creating'
-                    : 'downloading',
-                currentPageGenerating
-                    ? '正在歌曲详情页等待 Suno 生成完成并核对歌词...'
-                    : '正在歌曲详情页等待歌词匹配后下载...',
-              );
-              return;
-            }
-            _sunoRejectedCandidateSongUrls.add(pendingCandidate);
-            _sunoPendingDownloadSongUrl = null;
-            if (_sunoUseLibraryBroadRecall) {
-              await _sunoNavigateToLibraryForMoreCandidates(
-                controller,
-                message:
-                    '这个 Suno 歌曲详情页歌词与当前文章不匹配，正在回到 Library 核对其它候选...',
-              );
-            } else {
-              await _setSunoStatus(
-                'manualAction',
-                'Suno 候选歌曲详情页歌词与当前文章不匹配，已停止自动下载以避免保存错歌。',
-              );
-              _sunoAutomationTimer?.cancel();
-            }
-            return;
-          }
-          final rawCandidateSongUrls = _mergeSunoSongUrls([
-            ((result['candidateSongUrls'] as List?) ?? const [])
-                .map((value) => value.toString()),
-          ]);
-          final candidateSongUrls = rawCandidateSongUrls
-              .where((value) =>
-                  !_sunoDownloadedSongUrls.contains(value) &&
-                  !_hasSunoVersionForSongUrl(value) &&
-                  !_sunoRejectedCandidateSongUrls.contains(value))
-              .toList();
-          final canOpenCandidate = currentPageKind == 'library' ||
-              (!_sunoExistingDownloadOnly && currentPageKind == 'create');
-          final openFromLibrary = _sunoUseLibraryBroadRecall &&
-              currentPageKind == 'library' &&
-              libraryCandidateSongUrls.isNotEmpty;
-          final nextCandidateUrls = openFromLibrary
-              ? libraryCandidateSongUrls
-              : candidateSongUrls;
-          if (nextCandidateUrls.isNotEmpty && canOpenCandidate) {
-            final candidateUrl = nextCandidateUrls.first;
-            _sunoPendingDownloadSongUrl = candidateUrl;
-            _trustSunoSongUrls([candidateUrl]);
-            await controller.loadUrl(
-              urlRequest: URLRequest(url: WebUri(candidateUrl)),
-            );
-            await _setSunoStatus(
-              'downloading',
-              '正在打开 Suno 候选歌曲详情页核对歌词后下载...',
-            );
-            return;
-          }
-          if ((currentPageKind == 'library' || currentPageKind == 'create') &&
-              rawCandidateSongUrls.isNotEmpty &&
-              candidateSongUrls.isEmpty &&
-              (!_sunoUseLibraryBroadRecall ||
-                  libraryCandidateSongUrls.isEmpty) &&
-              (_sunoExistingDownloadOnly
-                  ? _sunoVersions.isNotEmpty
-                  : _hasNewSunoVersionsSinceCreate())) {
-            // Suno Library rows hydrate lazily. Do not mark an article complete
-            // just because the first visible row is an already-downloaded song:
-            // same lyrics with a different style is still another valid version.
-            if (!_isSunoPageSettled(currentUrl)) {
-              await _setSunoStatus(
-                'downloading',
-                '正在等待 Suno 歌曲列表加载完成，继续检查同歌词的其它风格版本...',
-              );
-              return;
-            }
-            await _saveSunoMetadata();
-            await _setSunoStatus('complete', null);
-            _sunoAutomationTimer?.cancel();
-            return;
-          }
-          if (!_sunoExistingDownloadOnly &&
-              (currentPageKind == 'library' || currentPageKind == 'create') &&
-              rawCandidateSongUrls.isEmpty &&
-              (!_sunoUseLibraryBroadRecall ||
-                  libraryCandidateSongUrls.isEmpty) &&
-              _hasNewSunoVersionsSinceCreate() &&
-              _isSunoPageSettled(currentUrl)) {
-            await _saveSunoMetadata();
-            await _setSunoStatus('complete', null);
-            _sunoAutomationTimer?.cancel();
-            return;
-          }
-        }
-        if (songUrl.isNotEmpty) {
-          _sunoSongUrl = songUrl;
-          if (_sunoExistingDownloadOnly &&
-              currentPageKind == 'song' &&
-              !_isSunoPageSettled(currentUrl)) {
-            await _setSunoStatus(
-              'downloading',
-              '正在等待 Suno 歌曲详情页加载完成后检测完整歌曲列表...',
-            );
-            return;
-          }
-          if (_sunoExistingDownloadOnly &&
-              songUrl.startsWith('https://') &&
-              !currentUrl.startsWith(songUrl)) {
-            final alreadyTriedSongDetail =
-                _sunoPendingDownloadSongUrl == songUrl;
-            _sunoPendingDownloadSongUrl = songUrl;
-            if (!alreadyTriedSongDetail && !_isSunoProfileUrl(currentUrl)) {
-              await controller.loadUrl(
-                urlRequest: URLRequest(url: WebUri(songUrl)),
-              );
-              await _setSunoStatus(
-                'downloading',
-                '正在打开 Suno 歌曲详情页准备下载...',
-              );
-              return;
-            }
-            if (alreadyTriedSongDetail &&
-                currentPageKind != 'library' &&
-                currentPageKind != 'profile' &&
-                !_sunoExistingDownloadLibraryTried) {
-              _sunoExistingDownloadLibraryTried = true;
-              await controller.loadUrl(
-                urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
-              );
-              await _setSunoStatus(
-                'downloading',
-                'Suno 页面跳到了非歌曲页，正在打开 Library 查找对应完整歌曲...',
-              );
-              return;
-            }
-            if (_isSunoProfileUrl(currentUrl)) {
-              await _setSunoStatus(
-                'downloading',
-                'Suno 打开歌曲链接后跳到了个人主页，Tomato 将只在当前页面查找下载入口，不再反复刷新。',
-              );
-            }
-          }
-          if (_sunoExistingDownloadOnly &&
-              songUrl.startsWith('https://') &&
-              !currentUrl.startsWith(songUrl) &&
-              !_isSunoProfileUrl(currentUrl) &&
-              _sunoPendingDownloadSongUrl != songUrl) {
-            return;
-          }
-          final resultSongUrls = (result['songUrls'] as List?)
-                  ?.map((value) => value.toString().trim())
-                  .where((value) => value.isNotEmpty)
-                  .toList() ??
-              <String>[];
-          final currentSongUrls = _mergeSunoSongUrls([
-            resultSongUrls,
-            _sunoDetectedSongUrls,
-            [songUrl],
-          ]);
-          final resultDetectedSongUrls = _mergeSunoSongUrls([resultSongUrls]);
-          if (currentSongUrls.isNotEmpty) {
-            _sunoDetectedSongUrls.addAll(currentSongUrls);
-            _trustSunoSongUrls(resultDetectedSongUrls);
-            _syncDownloadedSunoUrlsIntoDetected();
-          }
-          final completedUrls = currentSongUrls
-              .where((value) =>
-                  !_sunoDownloadedSongUrls.contains(value) &&
-                  !_hasSunoVersionForSongUrl(value))
-              .toList();
-          if (completedUrls.isEmpty && _sunoVersions.isNotEmpty) {
-            final undownloadedSidebarSongUrls = _mergeSunoSongUrls([
-              ((result['candidateSongUrls'] as List?) ?? const [])
-                  .map((value) => value.toString()),
-            ])
-                .where((value) =>
-                    !_sunoDownloadedSongUrls.contains(value) &&
-                    !_hasSunoVersionForSongUrl(value) &&
-                    !_sunoRejectedCandidateSongUrls.contains(value))
-                .toList();
-            if (!_sunoExistingDownloadOnly &&
-                _hasNewSunoVersionsSinceCreate() &&
-                currentPageKind == 'song') {
-              await _sunoNavigateToLibraryForMoreCandidates(
-                controller,
-                message: '这个候选歌曲已保存，正在回到 Library 扫描后续候选...',
-              );
-              return;
-            }
-            if (_sunoCreateSubmitted &&
-                !_sunoExistingDownloadOnly &&
-                _hasNewSunoVersionsSinceCreate() &&
-                currentPageKind == 'create' &&
-                undownloadedSidebarSongUrls.isNotEmpty) {
-              final candidateUrl = undownloadedSidebarSongUrls.first;
-              _sunoPendingDownloadSongUrl = candidateUrl;
-              _sunoSongUrl = candidateUrl;
-              _trustSunoSongUrls([candidateUrl]);
-              await controller.loadUrl(
-                urlRequest: URLRequest(url: WebUri(candidateUrl)),
-              );
-              await _setSunoStatus(
-                'downloading',
-                'Create 页还有未下载的完整歌曲，正在打开下一首详情页核对歌词...',
-              );
-              return;
-            }
-            if (_sunoCreateSubmitted &&
-                !_sunoExistingDownloadOnly &&
-                _hasNewSunoVersionsSinceCreate() &&
-                currentPageKind != 'library') {
-              await _sunoNavigateToLibraryForMoreCandidates(
-                controller,
-                message:
-                    '已保存本次 Create 匹配歌曲，正在打开 Library 扫描同批其它版本...',
-              );
-              return;
-            }
-            if (_sunoUseLibraryBroadRecall &&
-                currentPageKind == 'library' &&
-                libraryCandidateSongUrls.isNotEmpty) {
-              await _setSunoStatus(
-                'downloading',
-                '当前歌曲已保存，正在 Library 继续打开其它候选歌曲详情页...',
-              );
-              return;
-            }
-            if (_sunoUseLibraryBroadRecall &&
-                currentPageKind == 'library' &&
-                !_isSunoPageSettled(currentUrl)) {
-              await _setSunoStatus(
-                'downloading',
-                '正在等待 Suno Library 歌曲列表加载完成，继续检查同歌词的其它版本...',
-              );
-              return;
-            }
-            if (_sunoExistingDownloadOnly &&
-                !_sunoExistingDownloadLibraryTried &&
-                currentPageKind != 'library') {
-              _sunoExistingDownloadLibraryTried = true;
-              _sunoPendingDownloadSongUrl = songUrl;
-              await controller.loadUrl(
-                urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
-              );
-              await _setSunoStatus(
-                'downloading',
-                '歌曲详情页只看到已下载版本，正在打开 Suno Library 检测同一歌词的其它完整歌曲...',
-              );
-              return;
-            }
-            if (_sunoExistingDownloadOnly && resultDetectedSongUrls.isEmpty) {
-              await _setSunoStatus(
-                'downloading',
-                '正在等待 Suno 页面露出同一歌词的完整歌曲列表...',
-              );
-              return;
-            }
-            await _saveSunoMetadata();
-            await _setSunoStatus('complete', null);
-            _sunoAutomationTimer?.cancel();
-            return;
-          }
-          final mediaBySongUrl = <String, String>{};
-          final rawMediaBySongUrl = result['mediaBySongUrl'];
-          if (rawMediaBySongUrl is Map) {
-            for (final entry in rawMediaBySongUrl.entries) {
-              final key = entry.key.toString().trim();
-              final value = entry.value.toString().trim();
-              if (key.isNotEmpty && value.isNotEmpty) {
-                mediaBySongUrl[key] = value;
-              }
-            }
-          }
-          final directMediaDownloaded = await _downloadSunoDirectMediaUrls(
-            articleId: _sunoArticleId!,
-            songUrls: completedUrls,
-            mediaBySongUrl: mediaBySongUrl,
-            fallbackMediaUrl: (result['mediaUrl'] ?? '').toString(),
-          );
-          if (directMediaDownloaded > 0) {
-            final remainingUrls = currentSongUrls
-                .where((value) =>
-                    !_sunoDownloadedSongUrls.contains(value) &&
-                    !_hasSunoVersionForSongUrl(value))
-                .toList();
-            if (remainingUrls.isEmpty) {
-              final shouldScanLibraryForMore = _sunoUseLibraryBroadRecall &&
-                  currentPageKind != 'library';
-              if (shouldScanLibraryForMore ||
-                  (!_sunoExistingDownloadOnly && currentPageKind == 'song') ||
-                  (_sunoExistingDownloadOnly && currentPageKind == 'song')) {
-                await _sunoNavigateToLibraryForMoreCandidates(
-                  controller,
-                  message: _sunoCreateSubmitted && !_sunoExistingDownloadOnly
-                      ? '已直接保存 $directMediaDownloaded 个匹配歌曲，正在回到 Library 扫描后续候选...'
-                      : '已直接保存 $directMediaDownloaded 个 Suno 完整版本，正在回到 Library 继续检测其它候选...',
-                );
-                return;
-              }
-              if (_sunoUseLibraryBroadRecall &&
-                  currentPageKind == 'library' &&
-                  libraryCandidateSongUrls.isNotEmpty) {
-                await _setSunoStatus(
-                  'downloading',
-                  '已直接保存 $directMediaDownloaded 个 Suno 完整版本，正在 Library 继续打开其它候选...',
-                );
-                return;
-              }
-              if (_sunoUseLibraryBroadRecall &&
-                  currentPageKind == 'library' &&
-                  !_isSunoPageSettled(currentUrl)) {
-                await _setSunoStatus(
-                  'downloading',
-                  '已直接保存 $directMediaDownloaded 个 Suno 完整版本，正在等待 Library 加载后继续扫描...',
-                );
-                return;
-              }
-              await _setSunoStatus('complete', null);
-              _sunoAutomationTimer?.cancel();
-              return;
-            }
-            await _setSunoStatus(
-              'downloading',
-              '已直接保存 $directMediaDownloaded 个 Suno 完整版本，正在检查其它版本...',
-            );
-            return;
-          }
-          final unresolvedDirectUrls = currentSongUrls
-              .where((value) =>
-                  !_sunoDownloadedSongUrls.contains(value) &&
-                  !_hasSunoVersionForSongUrl(value))
-              .toList(growable: false);
-          if (_isAwaitingSunoMenuDownload() &&
-              unresolvedDirectUrls.isNotEmpty &&
-              _sunoPageKind(currentUrl) == 'song') {
-            await _setSunoStatus(
-              'downloading',
-              '已点击 Suno 下载菜单，正在等待 WebView 接收音频文件...',
-            );
-            return;
-          }
-          if (_sunoExistingDownloadOnly &&
-              unresolvedDirectUrls.isNotEmpty &&
-              _sunoPageKind(currentUrl) == 'song' &&
-              !_isAwaitingSunoMenuDownload()) {
-            // Pitfall: clicking Suno's native "Download Anyway" confirmation
-            // in Windows WebView can crash flutter_inappwebview_windows_plugin.
-            // Keep this path on Dart-side media downloads or stop safely.
-            await _saveSunoMetadata(
-              manualActionMessage:
-                  'Suno 详情页歌词已匹配，但 Tomato 没能提取可直接保存的音频地址。Windows WebView 下载确认会导致程序崩溃，已停止自动点击以保护数据。',
-            );
-            await _setSunoStatus(
-              'manualAction',
-              'Suno 详情页歌词已匹配，但 Tomato 没能提取可直接保存的音频地址。请先不要手动点击 Download Anyway；我需要继续适配这个页面的媒体地址。',
-            );
-            _sunoAutomationTimer?.cancel();
-            return;
-          }
-          final download = await _evaluateSunoJson(
-            controller,
-            _sunoDownloadScript(
-              downloadedSongUrls: _sunoDownloadedSongUrls.toList(),
-              pendingSongUrl: _pendingSunoDownloadTarget(completedUrls),
-              allowedSongUrls: completedUrls,
-              expectedStylePrompt: _sunoStylePrompt,
-              expectedLyrics: _sunoLyrics,
-              requireExpectedMatch: true,
-              trustedSongUrls: _trustedSunoSongUrls(completedUrls),
-            ),
-          );
-          TomatoLogger.info(
-            category: 'suno',
-            event: 'download.probe',
-            articleId: _sunoArticleId,
-            status: _sunoAutomationStatus,
-            data: _sunoDownloadProbeLogData(download),
-          );
-          final pendingSongUrl =
-              _canonicalSunoSongUrl(download['songUrl']) ?? '';
-          final pendingTitle = (download['title'] ?? '').toString().trim();
-          if (pendingSongUrl.isNotEmpty &&
-              !_isSyntheticSunoSongKey(pendingSongUrl)) {
-            _sunoPendingDownloadSongUrl = pendingSongUrl;
-          }
-          if (pendingTitle.isNotEmpty) {
-            _sunoPendingDownloadTitle = pendingTitle;
-          }
-          if (download['ok'] == true || download['retry'] == true) {
-            final downloadStage = (download['stage'] ?? '').toString();
-            if (download['ok'] == true && downloadStage == 'download') {
-              _sunoMenuDownloadClickedAt = DateTime.now();
-            }
-            if (download['retry'] == true && downloadStage == 'menu') {
-              _sunoExistingDownloadMenuRetries += 1;
-              if (_sunoExistingDownloadOnly &&
-                  _sunoExistingDownloadMenuRetries >= 3 &&
-                  !_sunoExistingDownloadLibraryTried &&
-                  _sunoPageKind(currentUrl) != 'library') {
-                _sunoExistingDownloadLibraryTried = true;
-                _sunoPendingDownloadSongUrl = songUrl;
-                await controller.loadUrl(
-                  urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
-                );
-                await _setSunoStatus(
-                  'downloading',
-                  '歌曲详情页菜单没有露出下载入口，正在打开 Suno Library 查找对应完整歌曲...',
-                );
-                return;
-              }
-              if (_sunoExistingDownloadOnly &&
-                  _sunoExistingDownloadMenuRetries >= 3 &&
-                  _sunoPageKind(currentUrl) == 'library') {
-                await _saveSunoMetadata(
-                  manualActionMessage:
-                      'Suno 已检测到缺失完整歌曲，但 Library 菜单没有露出 Download/Audio 项。',
-                );
-                await _setSunoStatus(
-                  'manualAction',
-                  'Suno 已检测到缺失完整歌曲，但 Library 菜单没有露出 Download/Audio 项。请在 Suno 页面手动下载音频，Tomato 会保存已能自动获取的版本。',
-                );
-                _sunoAutomationTimer?.cancel();
-                return;
-              }
-            } else if (download['ok'] == true) {
-              _sunoExistingDownloadMenuRetries = 0;
-            }
-            await _saveSunoMetadata(
-              manualActionMessage:
-                  'Suno 已生成 ${currentSongUrls.length} 个完整版本，Tomato 正在下载未保存的版本。',
-            );
-            await _setSunoStatus(
-              'downloading',
-              '正在下载 Suno 缺失歌曲版本 1 / ${completedUrls.length}...',
-            );
-            return;
-          }
-          if (_sunoExistingDownloadOnly &&
-              !_sunoExistingDownloadLibraryTried &&
-              _sunoPageKind(currentUrl) != 'library') {
-            _sunoExistingDownloadLibraryTried = true;
-            _sunoPendingDownloadSongUrl = songUrl;
-            await controller.loadUrl(
-              urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
-            );
-            await _setSunoStatus(
-              'downloading',
-              '歌曲详情页没有露出下载入口，正在打开 Suno Library 查找对应完整歌曲...',
-            );
-            return;
-          }
-          if (_sunoCreateSubmitted && currentPageKind == 'song') {
-            await _setSunoStatus(
-              'downloading',
-              'Suno 歌曲还在生成或音频未就绪，Tomato 会继续等待...',
-            );
-            return;
-          }
-          await _saveSunoMetadata(
-            manualActionMessage: 'Suno 已生成完整歌曲，但 Tomato 没能找到可自动点击的音频下载入口。',
-          );
-          await _setSunoStatus(
-            'manualAction',
-            (download['message'] ?? '').toString().trim().isEmpty
-                ? 'Suno 已生成完整歌曲，但 Tomato 没能找到可自动点击的音频下载入口。请在页面中点击下载音频。'
-                : (download['message'] ?? '').toString(),
-          );
-          _sunoAutomationTimer?.cancel();
-        } else if (_sunoExistingDownloadOnly) {
-          final startedAt = _sunoExistingDownloadStartedAt;
-          if (startedAt == null ||
-              DateTime.now().difference(startedAt) <
-                  const Duration(seconds: 75)) {
-            await _setSunoStatus(
-              'downloading',
-              '正在等待 Suno 歌曲列表加载完成，或打开候选详情页核对歌词...',
-            );
-            return;
-          }
-          await _setSunoStatus(
-            'manualAction',
-            'Suno 页面中没有找到与当前歌词匹配的完整歌曲，已停止自动下载以避免保存错歌。',
-          );
-          _sunoAutomationTimer?.cancel();
-        } else {
-          await _setSunoStatus('creating', 'Suno 正在生成歌曲...');
-        }
-      }
-    } catch (error) {
-      if (_isTransientSunoWebViewError(error)) {
-        await _setSunoStatus(
-          'manualAction',
-          'Suno 页面控件还在初始化或刚刚重建，Tomato 会继续检测；也可以稍后点击“继续检测”。',
-        );
-        return;
-      }
-      await _failSunoAutomation(_displayError(error));
-    } finally {
-      _sunoAutomationBusy = false;
-      if (mounted) {
-        setState(() {});
-      }
-    }
+    return {
+      'ok': true,
+      'status': _sunoEngine.state.statusKey,
+      ...(await _songStatePayload(articleId)),
+    };
   }
 
   Future<void> _confirmSunoCreate() async {
-    final controller = _sunoController;
-    if (controller == null || _sunoArticleId == null) {
-      return;
-    }
-    if (_sunoAutomationBusy) {
-      return;
-    }
-    _sunoAutomationBusy = true;
-    try {
-      try {
-        final currentUrl = (await controller.getUrl())?.toString() ?? '';
-        if (_sunoPageKind(currentUrl) == 'create') {
-          final probe = await _evaluateSunoJson(
-            controller,
-            _sunoFillScript(
-              lyrics: _sunoLyrics,
-              stylePrompt: _sunoStylePrompt,
-              ignoredStylePrompt: _sunoIgnoredStylePrompt,
-              allowMagicClick: false,
-              magicAlreadyRequested: _sunoStyleMagicRequestedAt != null,
-              readOnly: true,
-            ),
-          );
-          final currentStyle = (probe['stylePrompt'] ?? '').toString().trim();
-          if (currentStyle.isNotEmpty) {
-            _sunoStylePrompt = currentStyle;
-          }
-        }
-      } catch (error, stackTrace) {
-        TomatoLogger.warn(
-          category: 'suno',
-          event: 'create.style_sync_skipped',
-          articleId: _sunoArticleId,
-          status: _sunoAutomationStatus,
-          message: _displayError(error),
-          stackTrace: stackTrace,
-        );
-      }
-      await _snapshotSunoPreCreateSongUrls(controller);
-      final result = await _evaluateSunoJson(controller, _sunoCreateScript);
-      if (result['ok'] == true) {
-        _sunoCreateBaselineVersionCount = _sunoVersions.length;
-        _sunoCreateSubmitted = true;
-        _sunoCompletedStandby = false;
-        _sunoCompletedStandbyFilled = false;
-        _sunoDetectedSongUrls.clear();
-        _rememberDownloadedSunoUrls();
-        await _setSunoStatus('creating', 'Suno 正在生成歌曲...');
-        _startSunoPolling();
-        return;
-      }
-      await _setSunoStatus(
-        'manualAction',
-        (result['message'] ?? '').toString().trim().isEmpty
-            ? 'Tomato 没能点击 Suno Create，请检查页面字段或手工点击 Create。'
-            : (result['message'] ?? '').toString(),
-      );
-    } catch (error) {
-      if (_isTransientSunoWebViewError(error)) {
-        await _setSunoStatus(
-          'manualAction',
-          'Suno 页面控件还在初始化或刚刚重建，请稍后再确认创建。',
-        );
-        return;
-      }
-      await _failSunoAutomation(_displayError(error));
-    } finally {
-      _sunoAutomationBusy = false;
-      if (mounted) {
-        setState(() {});
-      }
-    }
-  }
-
-  /// 点击 Suno Create 之前，先把 Create 页面上已经存在的所有 /song/ 链接记为
-  /// “非本次生成”。Suno 只有在真人审核通过后才会把新歌加入右侧列表，期间页面
-  /// 上仍然只有这些旧歌。如果不先记下它们，创建后的第一轮 completion 探针会把
-  /// 这些旧歌当成候选、立刻 loadUrl 跳到旧歌详情页——这会中断真人审核+生成，
-  /// 还会触发 Suno 登录握手，把状态机拖回“重新打开 Create → 重填歌词 → 重点
-  /// 魔法棒 → 等待生成风格”的死循环。记下基线后，只有真正新出现的歌曲才会被
-  /// 当作候选，从而停留在 Create 页面等待右侧歌曲列表出现。
-  Future<void> _snapshotSunoPreCreateSongUrls(
-    InAppWebViewController controller,
-  ) async {
-    try {
-      final probe = await _evaluateSunoJson(
-        controller,
-        _sunoCompletionScript(
-          expectedStylePrompt: _sunoStylePrompt,
-          expectedLyrics: _sunoLyrics,
-          requireExpectedMatch: false,
-          trustedSongUrls: _trustedSunoSongUrls(),
-        ),
-      );
-      final preExisting = _mergeSunoSongUrls([
-        ((probe['candidateSongUrls'] as List?) ?? const [])
-            .map((value) => value.toString()),
-        ((probe['songUrls'] as List?) ?? const [])
-            .map((value) => value.toString()),
-      ])
-          .map((value) => _canonicalSunoSongUrl(value))
-          .whereType<String>()
-          .where((value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value))
-          .toList();
-      _sunoRejectedCandidateSongUrls.addAll(preExisting);
-      TomatoLogger.info(
-        category: 'suno',
-        event: 'create.pre_submit_snapshot',
-        articleId: _sunoArticleId,
-        status: _sunoAutomationStatus,
-        data: {
-          'preExistingSongUrls': preExisting.length,
-          'rejectedTotal': _sunoRejectedCandidateSongUrls.length,
-        },
-      );
-    } catch (error, stackTrace) {
-      TomatoLogger.warn(
-        category: 'suno',
-        event: 'create.pre_submit_snapshot_skipped',
-        articleId: _sunoArticleId,
-        status: _sunoAutomationStatus,
-        message: _displayError(error),
-        stackTrace: stackTrace,
-      );
-    }
+    _sunoEngine.attachWebController(_sunoController);
+    await _sunoEngine.confirmCreate();
   }
 
   Future<void> _handleSunoDownload(DownloadStartRequest request) async {
-    final articleId = _sunoArticleId;
-    if (articleId == null) {
-      return;
-    }
-    final songUrl =
-        _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl ?? _sunoSongUrl) ??
-            '';
-    final requestUrl = request.url.toString();
-    if (_isRejectedSunoMediaUrl(requestUrl)) {
-      TomatoLogger.info(
-        category: 'suno',
-        event: 'download.skipped_preview',
-        articleId: articleId,
-        status: _sunoAutomationStatus,
-        data: {'requestUrl': requestUrl},
-      );
-      await _setSunoStatus(
-        'downloading',
-        '已跳过 Suno 预览片段，正在继续查找完整版下载...',
-      );
-      _startSunoPolling();
-      return;
-    }
-    if (songUrl.isNotEmpty &&
-        _isVerifiableSunoMediaUrl(requestUrl) &&
-        _matchingSunoMediaUrl(requestUrl, songUrl) == null) {
-      TomatoLogger.warn(
-        category: 'suno',
-        event: 'download.rejected_wrong_song',
-        articleId: articleId,
-        status: _sunoAutomationStatus,
-        data: {
-          'requestUrl': requestUrl,
-          'targetSongUrl': songUrl,
-        },
-      );
-      await _setSunoStatus(
-        'manualAction',
-        '已拦截一个不属于当前文章目标歌曲的 Suno 下载链接，避免保存错歌。请回到正确歌曲页后再继续检测。',
-      );
-      _sunoAutomationTimer?.cancel();
-      return;
-    }
-    if (songUrl.isNotEmpty &&
-        (_sunoDownloadedSongUrls.contains(songUrl) ||
-            _hasSunoVersionForSongUrl(songUrl))) {
-      _sunoDownloadedSongUrls.add(songUrl);
-      _sunoDetectedSongUrls.add(songUrl);
-      _sunoTrustedSongUrls.add(songUrl);
-      _sunoPendingDownloadSongUrl = null;
-      _sunoPendingDownloadTitle = null;
-      await _setSunoStatus(
-        'downloading',
-        '这个 Suno 版本已经下载过，正在检查其它版本...',
-      );
-      _startSunoPolling();
-      return;
-    }
-    final downloadKey =
-        songUrl.isNotEmpty ? 'song:$songUrl' : 'download:$requestUrl';
-    if (_sunoDownloadInFlightKeys.contains(downloadKey) ||
-        _sunoDownloadedDownloadKeys.contains(downloadKey)) {
-      return;
-    }
-    _sunoDownloadInFlightKeys.add(downloadKey);
-    await _setSunoStatus('downloading', '正在下载 Suno 生成的歌曲...');
-    try {
-      final directory = Directory(await _resolvedSunoOutputDirectorySetting());
-      await directory.create(recursive: true);
-      final filename = _safeSunoFilename(request.suggestedFilename);
-      final target = _uniqueSunoTargetFile(directory, filename);
-      final bytes = await _downloadSunoUrl(
-        requestUrl,
-        userAgent: request.userAgent,
-      );
-      if (bytes.isEmpty) {
-        throw const FormatException('下载结果为空');
-      }
-      await target.writeAsBytes(bytes, flush: true);
-      _sunoAudioPath = target.path;
-      if (songUrl.isNotEmpty) {
-        _sunoDownloadedSongUrls.add(songUrl);
-        _sunoDetectedSongUrls.add(songUrl);
-        _sunoTrustedSongUrls.add(songUrl);
-      }
-      _sunoDownloadedDownloadKeys.add(downloadKey);
-      final lyricsHash = await _articleSongLyricsHash(
-        await _songArticle(articleId),
-      );
-      final version = ArticleSongVersion(
-        id: 'suno_${articleId}_${DateTime.now().millisecondsSinceEpoch}_${_sunoVersions.length + 1}',
-        audioPath: target.path,
-        title: (_sunoPendingDownloadTitle ?? '').trim().isEmpty
-            ? 'Suno 版本 ${_sunoVersions.length + 1}'
-            : _sunoPendingDownloadTitle!.trim(),
-        songUrl:
-            songUrl.isEmpty ? _canonicalSunoSongUrl(_sunoSongUrl) : songUrl,
-        createdAt: DateTime.now().toIso8601String(),
-        stylePrompt:
-            _sunoStylePrompt.trim().isEmpty ? null : _sunoStylePrompt.trim(),
-        lyricsHash: lyricsHash,
-      );
-      _sunoVersions.removeWhere((item) =>
-          item.songUrl != null &&
-          version.songUrl != null &&
-          _canonicalSunoSongUrl(item.songUrl) ==
-              _canonicalSunoSongUrl(version.songUrl));
-      _sunoVersions.add(version);
-      TomatoLogger.info(
-        category: 'suno',
-        event: 'download.saved',
-        articleId: articleId,
-        status: _sunoAutomationStatus,
-        data: {
-          'songUrl': version.songUrl,
-          'bytes': bytes.length,
-          'audioPath': target.path,
-          'versionCount': _sunoVersions.length,
-        },
-      );
-      _sunoPendingDownloadSongUrl = null;
-      _sunoPendingDownloadTitle = null;
-      _sunoMenuDownloadClickedAt = null;
-      await _saveSunoMetadata();
-      await _setSunoStatus(
-        'downloading',
-        '已下载 ${_sunoVersions.length} 个 Suno 完整版本，正在检查是否还有其它版本...',
-      );
-      _startSunoPolling();
-    } catch (error) {
-      TomatoLogger.error(
-        category: 'suno',
-        event: 'download.failed',
-        articleId: articleId,
-        status: _sunoAutomationStatus,
-        data: {
-          'requestUrl': requestUrl,
-          'targetSongUrl': songUrl,
-        },
-        error: error,
-      );
-      await _setSunoStatus(
-        'manualAction',
-        '自动下载失败：${_displayError(error)}。请在 Suno 页面手工下载音频。',
-      );
-    } finally {
-      _sunoDownloadInFlightKeys.remove(downloadKey);
+    await _sunoEngine.handleWebViewDownload(request);
+  }
+
+  void _closeCompletedSunoOverlay() {
+    _stopSunoAutomation(clearVisible: true);
+    final articleId = _sunoEngine.state.articleId;
+    if (articleId != null) {
+      unawaited(_pushSongState(articleId));
     }
   }
 
@@ -5013,20 +3657,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return {
         'ok': false,
         'message': 'Suno 页面尚未打开',
-        'status': _sunoAutomationStatus,
+        'status': _sunoEngine.state.statusKey,
       };
     }
     final url = await controller.getUrl();
-    final inspect = await _evaluateSunoJson(controller, _sunoInspectScript);
+    final inspect = await _evaluateSunoJson(controller, SunoWebScripts.inspectScript);
     final diagnostics = await _evaluateSunoJson(
       controller,
-      _sunoDomDiagnosticsScript,
+      SunoWebScripts.domDiagnosticsScript,
     );
     return {
       'ok': true,
-      'status': _sunoAutomationStatus,
-      'manualActionMessage': _sunoManualActionMessage,
-      'errorMessage': _sunoErrorMessage,
+      'status': _sunoEngine.state.statusKey,
+      'manualActionMessage': _sunoEngine.state.manualActionMessage,
+      'errorMessage': _sunoEngine.state.errorMessage,
       'url': url?.toString(),
       'inspect': inspect,
       'diagnostics': diagnostics,
@@ -5041,20 +3685,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return {
         'ok': false,
         'message': 'Suno 页面尚未打开',
-        'status': _sunoAutomationStatus,
+        'status': _sunoEngine.state.statusKey,
       };
     }
     final rows = await _evaluateSunoJson(
       controller,
-      _sunoRowsDebugScript(
-        expectedStylePrompt: _sunoStylePrompt,
-        expectedLyrics: _sunoLyrics,
+      SunoWebScripts.rowsDebugScript(
+        expectedStylePrompt: _sunoEngine.state.stylePrompt,
+        expectedLyrics: _sunoEngine.state.lyrics,
       ),
     );
     return {
       'ok': true,
-      'status': _sunoAutomationStatus,
-      'stylePrompt': _sunoStylePrompt,
+      'status': _sunoEngine.state.statusKey,
+      'stylePrompt': _sunoEngine.state.stylePrompt,
       'rows': rows,
     };
   }
@@ -5067,7 +3711,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return {
         'ok': false,
         'message': 'Suno 页面尚未打开',
-        'status': _sunoAutomationStatus,
+        'status': _sunoEngine.state.statusKey,
       };
     }
 
@@ -5090,50 +3734,50 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
     final url = (await controller.getUrl())?.toString() ?? '';
     final timestamp = DateTime.now().toUtc();
-    final pageKind = _sunoPageKind(url);
+    final pageKind = SunoUtilities.pageKind(url);
     final stem = _safeSunoSnapshotStem(url, timestamp);
     final warnings = <String>[];
 
-    final inspect = await _evaluateSunoJson(controller, _sunoInspectScript);
+    final inspect = await _evaluateSunoJson(controller, SunoWebScripts.inspectScript);
     final diagnostics = await _evaluateSunoJson(
       controller,
-      _sunoDomDiagnosticsScript,
+      SunoWebScripts.domDiagnosticsScript,
     );
     final rows = await _evaluateSunoJson(
       controller,
-      _sunoRowsDebugScript(
-        expectedStylePrompt: _sunoStylePrompt,
-        expectedLyrics: _sunoLyrics,
+      SunoWebScripts.rowsDebugScript(
+        expectedStylePrompt: _sunoEngine.state.stylePrompt,
+        expectedLyrics: _sunoEngine.state.lyrics,
       ),
     );
     final completion = await _evaluateSunoJson(
       controller,
-      _sunoCompletionScript(
-        expectedStylePrompt: _sunoStylePrompt,
-        expectedLyrics: _sunoLyrics,
+      SunoWebScripts.completionScript(
+        expectedStylePrompt: _sunoEngine.state.stylePrompt,
+        expectedLyrics: _sunoEngine.state.lyrics,
         requireExpectedMatch: false,
-        trustedSongUrls: _trustedSunoSongUrls(),
+        trustedSongUrls: _sunoEngine.state.trustedSongUrlsList(),
       ),
     );
-    final currentSongUrl = (_sunoSongUrl ?? '').trim();
+    final currentSongUrl = (_sunoEngine.state.songUrl ?? '').trim();
     final shouldProbeDownload = pageKind == 'song' ||
         pageKind == 'library' ||
         pageKind == 'profile' ||
-        _sunoExistingDownloadOnly ||
-        _sunoCreateSubmitted ||
-        _sunoAutomationStatus == 'downloading';
+        _sunoEngine.state.existingDownloadOnly ||
+        _sunoEngine.state.createSubmitted ||
+        _sunoEngine.state.statusKey == 'downloading';
     final downloadProbe = shouldProbeDownload
         ? await _evaluateSunoJson(
             controller,
-            _sunoDownloadScript(
-              downloadedSongUrls: _sunoDownloadedSongUrls.toList(),
-              pendingSongUrl: _sunoPendingDownloadSongUrl ?? currentSongUrl,
+            SunoWebScripts.downloadScript(
+              downloadedSongUrls: _sunoEngine.state.downloadedSongUrls.toList(),
+              pendingSongUrl: _sunoEngine.state.pendingDownloadSongUrl ?? currentSongUrl,
               allowedSongUrls:
                   currentSongUrl.isEmpty ? const <String>[] : [currentSongUrl],
-              expectedStylePrompt: _sunoStylePrompt,
-              expectedLyrics: _sunoLyrics,
+              expectedStylePrompt: _sunoEngine.state.stylePrompt,
+              expectedLyrics: _sunoEngine.state.lyrics,
               requireExpectedMatch: true,
-              trustedSongUrls: _trustedSunoSongUrls(
+              trustedSongUrls: _sunoEngine.state.trustedSongUrlsList(
                 currentSongUrl.isEmpty ? const <String>[] : [currentSongUrl],
               ),
               dryRun: true,
@@ -5144,7 +3788,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'reason': 'not-download-page',
             'pageKind': pageKind,
           };
-    final page = await _evaluateSunoJson(controller, _sunoSnapshotScript);
+    final page = await _evaluateSunoJson(controller, SunoWebScripts.snapshotScript);
     final sanitizedHtml = (page.remove('sanitizedHtml') ?? '').toString();
 
     String? htmlPath;
@@ -5173,19 +3817,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'capturedAt': timestamp.toIso8601String(),
       'url': url,
       'pageKind': pageKind,
-      'status': _sunoAutomationStatus,
-      'manualActionMessage': _sunoManualActionMessage,
-      'errorMessage': _sunoErrorMessage,
-      'articleId': _sunoArticleId,
-      'songUrl': _sunoSongUrl,
-      'pendingSongUrl': _sunoPendingDownloadSongUrl,
-      'existingDownloadOnly': _sunoExistingDownloadOnly,
-      'createSubmitted': _sunoCreateSubmitted,
-      'stylePrompt': _sunoStylePrompt,
-      'lyricsSample': _sunoLyrics.length <= 1200
-          ? _sunoLyrics
-          : '${_sunoLyrics.substring(0, 1200)}...',
-      'downloadedSongUrls': _sunoDownloadedSongUrls.toList(),
+      'status': _sunoEngine.state.statusKey,
+      'manualActionMessage': _sunoEngine.state.manualActionMessage,
+      'errorMessage': _sunoEngine.state.errorMessage,
+      'articleId': _sunoEngine.state.articleId,
+      'songUrl': _sunoEngine.state.songUrl,
+      'pendingSongUrl': _sunoEngine.state.pendingDownloadSongUrl,
+      'existingDownloadOnly': _sunoEngine.state.existingDownloadOnly,
+      'createSubmitted': _sunoEngine.state.createSubmitted,
+      'stylePrompt': _sunoEngine.state.stylePrompt,
+      'lyricsSample': _sunoEngine.state.lyrics.length <= 1200
+          ? _sunoEngine.state.lyrics
+          : '${_sunoEngine.state.lyrics.substring(0, 1200)}...',
+      'downloadedSongUrls': _sunoEngine.state.downloadedSongUrls.toList(),
       'inspect': inspect,
       'diagnostics': diagnostics,
       'rows': rows,
@@ -5207,8 +3851,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'htmlPath': htmlPath,
       'screenshotPath': screenshotPath,
       'url': url,
-      'pageKind': _sunoPageKind(url),
-      'status': _sunoAutomationStatus,
+      'pageKind': SunoUtilities.pageKind(url),
+      'status': _sunoEngine.state.statusKey,
       'downloadProbe': downloadProbe,
       'warnings': warnings,
     };
@@ -5222,32 +3866,32 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       return {
         'ok': false,
         'message': 'Suno 页面尚未打开',
-        'status': _sunoAutomationStatus,
+        'status': _sunoEngine.state.statusKey,
       };
     }
     final lyrics = _payloadString(
       message.payload,
       'lyrics',
-      fallback: _sunoLyrics.isEmpty
+      fallback: _sunoEngine.state.lyrics.isEmpty
           ? 'Tomato Suno automation field detection test.'
-          : _sunoLyrics,
+          : _sunoEngine.state.lyrics,
     );
     final stylePrompt = _payloadString(
       message.payload,
       'stylePrompt',
-      fallback: _sunoStylePrompt.isEmpty
+      fallback: _sunoEngine.state.stylePrompt.isEmpty
           ? 'whimsical story song, gentle pop, bright piano'
-          : _sunoStylePrompt,
+          : _sunoEngine.state.stylePrompt,
     );
     return _evaluateSunoJson(
       controller,
-      _sunoFillScript(
+      SunoWebScripts.fillScript(
         lyrics: lyrics,
         stylePrompt: stylePrompt,
         ignoredStylePrompt: _payloadString(
           message.payload,
           'ignoredStylePrompt',
-          fallback: _sunoIgnoredStylePrompt,
+          fallback: _sunoEngine.state.ignoredStylePrompt,
         ),
         allowMagicClick: true,
         magicAlreadyRequested: false,
@@ -5301,411 +3945,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
   }
 
-  Future<int> _downloadSunoDirectMediaUrls({
-    required int articleId,
-    required Iterable<String> songUrls,
-    required Map<String, String> mediaBySongUrl,
-    String? fallbackMediaUrl,
-  }) async {
-    var downloadedCount = 0;
-    final directory = Directory(await _resolvedSunoOutputDirectorySetting());
-    await directory.create(recursive: true);
-    final lyricsHash = await _articleSongLyricsHash(
-      await _songArticle(articleId),
-    );
-    final canonicalMediaBySongUrl = <String, String>{};
-    for (final entry in mediaBySongUrl.entries) {
-      final key = _canonicalSunoSongUrl(entry.key);
-      final value = entry.value.trim();
-      if (key != null &&
-          key.isNotEmpty &&
-          !_isSyntheticSunoSongKey(key) &&
-          value.isNotEmpty) {
-        canonicalMediaBySongUrl[key] = value;
-      }
-    }
-
-    for (final rawSongUrl in songUrls) {
-      final songUrl = _canonicalSunoSongUrl(rawSongUrl) ?? '';
-      if (songUrl.isEmpty ||
-          _sunoDownloadedSongUrls.contains(songUrl) ||
-          _hasSunoVersionForSongUrl(songUrl)) {
-        continue;
-      }
-      final mediaUrl = (canonicalMediaBySongUrl[songUrl] ??
-              _matchingSunoMediaUrl(
-                fallbackMediaUrl,
-                songUrl,
-              ) ??
-              _sunoCanonicalCdnMediaUrl(songUrl) ??
-              '')
-          .trim();
-      if (mediaUrl.isEmpty) {
-        TomatoLogger.warn(
-          category: 'suno',
-          event: 'direct_media.missing',
-          articleId: articleId,
-          status: _sunoAutomationStatus,
-          data: {'songUrl': songUrl},
-        );
-        continue;
-      }
-      final downloadKey = 'direct:$songUrl:$mediaUrl';
-      if (_sunoDownloadInFlightKeys.contains(downloadKey) ||
-          _sunoDownloadedDownloadKeys.contains(downloadKey)) {
-        continue;
-      }
-      _sunoDownloadInFlightKeys.add(downloadKey);
-      try {
-        final extension = _sunoMediaExtension(mediaUrl);
-        final songId = _sunoSongId(songUrl) ??
-            DateTime.now().millisecondsSinceEpoch.toString();
-        final filename = _safeSunoFilename(
-          'suno_article_${articleId}_${songId}_v${_sunoVersions.length + 1}$extension',
-        );
-        final target = _uniqueSunoTargetFile(directory, filename);
-        final bytes = await _downloadSunoUrl(mediaUrl);
-        if (bytes.length < 64 * 1024) {
-          throw FormatException('下载结果过小，疑似不是完整歌曲（${bytes.length} bytes）');
-        }
-        await target.writeAsBytes(bytes, flush: true);
-        _sunoAudioPath = target.path;
-        _sunoDownloadedSongUrls.add(songUrl);
-        _sunoDetectedSongUrls.add(songUrl);
-        _sunoTrustedSongUrls.add(songUrl);
-        _sunoDownloadedDownloadKeys.add(downloadKey);
-        final title = (_sunoPendingDownloadTitle ?? '').trim();
-        final version = ArticleSongVersion(
-          id: 'suno_${articleId}_${DateTime.now().millisecondsSinceEpoch}_${_sunoVersions.length + 1}',
-          audioPath: target.path,
-          title: title.isEmpty ? 'Suno 版本 ${_sunoVersions.length + 1}' : title,
-          songUrl: songUrl,
-          createdAt: DateTime.now().toIso8601String(),
-          stylePrompt:
-              _sunoStylePrompt.trim().isEmpty ? null : _sunoStylePrompt.trim(),
-          lyricsHash: lyricsHash,
-        );
-        _sunoVersions.removeWhere((item) =>
-            item.songUrl != null &&
-            version.songUrl != null &&
-            _canonicalSunoSongUrl(item.songUrl) ==
-                _canonicalSunoSongUrl(version.songUrl));
-        _sunoVersions.add(version);
-        downloadedCount += 1;
-        TomatoLogger.info(
-          category: 'suno',
-          event: 'direct_media.saved',
-          articleId: articleId,
-          status: _sunoAutomationStatus,
-          data: {
-            'songUrl': songUrl,
-            'mediaUrl': mediaUrl,
-            'bytes': bytes.length,
-            'audioPath': target.path,
-          },
-        );
-      } catch (error) {
-        TomatoLogger.error(
-          category: 'suno',
-          event: 'direct_media.failed',
-          articleId: articleId,
-          status: _sunoAutomationStatus,
-          data: {
-            'songUrl': songUrl,
-            'mediaUrl': mediaUrl,
-          },
-          error: error,
-        );
-      } finally {
-        _sunoDownloadInFlightKeys.remove(downloadKey);
-      }
-    }
-
-    if (downloadedCount > 0) {
-      _sunoPendingDownloadSongUrl = null;
-      _sunoPendingDownloadTitle = null;
-      _sunoMenuDownloadClickedAt = null;
-      await _saveSunoMetadata();
-    }
-    return downloadedCount;
-  }
-
-  /// Library 行候选召回。默认要求行内 token 分数或同标题才打开详情页；
-  /// [detectDownloadBroadRecall] 为 true 时（检测下载）按 Library DOM 自上而下
-  /// 依次打开未下载/未拒绝的 `/song/` 行，在详情页再做歌词 exact match。
-  List<String> _sunoLibraryCandidateSongUrls(
-    Map<String, dynamic> result, {
-    bool detectDownloadBroadRecall = false,
-  }) {
-    final rawCandidates = result['candidateSongs'];
-    if (rawCandidates is! List) {
-      return const <String>[];
-    }
-    final candidates = rawCandidates.whereType<Map>().toList(growable: false);
-    if (candidates.isEmpty) {
-      return const <String>[];
-    }
-    final known = _mergeSunoSongUrls([
-      _sunoDetectedSongUrls,
-      _sunoDownloadedSongUrls,
-      _sunoVersions.map((version) => version.songUrl),
-    ]).toSet();
-    final knownTitles = <String>{};
-    for (final candidate in candidates) {
-      final href = _canonicalSunoSongUrl(candidate['href']) ?? '';
-      if (!known.contains(href)) {
-        continue;
-      }
-      final title = _sunoCandidateTitle(candidate);
-      if (title.isNotEmpty) {
-        knownTitles.add(title);
-      }
-    }
-    final matches = <({String url, int score, bool sameTitle, int index})>[];
-    final seen = <String>{};
-    for (var index = 0; index < candidates.length; index += 1) {
-      final candidate = candidates[index];
-      final href = _canonicalSunoSongUrl(candidate['href']) ?? '';
-      if (href.isEmpty ||
-          known.contains(href) ||
-          _sunoDownloadedSongUrls.contains(href) ||
-          _hasSunoVersionForSongUrl(href) ||
-          _sunoRejectedCandidateSongUrls.contains(href) ||
-          !seen.add(href)) {
-        continue;
-      }
-      final title = _sunoCandidateTitle(candidate);
-      final score = (candidate['expectedScore'] as num?)?.toInt() ?? 0;
-      final sameTitle = title.isNotEmpty && knownTitles.contains(title);
-      // Library 行通常只有标题 + 风格，不含全文歌词。检测下载时不能要求
-      // expectedScore>0，否则 Suno 新生成、标题与旧歌不同的条目（如
-      // "The Croquet Game"）会被跳过，反而先打开标题更贴近旧版本的行。
-      if (detectDownloadBroadRecall || score > 0 || sameTitle) {
-        matches.add((
-          url: href,
-          score: score,
-          sameTitle: sameTitle,
-          index: index,
-        ));
-      }
-    }
-    matches.sort((left, right) {
-      if (detectDownloadBroadRecall) {
-        return left.index.compareTo(right.index);
-      }
-      if (left.score != right.score) {
-        return right.score.compareTo(left.score);
-      }
-      if (left.sameTitle != right.sameTitle) {
-        return left.sameTitle ? -1 : 1;
-      }
-      return left.index.compareTo(right.index);
-    });
-    return matches.map((match) => match.url).toList(growable: false);
-  }
-
-  String _sunoCandidateTitle(Map candidate) =>
-      _sunoNormalizeCandidateText(candidate['title'])
-          .replaceAll(RegExp(r'[^a-z0-9 ]+'), ' ')
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
-
-  String _sunoNormalizeCandidateText(Object? value) => (value ?? '')
-      .toString()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[\u2018\u2019]'), "'")
-      .replaceAll(RegExp(r'[\u201c\u201d]'), '"')
-      .replaceAll(RegExp(r'\s+'), ' ')
-      .trim();
-
-  String? _matchingSunoMediaUrl(String? mediaUrl, String songUrl) {
-    final normalized = (mediaUrl ?? '').trim();
-    if (normalized.isEmpty) {
-      return null;
-    }
-    final songId = _sunoSongId(songUrl);
-    if (songId == null || !normalized.contains(songId)) {
-      return null;
-    }
-    if (_isRejectedSunoMediaUrl(normalized)) {
-      return null;
-    }
-    return normalized;
-  }
-
-  bool _isVerifiableSunoMediaUrl(String mediaUrl) {
-    final normalized = mediaUrl.trim().toLowerCase();
-    if (normalized.isEmpty) {
-      return false;
-    }
-    return normalized.contains('cdn1.suno.ai') ||
-        RegExp(r'\.(mp3|m4a|wav|webm)(?:[?#]|$)', caseSensitive: false)
-            .hasMatch(normalized);
-  }
-
-  String? _sunoSongId(String songUrl) {
-    final match = RegExp(
-      r'/song/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})',
-    ).firstMatch(songUrl);
-    return match?.group(1)?.toLowerCase();
-  }
-
-  String? _sunoCanonicalCdnMediaUrl(String songUrl) {
-    final songId = _sunoSongId(songUrl);
-    if (songId == null || songId.isEmpty) {
-      return null;
-    }
-    return 'https://cdn1.suno.ai/$songId.mp3';
-  }
-
-  bool _isAwaitingSunoMenuDownload() {
-    final clickedAt = _sunoMenuDownloadClickedAt;
-    if (clickedAt == null) {
-      return false;
-    }
-    return DateTime.now().difference(clickedAt) <
-        const Duration(seconds: 45);
-  }
-
-  String? _canonicalSunoSongUrl(Object? value) {
-    final text = _nonEmptyString(value);
-    if (text == null || _isSyntheticSunoSongKey(text)) {
-      return text;
-    }
-    final songId = _sunoSongId(text);
-    if (songId == null) {
-      return text;
-    }
-    return 'https://suno.com/song/$songId';
-  }
-
-  bool _isRejectedSunoMediaUrl(String mediaUrl) {
-    final lower = mediaUrl.toLowerCase();
-    return lower.contains('sil-100') ||
-        lower.contains('preview') ||
-        lower.contains('sample') ||
-        lower.contains('snippet') ||
-        lower.contains('teaser');
-  }
-
-  String _sunoMediaExtension(String mediaUrl) {
-    final uri = Uri.tryParse(mediaUrl);
-    final extension = uri == null ? '' : path_lib.extension(uri.path);
-    if (extension.isNotEmpty && extension.length <= 8) {
-      return extension;
-    }
-    return '.mp3';
-  }
-
-  Map<String, dynamic> _sunoDownloadProbeLogData(Map<String, dynamic> result) {
-    final candidates = (result['candidates'] as List? ?? const [])
-        .take(5)
-        .whereType<Map>()
-        .map(
-          (candidate) => {
-            'label': candidate['label']?.toString(),
-            'score': candidate['score'],
-            'directDownload': candidate['directDownload'],
-            'songUrl': candidate['songUrl']?.toString(),
-            'title': candidate['title']?.toString(),
-            'inOpenMenu': candidate['inOpenMenu'],
-          },
-        )
-        .toList(growable: false);
-    return {
-      'ok': result['ok'],
-      'retry': result['retry'],
-      'stage': result['stage'],
-      'message': result['message'],
-      'songUrl': result['songUrl'],
-      'title': result['title'],
-      'currentPageExpectedScore': result['currentPageExpectedScore'],
-      'currentPageLyricsExactMatch': result['currentPageLyricsExactMatch'],
-      'candidateCount': (result['candidates'] as List?)?.length ?? 0,
-      'candidates': candidates,
-    };
-  }
-
-  Future<void> _setSunoStatus(String status, String? message) async {
-    final previousStatus = _sunoAutomationStatus;
-    _sunoAutomationStatus = status;
-    _sunoManualActionMessage = message;
-    _sunoErrorMessage = null;
-    TomatoLogger.info(
-      category: 'suno',
-      event: 'status.changed',
-      articleId: _sunoArticleId,
-      status: status,
-      data: {
-        'previousStatus': previousStatus,
-        'message': message,
-        'songUrl': _sunoSongUrl,
-        'pendingSongUrl': _sunoPendingDownloadSongUrl,
-        'versions': _sunoVersions.length,
-      },
-    );
-    if (mounted) {
-      setState(() {});
-    }
-    final articleId = _sunoArticleId;
-    if (articleId != null) {
-      await _pushSongState(articleId);
-    }
-  }
-
-  Future<void> _failSunoAutomation(String message) async {
-    final previousStatus = _sunoAutomationStatus;
-    _sunoAutomationStatus = 'failed';
-    _sunoErrorMessage = message;
-    _sunoManualActionMessage = null;
-    _sunoAutomationTimer?.cancel();
-    TomatoLogger.error(
-      category: 'suno',
-      event: 'automation.failed',
-      articleId: _sunoArticleId,
-      status: 'failed',
-      data: {
-        'previousStatus': previousStatus,
-        'message': message,
-        'songUrl': _sunoSongUrl,
-      },
-    );
-    if (mounted) {
-      setState(() {});
-    }
-    final articleId = _sunoArticleId;
-    if (articleId != null) {
-      await _pushSongState(articleId);
-    }
-  }
-
-  Future<void> _saveSunoMetadata({String? manualActionMessage}) async {
-    final articleId = _sunoArticleId;
-    if (articleId == null) {
-      return;
-    }
-    final article = await _songArticle(articleId);
-    final currentVersions = _sunoVersions
-        .map((version) => version.copyWith(
-              source: AppConfig.songProviderSuno,
-              songUrl: _canonicalSunoSongUrl(version.songUrl),
-            ))
-        .toList(growable: false);
-    await _saveSunoMetadataForVersions(
-      article: article,
-      versions: currentVersions,
-      manualActionMessage: manualActionMessage,
-      downloadCompleteOverride: _currentSunoDownloadsComplete(),
-      stylePromptOverride: _sunoStylePrompt.trim().isEmpty
-          ? null
-          : _sunoStylePrompt.trim(),
-      detectedSongUrlsOverride: _mergeSunoSongUrls([
-        _sunoDetectedSongUrls,
-        currentVersions.map((version) => version.songUrl),
-      ]),
-    );
-  }
-
   Future<Map<String, dynamic>> _evaluateSunoJson(
     InAppWebViewController controller,
     String source,
@@ -5726,13 +3965,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   String _sunoOverlayStatusText() {
-    if (_sunoErrorMessage != null) {
-      return 'Suno 自动化失败：$_sunoErrorMessage';
+    if (_sunoEngine.state.errorMessage != null) {
+      return 'Suno 自动化失败：$_sunoEngine.state.errorMessage';
     }
-    if ((_sunoManualActionMessage ?? '').trim().isNotEmpty) {
-      return _sunoManualActionMessage!;
+    if ((_sunoEngine.state.manualActionMessage ?? '').trim().isNotEmpty) {
+      return _sunoEngine.state.manualActionMessage!;
     }
-    switch (_sunoAutomationStatus) {
+    switch (_sunoEngine.state.statusKey) {
       case 'waitingLogin':
         return '等待 Suno 登录';
       case 'waitingConfirm':
@@ -5746,2520 +3985,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       default:
         return 'Suno 自动操作中';
     }
-  }
-
-  String _safeSunoFilename(String? suggestedFilename) {
-    final raw = (suggestedFilename ?? '').trim();
-    final fallback =
-        'suno_article_${_sunoArticleId ?? 0}_${DateTime.now().millisecondsSinceEpoch}.mp3';
-    final filename = raw.isEmpty ? fallback : raw;
-    final cleaned = filename
-        .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')
-        .replaceAll(RegExp(r'\s+'), ' ')
-        .trim();
-    if (cleaned.isEmpty) {
-      return fallback;
-    }
-    return path_lib.extension(cleaned).isEmpty ? '$cleaned.mp3' : cleaned;
-  }
-
-  File _uniqueSunoTargetFile(Directory directory, String filename) {
-    final extension = path_lib.extension(filename);
-    final stem = path_lib.basenameWithoutExtension(filename);
-    var candidate = File(path_lib.join(directory.path, filename));
-    var suffix = 2;
-    while (candidate.existsSync()) {
-      final nextName =
-          extension.isEmpty ? '${stem}_$suffix' : '${stem}_$suffix$extension';
-      candidate = File(path_lib.join(directory.path, nextName));
-      suffix += 1;
-    }
-    return candidate;
-  }
-
-  String get _sunoInspectScript => r'''
-(() => {
-  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-  const visibleText = document.body ? document.body.innerText || '' : '';
-  const visible = (el) => {
-    const rect = el.getBoundingClientRect?.();
-    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
-    const style = window.getComputedStyle(el);
-    return style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
-  const controlText = Array.from(document.querySelectorAll('button,a,[role="button"],[aria-label],[title]'))
-    .filter(visible)
-    .map((el) => [
-      el.innerText || el.textContent || '',
-      el.getAttribute?.('aria-label') || '',
-      el.getAttribute?.('title') || '',
-      el.getAttribute?.('href') || ''
-    ].join(' '))
-    .join(' ');
-  const text = normalize(`${visibleText} ${controlText}`);
-  const creditsMatch = text.match(/Credits\s+remaining[:\s]+(\d+)/i) || text.match(/(\d+)\s+Credits/i);
-  const hasCreateSurface = /Create song|Create|Lyrics|Instrumental|Advanced|Style of Music|Song Description/i.test(text);
-  const hasLoginPrompt = /sign in|sign-in|signin|log in|log-in|login|join suno for free|join for free|sign up|sign-up|signup|create account|continue with google|continue with discord|continue with apple|get started|登录|登入|注册|註冊|免费加入/i.test(text);
-  let host = '';
-  let path = '';
-  try {
-    const url = new URL(location.href);
-    host = url.hostname.toLowerCase();
-    path = url.pathname.toLowerCase();
-  } catch (_) {}
-  const isSunoHost = host === 'suno.com' || host === 'www.suno.com';
-  const isSunoAuthHost = /(^|\.)suno\.com$/.test(host) && /auth|account|login|clerk/i.test(host);
-  const isExternalAuthHost = !isSunoHost && (
-    isSunoAuthHost ||
-    /accounts\.google\.com|discord(?:app)?\.com|appleid\.apple\.com|clerk|oauth|auth|login|sso|identity/i.test(host)
-  );
-  const isSunoAuthPath = isSunoHost && /\/(?:login|log-in|signin|sign-in|signup|sign-up|auth|oauth|sso)(?:\/|$)/i.test(path);
-  const loginFlow = hasLoginPrompt || isExternalAuthHost || isSunoAuthPath;
-  const hasAccountSignal = /Profile menu button|\b\d+\s+Credits\b|Credits remaining[:\s]+\d+|Upgrade to Pro|Library|Notifications/i.test(text);
-  const hasSongDetail = /\/song\//i.test(location.href) && /Lyrics|Comments|Add a Caption|Show full styles|v\d/i.test(text);
-  return JSON.stringify({
-    loggedIn: !loginFlow && (hasAccountSignal || hasSongDetail || hasCreateSurface),
-    creditsRemaining: creditsMatch ? Number(creditsMatch[1]) : null,
-    loginFlow,
-    hasLoginPrompt,
-    hasAccountSignal,
-    currentUrl: location.href,
-    textSample: text.slice(0, 800)
-  });
-})()
-''';
-
-  String get _sunoDomDiagnosticsScript => r'''
-(() => {
-  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const rectOf = (el) => {
-    const rect = el.getBoundingClientRect();
-    return {
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
-    };
-  };
-  const hitTestVisible = (el) => {
-    const rect = el.getBoundingClientRect();
-    const points = [
-      [rect.left + rect.width / 2, rect.top + rect.height / 2],
-      [rect.left + Math.min(rect.width - 1, Math.max(1, rect.width * 0.25)), rect.top + Math.min(rect.height - 1, Math.max(1, rect.height * 0.25))],
-      [rect.left + Math.min(rect.width - 1, Math.max(1, rect.width * 0.75)), rect.top + Math.min(rect.height - 1, Math.max(1, rect.height * 0.75))]
-    ];
-    return points.some(([x, y]) => {
-      if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false;
-      const hit = document.elementFromPoint(x, y);
-      return hit === el || el.contains(hit);
-    });
-  };
-  const rendered = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 &&
-      rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
-  const visible = (el) => {
-    return rendered(el) && hitTestVisible(el);
-  };
-  const attrsText = (el) => normalize([
-    el.getAttribute?.('aria-label'),
-    el.getAttribute?.('placeholder'),
-    el.getAttribute?.('data-testid'),
-    el.getAttribute?.('data-test-id'),
-    el.getAttribute?.('name'),
-    el.getAttribute?.('id'),
-    el.getAttribute?.('role'),
-    el.getAttribute?.('type')
-  ].filter(Boolean).join(' '));
-  const inputValue = (el) => normalize(el?.matches?.('input,textarea') ? el.value || '' : '');
-  const ownText = (el) => normalize(
-    inputValue(el) ||
-      el.getAttribute?.('aria-label') ||
-      el.innerText ||
-      el.textContent ||
-      el.getAttribute?.('placeholder') ||
-      ''
-  );
-  const contextText = (el) => {
-    const parts = [attrsText(el), ownText(el)];
-    let current = el.parentElement;
-    for (let i = 0; current && i < 5; i += 1, current = current.parentElement) {
-      const text = normalize(current.innerText || current.textContent || '');
-      if (text && text.length <= 700) parts.push(text);
-      parts.push(attrsText(current));
-    }
-    return normalize(parts.join(' ')).slice(0, 900);
-  };
-  const summarize = (el) => ({
-    tag: el.tagName.toLowerCase(),
-    role: el.getAttribute('role') || '',
-    type: el.getAttribute('type') || '',
-    id: el.id || '',
-    name: el.getAttribute('name') || '',
-    className: String(el.className || '').slice(0, 180),
-    ariaLabel: el.getAttribute('aria-label') || '',
-    placeholder: el.getAttribute('placeholder') || '',
-    value: inputValue(el),
-    dataTestId: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '',
-    text: ownText(el).slice(0, 220),
-    context: contextText(el).slice(0, 420),
-    hitTestVisible: hitTestVisible(el),
-    editable: Boolean(el.isContentEditable),
-    disabled: Boolean(el.disabled) || el.getAttribute('aria-disabled') === 'true',
-    rect: rectOf(el)
-  });
-  const controlSelector = [
-    'button',
-    '[role="button"]',
-    '[role="tab"]',
-    'a',
-    'label',
-    '[aria-label]',
-    '[data-testid]',
-    '[data-test-id]'
-  ].join(',');
-  const editorSelector = [
-    'textarea',
-    'input:not([type])',
-    'input[type="text"]',
-    'input[type="search"]',
-    '[contenteditable="true"]',
-    '[role="textbox"]',
-    '.ProseMirror',
-    '[data-slate-editor="true"]',
-    '[data-lexical-editor="true"]'
-  ].join(',');
-  const controls = Array.from(document.querySelectorAll(controlSelector))
-    .filter(visible)
-    .filter((el) => /advanced|simple|create|lyrics|style|song|music|歌词|风格/i.test(contextText(el)))
-    .slice(0, 80)
-    .map(summarize);
-  const editors = Array.from(document.querySelectorAll(editorSelector))
-    .filter(visible)
-    .slice(0, 60)
-    .map(summarize);
-  return JSON.stringify({
-    href: location.href,
-    title: document.title,
-    bodyTextSample: normalize(document.body?.innerText || '').slice(0, 1600),
-    controls,
-    editors,
-    controlCount: controls.length,
-    editorCount: editors.length
-  });
-})()
-''';
-
-  String get _sunoSnapshotScript => r'''
-(() => {
-  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-  const maskSensitiveText = (value) => normalize(value)
-    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email]')
-    .replace(/\b(?:Bearer|token|authorization|session|cookie)\s*[:=]\s*[A-Za-z0-9._~+/=-]{12,}/gi, '[secret]')
-    .replace(/https:\/\/suno\.com\/@\w+/gi, 'https://suno.com/@user')
-    .replace(/@\d{5,}/g, '@user')
-    .replace(/\b\d{7,}\b/g, (match) => match.length >= 10 ? '[number]' : match);
-  const rectOf = (el) => {
-    const rect = el.getBoundingClientRect();
-    return {
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
-    };
-  };
-  const hitTestVisible = (el) => {
-    const rect = el.getBoundingClientRect();
-    const points = [
-      [rect.left + rect.width / 2, rect.top + rect.height / 2],
-      [rect.left + Math.min(rect.width - 1, Math.max(1, rect.width * 0.25)), rect.top + Math.min(rect.height - 1, Math.max(1, rect.height * 0.25))],
-      [rect.left + Math.min(rect.width - 1, Math.max(1, rect.width * 0.75)), rect.top + Math.min(rect.height - 1, Math.max(1, rect.height * 0.75))]
-    ];
-    return points.some(([x, y]) => {
-      if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false;
-      const hit = document.elementFromPoint(x, y);
-      return hit === el || el.contains(hit);
-    });
-  };
-  const rendered = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 &&
-      rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
-  const visible = (el) => {
-    return rendered(el) && hitTestVisible(el);
-  };
-  const attrsText = (el) => normalize([
-    el.getAttribute?.('aria-label'),
-    el.getAttribute?.('title'),
-    el.getAttribute?.('placeholder'),
-    el.getAttribute?.('data-testid'),
-    el.getAttribute?.('data-test-id'),
-    el.getAttribute?.('name'),
-    el.getAttribute?.('id'),
-    el.getAttribute?.('role'),
-    el.getAttribute?.('type'),
-    el.getAttribute?.('download'),
-    el.href
-  ].filter(Boolean).join(' '));
-  const ownText = (el) => normalize([
-    el.matches?.('input,textarea') ? el.value || '' : '',
-    el.getAttribute?.('aria-label'),
-    el.getAttribute?.('title'),
-    el.innerText,
-    el.textContent,
-    el.getAttribute?.('placeholder')
-  ].filter(Boolean).join(' '));
-  const contextText = (el) => {
-    const parts = [attrsText(el), ownText(el)];
-    let current = el.parentElement;
-    for (let i = 0; current && i < 4; i += 1, current = current.parentElement) {
-      const text = normalize(current.innerText || current.textContent || '');
-      if (text && text.length <= 900) parts.push(text);
-      parts.push(attrsText(current));
-    }
-    return maskSensitiveText(parts.join(' ')).slice(0, 1200);
-  };
-  const summarize = (el, index) => ({
-    index,
-    tag: el.tagName.toLowerCase(),
-    role: el.getAttribute('role') || '',
-    type: el.getAttribute('type') || '',
-    id: maskSensitiveText(el.id || '').slice(0, 120),
-    name: maskSensitiveText(el.getAttribute('name') || '').slice(0, 120),
-    className: String(el.className || '').slice(0, 220),
-    ariaLabel: maskSensitiveText(el.getAttribute('aria-label') || '').slice(0, 220),
-    title: maskSensitiveText(el.getAttribute('title') || '').slice(0, 220),
-    placeholder: maskSensitiveText(el.getAttribute('placeholder') || '').slice(0, 220),
-    dataTestId: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '',
-    href: maskSensitiveText(el.href || '').slice(0, 260),
-    download: maskSensitiveText(el.getAttribute('download') || '').slice(0, 180),
-    value: el.matches?.('input,textarea') && el.type !== 'password'
-      ? maskSensitiveText(el.value || '').slice(0, 260)
-      : '',
-    text: maskSensitiveText(ownText(el)).slice(0, 360),
-    context: contextText(el).slice(0, 700),
-    hitTestVisible: hitTestVisible(el),
-    editable: Boolean(el.isContentEditable),
-    disabled: Boolean(el.disabled) || el.getAttribute('aria-disabled') === 'true',
-    rect: rectOf(el)
-  });
-  const selectors = [
-    'a[href]',
-    'button',
-    '[role="button"]',
-    '[role="menuitem"]',
-    '[role="tab"]',
-    'label',
-    'textarea',
-    'input',
-    '[contenteditable="true"]',
-    '[role="textbox"]',
-    '.ProseMirror',
-    '[data-slate-editor="true"]',
-    '[data-lexical-editor="true"]',
-    '[aria-label]',
-    '[title]',
-    '[data-testid]',
-    '[data-test-id]',
-    'audio[src]',
-    'video[src]'
-  ].join(',');
-  const elements = Array.from(document.querySelectorAll(selectors))
-    .filter(visible)
-    .slice(0, 450)
-    .map(summarize);
-  const songLinks = Array.from(document.querySelectorAll('a[href*="/song/"],a[href*="suno.com/song"]'))
-    .filter(visible)
-    .slice(0, 80)
-    .map((el, index) => summarize(el, index));
-  const media = Array.from(document.querySelectorAll('audio[src],video[src]'))
-    .filter(visible)
-    .slice(0, 40)
-    .map((el, index) => summarize(el, index));
-  const outline = [];
-  const walk = (node, depth) => {
-    if (!node || outline.length >= 900 || depth > 7 || node.nodeType !== Node.ELEMENT_NODE) return;
-    const el = node;
-    if (visible(el) || depth <= 2) {
-      const text = maskSensitiveText(normalize(el.innerText || el.textContent || '')).slice(0, 160);
-      outline.push({
-        depth,
-        tag: el.tagName.toLowerCase(),
-        role: el.getAttribute('role') || '',
-        id: maskSensitiveText(el.id || '').slice(0, 80),
-        className: String(el.className || '').slice(0, 120),
-        ariaLabel: maskSensitiveText(el.getAttribute('aria-label') || '').slice(0, 120),
-        dataTestId: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '',
-        text,
-        rect: rectOf(el)
-      });
-    }
-    Array.from(el.children || []).forEach((child) => walk(child, depth + 1));
-  };
-  walk(document.body, 0);
-
-  const clone = document.documentElement.cloneNode(true);
-  clone.querySelectorAll('script,style,noscript,template').forEach((el) => el.remove());
-  clone.querySelectorAll('*').forEach((el) => {
-    Array.from(el.attributes || []).forEach((attr) => {
-      const name = attr.name.toLowerCase();
-      if (name.startsWith('on') || /cookie|token|session|authorization|password/i.test(name)) {
-        el.removeAttribute(attr.name);
-      } else if (name === 'value' && /password/i.test(el.getAttribute('type') || '')) {
-        el.setAttribute(attr.name, '[password]');
-      } else if (attr.value) {
-        el.setAttribute(attr.name, maskSensitiveText(attr.value).slice(0, 500));
-      }
-    });
-    if (el.matches?.('input[type="password"]')) {
-      el.setAttribute('value', '[password]');
-    }
-  });
-  const sanitizedHtml = maskSensitiveText(clone.outerHTML).slice(0, 350000);
-  return JSON.stringify({
-    href: maskSensitiveText(location.href),
-    rawHref: location.href,
-    title: maskSensitiveText(document.title || ''),
-    bodyTextSample: maskSensitiveText(document.body?.innerText || '').slice(0, 5000),
-    elementCount: elements.length,
-    elements,
-    songLinks,
-    media,
-    outline,
-    sanitizedHtml
-  });
-})()
-''';
-
-  String _sunoRowsDebugScript({
-    required String expectedStylePrompt,
-    required String expectedLyrics,
-  }) {
-    final expectedStyleJson = jsonEncode(expectedStylePrompt.trim());
-    final expectedLyricsJson = jsonEncode(expectedLyrics.trim());
-    return '''
-(() => {
-  const expectedStyle = $expectedStyleJson;
-  const expectedLyrics = $expectedLyricsJson;
-  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const normalizeLoose = (value) => normalize(value).toLowerCase();
-  const expectedTokens = normalize(expectedLyrics)
-    .split(/[^A-Za-z0-9\\u4e00-\\u9fff'-]+/g)
-    .map((value) => value.trim())
-    .filter((value) => value.length >= 4)
-    .slice(0, 20);
-  const lyricSamples = normalize(expectedLyrics)
-    .split(/\\n+/g)
-    .map((value) => value.trim())
-    .filter((value) => value.length >= 24)
-    .slice(0, 4)
-    .map((value) => value.slice(0, 90));
-  const expectedScore = (text) => {
-    const haystack = normalizeLoose(text);
-    let score = 0;
-    for (const token of expectedTokens) {
-      if (haystack.includes(token.toLowerCase())) score += 1;
-    }
-    for (const sample of lyricSamples) {
-      if (haystack.includes(sample.toLowerCase())) score += 6;
-    }
-    return score;
-  };
-  const incomplete = /generating|creating|processing|queued|loading|failed|error|retry|生成中|创建中|处理中|排队|失败|重试/i;
-  const preview = /preview|demo|sample|clip|snippet|teaser|试听|試聽|预览|預覽|片段|样例|樣例/i;
-  const rows = Array.from(document.querySelectorAll('[data-testid="clip-row"],.clip-row,[role="group"][aria-label]'))
-    .map((row, index) => {
-      const text = normalize(row.innerText || row.textContent || '');
-      const title = normalize(row.getAttribute('aria-label') || row.querySelector?.('h1,h2,h3,[role="heading"]')?.innerText || text.split('\\n')[0] || '');
-      const anchor = row.querySelector?.('a[href*="/song/"],a[href*="suno.com/song"]');
-      const rect = row.getBoundingClientRect();
-      return {
-        index,
-        title,
-        href: anchor?.href || '',
-        text: text.slice(0, 500),
-        expectedScore: expectedScore(title + '\\n' + text),
-        incomplete: incomplete.test(text),
-        preview: preview.test(text),
-        rect: {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height)
-        }
-      };
-    });
-  const visible = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 &&
-      rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
-  const textOf = (el) => normalize([
-    el.getAttribute?.('aria-label'),
-    el.getAttribute?.('title'),
-    el.getAttribute?.('download'),
-    el.getAttribute?.('data-testid'),
-    el.getAttribute?.('data-test-id'),
-    el.getAttribute?.('role'),
-    el.href,
-    el.innerText,
-    el.textContent
-  ].filter(Boolean).join(' '));
-  const contextText = (el) => {
-    const parts = [textOf(el)];
-    let current = el.parentElement;
-    for (let i = 0; current && i < 5; i += 1, current = current.parentElement) {
-      const text = normalize(current.innerText || current.textContent || '');
-      if (text && text.length <= 900) parts.push(text);
-      parts.push(textOf(current));
-    }
-    return normalize(parts.join(' ')).slice(0, 1200);
-  };
-  const controlCandidates = Array.from(document.querySelectorAll(
-    'a[href],button,[role="button"],[role="menuitem"],label,[aria-label],[title],[data-testid],[data-test-id]'
-  ))
-    .filter(visible)
-    .map((el, index) => {
-      const context = contextText(el);
-      const score = expectedScore(context);
-      const rect = el.getBoundingClientRect();
-      return {
-        index,
-        tag: el.tagName.toLowerCase(),
-        role: el.getAttribute('role') || '',
-        ariaLabel: el.getAttribute('aria-label') || '',
-        dataTestId: el.getAttribute('data-testid') || el.getAttribute('data-test-id') || '',
-        text: textOf(el).slice(0, 140),
-        expectedScore: score,
-        context: context.slice(0, 420),
-        rect: {
-          x: Math.round(rect.x),
-          y: Math.round(rect.y),
-          width: Math.round(rect.width),
-          height: Math.round(rect.height)
-        }
-      };
-    })
-    .filter((item) => item.expectedScore > 0 || /猫头|奇幻儿童|爱丽丝|Download|下载|More/i.test(item.context))
-    .slice(0, 80);
-  return JSON.stringify({
-    expectedStyle,
-    expectedTokens,
-    lyricSamples,
-    rowCount: rows.length,
-    rows,
-    controlCandidates
-  });
-})()
-''';
-  }
-
-  String _sunoFillScript({
-    required String lyrics,
-    required String stylePrompt,
-    required String ignoredStylePrompt,
-    required bool allowMagicClick,
-    required bool magicAlreadyRequested,
-    bool readOnly = false,
-  }) {
-    final lyricsJson = jsonEncode(lyrics);
-    final styleJson = jsonEncode(stylePrompt);
-    final ignoredStyleJson = jsonEncode(ignoredStylePrompt);
-    final allowMagicClickJson = jsonEncode(allowMagicClick);
-    final magicAlreadyRequestedJson = jsonEncode(magicAlreadyRequested);
-    final readOnlyJson = jsonEncode(readOnly);
-    return '''
-(() => {
-  try {
-  const lyrics = $lyricsJson;
-  const style = $styleJson;
-  const ignoredStyleRaw = $ignoredStyleJson;
-  const allowMagicClick = $allowMagicClickJson;
-  const magicAlreadyRequested = $magicAlreadyRequestedJson;
-  const readOnly = $readOnlyJson;
-  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const ignoredStyle = normalize(ignoredStyleRaw);
-  const isCreatePage = (() => {
-    try {
-      const url = new URL(window.location.href);
-      const host = url.hostname.toLowerCase();
-      return (host === 'suno.com' || host === 'www.suno.com') &&
-        url.pathname.split('/').filter(Boolean).includes('create');
-    } catch (_) {
-      return false;
-    }
-  })();
-  if (!isCreatePage) {
-    return JSON.stringify({
-      ok: false,
-      retry: true,
-      missing: ['createPage'],
-      message: 'Suno 当前不在 Create 页面，Tomato 会重新打开 Create 后再填写。',
-      currentUrl: window.location.href
-    });
-  }
-  const rectOf = (el) => {
-    const rect = el.getBoundingClientRect();
-    return {
-      x: Math.round(rect.x),
-      y: Math.round(rect.y),
-      width: Math.round(rect.width),
-      height: Math.round(rect.height)
-    };
-  };
-  const hitTestVisible = (el) => {
-    const rect = el.getBoundingClientRect();
-    const points = [
-      [rect.left + rect.width / 2, rect.top + rect.height / 2],
-      [rect.left + Math.min(rect.width - 1, Math.max(1, rect.width * 0.25)), rect.top + Math.min(rect.height - 1, Math.max(1, rect.height * 0.25))],
-      [rect.left + Math.min(rect.width - 1, Math.max(1, rect.width * 0.75)), rect.top + Math.min(rect.height - 1, Math.max(1, rect.height * 0.75))]
-    ];
-    return points.some(([x, y]) => {
-      if (x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return false;
-      const hit = document.elementFromPoint(x, y);
-      return hit === el || el.contains(hit);
-    });
-  };
-  const rendered = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 &&
-      rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
-  const visible = (el) => {
-    return rendered(el) && hitTestVisible(el);
-  };
-  const textOf = (el) => [
-    el.getAttribute?.('aria-label'),
-    el.getAttribute?.('placeholder'),
-    el.getAttribute?.('data-testid'),
-    el.getAttribute?.('data-test-id'),
-    el.getAttribute?.('role'),
-    el.name,
-    el.id,
-    el.innerText,
-    el.textContent,
-    el.value
-  ].filter(Boolean).join(' ');
-  const inputValue = (el) => normalize(el?.matches?.('input,textarea') ? el.value || '' : '');
-  const ownText = (el) => normalize(
-    inputValue(el) ||
-      el.getAttribute?.('aria-label') ||
-      el.innerText ||
-      el.textContent ||
-      el.getAttribute?.('placeholder') ||
-      ''
-  );
-  const contextText = (el) => {
-    const parts = [textOf(el)];
-    let current = el.parentElement;
-    for (let i = 0; current && i < 5; i += 1, current = current.parentElement) {
-      const text = normalize(current.innerText || current.textContent || '');
-      if (text && text.length <= 800) parts.push(text);
-      parts.push(textOf(current));
-    }
-    return normalize(parts.join(' ')).slice(0, 1200);
-  };
-  const summarize = (el) => el ? {
-    tag: el.tagName.toLowerCase(),
-    role: el.getAttribute('role') || '',
-    type: el.getAttribute('type') || '',
-    id: el.id || '',
-    name: el.getAttribute('name') || '',
-    className: String(el.className || '').slice(0, 160),
-    ariaLabel: el.getAttribute('aria-label') || '',
-    placeholder: el.getAttribute('placeholder') || '',
-    value: inputValue(el),
-    text: ownText(el).slice(0, 160),
-    context: contextText(el).slice(0, 260),
-    hitTestVisible: hitTestVisible(el),
-    editable: Boolean(el.isContentEditable),
-    rect: rectOf(el)
-  } : null;
-  const isDisabled = (el) =>
-    Boolean(el?.disabled) || el?.getAttribute?.('aria-disabled') === 'true';
-  const clickableAncestor = (el) =>
-    el?.closest?.('button,[role="button"],[role="tab"],a,label') || el;
-  const clickCookieBanner = () => {
-    const cookiePattern = /cookie|cookies|privacy|consent|tracking|隐私|隱私/i;
-    const positivePattern = /accept all|accept cookies|accept|agree|i agree|allow all|allow|got it|ok|okay|同意|接受|全部接受|允许全部|允許全部|知道了/i;
-    const softPositivePattern = /continue|继续/i;
-    const negativePattern = /reject|decline|manage|settings|preferences|customize|learn more|privacy policy|terms|拒绝|拒絕|管理|设置|設定|偏好/i;
-    const nearbyCookieText = (el) => {
-      const parts = [];
-      let current = el;
-      for (let i = 0; current && i < 6; i += 1, current = current.parentElement) {
-        const attrs = normalize([
-          current.getAttribute?.('id'),
-          current.getAttribute?.('class'),
-          current.getAttribute?.('aria-label'),
-          current.getAttribute?.('data-testid'),
-          current.getAttribute?.('data-test-id')
-        ].filter(Boolean).join(' '));
-        if (attrs) parts.push(attrs);
-        const text = normalize(current.innerText || current.textContent || '');
-        if (text && text.length <= 1200) {
-          parts.push(text);
-        }
-      }
-      return normalize(parts.join(' '));
-    };
-    const candidates = Array.from(document.querySelectorAll(
-      'button,[role="button"],a,label'
-    ))
-      .filter(visible)
-      .map((el) => {
-        const clickable = clickableAncestor(el);
-        const label = normalize(textOf(el));
-        const context = nearbyCookieText(clickable);
-        const hasCookieContext = cookiePattern.test(context);
-        const hasStrongPositive = positivePattern.test(label);
-        const hasSoftPositive = softPositivePattern.test(label) && hasCookieContext;
-        if ((!hasStrongPositive && !hasSoftPositive) || !hasCookieContext) {
-          return null;
-        }
-        if (isDisabled(clickable)) {
-          return null;
-        }
-        let score = 0;
-        if (clickable === el || clickable.contains(el)) score += 2;
-        if (clickable.tagName === 'BUTTON') score += 10;
-        if (/button/i.test(clickable.getAttribute('role') || '')) score += 6;
-        if (/accept all|全部接受|允许全部|允許全部/i.test(label)) score += 10;
-        if (/accept cookies|accept|agree|同意|接受/i.test(label)) score += 7;
-        if (hasSoftPositive) score += 3;
-        if (negativePattern.test(label)) score -= 20;
-        if (negativePattern.test(context) && !/accept|agree|同意|接受/i.test(label)) score -= 5;
-        score -= Math.max(0, label.length - 40) / 30;
-        return { clickable, label, score };
-      })
-      .filter(Boolean)
-      .sort((left, right) => right.score - left.score);
-    const match = candidates[0];
-    if (!match || match.score < 6) {
-      return { clicked: false, target: null };
-    }
-    match.clickable.scrollIntoView({ block: 'center', inline: 'center' });
-    match.clickable.focus?.();
-    match.clickable.click();
-    return { clicked: true, target: summarize(match.clickable) };
-  };
-  const isAdvancedActive = () => {
-    const candidates = Array.from(document.querySelectorAll(
-      'button,[role="button"],[role="tab"],a,label,[aria-label],[data-testid],[data-test-id]'
-    )).filter(visible);
-    return candidates.some((el) => {
-      const label = normalize(textOf(el));
-      if (!/\\badvanced\\b/i.test(label)) return false;
-      const className = String(el.className || '');
-      return el.getAttribute('aria-selected') === 'true' ||
-        el.getAttribute('aria-pressed') === 'true' ||
-        el.getAttribute('data-state') === 'active' ||
-        /active|selected|checked/i.test(className);
-    });
-  };
-  const clickAdvanced = () => {
-    if (isAdvancedActive()) {
-      return { clicked: false, alreadyActive: true, target: null };
-    }
-    const candidates = Array.from(document.querySelectorAll(
-      'button,[role="button"],[role="tab"],a,label,span,div,[aria-label],[data-testid],[data-test-id]'
-    ))
-      .filter(visible)
-      .map((el) => {
-        const label = normalize(textOf(el));
-        const exact = label.toLowerCase() === 'advanced';
-        const shortMatch = /\\badvanced\\b/i.test(label) && label.length <= 120;
-        if (!exact && !shortMatch) return null;
-        const clickable = clickableAncestor(el);
-        const role = clickable.getAttribute('role') || '';
-        let score = 0;
-        if (exact) score += 20;
-        if (/button|tab/i.test(role) || clickable.tagName === 'BUTTON') score += 8;
-        if (clickable.getAttribute('aria-selected') === 'false') score += 3;
-        if (!isDisabled(clickable)) score += 2;
-        score -= Math.max(0, label.length - 8) / 20;
-        return { el, clickable, label, score };
-      })
-      .filter(Boolean)
-      .sort((left, right) => right.score - left.score);
-    const match = candidates[0];
-    if (!match || isDisabled(match.clickable)) {
-      return { clicked: false, alreadyActive: false, target: null };
-    }
-    match.clickable.scrollIntoView({ block: 'center', inline: 'center' });
-    match.clickable.focus?.();
-    match.clickable.click();
-    return { clicked: true, alreadyActive: false, target: summarize(match.clickable) };
-  };
-  const cookieResult = clickCookieBanner();
-  const advancedResult = clickAdvanced();
-  if (cookieResult.clicked || advancedResult.clicked) {
-    return JSON.stringify({
-      ok: false,
-      retry: true,
-      message: cookieResult.clicked
-        ? 'Tomato 已处理 Suno Cookies 提示，正在等待页面刷新后继续填写。'
-        : 'Tomato 已尝试切换 Suno Advanced，正在等待页面刷新后继续填写。',
-      cookieAccepted: cookieResult.clicked,
-      cookieTarget: cookieResult.target,
-      advancedClicked: advancedResult.clicked,
-      advancedAlreadyActive: advancedResult.alreadyActive,
-      advancedActive: isAdvancedActive(),
-      advancedTarget: advancedResult.target
-    });
-  }
-  const editorSelector = [
-    'textarea',
-    'input:not([type])',
-    'input[type="text"]',
-    'input[type="search"]',
-    '[contenteditable="true"]',
-    '[role="textbox"]',
-    '.ProseMirror',
-    '[data-slate-editor="true"]',
-    '[data-lexical-editor="true"]'
-  ].join(',');
-  const utilityMeta = (el) => normalize([
-    el.getAttribute?.('aria-label'),
-    el.getAttribute?.('placeholder'),
-    el.getAttribute?.('name'),
-    el.getAttribute?.('id'),
-    el.getAttribute?.('data-testid'),
-    el.getAttribute?.('data-test-id'),
-    el.getAttribute?.('type')
-  ].filter(Boolean).join(' '));
-  const isUtilityEditor = (el, context) => {
-    const meta = utilityMeta(el);
-    if (/\\bsearch\\b|current page|song title|enhance lyrics|搜索|页码|标题|增强歌词/i.test(meta)) {
-      return true;
-    }
-    return el.matches?.('input[type="search"]') === true;
-  };
-  const looksLikeSunoGeneratedStyle = (value) => {
-    const text = normalize(value);
-    if (text.length < 8 || text.length > 1000) return false;
-    if (/style of music|song description|describe|enter|type|optional|风格描述|曲风描述|输入|填写/i.test(text)) {
-      return false;
-    }
-    return /[,，]|\\bbpm\\b|vocals?|guitar|drum|bass|piano|synth|folk|pop|rock|rap|house|ambient|trance|beats?|minor|major|music|melody|rhythm|voice|vocal|和声|鼓|吉他|钢琴|贝斯|旋律|节奏|人声|民谣|流行|摇滚|说唱|电子/i.test(text);
-  };
-  const allFields = Array.from(document.querySelectorAll(editorSelector))
-    .filter(rendered)
-    .filter((el) => !isDisabled(el))
-    .map((el) => {
-      const context = contextText(el);
-      const rect = el.getBoundingClientRect();
-      return { el, context, rect };
-    });
-  const formFields = allFields.filter((item) => !isUtilityEditor(item.el, item.context));
-  const fieldByExplicitMeta = (pattern, reject = null) => {
-    const match = formFields.find((item) => {
-      const meta = normalize([
-        utilityMeta(item.el),
-        item.el.getAttribute?.('aria-label'),
-        item.el.getAttribute?.('placeholder')
-      ].filter(Boolean).join(' '));
-      return pattern.test(meta) && !(reject && reject.test(meta));
-    });
-    return match?.el || null;
-  };
-  const editorIn = (root, reject = null) => {
-    if (!root) return null;
-    const editors = Array.from(root.querySelectorAll(editorSelector))
-      .filter(rendered)
-      .filter((el) => !isDisabled(el))
-      .filter((el) => !isUtilityEditor(el, contextText(el)))
-      .filter((el) => !(reject && reject.test(normalize([utilityMeta(el), contextText(el)].join(' ')))))
-      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
-    return editors[0] || null;
-  };
-  const directTextOf = (el) => normalize(
-    Array.from(el.childNodes || [])
-      .filter((node) => node.nodeType === Node.TEXT_NODE)
-      .map((node) => node.textContent || '')
-      .join(' ')
-  );
-  const headingTextOf = (el) => normalize([
-    directTextOf(el),
-    Array.from(el.children || [])
-      .slice(0, 4)
-      .map((child) => child.matches?.('h1,h2,h3,h4,button,[role="button"],summary,[aria-label]')
-        ? textOf(child)
-        : directTextOf(child))
-      .join(' ')
-  ].join(' '));
-  const panelByTestId = (pattern, reject = null) => {
-    const panels = Array.from(document.querySelectorAll('[data-testid],[data-test-id]'))
-      .filter(rendered)
-      .filter((el) => {
-        const meta = normalize([
-          el.getAttribute?.('data-testid'),
-          el.getAttribute?.('data-test-id'),
-          el.getAttribute?.('aria-label')
-        ].filter(Boolean).join(' '));
-        return pattern.test(meta) && !(reject && reject.test(meta));
-      })
-      .filter((el) => editorIn(el, reject))
-      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
-    return panels[0] || null;
-  };
-  const panelByTitle = (titlePattern, rejectTitlePattern = null) => {
-    const panels = Array.from(document.querySelectorAll('section,article,[role="group"],div'))
-      .filter(rendered)
-      .filter((el) => editorIn(el, rejectTitlePattern))
-      .filter((el) => {
-        const rect = el.getBoundingClientRect();
-        if (rect.width < 160 || rect.height < 36) return false;
-        const title = headingTextOf(el).slice(0, 220);
-        return titlePattern.test(title) &&
-          !(rejectTitlePattern && rejectTitlePattern.test(title));
-      })
-      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
-    return panels[0] || null;
-  };
-  const styleWrapperSelectorForFields =
-    '[data-testid="create-form-styles-wrapper"],[data-test-id="create-form-styles-wrapper"]';
-  const lyricsPanel =
-    panelByTestId(/lyrics?|歌词|歌詞/i, /styles?|风格|曲风/i) ||
-    panelByTitle(/\\blyrics?\\b|歌词|歌詞/i, /\\bstyles?\\b|风格|曲风/i);
-  const stylePanelForFields =
-    document.querySelector(styleWrapperSelectorForFields) ||
-    panelByTestId(/styles?|style|genre|music|风格|曲风/i, /lyrics?|歌词|歌詞/i) ||
-    panelByTitle(/\\bstyles?\\b|style prompt|music style|genre|风格|曲风/i, /\\blyrics?\\b|歌词|歌詞/i);
-  let lyricsField =
-    editorIn(lyricsPanel, /styles?|style prompt|music style|genre|风格|曲风/i) ||
-    fieldByExplicitMeta(/lyrics?|歌词|歌詞/i, /styles?|风格|曲风/i);
-  let styleField =
-    editorIn(stylePanelForFields, /lyrics?|歌词|歌詞/i) ||
-    fieldByExplicitMeta(/styles?|style prompt|music style|genre|风格|曲风/i, /lyrics?|歌词|歌詞/i);
-  if (styleField === lyricsField) {
-    styleField = null;
-  }
-  const fillTarget = (el) => {
-    if (!el) return null;
-    if (el.matches?.('input,textarea') || el.isContentEditable) return el;
-    return el.querySelector?.('textarea,input,[contenteditable="true"],[role="textbox"],.ProseMirror') || el;
-  };
-  const dispatchInput = (el, value) => {
-    try {
-      el.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: value
-      }));
-    } catch (_) {}
-    try {
-      el.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        inputType: 'insertText',
-        data: value
-      }));
-    } catch (_) {
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-    el.blur?.();
-  };
-  const setValue = (rawEl, value) => {
-    const el = fillTarget(rawEl);
-    if (!el) return false;
-    const currentValue = el.matches?.('input,textarea')
-      ? normalize(el.value || '')
-      : normalize(el.innerText || el.textContent || el.value || '');
-    if (currentValue === normalize(value)) return true;
-    el.scrollIntoView({ block: 'center', inline: 'center' });
-    el.focus?.();
-    if (el.matches?.('input,textarea')) {
-      const nativePrototype = el.tagName === 'TEXTAREA'
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-      const nativeSetter = Object.getOwnPropertyDescriptor(nativePrototype, 'value')?.set;
-      const ownSetter = Object.getOwnPropertyDescriptor(el, 'value')?.set;
-      const setNativeValue = (nextValue) => {
-        if (ownSetter && ownSetter !== nativeSetter) {
-          ownSetter.call(el, nextValue);
-        } else if (nativeSetter) {
-          nativeSetter.call(el, nextValue);
-        } else {
-          el.value = nextValue;
-        }
-      };
-      try {
-        el.setSelectionRange?.(0, (el.value || '').length);
-      } catch (_) {}
-      try {
-        el.select?.();
-      } catch (_) {}
-      try {
-        el._valueTracker?.setValue('');
-      } catch (_) {}
-      let inserted = false;
-      try {
-        if (typeof el.setRangeText === 'function') {
-          el.setRangeText(value, 0, (el.value || '').length, 'end');
-          inserted = normalize(el.value || '') === normalize(value);
-        }
-      } catch (_) {
-        inserted = false;
-      }
-      if (!inserted) {
-        try {
-          inserted = document.execCommand && document.execCommand('insertText', false, value);
-        } catch (_) {
-          inserted = false;
-        }
-      }
-      if (!inserted || normalize(el.value || '') !== normalize(value)) {
-        setNativeValue(value);
-      }
-      dispatchInput(el, value);
-      try {
-        el.setSelectionRange?.((el.value || '').length, (el.value || '').length);
-      } catch (_) {}
-      return true;
-    }
-    if (el.isContentEditable || el.getAttribute?.('role') === 'textbox') {
-      const selection = window.getSelection?.();
-      const range = document.createRange();
-      try {
-        range.selectNodeContents(el);
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-      } catch (_) {}
-      let inserted = false;
-      try {
-        inserted = document.execCommand && document.execCommand('insertText', false, value);
-      } catch (_) {
-        inserted = false;
-      }
-      if (!inserted) {
-        el.textContent = value;
-      }
-      dispatchInput(el, value);
-      return true;
-    }
-    return false;
-  };
-  const fields = allFields.map((item) => ({
-    field: summarize(item.el)
-  })).slice(0, 20);
-  const getValue = (rawEl) => {
-    const el = fillTarget(rawEl);
-    if (!el) return '';
-    if (el.matches?.('input,textarea')) return normalize(el.value || '');
-    return normalize(el.innerText || el.textContent || el.value || '');
-  };
-  const textIsMuted = (el) => {
-    if (!el) return true;
-    const color = window.getComputedStyle(el).color || '';
-    const match = color.match(/rgba?\\(([^)]+)\\)/i);
-    if (!match) return false;
-    const parts = match[1]
-      .split(',')
-      .map((part) => Number(String(part).trim()))
-      .filter((part) => Number.isFinite(part));
-    if (parts.length < 3) return false;
-    const alpha = parts.length >= 4 ? parts[3] : 1;
-    const luma = parts[0] * 0.299 + parts[1] * 0.587 + parts[2] * 0.114;
-    return alpha < 0.65 || luma < 150;
-  };
-  const isStyleToolText = (el) =>
-    Boolean(el?.closest?.('button,[role="button"],a,label'));
-  const stylePanelSelector =
-    '[data-testid="create-form-styles-wrapper"],[data-test-id="create-form-styles-wrapper"]';
-  const findStylePanel = (anchor = null) => {
-    const direct = anchor?.closest?.(stylePanelSelector);
-    if (rendered(direct)) return direct;
-    const panels = Array.from(document.querySelectorAll(stylePanelSelector))
-      .filter(rendered);
-    if (panels.length > 0) {
-      const lyricsRect = lyricsField?.getBoundingClientRect?.();
-      if (lyricsRect) {
-        const belowLyrics = panels
-          .filter((panel) => panel.getBoundingClientRect().top > lyricsRect.top)
-          .sort((left, right) =>
-            left.getBoundingClientRect().top - right.getBoundingClientRect().top
-          );
-        if (belowLyrics.length > 0) return belowLyrics[0];
-      }
-      return panels[0];
-    }
-    const styleCards = Array.from(document.querySelectorAll('section,article,div,[role="group"]'))
-      .filter(rendered)
-      .filter((el) => {
-        const rect = el.getBoundingClientRect();
-        const ownText = normalize(textOf(el));
-        if (!/^\\s*styles?\\b/i.test(ownText)) return false;
-        if (rect.height < 44 || rect.width < 180) return false;
-        return /styles?|personalize style prompt|magic|wand|风格|曲风/i.test(
-          normalize(ownText + ' ' + contextText(el))
-        );
-      })
-      .sort((left, right) =>
-        left.getBoundingClientRect().top - right.getBoundingClientRect().top
-      );
-    return styleCards[0] || null;
-  };
-  const stylePanelTextValue = (panel) => {
-    if (!panel) return '';
-    const usableLine = (value) => {
-      const line = normalize(value);
-      if (!line) return '';
-      if (/^styles?\$/i.test(line)) return '';
-      if (/^\\d+\\s*\\/\\s*\\d+\$/.test(line)) return '';
-      if (/personalize style prompt|refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|歌词|创建|下载|删除|上传|登录/i.test(line)) {
-        return '';
-      }
-      const cleaned = line.replace(/\\s+\\d+\\s*\\/\\s*\\d+\$/, '').trim();
-      return looksLikeSunoGeneratedStyle(cleaned) ? cleaned : '';
-    };
-    const walker = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT);
-    let node = walker.nextNode();
-    while (node) {
-      const parent = node.parentElement;
-      if (rendered(parent) && !isStyleToolText(parent) && !textIsMuted(parent)) {
-        const lines = String(node.textContent || '').split(/\\n+/);
-        for (const line of lines) {
-          const candidate = usableLine(line);
-          if (candidate) return candidate;
-        }
-      }
-      node = walker.nextNode();
-    }
-    return '';
-  };
-  const findStyleContainer = (anchor = null) => {
-    const panel = findStylePanel(anchor);
-    let node = panel || anchor;
-    while (node && node !== document.body && node !== document.documentElement) {
-      if (rendered(node)) {
-        const text = normalize(node.innerText || node.textContent || '');
-        const hasStyleTitle = /\\bstyles?\\b|风格|曲风/i.test(text);
-        const hasLyricsTitle = /\\blyrics?\\b|歌词|歌詞/i.test(text);
-        const hasControls = node.querySelectorAll?.('button,[role="button"],a,label').length > 0;
-        if (hasStyleTitle && !hasLyricsTitle && hasControls) {
-          return node;
-        }
-      }
-      node = node.parentElement;
-    }
-    return panel || anchor;
-  };
-  const getStyleValue = (rawEl) => {
-    const el = fillTarget(rawEl);
-    if (el) {
-      const direct = el.matches?.('input,textarea')
-        ? normalize(el.value || '')
-        : normalize(el.innerText || el.textContent || el.value || '');
-      if (el.matches?.('input,textarea')) {
-        return looksLikeSunoGeneratedStyle(direct) ? direct : '';
-      }
-      if (looksLikeSunoGeneratedStyle(direct) &&
-          (el.matches?.('input,textarea') || !textIsMuted(el))) {
-        return direct;
-      }
-    }
-    return stylePanelTextValue(findStylePanel(rawEl));
-  };
-  const getPlaceholder = (rawEl) => {
-    const el = fillTarget(rawEl);
-    return normalize(
-      el?.getAttribute?.('placeholder') ||
-        rawEl?.getAttribute?.('placeholder') ||
-        ''
-    );
-  };
-  const expectedLyrics = normalize(lyrics);
-  const bodyText = normalize(document.body?.innerText || '');
-  const presenceText = (value) => normalize(value)
-    .toLowerCase()
-    .replace(/([a-z0-9])[’'`´](?=[a-z0-9])/gi, '\$1')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-  const expectedLyricTokens = presenceText(expectedLyrics)
-    .split(' ')
-    .filter((token) => token.length > 1);
-  const lyricProbe = expectedLyricTokens.slice(0, 14).join(' ');
-  const containsLyricProbe = (value) =>
-    lyricProbe.length >= 24 && presenceText(value).includes(lyricProbe);
-  const stylePanel = findStylePanel(styleField);
-  const styleSurface = styleField || stylePanel;
-  const styleLooksLikeLyrics = styleSurface ? containsLyricProbe(getStyleValue(styleSurface)) : false;
-  const lyricsValueAlreadyPresent = Array.from(document.querySelectorAll(editorSelector))
-    .some((el) => {
-      const labelText = normalize([textOf(el), contextText(el)].join(' '));
-      if (!/lyrics?|歌词|歌詞/i.test(labelText)) return false;
-      return containsLyricProbe(inputValue(el) || textOf(el) || el.innerText || el.textContent || '');
-    });
-  const lyricsAlreadyPresent =
-    lyricsValueAlreadyPresent || (containsLyricProbe(bodyText) && !styleLooksLikeLyrics);
-  if (readOnly) {
-    return JSON.stringify({
-      ok: Boolean((lyricsField || lyricsAlreadyPresent) && styleSurface),
-      retry: false,
-      stylePrompt: styleSurface ? getStyleValue(styleSurface) : '',
-      lyricsPrompt: lyricsField ? getValue(lyricsField) : '',
-      stylePlaceholder: styleField ? getPlaceholder(styleField) : '',
-      lyricsAlreadyPresent,
-      fieldCount: allFields.length,
-      lyricsField: summarize(lyricsField),
-      styleField: summarize(styleField),
-      fields,
-      textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-    });
-  }
-  const isRejectedStyleMagicLabel = (label, context) => {
-    const labelText = normalize(label);
-    const text = normalize(String(label || '') + ' ' + String(context || ''));
-    if (/view saved style prompts?|saved style prompts?|refresh recommended styles|recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|more options|additional options|lyrics?|create song|download|delete|remove|upload|advanced|simple|sign in|log in|credits|instrumental|extend|cover|\\bpersona\\b|查看已保存|已保存风格|刷新推荐|推荐风格|添加风格|保存提示|撤销|清空|更多选项|更多设置|歌词|创建|下载|删除|上传|登录/i.test(labelText)) {
-      return true;
-    }
-    return /view saved style prompts?|saved style prompts?|refresh recommended styles|add style|no saved styles|save prompt|undo changes|clear styles|clear all|查看已保存|已保存风格|刷新推荐|添加风格|保存提示|撤销|清空/i.test(text);
-  };
-  const hasVisibleStyleMagic = (panel) => {
-    const root = findStyleContainer(panel);
-    if (!root) return false;
-    return Array.from(root.querySelectorAll('button,[role="button"],a,label,[aria-label],[data-testid],[data-test-id]'))
-      .filter(rendered)
-      .some((el) => {
-        const clickable = clickableAncestor(el);
-        if (!clickable || isDisabled(clickable)) return false;
-        const label = normalize(textOf(el));
-        const context = contextText(el);
-        const hasIcon = Boolean(clickable.querySelector?.('svg,img,[class*="icon"],[class*="magic"],[class*="wand"],[class*="spark"]'));
-        const classText = normalize(String(clickable.className || '') + ' ' + String(el.className || ''));
-        const styleText = normalize([
-          clickable.getAttribute?.('style'),
-          el.getAttribute?.('style')
-        ].filter(Boolean).join(' '));
-        const hasStyleMagicColor =
-          /accent-blue|bg-accent-blue|blue|primary-blue/i.test(classText) ||
-          /rgb\\(47,\\s*127,\\s*252\\)|rgb\\(59,\\s*130,\\s*246\\)|rgb\\(37,\\s*99,\\s*235\\)|#2f7ffc|#3b82f6|#2563eb|blue/i.test(styleText);
-        const positive = /personalize style prompt|magic wand|magic|wand|spark|auto.*style|style.*auto|generate.*style|style.*generate|inspire|style prompt|风格.*魔法|魔法.*风格|自动.*风格|风格.*自动|生成.*风格|风格.*生成|曲风.*生成|生成.*曲风/i;
-        if (isRejectedStyleMagicLabel(label, context)) return false;
-        if (/^styles?\$/i.test(label) && !hasStyleMagicColor) return false;
-        if (/chevron|accordion|collapse|expand/i.test(classText) && !hasStyleMagicColor) return false;
-        return positive.test(label) || positive.test(context) || hasStyleMagicColor || (hasIcon && hasStyleMagicColor);
-      });
-  };
-  const findStyleExpansionButton = () => {
-    const hasVisibleStylesPanel = Boolean(
-      styleField ||
-      hasVisibleStyleMagic(stylePanel)
-    );
-    if (hasVisibleStylesPanel) return null;
-    const lyricsRect = lyricsField?.getBoundingClientRect?.();
-    const styleRect = styleField?.getBoundingClientRect?.();
-    const candidates = Array.from(document.querySelectorAll(
-      'button,[role="button"],summary,a,label,[aria-expanded],[data-state],[tabindex]'
-    ))
-      .filter(rendered)
-      .map((el) => {
-        const clickable = clickableAncestor(el);
-        if (!clickable || isDisabled(clickable)) return null;
-        const label = normalize(textOf(el));
-        const ownMeta = normalize([
-          label,
-          clickable.getAttribute?.('aria-label'),
-          el.getAttribute?.('aria-label'),
-          clickable.getAttribute?.('data-testid'),
-          el.getAttribute?.('data-testid'),
-          clickable.getAttribute?.('data-test-id'),
-          el.getAttribute?.('data-test-id')
-        ].filter(Boolean).join(' '));
-        const className = normalize(String(clickable.className || '') + ' ' + String(el.className || ''));
-        const styleText = /\\bstyles?\\b|style of music|style prompt|music style|genre|风格|曲风/i.test(ownMeta);
-        const moreOptionsText = /more options|additional options|options|更多选项|更多设置/i.test(ownMeta);
-        if (!styleText || moreOptionsText) return null;
-        if (/advanced|simple|create song|lyrics?|download|login|sign in|credits|refresh recommended|add style|save prompt|clear all|instrumental|terms|policies|home|explore|studio|library|notifications|labs|more|创建|歌词|下载|登录|推荐风格|添加风格/i.test(ownMeta)) {
-          return null;
-        }
-        const rect = clickable.getBoundingClientRect();
-        const nearbyText = contextText(clickable);
-        const expandedContentVisible = Boolean(
-          styleField ||
-          hasVisibleStyleMagic(stylePanel) ||
-          /\\b\\d+\\s*\\/\\s*\\d+\\b|personalize style prompt|undo changes|save prompt|clear styles|refresh recommended styles|add style:|create-form-styles-wrapper|自动风格|生成风格|保存提示|清空风格/i.test(nearbyText)
-        );
-        const expandedAttr = normalize(
-          clickable.getAttribute?.('aria-expanded') ||
-          el.getAttribute?.('aria-expanded') ||
-          ''
-        ).toLowerCase();
-        const stateText = normalize([
-          clickable.getAttribute?.('data-state'),
-          el.getAttribute?.('data-state'),
-          clickable.getAttribute?.('aria-label'),
-          el.getAttribute?.('aria-label'),
-          className
-        ].filter(Boolean).join(' '));
-        const inferredCollapsed =
-          !expandedContentVisible &&
-          rect.height <= 80 &&
-          /\\bstyles?\\b|style prompt|music style|genre|风格|曲风/i.test(
-            ownMeta
-          );
-        const explicitCollapsed =
-          expandedAttr === 'false' ||
-          /closed|collapsed|折叠|收起/i.test(stateText) ||
-          inferredCollapsed;
-        if (!explicitCollapsed) return null;
-        if (lyricsRect &&
-            rect.top <= lyricsRect.top + 20 &&
-            !styleField &&
-            !styleRect) return null;
-        return { clickable, label, context: ownMeta, top: rect.top };
-      })
-      .filter(Boolean)
-      .sort((left, right) => left.top - right.top);
-    const match = candidates[0];
-    return match || null;
-  };
-  const expandStylesIfNeeded = () => {
-    const expansion = findStyleExpansionButton();
-    if (!expansion) return null;
-    const rect = expansion.clickable.getBoundingClientRect();
-    const outsideViewport =
-      rect.top < 0 ||
-      rect.bottom > window.innerHeight ||
-      rect.left < 0 ||
-      rect.right > window.innerWidth;
-    if (outsideViewport) {
-      expansion.clickable.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-    }
-    expansion.clickable.focus?.();
-    expansion.clickable.click();
-    const scrollStylesIntoView = () => {
-      try {
-        expansion.clickable.scrollIntoView({ block: 'start', inline: 'nearest' });
-      } catch (_) {}
-    };
-    try {
-      window.setTimeout(scrollStylesIntoView, 120);
-    } catch (_) {
-      scrollStylesIntoView();
-    }
-    return JSON.stringify({
-      ok: false,
-      retry: true,
-      magicClicked: false,
-      styleExpanded: true,
-      message: 'Tomato 已展开 Suno Styles，正在等待魔法棒出现。',
-      stylePrompt: '',
-      styleSource: 'sunoMagic',
-      styleExpandTarget: summarize(expansion.clickable),
-      fieldCount: allFields.length,
-      lyricsField: summarize(lyricsField),
-      styleField: summarize(styleField),
-      stylePlaceholder,
-      lyricsAlreadyPresent,
-      fields,
-      textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-    });
-  };
-  const scrollParentFor = (element) => {
-    let node = element?.parentElement;
-    while (node && node !== document.body && node !== document.documentElement) {
-      const computed = window.getComputedStyle(node);
-      const overflowText = String(computed.overflowY || '') +
-        ' ' +
-        String(computed.overflow || '');
-      if (/(auto|scroll|overlay)/i.test(overflowText) &&
-          node.scrollHeight > node.clientHeight + 12) {
-        return node;
-      }
-      node = node.parentElement;
-    }
-    return document.scrollingElement || document.documentElement;
-  };
-  const scrollStylesPanelIntoView = (reason) => {
-    const target = findStyleContainer(styleSurface || stylePanel) ||
-      styleSurface ||
-      stylePanel;
-    if (!target) return null;
-    const before = target.getBoundingClientRect();
-    const parent = scrollParentFor(target);
-    const scrollDown = () => {
-      try {
-        target.scrollIntoView({ block: 'center', inline: 'nearest' });
-      } catch (_) {}
-      try {
-        parent?.scrollBy?.({ top: 220, left: 0, behavior: 'auto' });
-      } catch (_) {
-        try {
-          if (parent) parent.scrollTop += 220;
-        } catch (_) {}
-      }
-    };
-    scrollDown();
-    try {
-      window.setTimeout(scrollDown, 120);
-    } catch (_) {}
-    return JSON.stringify({
-      ok: false,
-      retry: true,
-      magicClicked: false,
-      styleScrolled: true,
-      message: 'Tomato 已滚动到 Suno Styles 工具栏，正在等待蓝色魔法棒出现。',
-      stylePrompt: '',
-      styleSource: 'sunoMagic',
-      styleScrollReason: reason,
-      styleScrollTarget: summarize(target),
-      styleScrollParent: summarize(parent),
-      styleScrollBefore: {
-        top: before.top,
-        bottom: before.bottom,
-        height: before.height
-      },
-      fieldCount: allFields.length,
-      lyricsField: summarize(lyricsField),
-      styleField: summarize(styleField),
-      stylePlaceholder,
-      lyricsAlreadyPresent,
-      fields,
-      textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-    });
-  };
-  const findStyleMagicButton = () => {
-    const styleAnchor = styleField || stylePanel;
-    if (!styleAnchor) return null;
-    const styleRect = styleAnchor.getBoundingClientRect();
-    const searchRoot = findStyleContainer(styleAnchor);
-    const roots = searchRoot ? [searchRoot] : [document];
-    const candidates = roots
-      .flatMap((root) => Array.from(root.querySelectorAll(
-        'button,[role="button"],a,label,[aria-label],[data-testid],[data-test-id]'
-      )))
-      .filter(rendered)
-      .map((el) => {
-        const clickable = clickableAncestor(el);
-        if (!clickable || isDisabled(clickable)) return null;
-        const label = normalize(textOf(el));
-        const context = contextText(el);
-        const rect = clickable.getBoundingClientRect();
-        const nearStyle =
-          rect.bottom >= styleRect.top - 180 &&
-          rect.top <= styleRect.bottom + 180 &&
-          rect.right >= styleRect.left - 260 &&
-          rect.left <= styleRect.right + 260;
-        const hasIcon = Boolean(clickable.querySelector?.('svg,img,[class*="icon"],[class*="magic"],[class*="wand"],[class*="spark"]'));
-        const classText = normalize(String(clickable.className || '') + ' ' + String(el.className || ''));
-        const styleText = normalize([
-          clickable.getAttribute?.('style'),
-          el.getAttribute?.('style')
-        ].filter(Boolean).join(' '));
-        const hasStyleMagicColor =
-          /accent-blue|bg-accent-blue|blue|primary-blue/i.test(classText) ||
-          /rgb\\(47,\\s*127,\\s*252\\)|rgb\\(59,\\s*130,\\s*246\\)|rgb\\(37,\\s*99,\\s*235\\)|#2f7ffc|#3b82f6|#2563eb|blue/i.test(styleText);
-        const positive = /personalize style prompt|magic wand|magic|wand|spark|auto.*style|style.*auto|generate.*style|style.*generate|inspire|style prompt|风格.*魔法|魔法.*风格|自动.*风格|风格.*自动|生成.*风格|风格.*生成|曲风.*生成|生成.*曲风/i;
-        const strongMagic = /personalize style prompt|magic wand|magic|wand|spark|魔法|自动.*风格|生成.*风格|曲风.*生成|inspire/i;
-        if (isRejectedStyleMagicLabel(label, context)) return null;
-        if (!searchRoot && !nearStyle) return null;
-        if (/^styles?\$/i.test(label) && !hasStyleMagicColor) return null;
-        if (/chevron|accordion|collapse|expand/i.test(classText) && !hasStyleMagicColor) return null;
-        if (!positive.test(label) && !positive.test(context) && !hasStyleMagicColor) {
-          return null;
-        }
-        const namedMagic = strongMagic.test(label) || positive.test(label);
-        const blueMagic =
-          hasStyleMagicColor &&
-          (hasIcon || !label || positive.test(context) || strongMagic.test(context));
-        return {
-          clickable,
-          label,
-          context,
-          namedMagic,
-          blueMagic,
-          top: rect.top,
-          left: rect.left
-        };
-      })
-      .filter(Boolean)
-      .sort((left, right) => (left.top - right.top) || (left.left - right.left));
-    return candidates.find((item) => item.namedMagic) ||
-      candidates.find((item) => item.blueMagic) ||
-      candidates[0] ||
-      null;
-  };
-  const triggerStyleMagicButton = (magic) => {
-    const target = magic?.clickable;
-    if (!target) {
-      return {
-        clicked: false,
-        waiting: false,
-        method: '',
-        error: 'missingTarget'
-      };
-    }
-    let result = {};
-    try {
-      target.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-    } catch (_) {}
-    try {
-      target.focus?.();
-    } catch (_) {}
-    try {
-      target.click();
-      result = {
-        ok: true
-      };
-    } catch (error) {
-      result = {
-        ok: false,
-        error: String(error && error.message ? error.message : error)
-      };
-    }
-    return {
-      clicked: result.ok !== false,
-      waiting: false,
-      method: 'nativeClick',
-      result
-    };
-  };
-  const missing = [];
-  let styleValue = styleSurface ? getStyleValue(styleSurface) : '';
-  let stylePlaceholder = styleField ? getPlaceholder(styleField) : '';
-  let styleFilled = false;
-  let styleSource = '';
-  let magicClicked = false;
-  let magicTarget = null;
-  let magicTrigger = null;
-  if (!lyricsField && !lyricsAlreadyPresent) {
-    missing.push('lyrics');
-  } else if (!expectedLyrics) {
-    missing.push('lyricsText');
-  } else if (lyricsField && getValue(lyricsField) !== expectedLyrics) {
-    const lyricsFilled = setValue(lyricsField, lyrics);
-    const lyricsValue = getValue(lyricsField);
-    if (!lyricsFilled || lyricsValue !== expectedLyrics) {
-      missing.push('lyricsFill');
-    } else {
-      return JSON.stringify({
-        ok: false,
-        retry: true,
-        magicClicked: false,
-        message: 'Tomato 已把歌词写入 Suno Lyrics，正在确认页面渲染。',
-        stylePrompt: '',
-        styleSource: '',
-        fieldCount: allFields.length,
-        lyricsField: summarize(lyricsField),
-        styleField: summarize(styleField),
-        fields,
-        textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-      });
-    }
-  }
-  if (missing.length > 0) {
-    return JSON.stringify({
-      ok: false,
-      missing,
-      retry: false,
-      magicClicked: false,
-      message: 'Suno Lyrics 尚未确认写入，暂不处理 Styles。',
-      stylePrompt: '',
-      styleSource: '',
-      fieldCount: allFields.length,
-      lyricsField: summarize(lyricsField),
-      styleField: summarize(styleField),
-      stylePlaceholder,
-      lyricsAlreadyPresent,
-      fields,
-      textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-    });
-  }
-  if (!styleSurface) {
-    const expanded = expandStylesIfNeeded();
-    if (expanded) {
-      return expanded;
-    }
-    const scrolled = scrollStylesPanelIntoView('missingStyleSurface');
-    if (scrolled) {
-      return scrolled;
-    }
-    missing.push('style');
-  } else {
-    const magic = findStyleMagicButton();
-    const expandedStyleSurface = Boolean(styleField || magic ||
-      (magicAlreadyRequested && looksLikeSunoGeneratedStyle(styleValue)));
-    if (!expandedStyleSurface) {
-      const expanded = expandStylesIfNeeded();
-      if (expanded) {
-        return expanded;
-      }
-      const scrolled = scrollStylesPanelIntoView('styleSurfaceNeedsToolbar');
-      if (scrolled) {
-        return scrolled;
-      }
-      missing.push('style');
-    } else if (magicAlreadyRequested &&
-        styleValue.length >= 6 &&
-        styleValue !== ignoredStyle) {
-      styleSource = 'sunoMagic';
-    } else if (!magic) {
-      const expanded = expandStylesIfNeeded();
-      if (expanded) {
-        return expanded;
-      }
-      const scrolled = scrollStylesPanelIntoView('styleMagicNotVisible');
-      if (scrolled) {
-        return scrolled;
-      }
-      if (magicAlreadyRequested) {
-        return JSON.stringify({
-          ok: false,
-          retry: true,
-          magicClicked: false,
-          message: '正在等待 Suno 自动风格生成完成...',
-          stylePrompt: '',
-          styleSource: 'sunoMagic',
-          magicTarget: null,
-          ignoredStylePrompt: ignoredStyle,
-          stylePlaceholder,
-          fieldCount: allFields.length,
-          lyricsField: summarize(lyricsField),
-          styleField: summarize(styleField),
-          fields,
-          textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-        });
-      }
-      missing.push('styleMagic');
-    } else if (styleField && styleValue.length >= 6 && !magicAlreadyRequested) {
-      const ignoredStylePrompt = ignoredStyle || styleValue;
-      styleFilled = setValue(styleField, '');
-      styleValue = getStyleValue(styleField);
-      return JSON.stringify({
-        ok: false,
-        retry: true,
-        magicClicked: false,
-        message: 'Tomato 已清空 Suno Styles 中的旧风格，准备点击自动风格魔法棒。',
-        stylePrompt: '',
-        styleSource: 'sunoMagic',
-        ignoredStylePrompt,
-        styleFilled,
-        fieldCount: allFields.length,
-        lyricsField: summarize(lyricsField),
-        styleField: summarize(styleField),
-        stylePlaceholder,
-        fields,
-        textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-      });
-    } else if (magic && !magicAlreadyRequested && allowMagicClick) {
-      magicTrigger = triggerStyleMagicButton(magic);
-      magicClicked = magicTrigger.clicked;
-      magicTarget = summarize(magic.clickable);
-      return JSON.stringify({
-        ok: false,
-        retry: magicClicked,
-        missing: magicClicked ? [] : ['styleMagicClick'],
-        magicClicked,
-        message: magicClicked
-          ? 'Tomato 已通过 DOM 触发 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成风格。'
-          : 'Tomato 已找到 Suno 自动风格魔法棒，但 DOM click 触发失败。',
-        stylePrompt: '',
-        styleSource: 'sunoMagic',
-        magicTarget,
-        magicTrigger,
-        ignoredStylePrompt: ignoredStyle,
-        fieldCount: allFields.length,
-        lyricsField: summarize(lyricsField),
-        styleField: summarize(styleField),
-        stylePlaceholder,
-        fields,
-        textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-      });
-    } else if (magic && magicAlreadyRequested) {
-      return JSON.stringify({
-        ok: false,
-        retry: true,
-        magicClicked: false,
-        message: '正在等待 Suno 自动风格生成完成...',
-        stylePrompt: '',
-        styleSource: 'sunoMagic',
-        magicTarget: summarize(magic.clickable),
-        ignoredStylePrompt: ignoredStyle,
-        stylePlaceholder,
-        fieldCount: allFields.length,
-        lyricsField: summarize(lyricsField),
-        styleField: summarize(styleField),
-        fields,
-        textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-      });
-    } else if (magic && !allowMagicClick) {
-      return JSON.stringify({
-        ok: false,
-        retry: true,
-        magicClicked: false,
-        message: '正在等待 Suno 自动风格生成完成...',
-        stylePrompt: '',
-        styleSource: 'sunoMagic',
-        magicTarget: magic ? summarize(magic.clickable) : null,
-        magicTrigger,
-        ignoredStylePrompt: ignoredStyle,
-        stylePlaceholder,
-        fieldCount: allFields.length,
-        lyricsField: summarize(lyricsField),
-        styleField: summarize(styleField),
-        fields,
-        textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-      });
-    }
-  }
-  const advancedActive = isAdvancedActive();
-  return JSON.stringify({
-    ok: missing.length === 0,
-    missing,
-    retry: false,
-    magicClicked,
-    magicTarget,
-    magicTrigger,
-    stylePrompt: styleValue,
-    stylePlaceholder,
-    styleSource,
-    styleFilled,
-    cookieAccepted: cookieResult.clicked,
-    cookieTarget: cookieResult.target,
-    advancedClicked: advancedResult.clicked,
-    advancedAlreadyActive: advancedResult.alreadyActive,
-    advancedActive,
-    advancedTarget: advancedResult.target,
-    fieldCount: allFields.length,
-    lyricsField: summarize(lyricsField),
-    styleField: summarize(styleField),
-    fields,
-    textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-  });
-  } catch (error) {
-    return JSON.stringify({
-      ok: false,
-      retry: false,
-      missing: ['scriptError'],
-      magicClicked: false,
-      message: 'Suno 填表脚本执行失败：' +
-        String(error && error.message ? error.message : error),
-      error: String(error && error.message ? error.message : error),
-      stack: String(error && error.stack ? error.stack : '')
-    });
-  }
-})()
-''';
-  }
-
-  String get _sunoCreateScript => r'''
-(() => {
-  const visible = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
-  };
-  const textOf = (el) => [
-    el.getAttribute?.('aria-label'),
-    el.innerText,
-    el.textContent
-  ].filter(Boolean).join(' ');
-  const buttons = Array.from(document.querySelectorAll('button,[role="button"]')).filter(visible);
-  const button = buttons.find((el) => /create song/i.test(textOf(el))) ||
-    buttons.find((el) => /^create$/i.test(textOf(el).trim())) ||
-    buttons.find((el) => /create/i.test(textOf(el)));
-  if (!button) {
-    return JSON.stringify({ ok: false, message: '没有找到 Suno Create 按钮。' });
-  }
-  if (button.disabled || button.getAttribute('aria-disabled') === 'true') {
-    return JSON.stringify({ ok: false, message: 'Suno Create 按钮仍不可用，请检查歌词、风格或 credits。' });
-  }
-  button.click();
-  return JSON.stringify({ ok: true });
-})()
-''';
-
-  String _sunoCompletionScript({
-    required String expectedStylePrompt,
-    required String expectedLyrics,
-    required bool requireExpectedMatch,
-    List<String> trustedSongUrls = const <String>[],
-  }) {
-    final expectedStyleJson = jsonEncode(expectedStylePrompt.trim());
-    final expectedLyricsJson = jsonEncode(expectedLyrics.trim());
-    final requireExpectedJson = jsonEncode(requireExpectedMatch);
-    final trustedSongUrlsJson = jsonEncode(
-      _mergeSunoSongUrls([trustedSongUrls]),
-    );
-    return '''
-(() => {
-  const expectedStyle = $expectedStyleJson;
-  const expectedLyrics = $expectedLyricsJson;
-  const requireExpectedMatch = $requireExpectedJson;
-  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const normalizeLoose = (value) => normalize(value).toLowerCase();
-  const normalizeLyricsExact = (value) => normalize(value)
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .toLowerCase()
-    .replace(/[^a-z0-9\\u4e00-\\u9fff']+/g, ' ')
-    .replace(/\\s+/g, ' ')
-    .trim();
-  const expectedLyricsExact = normalizeLyricsExact(expectedLyrics);
-  const lyricsExactMatch = (text) => {
-    if (!expectedLyricsExact) return false;
-    return normalizeLyricsExact(text).includes(expectedLyricsExact);
-  };
-  const expectedTokens = normalize(expectedLyrics)
-    .split(/[^A-Za-z0-9\\u4e00-\\u9fff'-]+/g)
-    .map((value) => value.trim())
-    .filter((value) => value.length >= 4)
-    .slice(0, 20);
-  const lyricSamples = normalize(expectedLyrics)
-    .split(/\\n+/g)
-    .map((value) => value.trim())
-    .filter((value) => value.length >= 24)
-    .slice(0, 4)
-    .map((value) => value.slice(0, 90));
-  const expectedScore = (text) => {
-    const haystack = normalizeLoose(text);
-    let score = 0;
-    for (const token of expectedTokens) {
-      if (haystack.includes(token.toLowerCase())) score += 1;
-    }
-    for (const sample of lyricSamples) {
-      if (haystack.includes(sample.toLowerCase())) score += 6;
-    }
-    return score;
-  };
-  const visible = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 &&
-      rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
-  const songIdFromUrl = (url) => {
-    const match = String(url || '').match(/\\/song\\/([0-9a-fA-F-]{36})/);
-    return match ? match[1].toLowerCase() : '';
-  };
-  const canonicalSongUrl = (url) => {
-    const songId = songIdFromUrl(url);
-    return songId ? 'https://suno.com/song/' + songId : String(url || '').trim();
-  };
-  const trustedSongUrls = new Set(
-    ($trustedSongUrlsJson).map(canonicalSongUrl).filter(Boolean)
-  );
-  const isTrustedSongUrl = (url) => trustedSongUrls.has(canonicalSongUrl(url));
-  const incomplete = /generating|creating|processing|queued|loading|failed|error|retry|生成中|创建中|处理中|排队|失败|重试/i;
-  const preview = /preview|demo|sample|clip|snippet|teaser|试听|試聽|预览|預覽|片段|样例|樣例/i;
-  const rawAnchors = Array.from(document.querySelectorAll('a[href]'))
-    .filter(visible)
-    .filter((a) => /suno\\.com\\/song|\\/song\\//i.test(a.href))
-    .map((a) => {
-      const container = a.closest('article,section,[data-testid],[data-test-id],div') || a;
-      const text = normalize(container.innerText || container.textContent || a.innerText || '');
-      const title = normalize(container.querySelector?.('h1,h2,h3,[role="heading"]')?.innerText || a.innerText || '');
-      return {
-        href: canonicalSongUrl(a.href),
-        title,
-        text,
-        expectedScore: expectedScore(title + '\\n' + text),
-        lyricsExactMatch: lyricsExactMatch(title + '\\n' + text)
-      };
-    })
-    .filter((item) => item.href && !incomplete.test(item.text) && !preview.test(item.text));
-  const anchors = rawAnchors
-    .filter((item) => !requireExpectedMatch || item.lyricsExactMatch || isTrustedSongUrl(item.href));
-  const rawRows = Array.from(document.querySelectorAll('[data-testid="clip-row"],.clip-row,[role="group"][aria-label]'))
-    .map((row, index) => {
-      const text = normalize(row.innerText || row.textContent || '');
-      const title = normalize(row.getAttribute('aria-label') || row.querySelector?.('h1,h2,h3,[role="heading"]')?.innerText || text.split('\\n')[0] || '');
-      const anchor = row.querySelector?.('a[href*="/song/"],a[href*="suno.com/song"]');
-      const href = canonicalSongUrl(anchor?.href || '') || ('suno-row:' + index + ':' + (title || 'untitled'));
-      return {
-        href,
-        title,
-        text,
-        expectedScore: expectedScore(title + '\\n' + text),
-        lyricsExactMatch: lyricsExactMatch(title + '\\n' + text)
-      };
-    })
-    .filter((item) => item.href && !incomplete.test(item.text) && !preview.test(item.text));
-  const rows = rawRows
-    .filter((item) => !requireExpectedMatch || item.lyricsExactMatch || isTrustedSongUrl(item.href));
-  const seen = new Set();
-  const songCandidates = anchors.concat(rows).filter((item) => {
-    if (seen.has(item.href)) return false;
-    seen.add(item.href);
-    return true;
-  }).sort((left, right) => right.expectedScore - left.expectedScore);
-  const rawSeen = new Set();
-  const rawSongRows = rawRows.filter((item) => /\\/song\\//i.test(item.href));
-  const unverifiedSource = rawSongRows.length > 0 ? rawSongRows : rawAnchors;
-  const unverifiedSongCandidates = unverifiedSource.filter((item) => {
-    if (!/\\/song\\//i.test(item.href)) return false;
-    if (rawSeen.has(item.href)) return false;
-    rawSeen.add(item.href);
-    return true;
-  });
-  const mediaRank = (url) => {
-    if (/\\.mp3(?:[?#]|\$)/i.test(url)) return 4;
-    if (/\\.m4a(?:[?#]|\$)/i.test(url)) return 3;
-    if (/\\.wav(?:[?#]|\$)/i.test(url)) return 2;
-    if (/\\.webm(?:[?#]|\$)/i.test(url)) return 1;
-    return 0;
-  };
-  const mediaUrls = Array.from(new Set(
-    Array.from(document.querySelectorAll('audio[src],video[src],source[src]'))
-      .map((el) => el.src)
-      .concat(
-        Array.from((document.documentElement?.innerHTML || '').matchAll(/https:\\/\\/cdn\\d*\\.suno\\.ai\\/[^"'<>\\s\\\\]+?\\.(?:mp3|m4a|wav|webm)(?:\\?[^"'<>\\s\\\\]*)?/gi))
-          .map((match) => match[0])
-      )
-      .map((value) => String(value || '').replace(/&amp;/g, '&').trim())
-      .filter((value) => value && !/sil-100|preview|sample|snippet|teaser/i.test(value))
-  )).sort((left, right) => mediaRank(right) - mediaRank(left));
-  const mediaBySongUrl = {};
-  for (const song of songCandidates) {
-    const songId = songIdFromUrl(song.href);
-    if (!songId) continue;
-    const matched = mediaUrls.find((url) => url.includes(songId));
-    if (matched) mediaBySongUrl[song.href] = matched;
-  }
-  const currentPageExpectedScore = expectedScore(document.body?.innerText || document.body?.textContent || '');
-  const currentPageLyricsExactMatch = lyricsExactMatch(document.body?.innerText || document.body?.textContent || '');
-  const currentPageBodyText = normalize(document.body?.innerText || document.body?.textContent || '');
-  const currentPageGenerating = /\\/song\\//i.test(location.href) &&
-    incomplete.test(currentPageBodyText);
-  const canonicalCurrentUrl = canonicalSongUrl(location.href);
-  const currentSongUrl = /\\/song\\//i.test(location.href) &&
-    (!requireExpectedMatch ||
-      currentPageLyricsExactMatch ||
-      isTrustedSongUrl(canonicalCurrentUrl))
-    ? canonicalCurrentUrl
-    : '';
-  // Suno detail pages can match the lyrics without exposing their own /song/
-  // anchor. Keep the verified current URL so Dart can download by songUrl.
-  if (currentSongUrl) {
-    const currentSongId = songIdFromUrl(currentSongUrl);
-    const matched = currentSongId
-      ? mediaUrls.find((url) => url.includes(currentSongId))
-      : '';
-    if (matched) mediaBySongUrl[currentSongUrl] = matched;
-  }
-  const completedSongs = songCandidates.slice();
-  if (currentSongUrl && !completedSongs.some((item) => item.href === currentSongUrl)) {
-    completedSongs.unshift({
-      href: currentSongUrl,
-      title: normalize(document.querySelector('h1,h2,h3,[role="heading"]')?.innerText || ''),
-      text: normalize(document.body?.innerText || document.body?.textContent || ''),
-      expectedScore: currentPageExpectedScore
-    });
-  }
-  const primarySongUrl = songCandidates[0]?.href || currentSongUrl;
-  const primarySongId = songIdFromUrl(primarySongUrl);
-  const primaryMediaUrl = primarySongUrl && mediaBySongUrl[primarySongUrl]
-    ? mediaBySongUrl[primarySongUrl]
-    : primarySongId
-      ? (mediaUrls.find((url) => url.includes(primarySongId)) || '')
-      : '';
-  return JSON.stringify({
-    songUrl: completedSongs[0]?.href || '',
-    songUrls: completedSongs.map((item) => item.href),
-    songs: completedSongs,
-    candidateSongUrls: unverifiedSongCandidates.map((item) => item.href),
-    candidateSongs: unverifiedSongCandidates,
-    mediaUrl: primaryMediaUrl,
-    mediaUrls,
-    mediaBySongUrl,
-    currentPageExpectedScore,
-    currentPageLyricsExactMatch,
-    currentPageGenerating,
-    linkCount: songCandidates.length
-  });
-})()
-''';
-  }
-
-  String _sunoDownloadScript({
-    required List<String> downloadedSongUrls,
-    required List<String> allowedSongUrls,
-    required String expectedStylePrompt,
-    required String expectedLyrics,
-    required bool requireExpectedMatch,
-    List<String> trustedSongUrls = const <String>[],
-    bool dryRun = false,
-    String? pendingSongUrl,
-  }) {
-    final downloadedJson = jsonEncode(downloadedSongUrls);
-    final allowedJson = jsonEncode(allowedSongUrls);
-    final expectedStyleJson = jsonEncode(expectedStylePrompt.trim());
-    final expectedLyricsJson = jsonEncode(expectedLyrics.trim());
-    final requireExpectedJson = jsonEncode(requireExpectedMatch);
-    final dryRunJson = jsonEncode(dryRun);
-    final pendingJson = jsonEncode((pendingSongUrl ?? '').trim());
-    final trustedSongUrlsJson = jsonEncode(
-      _mergeSunoSongUrls([trustedSongUrls]),
-    );
-    return '''
-(() => {
-  const canonicalSongUrl = (url) => {
-    const match = String(url || '').match(/\\/song\\/([0-9a-fA-F-]{36})/);
-    return match ? 'https://suno.com/song/' + match[1].toLowerCase() : String(url || '').trim();
-  };
-  const downloadedSongUrls = new Set(
-    ($downloadedJson).map(canonicalSongUrl).filter(Boolean)
-  );
-  const allowedSongUrls = new Set(
-    ($allowedJson).map(canonicalSongUrl).filter(Boolean)
-  );
-  const trustedSongUrls = new Set(
-    ($trustedSongUrlsJson).map(canonicalSongUrl).filter(Boolean)
-  );
-  const expectedStyle = $expectedStyleJson;
-  const expectedLyrics = $expectedLyricsJson;
-  const requireExpectedMatch = $requireExpectedJson;
-  const dryRun = $dryRunJson;
-  const pendingSongUrl = canonicalSongUrl($pendingJson);
-  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const normalizeLoose = (value) => normalize(value).toLowerCase();
-  const normalizeLyricsExact = (value) => normalize(value)
-    .replace(/[“”]/g, '"')
-    .replace(/[‘’]/g, "'")
-    .toLowerCase()
-    .replace(/[^a-z0-9\\u4e00-\\u9fff']+/g, ' ')
-    .replace(/\\s+/g, ' ')
-    .trim();
-  const expectedLyricsExact = normalizeLyricsExact(expectedLyrics);
-  const lyricsExactMatch = (text) => {
-    if (!expectedLyricsExact) return false;
-    return normalizeLyricsExact(text).includes(expectedLyricsExact);
-  };
-  const expectedTokens = normalize(expectedLyrics)
-    .split(/[^A-Za-z0-9\\u4e00-\\u9fff'-]+/g)
-    .map((value) => value.trim())
-    .filter((value) => value.length >= 4)
-    .slice(0, 20);
-  const lyricSamples = normalize(expectedLyrics)
-    .split(/\\n+/g)
-    .map((value) => value.trim())
-    .filter((value) => value.length >= 24)
-    .slice(0, 4)
-    .map((value) => value.slice(0, 90));
-  const expectedScore = (text) => {
-    const haystack = normalizeLoose(text);
-    let score = 0;
-    for (const token of expectedTokens) {
-      if (haystack.includes(token.toLowerCase())) score += 1;
-    }
-    for (const sample of lyricSamples) {
-      if (haystack.includes(sample.toLowerCase())) score += 6;
-    }
-    return score;
-  };
-  const currentPageExpectedScore = expectedScore(
-    document.body?.innerText || document.body?.textContent || ''
-  );
-  const currentPageLyricsExactMatch = lyricsExactMatch(
-    document.body?.innerText || document.body?.textContent || ''
-  );
-  const isExpectedMatch = (text) =>
-    !requireExpectedMatch || lyricsExactMatch(text);
-  const isTrustedSongUrl = (url) => trustedSongUrls.has(canonicalSongUrl(url));
-  const isBoundSongUrl = (url) => {
-    const canonical = canonicalSongUrl(url);
-    return Boolean(canonical) && (
-      allowedSongUrls.has(canonical) ||
-      isTrustedSongUrl(canonical)
-    );
-  };
-  const visible = (el) => {
-    if (!el) return false;
-    const rect = el.getBoundingClientRect();
-    const style = window.getComputedStyle(el);
-    return rect.width > 0 &&
-      rect.height > 0 &&
-      style.visibility !== 'hidden' &&
-      style.display !== 'none' &&
-      Number(style.opacity || '1') > 0.01;
-  };
-  const textOf = (el) => normalize([
-    el.getAttribute?.('aria-label'),
-    el.getAttribute?.('title'),
-    el.getAttribute?.('download'),
-    el.getAttribute?.('data-testid'),
-    el.getAttribute?.('data-test-id'),
-    el.getAttribute?.('role'),
-    el.href,
-    el.innerText,
-    el.textContent
-  ].filter(Boolean).join(' '));
-  const contextText = (el) => {
-    const parts = [textOf(el)];
-    let current = el.parentElement;
-    for (let i = 0; current && i < 5; i += 1, current = current.parentElement) {
-      const text = normalize(current.innerText || current.textContent || '');
-      if (text && text.length <= 900) parts.push(text);
-      parts.push(textOf(current));
-    }
-    return normalize(parts.join(' ')).slice(0, 1200);
-  };
-  const summarize = (el) => {
-    if (!el) return null;
-    const rect = el.getBoundingClientRect();
-    return {
-      tag: el.tagName.toLowerCase(),
-      role: el.getAttribute('role') || '',
-      type: el.getAttribute('type') || '',
-      id: el.id || '',
-      className: String(el.className || '').slice(0, 160),
-      ariaLabel: el.getAttribute('aria-label') || '',
-      title: el.getAttribute('title') || '',
-      href: el.href || '',
-      text: textOf(el).slice(0, 180),
-      rect: {
-        x: Math.round(rect.x),
-        y: Math.round(rect.y),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height)
-      }
-    };
-  };
-  const menuLayerSelector = '[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper],[data-floating-ui-portal],[data-side][data-align]';
-  const menuLayerFor = (el) => el?.closest?.(menuLayerSelector) || null;
-  const clickLikeUser = (el, options = {}) => {
-    if (!el) return;
-    const label = textOf(el);
-    const nativeOnly =
-      options.nativeOnly === true ||
-      /more menu contents|more options/i.test(label);
-    el.scrollIntoView({ block: 'center', inline: 'center' });
-    if (nativeOnly) {
-      el.focus?.();
-      el.click?.();
-      return;
-    }
-    el.focus?.();
-    const rect = el.getBoundingClientRect();
-    const x = Math.max(0, Math.min(window.innerWidth - 1, rect.left + rect.width / 2));
-    const y = Math.max(0, Math.min(window.innerHeight - 1, rect.top + rect.height / 2));
-    const hit = document.elementFromPoint(x, y);
-    const target = hit && (hit === el || el.contains(hit)) ? hit : el;
-    const pointerOptions = {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      view: window,
-      clientX: x,
-      clientY: y,
-      screenX: window.screenX + x,
-      screenY: window.screenY + y,
-      button: 0,
-      buttons: 1,
-      pointerId: 1,
-      pointerType: 'mouse',
-      isPrimary: true
-    };
-    const mouseOptions = {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      view: window,
-      clientX: x,
-      clientY: y,
-      screenX: window.screenX + x,
-      screenY: window.screenY + y,
-      button: 0,
-      buttons: 1
-    };
-    try {
-      if (typeof PointerEvent === 'function') {
-        target.dispatchEvent(new PointerEvent('pointerover', pointerOptions));
-        target.dispatchEvent(new PointerEvent('pointermove', pointerOptions));
-        target.dispatchEvent(new PointerEvent('pointerdown', pointerOptions));
-      }
-      target.dispatchEvent(new MouseEvent('mouseover', mouseOptions));
-      target.dispatchEvent(new MouseEvent('mousemove', mouseOptions));
-      target.dispatchEvent(new MouseEvent('mousedown', mouseOptions));
-      if (typeof PointerEvent === 'function') {
-        target.dispatchEvent(new PointerEvent('pointerup', {
-          ...pointerOptions,
-          buttons: 0
-        }));
-      }
-      target.dispatchEvent(new MouseEvent('mouseup', {
-        ...mouseOptions,
-        buttons: 0
-      }));
-      el.click?.();
-    } catch (_) {
-      el.click?.();
-    }
-  };
-  const isDisabled = (el) =>
-    Boolean(el?.disabled) || el?.getAttribute?.('aria-disabled') === 'true';
-  const clickableAncestor = (el) =>
-    el?.closest?.('button,[role="button"],[role="menuitem"],a,label');
-  const songUrlFor = (el) => {
-    const anchor = el.closest?.('a[href*="/song/"],a[href*="suno.com/song"]') ||
-      el.querySelector?.('a[href*="/song/"],a[href*="suno.com/song"]') ||
-      el.closest?.('[data-testid],[data-test-id],article,section,div')?.querySelector?.('a[href*="/song/"],a[href*="suno.com/song"]');
-    const href = String(anchor?.href || '');
-    return canonicalSongUrl(href) || '';
-  };
-  const titleFor = (el) => {
-    const container = el.closest?.('article,section,[data-testid],[data-test-id],div') || el;
-    const heading = container.querySelector?.('h1,h2,h3,[role="heading"]');
-    const headingText = normalize(heading?.innerText || heading?.textContent || '');
-    if (headingText) return headingText.slice(0, 120);
-    const text = normalize(container.innerText || container.textContent || '');
-    return text.split(/\\n|\\|/).map((part) => normalize(part)).find((part) =>
-      part.length >= 3 &&
-      part.length <= 120 &&
-      !/download|audio|mp3|create|share|more|下载|音频|创建|分享|更多/i.test(part)
-    ) || '';
-  };
-  const controls = Array.from(document.querySelectorAll(
-    'a[href],button,[role="button"],[role="menuitem"],label,[aria-label],[title],[data-testid],[data-test-id]'
-  ))
-    .filter(visible)
-    .map((el) => {
-      const clickable = clickableAncestor(el);
-      if (!clickable || isDisabled(clickable)) return null;
-      const label = textOf(el);
-      const context = contextText(el);
-      const contextMatchesLyrics = isExpectedMatch(context);
-      const inOpenMenu = Boolean(menuLayerFor(clickable) || menuLayerFor(el));
-      const hasBoundSongTarget =
-        Boolean(pendingSongUrl) || allowedSongUrls.size > 0 || trustedSongUrls.size > 0;
-      if (requireExpectedMatch && !hasBoundSongTarget && !contextMatchesLyrics) return null;
-      const href = String(clickable.href || el.href || '');
-      if (/suno\\.com\\/@|\\/\\@/i.test(href)) return null;
-      if (/\\/style\\//i.test(href)) return null;
-      if (href && !/\\/song\\//i.test(href) && !/download|audio|mp3/i.test(href)) return null;
-      const songUrl = songUrlFor(clickable) || songUrlFor(el);
-      const onSongDetail = /\\/song\\//i.test(location.href);
-      const onCreatePage = /\\/create(?:\\/|\$)/i.test(location.pathname);
-      const currentSongUrl = canonicalSongUrl(location.href);
-      const currentUrlMatchesPending = pendingSongUrl &&
-        location.href.startsWith(pendingSongUrl);
-      const clickableRect = clickable.getBoundingClientRect();
-      const downloadMenuContext =
-        /download|save|export|mp3|下载|下載|保存|导出|匯出|音频下载|下载音频|音頻下載|下載音頻/i.test(context);
-      const targetBoundToExpected =
-        Boolean(songUrl && isBoundSongUrl(songUrl)) ||
-        Boolean(pendingSongUrl && currentUrlMatchesPending && isBoundSongUrl(pendingSongUrl));
-      const currentSongDetailMatchesExpected =
-        onSongDetail &&
-        currentSongUrl &&
-        currentPageLyricsExactMatch &&
-        (!pendingSongUrl || currentUrlMatchesPending || isBoundSongUrl(currentSongUrl));
-      if (allowedSongUrls.size > 0 && !songUrl && !onSongDetail && !pendingSongUrl) return null;
-      if (allowedSongUrls.size > 0 && songUrl && !allowedSongUrls.has(songUrl)) return null;
-      if (pendingSongUrl && songUrl && songUrl !== pendingSongUrl) return null;
-      if (songUrl && downloadedSongUrls.has(songUrl)) return null;
-      if (!songUrl && pendingSongUrl && downloadedSongUrls.has(pendingSongUrl)) return null;
-      if (requireExpectedMatch && songUrl && !contextMatchesLyrics && !isBoundSongUrl(songUrl)) {
-        const trustedSongDetail =
-          onSongDetail &&
-          currentSongUrl === songUrl &&
-          (isBoundSongUrl(songUrl) || currentPageLyricsExactMatch);
-        if (!trustedSongDetail) return null;
-      }
-      if (requireExpectedMatch && pendingSongUrl && !songUrl) {
-        const pendingTrusted = isBoundSongUrl(pendingSongUrl);
-        const trustedPendingDetail =
-          onSongDetail &&
-          currentUrlMatchesPending &&
-          (pendingTrusted || currentPageLyricsExactMatch);
-        const trustedLibraryContext =
-          !onSongDetail && contextMatchesLyrics;
-        const trustedOpenMenu =
-          inOpenMenu &&
-          downloadMenuContext &&
-          ((onSongDetail && pendingTrusted) ||
-            (!onSongDetail && currentPageLyricsExactMatch));
-        if (!trustedPendingDetail && !trustedLibraryContext && !trustedOpenMenu) {
-          return null;
-        }
-      }
-      if (requireExpectedMatch &&
-          !contextMatchesLyrics &&
-          !targetBoundToExpected &&
-          !currentSongDetailMatchesExpected &&
-          !(inOpenMenu && downloadMenuContext && currentPageLyricsExactMatch)) {
-        return null;
-      }
-      let score = 0;
-      const audioPattern = /\\bmp3\\b|\\baudio\\b|download audio|下载音频|音频下载|音频|聲音/i;
-      const downloadPattern = /download|save|export|下载|下載|保存/i;
-      const menuPattern = /more|options|menu|actions|ellipsis|更多|菜单|選單|操作/i;
-      const confirmDownloadPattern =
-        /download anyway|keep download|continue download|confirm download|仍然下载|继续下载|确认下载/i;
-      const audioDownloadIntent =
-        /download audio|audio download|mp3|下载音频|音频下载|下載音頻|音頻下載/i.test(label) ||
-        (inOpenMenu && audioPattern.test(label) && downloadMenuContext) ||
-        /download|audio|mp3/i.test(href);
-      const hasDownloadIntent =
-        audioDownloadIntent ||
-        downloadPattern.test(label) ||
-        confirmDownloadPattern.test(label) ||
-        confirmDownloadPattern.test(context) ||
-        (inOpenMenu && (downloadMenuContext || downloadPattern.test(context)));
-      const hasMenuIntent =
-        menuPattern.test(label) ||
-        /more menu contents|more options/i.test(label) ||
-        (inOpenMenu && menuPattern.test(context));
-      if (!hasDownloadIntent && !hasMenuIntent) return null;
-      const previewReject = /preview|demo|sample|clip|snippet|teaser|试听|試聽|预览|預覽|片段|样例|樣例/i;
-      const incompleteReject = /generating|creating|processing|queued|loading|failed|error|retry|生成中|创建中|处理中|排队|失败|重试/i;
-      const reject = /video|mp4|wav|midi|stems?|instrumental|share|copy|remix|extend|cover|image|artwork|delete|report|play|like|dislike|publish|创建|create|视频|影片|分享|复制|删除|举报|播放|喜欢|不喜欢|發布|发布|封面|图片|圖片/i;
-      const profileReject = /profile|subscription|account|followers|following|upgrade|sign out|signout|log out|logout|my taste|个人主页|账户|账号|订阅|退出/i;
-      const sidebarReject = /home|explore|create|studio|library|notifications|labs|terms|policies|upgrade|首页|探索|工作室|资料库|通知|条款/i;
-      const globalMenuReject = /earn credits|invite friends|what'?s new|help|about|blog|careers|feedback|instagram|discord|twitter|\\bx\\b|积分|邀请|帮助|关于|博客|职业|反馈/i;
-      const createFormReject = /add audio|browse|upload|record audio|save prompt|clear all form|save lyrics|clear lyrics|generate lyrics|enhance lyrics|saved styles|recommended styles|添加音频|上传|录音|保存歌词|清空歌词|生成歌词|推荐风格/i;
-      const openMenuContext = /remix|edit|publish|share|download|manage|queue|playlist|song radio|trash|audio|mp3/i.test(context);
-      if (previewReject.test(label) || previewReject.test(context)) return null;
-      if (incompleteReject.test(context)) return null;
-      if (profileReject.test(label) && !audioPattern.test(label)) return null;
-      if (menuPattern.test(label) && clickableRect.left < 220 && clickableRect.width >= 80) return null;
-      if (globalMenuReject.test(label) ||
-          /listen-and-rank|release-notes|help\\.suno|\\/about|\\/blog|ashbyhq|x\\.com|instagram|discord/i.test(href)) return null;
-      if (menuPattern.test(label) &&
-          sidebarReject.test(context) &&
-          !/download|audio|mp3|remix|edit|publish|share/i.test(context)) return null;
-      if (onCreatePage &&
-          !songUrl &&
-          clickableRect.left < Math.min(820, window.innerWidth * 0.55) &&
-          (createFormReject.test(label) ||
-            (audioPattern.test(label) && !downloadMenuContext))) {
-        return null;
-      }
-      if (onCreatePage &&
-          inOpenMenu &&
-          /upload|record|browse|上传|錄音|录音/i.test(context) &&
-          !downloadMenuContext) {
-        return null;
-      }
-      if (reject.test(label) && !audioPattern.test(label)) return null;
-      if (allowedSongUrls.size > 0 &&
-          !songUrl &&
-          !onSongDetail &&
-          pendingSongUrl &&
-          !openMenuContext) return null;
-      if (confirmDownloadPattern.test(label)) score += 42;
-      if (confirmDownloadPattern.test(context)) score += 16;
-      if (audioDownloadIntent) score += 35;
-      if (audioPattern.test(context) && downloadMenuContext) score += 12;
-      if (downloadPattern.test(label)) score += 24;
-      if (downloadPattern.test(context)) score += 8;
-      if (menuPattern.test(label)) score += 9;
-      if (inOpenMenu && audioPattern.test(label)) score += 28;
-      if (inOpenMenu && downloadPattern.test(label)) score += 18;
-      if (contextMatchesLyrics) score += 18;
-      if (/download|audio|mp3/i.test(href)) score += 20;
-      if (clickable.tagName === 'A' && href) score += 6;
-      if (clickable.tagName === 'BUTTON') score += 4;
-      if (!label && clickable.querySelector?.('svg')) score += 2;
-      score -= Math.max(0, label.length - 80) / 30;
-      if (songUrl) score += 8;
-      const directDownload = confirmDownloadPattern.test(label) ||
-        /download audio|audio download|mp3/i.test(label) ||
-        (inOpenMenu && audioPattern.test(label) && downloadMenuContext) ||
-        /download|audio|mp3/i.test(href);
-      return {
-        clickable,
-        label,
-        context,
-        href,
-        score,
-        directDownload,
-        songUrl,
-        title: titleFor(clickable),
-        inOpenMenu
-      };
-    })
-    .filter(Boolean)
-    .sort((left, right) => right.score - left.score);
-  const augmentedControls = controls.slice();
-  const playbarMenu = Array.from(document.querySelectorAll('button,[role="button"],[aria-label]'))
-    .filter(visible)
-    .find((el) => /more menu contents/i.test(textOf(el)));
-  const playbarSongUrl = playbarMenu ? songUrlFor(playbarMenu) : '';
-  const playbarAllowed =
-    allowedSongUrls.size === 0 ||
-    (playbarSongUrl && allowedSongUrls.has(playbarSongUrl));
-  if (playbarMenu &&
-      playbarAllowed &&
-      !augmentedControls.some((item) => item.clickable === playbarMenu)) {
-    augmentedControls.push({
-      clickable: playbarMenu,
-      label: textOf(playbarMenu),
-      context: contextText(playbarMenu),
-      href: '',
-      score: 18,
-      directDownload: false,
-      songUrl: playbarSongUrl || pendingSongUrl || '',
-      title: titleFor(playbarMenu),
-      inOpenMenu: false
-    });
-  }
-  augmentedControls.sort((left, right) => right.score - left.score);
-  const isDownloadMenuItem = (item) =>
-    item.directDownload ||
-    /download audio|audio download|mp3|下载音频|音频下载|下載音頻|音頻下載/i.test(
-      [
-        item.label,
-        item.context,
-        item.href
-      ].join(' ')
-    );
-  const canUseCurrentSongDetail =
-    location.href.toLowerCase().includes('/song/') &&
-    currentPageLyricsExactMatch &&
-    (!pendingSongUrl || location.href.startsWith(pendingSongUrl));
-  const isSongMenuTrigger = (item) =>
-    !item.inOpenMenu &&
-    !hasDownloadAdvanceStep &&
-    /more menu contents|more options|actions|ellipsis|更多|菜单|選單|操作/i.test(
-      [item.label, item.context].join(' ')
-    ) &&
-    canUseCurrentSongDetail;
-  // 新版 Suno 歌曲详情 More 菜单不再带 role="menu"/radix/floating-ui 标记，
-  // 打开后的“Download”菜单项 inOpenMenu 探测不到，也不含 audio/mp3 字样。
-  // 在已核对歌词的详情页上，把纯 Download 标签按钮当作下一步推进项点击，
-  // 否则查找器会一直回落到 More 触发器，反复开关菜单形成下载死循环。
-  const isDownloadAdvanceItem = (item) =>
-    canUseCurrentSongDetail &&
-    !/more menu contents|more options/i.test(item.label) && (
-      /^(?:download\\s*)+\$/i.test(item.label) ||
-      /mp3|audio/i.test(item.label)
-    );
-  const hasDownloadAdvanceStep = augmentedControls.some(isDownloadAdvanceItem);
-  const direct = augmentedControls.find(isDownloadMenuItem);
-  const openMenuText = normalize(Array.from(document.querySelectorAll(menuLayerSelector))
-    .filter(visible)
-    .map((el) => el.innerText || el.textContent || '')
-    .join(' '));
-  const nonDownloadSongMenuOpen =
-    /restore to library|delete permanently|report|恢复到资料库|永久删除|举报/i.test(openMenuText) &&
-    !/download|audio|mp3|下载|下載|音频|音頻/i.test(openMenuText);
-  if (!direct && nonDownloadSongMenuOpen) {
-    return JSON.stringify({
-      ok: false,
-      retry: false,
-      stage: 'nonDownloadMenu',
-      message: 'Suno 当前歌曲详情菜单没有 Download/Audio 项，将改到 Library 查找完整歌曲。',
-      menuText: openMenuText.slice(0, 240),
-      candidates: augmentedControls.slice(0, 12).map((item) => ({
-        label: item.label,
-        score: item.score,
-        directDownload: item.directDownload,
-        songUrl: item.songUrl,
-        title: item.title,
-        inOpenMenu: item.inOpenMenu,
-        target: summarize(item.clickable)
-      })),
-      currentPageExpectedScore,
-      currentPageLyricsExactMatch
-    });
-  }
-  const menu = augmentedControls.find((item) =>
-    item.inOpenMenu &&
-    !/more menu contents/i.test(item.label) &&
-    isDownloadMenuItem(item)
-  ) || augmentedControls.find(isDownloadAdvanceItem)
-    || augmentedControls.find(isSongMenuTrigger);
-  const target = direct || menu;
-  if (!target) {
-    return JSON.stringify({
-      ok: false,
-      retry: false,
-      message: 'Suno 生成结果已出现，但没有找到 Download 或 Audio 下载按钮。',
-      candidates: augmentedControls.slice(0, 12).map((item) => ({
-        label: item.label,
-        score: item.score,
-        directDownload: item.directDownload,
-        songUrl: item.songUrl,
-        title: item.title,
-        inOpenMenu: item.inOpenMenu,
-        target: summarize(item.clickable)
-      })),
-      currentPageExpectedScore,
-      currentPageLyricsExactMatch
-    });
-  }
-  if (dryRun) {
-    return JSON.stringify({
-      ok: Boolean(direct),
-      retry: !direct,
-      dryRun: true,
-      wouldClick: true,
-      stage: direct ? 'download' : 'menu',
-      songUrl: target.songUrl || pendingSongUrl || ('suno-row:' + (target.title || 'matched')),
-      title: target.title || '',
-      target: summarize(target.clickable),
-      candidates: augmentedControls.slice(0, 12).map((item) => ({
-        label: item.label,
-        score: item.score,
-        directDownload: item.directDownload,
-        songUrl: item.songUrl,
-        title: item.title,
-        inOpenMenu: item.inOpenMenu,
-        target: summarize(item.clickable)
-      })),
-      currentPageExpectedScore,
-      currentPageLyricsExactMatch
-    });
-  }
-  clickLikeUser(target.clickable, {
-    nativeOnly: /more menu contents|more options/i.test(target.label)
-  });
-  return JSON.stringify({
-    ok: Boolean(direct),
-    retry: !direct,
-    clicked: true,
-    stage: direct ? 'download' : 'menu',
-    songUrl: target.songUrl || pendingSongUrl || ('suno-row:' + (target.title || 'matched')),
-    title: target.title || '',
-    target: summarize(target.clickable),
-    candidates: augmentedControls.slice(0, 12).map((item) => ({
-      label: item.label,
-      score: item.score,
-      directDownload: item.directDownload,
-      songUrl: item.songUrl,
-      title: item.title,
-      inOpenMenu: item.inOpenMenu,
-      target: summarize(item.clickable)
-    })),
-    currentPageExpectedScore,
-    currentPageLyricsExactMatch
-  });
-})()
-''';
   }
 
   Future<Map<String, dynamic>> _handleListeningPrepare(
@@ -11365,46 +7090,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     return null;
   }
 
-  List<String> _sunoSongUrlList(Object? value) {
-    final urls = <String>[];
-    if (value is List) {
-      for (final item in value) {
-        final text = _canonicalSunoSongUrl(item);
-        if (text == null || _isSyntheticSunoSongKey(text)) {
-          continue;
-        }
-        urls.add(text);
-      }
-    }
-    return urls.toSet().toList(growable: false);
-  }
-
-  List<String> _mergeSunoSongUrls(Iterable<Iterable<Object?>> sources) {
-    final seen = <String>{};
-    final urls = <String>[];
-    for (final source in sources) {
-      for (final value in source) {
-        final text = _canonicalSunoSongUrl(value);
-        if (text == null || _isSyntheticSunoSongKey(text) || !seen.add(text)) {
-          continue;
-        }
-        urls.add(text);
-      }
-    }
-    return urls;
-  }
-
-  List<String> _trustedSunoSongUrls([Iterable<Object?> extra = const []]) =>
-      _mergeSunoSongUrls([_sunoTrustedSongUrls, extra]);
-
-  void _trustSunoSongUrls(Iterable<Object?> values) {
-    _sunoTrustedSongUrls.addAll(
-      _mergeSunoSongUrls([values]).where(
-        (value) => !_sunoRejectedCandidateSongUrls.contains(value),
-      ),
-    );
-  }
-
   String _songTimelineKey(int articleId, String versionId) =>
       '$articleId::$versionId';
 
@@ -11537,28 +7222,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     ];
   }
 
-  void _rememberDownloadedSunoUrls() {
-    _sunoDownloadedSongUrls
-      ..clear()
-      ..addAll(
-        _sunoVersions
-            .map((version) => _canonicalSunoSongUrl(version.songUrl))
-            .whereType<String>()
-            .where(
-                (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
-      );
-  }
-
-  void _syncDownloadedSunoUrlsIntoDetected() {
-    _sunoDetectedSongUrls.addAll(
-      _sunoVersions
-          .map((version) => _canonicalSunoSongUrl(version.songUrl))
-          .whereType<String>()
-          .where(
-              (value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value)),
-    );
-  }
-
   Future<Set<String>> _sunoSongUrlsForOtherArticles(int articleId) async {
     final db = await DatabaseService.database;
     final rows = await db.query(
@@ -11576,13 +7239,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       if (entryArticleId == null || entryArticleId == articleId) {
         continue;
       }
-      final songUrl = _canonicalSunoSongUrl(metadata['songUrl']);
-      if (songUrl != null && !_isSyntheticSunoSongKey(songUrl)) {
+      final songUrl = SunoUtilities.canonicalSongUrl(metadata['songUrl']);
+      if (songUrl != null && !SunoUtilities.isSyntheticSongKey(songUrl)) {
         urls.add(songUrl);
       }
       urls.addAll(
-        _sunoSongUrlList(metadata['detectedSongUrls'])
-            .where((value) => !_isSyntheticSunoSongKey(value)),
+        SunoUtilities.songUrlList(metadata['detectedSongUrls'])
+            .where((value) => !SunoUtilities.isSyntheticSongKey(value)),
       );
       final versions = metadata['versions'];
       if (versions is List) {
@@ -11590,9 +7253,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           if (version is! Map) {
             continue;
           }
-          final versionSongUrl = _canonicalSunoSongUrl(version['songUrl']);
+          final versionSongUrl = SunoUtilities.canonicalSongUrl(version['songUrl']);
           if (versionSongUrl != null &&
-              !_isSyntheticSunoSongKey(versionSongUrl)) {
+              !SunoUtilities.isSyntheticSongKey(versionSongUrl)) {
             urls.add(versionSongUrl);
           }
         }
@@ -11606,159 +7269,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   bool _currentSunoDownloadsComplete() {
-    if (_sunoDetectedSongUrls.isEmpty) {
+    if (_sunoEngine.state.detectedSongUrls.isEmpty) {
       return false;
     }
-    final downloaded = _sunoVersions
-        .map((version) => _canonicalSunoSongUrl(version.songUrl))
+    final downloaded = _sunoEngine.state.versions
+        .map((version) => SunoUtilities.canonicalSongUrl(version.songUrl))
         .whereType<String>()
-        .where((value) => value.isNotEmpty && !_isSyntheticSunoSongKey(value))
+        .where((value) => value.isNotEmpty && !SunoUtilities.isSyntheticSongKey(value))
         .toSet();
-    return _sunoDetectedSongUrls.every((value) {
-      final songUrl = _canonicalSunoSongUrl(value);
+    return _sunoEngine.state.detectedSongUrls.every((value) {
+      final songUrl = SunoUtilities.canonicalSongUrl(value);
       return songUrl != null && downloaded.contains(songUrl);
     });
-  }
-
-  bool _hasNewSunoVersionsSinceCreate() =>
-      _sunoVersions.length > _sunoCreateBaselineVersionCount;
-
-  /// Create 提交后进入 downloading 阶段时，与「检测下载」共用 Library 广召回规则。
-  bool get _sunoUseLibraryBroadRecall =>
-      _sunoExistingDownloadOnly ||
-      (_sunoCreateSubmitted && _sunoAutomationStatus == 'downloading');
-
-  Future<void> _sunoNavigateToLibraryForMoreCandidates(
-    InAppWebViewController controller, {
-    required String message,
-    bool resetLibraryTried = true,
-  }) async {
-    if (resetLibraryTried) {
-      _sunoExistingDownloadLibraryTried = false;
-    }
-    _sunoPendingDownloadSongUrl = null;
-    await controller.loadUrl(
-      urlRequest: URLRequest(url: WebUri('https://suno.com/me')),
-    );
-    await _setSunoStatus('downloading', message);
-  }
-
-  String? _pendingSunoDownloadTarget(List<String> missingSongUrls) {
-    final currentPending =
-        _canonicalSunoSongUrl(_sunoPendingDownloadSongUrl) ?? '';
-    if (currentPending.isNotEmpty && missingSongUrls.contains(currentPending)) {
-      return currentPending;
-    }
-    return missingSongUrls.isEmpty ? null : missingSongUrls.first;
-  }
-
-  bool _isSunoProfileUrl(String value) {
-    final uri = Uri.tryParse(value.trim());
-    if (uri == null) {
-      return false;
-    }
-    final host = uri.host.toLowerCase();
-    if (host != 'suno.com' && host != 'www.suno.com') {
-      return false;
-    }
-    return uri.pathSegments.isNotEmpty &&
-        uri.pathSegments.first.startsWith('@');
-  }
-
-  bool _isSunoLoginFlowUrl(String value) {
-    final uri = Uri.tryParse(value.trim());
-    if (uri == null) {
-      return false;
-    }
-    final host = uri.host.toLowerCase();
-    final path = uri.path.toLowerCase();
-    final isSunoHost = host == 'suno.com' || host == 'www.suno.com';
-    final sunoAuthPath = RegExp(
-      r'/(login|log-in|signin|sign-in|signup|sign-up|auth|oauth|sso)(/|$)',
-      caseSensitive: false,
-    ).hasMatch(path);
-    if (isSunoHost && sunoAuthPath) {
-      return true;
-    }
-    final sunoRelatedAuthHost = host.endsWith('.suno.com') &&
-        RegExp(r'auth|account|login|clerk').hasMatch(host);
-    final externalAuthHost = RegExp(
-      r'accounts\.google\.com|discord(?:app)?\.com|appleid\.apple\.com|clerk|oauth|auth|login|sso|identity',
-      caseSensitive: false,
-    ).hasMatch(host);
-    return !isSunoHost && (sunoRelatedAuthHost || externalAuthHost);
-  }
-
-  bool _isSyntheticSunoSongKey(String value) {
-    return value.trim().toLowerCase().startsWith('suno-row:');
-  }
-
-  String _sunoPageKind(String url) {
-    final uri = Uri.tryParse(url.trim());
-    if (uri == null) {
-      return 'unknown';
-    }
-    if (_isSunoLoginFlowUrl(url)) {
-      return 'login';
-    }
-    final host = uri.host.toLowerCase();
-    if (host != 'suno.com' && host != 'www.suno.com') {
-      return 'external';
-    }
-    if (_isSunoProfileUrl(url)) {
-      return 'profile';
-    }
-    if (uri.pathSegments.contains('song')) {
-      return 'song';
-    }
-    if (uri.pathSegments.contains('create')) {
-      return 'create';
-    }
-    if (uri.pathSegments.contains('library') ||
-        (uri.pathSegments.length == 1 && uri.pathSegments.first == 'me')) {
-      return 'library';
-    }
-    return uri.pathSegments.isEmpty ? 'home' : 'unknown';
-  }
-
-  bool _isSunoPageSettled(String currentUrl) {
-    final loadedUrl = _sunoLastLoadStopUrl;
-    final loadedAt = _sunoLastLoadStopAt;
-    if (loadedUrl == null || loadedAt == null) {
-      return false;
-    }
-    if (!_sameSunoPageLocation(currentUrl, loadedUrl)) {
-      return false;
-    }
-    return DateTime.now().difference(loadedAt) >=
-        const Duration(milliseconds: 800);
-  }
-
-  bool _sameSunoPageLocation(String left, String right) {
-    final leftUri = Uri.tryParse(left.trim());
-    final rightUri = Uri.tryParse(right.trim());
-    if (leftUri == null || rightUri == null) {
-      return left.trim() == right.trim();
-    }
-    return leftUri.host.toLowerCase() == rightUri.host.toLowerCase() &&
-        leftUri.path == rightUri.path;
-  }
-
-  String _safeSunoSnapshotStem(String url, DateTime timestamp) {
-    final stamp = timestamp
-        .toIso8601String()
-        .replaceAll(RegExp(r'[:.]'), '-')
-        .replaceAll('Z', 'z');
-    final kind = _sunoPageKind(url);
-    final uri = Uri.tryParse(url.trim());
-    final path = uri == null
-        ? 'unknown'
-        : uri.pathSegments.take(3).join('-').replaceAll('@', 'at-');
-    final slug = (path.isEmpty ? kind : '$kind-$path')
-        .replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '-')
-        .replaceAll(RegExp(r'-+'), '-')
-        .replaceAll(RegExp(r'^-|-$'), '');
-    return 'suno_${stamp}_${slug.isEmpty ? kind : slug}';
   }
 
   String _defaultSunoFixtureDirectory() {
@@ -11797,6 +7319,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       path_lib.normalize(_resolveSunoOutputDirectory(trimmed)),
       path_lib.normalize(_defaultSunoOutputDirectory()),
     );
+  }
+
+  String _safeSunoSnapshotStem(String url, DateTime timestamp) {
+    final stamp = timestamp
+        .toIso8601String()
+        .replaceAll(RegExp(r'[:.]'), '-')
+        .replaceAll('Z', 'z');
+    final kind = SunoUtilities.pageKind(url);
+    final uri = Uri.tryParse(url.trim());
+    final path = uri == null
+        ? 'unknown'
+        : uri.pathSegments.take(3).join('-').replaceAll('@', 'at-');
+    final slug = (path.isEmpty ? kind : '$kind-$path')
+        .replaceAll(RegExp(r'[^a-zA-Z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'-+'), '-')
+        .replaceAll(RegExp(r'^-|-$'), '');
+    return 'suno_${stamp}_${slug.isEmpty ? kind : slug}';
   }
 
   String _sunoOutputDirectorySettingForSave(String configured) {
@@ -11877,6 +7416,70 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     );
     return targetPath;
   }
+}
+
+class _WebShellSunoHost implements SunoAutomationHost {
+  _WebShellSunoHost(this._state);
+
+  final _WebShellScreenState _state;
+
+  @override
+  bool get isMounted => _state.mounted;
+
+  @override
+  void requestSetState() => _state.sunoRequestSetState();
+
+  @override
+  Future<Article> loadSongArticle(int articleId) =>
+      _state._songArticle(articleId);
+
+  @override
+  Future<String> articleSongLyricsHash(Article article) =>
+      _state._articleSongLyricsHash(article);
+
+  @override
+  Future<List<SunoCachedSongGroup>> cachedSunoSongGroups(Article article) =>
+      _state._cachedSunoSongGroups(article);
+
+  @override
+  Future<ArticleSongState?> cachedSunoSongState(Article article) =>
+      _state._cachedSunoSongState(article);
+
+  @override
+  Future<void> pushSongState(int articleId) => _state._pushSongState(articleId);
+
+  @override
+  Future<void> saveSunoMetadataForVersions({
+    required Article article,
+    required List<ArticleSongVersion> versions,
+    String? manualActionMessage,
+    bool? downloadCompleteOverride,
+    String? stylePromptOverride,
+    List<String>? detectedSongUrlsOverride,
+  }) =>
+      _state._saveSunoMetadataForVersions(
+        article: article,
+        versions: versions,
+        manualActionMessage: manualActionMessage,
+        downloadCompleteOverride: downloadCompleteOverride,
+        stylePromptOverride: stylePromptOverride,
+        detectedSongUrlsOverride: detectedSongUrlsOverride,
+      );
+
+  @override
+  Future<String> resolvedSunoOutputDirectory() =>
+      _state._resolvedSunoOutputDirectorySetting();
+
+  @override
+  Future<Set<String>> sunoSongUrlsForOtherArticles(int articleId) =>
+      _state._sunoSongUrlsForOtherArticles(articleId);
+
+  @override
+  String displayError(Object error) => _state._displayError(error);
+
+  @override
+  Future<List<int>> downloadUrl(String url, {String? userAgent}) =>
+      _state._downloadSunoUrl(url, userAgent: userAgent);
 }
 
 class _NativeErrorView extends StatelessWidget {

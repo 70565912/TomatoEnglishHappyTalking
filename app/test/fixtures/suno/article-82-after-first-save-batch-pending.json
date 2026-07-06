@@ -1,0 +1,42 @@
+{
+  "schema": "tomato_suno_replay_fixture_v1",
+  "id": "article-82-after-first-save-batch-pending",
+  "description": "首首 direct_media.saved 后 batch 仍有 pending：以 Library 扫描结果为准，不回 Create。",
+  "source": "article-82 QA regression",
+  "url": "https://suno.com/me",
+  "pageKind": "library",
+  "automation": {
+    "createSubmitted": true,
+    "existingDownloadOnly": false,
+    "createBaselineVersionCount": 0,
+    "versionsCount": 1,
+    "statusKey": "downloading",
+    "libraryScanSettled": true,
+    "mightHaveMoreLibraryRows": false,
+    "detectedUrlCount": 1,
+    "allKnownUrlsDownloaded": true,
+    "hasOpenLibraryCandidates": false,
+    "batch": {
+      "preCreateUrls": ["https://suno.com/song/e2cfe4ec-4a40-490a-9af7-f665a9485311"],
+      "pendingUrls": ["https://suno.com/song/b2c3d4e5-2222-4222-8222-222222222222"],
+      "downloadedUrls": ["https://suno.com/song/a1b2c3d4-1111-4111-8111-111111111111"]
+    }
+  },
+  "completion": {
+    "songUrl": "",
+    "songUrls": [],
+    "candidateSongUrls": [],
+    "currentPageLyricsExactMatch": false,
+    "currentPageGenerating": false,
+    "createSidebarSongUrls": [],
+    "createSidebarGeneratingCount": 0,
+    "linkCount": 0
+  },
+  "expected": {
+    "batchPendingCount": 1,
+    "postCreatePhase": "complete",
+    "completeAllowed": true,
+    "completeBlockReason": "none",
+    "shouldOpenLibraryCandidate": false
+  }
+}

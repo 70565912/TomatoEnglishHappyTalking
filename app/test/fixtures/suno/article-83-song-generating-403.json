@@ -1,0 +1,45 @@
+{
+  "schema": "tomato_suno_replay_fixture_v1",
+  "id": "article-83-song-generating-403",
+  "description": "详情页 generating 时 CDN 直链 403：记 not_ready，保持 verifyingDetail，不 complete。",
+  "source": "article-83 QA regression",
+  "url": "https://suno.com/song/c3d4e5f6-3333-4333-8333-333333333333",
+  "pageKind": "song",
+  "automation": {
+    "createSubmitted": true,
+    "existingDownloadOnly": false,
+    "createBaselineVersionCount": 0,
+    "versionsCount": 1,
+    "statusKey": "downloading",
+    "libraryScanSettled": false,
+    "mightHaveMoreLibraryRows": true,
+    "detectedUrlCount": 1,
+    "allKnownUrlsDownloaded": false,
+    "hasOpenLibraryCandidates": false,
+    "batch": {
+      "preCreateUrls": [],
+      "pendingUrls": ["https://suno.com/song/c3d4e5f6-3333-4333-8333-333333333333"],
+      "downloadedUrls": ["https://suno.com/song/a1b2c3d4-1111-4111-8111-111111111111"]
+    }
+  },
+  "completion": {
+    "songUrl": "https://suno.com/song/c3d4e5f6-3333-4333-8333-333333333333",
+    "songUrls": [],
+    "candidateSongUrls": [],
+    "currentPageLyricsExactMatch": true,
+    "currentPageGenerating": true,
+    "createSidebarSongUrls": [],
+    "createSidebarGeneratingCount": 0,
+    "linkCount": 0
+  },
+  "directMedia": {
+    "httpStatus": 403,
+    "songUrl": "https://suno.com/song/c3d4e5f6-3333-4333-8333-333333333333"
+  },
+  "expected": {
+    "directMediaNotReady": true,
+    "postCreatePhase": "verifyingDetail",
+    "completeAllowed": false,
+    "completeBlockReason": "libraryNotSettled"
+  }
+}

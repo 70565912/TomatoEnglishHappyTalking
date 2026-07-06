@@ -548,3 +548,106 @@ export function selectSunoDownloadCandidate(params: {
   if (menu) return { action: 'openMenu', candidate: menu.candidate };
   return { action: 'none', reason: 'no-safe-candidate' };
 }
+
+export interface SunoCreateBatchState {
+  preCreateUrls: string[];
+  pendingUrls: string[];
+  downloadedUrls: string[];
+}
+
+export interface SunoCompletionAutomationState {
+  existingDownloadOnly: boolean;
+  createSubmitted: boolean;
+  statusKey: string;
+  versionsCount: number;
+  createBaselineVersionCount: number;
+  batch: SunoCreateBatchState;
+  detectedUrlCount: number;
+  libraryScanSettled: boolean;
+  hasOpenLibraryCandidates: boolean;
+  mightHaveMoreLibraryRows: boolean;
+  allKnownUrlsDownloaded: boolean;
+}
+
+export type SunoCompleteBlockReason =
+  | 'noNewVersionsSinceCreate'
+  | 'libraryNotSettled'
+  | 'openCandidatesRemain'
+  | 'urlsNotAllDownloaded'
+  | 'existingDownloadNoVersions'
+  | 'none';
+
+export function absorbCreateSidebarUrls(
+  batch: SunoCreateBatchState,
+  rawUrls: string[],
+): SunoCreateBatchState {
+  const pending = new Set(batch.pendingUrls);
+  const pre = new Set(batch.preCreateUrls);
+  const downloaded = new Set(batch.downloadedUrls);
+  for (const raw of rawUrls) {
+    const url = raw.trim();
+    if (!url || pre.has(url)) continue;
+    if (downloaded.has(url)) {
+      pending.delete(url);
+      continue;
+    }
+    pending.add(url);
+  }
+  return { ...batch, pendingUrls: [...pending] };
+}
+
+export function canCompleteAutomation(state: SunoCompletionAutomationState): {
+  allowed: boolean;
+  reason: SunoCompleteBlockReason;
+} {
+  if (state.existingDownloadOnly) {
+    if (state.versionsCount <= 0) {
+      return { allowed: false, reason: 'existingDownloadNoVersions' };
+    }
+    if (!state.libraryScanSettled) {
+      return { allowed: false, reason: 'libraryNotSettled' };
+    }
+    if (state.hasOpenLibraryCandidates) {
+      return { allowed: false, reason: 'openCandidatesRemain' };
+    }
+    if (!state.allKnownUrlsDownloaded) {
+      return { allowed: false, reason: 'urlsNotAllDownloaded' };
+    }
+    return { allowed: true, reason: 'none' };
+  }
+  if (state.versionsCount <= state.createBaselineVersionCount) {
+    return { allowed: false, reason: 'noNewVersionsSinceCreate' };
+  }
+  if (!state.libraryScanSettled) {
+    return { allowed: false, reason: 'libraryNotSettled' };
+  }
+  if (state.hasOpenLibraryCandidates) {
+    return { allowed: false, reason: 'openCandidatesRemain' };
+  }
+  if (!state.allKnownUrlsDownloaded) {
+    return { allowed: false, reason: 'urlsNotAllDownloaded' };
+  }
+  return { allowed: true, reason: 'none' };
+}
+
+/** Create page: lyrics in form must not count as detail match when sidebar empty. */
+export function probeCreatePageLyricsMatch(params: {
+  pageKind: SunoPageKind;
+  formLyricsPresent: boolean;
+  sidebarText: string;
+  expectedLyrics: string;
+}): boolean {
+  if (params.pageKind !== 'create') {
+    return false;
+  }
+  const normalize = (value: string) =>
+    value.replace(/\s+/g, ' ').trim().toLowerCase();
+  const expected = normalize(params.expectedLyrics);
+  if (!expected) return false;
+  // Sidebar-only probe: ignore form body that always contains full lyrics.
+  return normalize(params.sidebarText).includes(expected);
+}
+
+export function isDirectMediaNotReady(httpStatus: number): boolean {
+  return httpStatus === 403 || httpStatus === 404;
+}

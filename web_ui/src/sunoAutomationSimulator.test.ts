@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  absorbCreateSidebarUrls,
+  canCompleteAutomation,
   detectSunoPageKind,
+  isDirectMediaNotReady,
   isSunoLoginFlowUrl,
+  probeCreatePageLyricsMatch,
   selectSunoCreateFields,
   selectSunoDownloadCandidate,
   shouldOpenLibraryForExistingDownload,
@@ -999,5 +1003,90 @@ describe('suno automation simulator', () => {
       fields: [],
     });
     expect(decision.action).toBe('switchAdvanced');
+  });
+});
+
+describe('suno batch and completion policy', () => {
+  it('does not treat Create form lyrics as sidebar match when sidebar is empty', () => {
+    const match = probeCreatePageLyricsMatch({
+      pageKind: 'create',
+      formLyricsPresent: true,
+      sidebarText: '',
+      expectedLyrics: 'Down the rabbit hole she went',
+    });
+    expect(match).toBe(false);
+  });
+
+  it('tracks sidebar URLs without treating pending as a complete blocker', () => {
+    let batch = absorbCreateSidebarUrls(
+      { preCreateUrls: ['https://suno.com/song/old'], pendingUrls: [], downloadedUrls: [] },
+      ['https://suno.com/song/new-a', 'https://suno.com/song/new-b'],
+    );
+    expect(batch.pendingUrls).toHaveLength(2);
+    const result = canCompleteAutomation({
+      existingDownloadOnly: false,
+      createSubmitted: true,
+      statusKey: 'downloading',
+      versionsCount: 2,
+      createBaselineVersionCount: 0,
+      batch,
+      detectedUrlCount: 2,
+      libraryScanSettled: true,
+      hasOpenLibraryCandidates: false,
+      mightHaveMoreLibraryRows: false,
+      allKnownUrlsDownloaded: true,
+    });
+    expect(result.allowed).toBe(true);
+    expect(result.reason).toBe('none');
+  });
+
+  it('blocks complete when known URLs are not downloaded', () => {
+    const result = canCompleteAutomation({
+      existingDownloadOnly: false,
+      createSubmitted: true,
+      statusKey: 'downloading',
+      versionsCount: 2,
+      createBaselineVersionCount: 0,
+      batch: {
+        preCreateUrls: [] as string[],
+        pendingUrls: ['https://suno.com/song/new-b'],
+        downloadedUrls: ['https://suno.com/song/new-a'],
+      },
+      detectedUrlCount: 2,
+      libraryScanSettled: true,
+      hasOpenLibraryCandidates: false,
+      mightHaveMoreLibraryRows: false,
+      allKnownUrlsDownloaded: false,
+    });
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toBe('urlsNotAllDownloaded');
+  });
+
+  it('allows complete after batch pending cleared and library settled', () => {
+    const batch = {
+      preCreateUrls: [] as string[],
+      pendingUrls: [] as string[],
+      downloadedUrls: ['https://suno.com/song/a', 'https://suno.com/song/b'],
+    };
+    const result = canCompleteAutomation({
+      existingDownloadOnly: false,
+      createSubmitted: true,
+      statusKey: 'downloading',
+      versionsCount: 2,
+      createBaselineVersionCount: 0,
+      batch,
+      detectedUrlCount: 2,
+      libraryScanSettled: true,
+      hasOpenLibraryCandidates: false,
+      mightHaveMoreLibraryRows: false,
+      allKnownUrlsDownloaded: true,
+    });
+    expect(result.allowed).toBe(true);
+  });
+
+  it('treats CDN 403/404 as not-ready', () => {
+    expect(isDirectMediaNotReady(403)).toBe(true);
+    expect(isDirectMediaNotReady(404)).toBe(true);
+    expect(isDirectMediaNotReady(500)).toBe(false);
   });
 });

@@ -1,0 +1,47 @@
+{
+  "schema": "tomato_suno_replay_fixture_v1",
+  "id": "article-82-create-form-false-positive",
+  "description": "Create 页 Lyrics 表单含全文但侧栏尚无歌：不得把表单当详情页歌词匹配，也不应打开 Library 旧歌。",
+  "source": "article-82 QA regression",
+  "url": "https://suno.com/create",
+  "pageKind": "create",
+  "automation": {
+    "createSubmitted": true,
+    "existingDownloadOnly": false,
+    "createBaselineVersionCount": 0,
+    "versionsCount": 0,
+    "statusKey": "creating",
+    "libraryScanSettled": false,
+    "mightHaveMoreLibraryRows": true,
+    "detectedUrlCount": 0,
+    "allKnownUrlsDownloaded": false,
+    "hasOpenLibraryCandidates": false,
+    "batch": {
+      "preCreateUrls": ["https://suno.com/song/e2cfe4ec-4a40-490a-9af7-f665a9485311"],
+      "pendingUrls": [],
+      "downloadedUrls": []
+    }
+  },
+  "completion": {
+    "songUrl": "",
+    "songUrls": [],
+    "candidateSongUrls": [],
+    "currentPageLyricsExactMatch": false,
+    "currentPageGenerating": true,
+    "createSidebarSongUrls": [],
+    "createSidebarGeneratingCount": 1,
+    "linkCount": 0
+  },
+  "probe": {
+    "formLyricsPresent": true,
+    "sidebarText": "",
+    "expectedLyrics": "The Queen's Croquet-Ground was a curious place"
+  },
+  "expected": {
+    "sidebarLyricsMatch": false,
+    "postCreatePhase": "postCreateWaiting",
+    "completeAllowed": false,
+    "completeBlockReason": "noNewVersionsSinceCreate",
+    "shouldOpenLibraryCandidate": false
+  }
+}

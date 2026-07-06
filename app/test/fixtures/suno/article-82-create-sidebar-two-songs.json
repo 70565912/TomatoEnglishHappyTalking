@@ -1,0 +1,53 @@
+{
+  "schema": "tomato_suno_replay_fixture_v1",
+  "id": "article-82-create-sidebar-two-songs",
+  "description": "真人审核后 Create 侧栏出现两首新歌（一首 ready、一首 generating）：batch 应记录 URL，但未落盘前不得 complete。",
+  "source": "article-82 QA regression",
+  "url": "https://suno.com/create",
+  "pageKind": "create",
+  "automation": {
+    "createSubmitted": true,
+    "existingDownloadOnly": false,
+    "createBaselineVersionCount": 0,
+    "versionsCount": 0,
+    "statusKey": "creating",
+    "libraryScanSettled": false,
+    "mightHaveMoreLibraryRows": true,
+    "detectedUrlCount": 0,
+    "allKnownUrlsDownloaded": false,
+    "hasOpenLibraryCandidates": false,
+    "batch": {
+      "preCreateUrls": ["https://suno.com/song/e2cfe4ec-4a40-490a-9af7-f665a9485311"],
+      "pendingUrls": [],
+      "downloadedUrls": []
+    }
+  },
+  "completion": {
+    "songUrl": "",
+    "songUrls": [],
+    "candidateSongUrls": [
+      "https://suno.com/song/a1b2c3d4-1111-4111-8111-111111111111",
+      "https://suno.com/song/b2c3d4e5-2222-4222-8222-222222222222"
+    ],
+    "currentPageLyricsExactMatch": false,
+    "currentPageGenerating": true,
+    "createSidebarSongUrls": [
+      "https://suno.com/song/a1b2c3d4-1111-4111-8111-111111111111",
+      "https://suno.com/song/b2c3d4e5-2222-4222-8222-222222222222"
+    ],
+    "createSidebarGeneratingCount": 1,
+    "linkCount": 0
+  },
+  "probe": {
+    "formLyricsPresent": true,
+    "sidebarText": "Croquet Ground whimsical generating incomplete",
+    "expectedLyrics": "The Queen's Croquet-Ground was a curious place"
+  },
+  "expected": {
+    "batchPendingCount": 2,
+    "postCreatePhase": "openingCandidate",
+    "completeAllowed": false,
+    "completeBlockReason": "noNewVersionsSinceCreate",
+    "shouldOpenLibraryCandidate": false
+  }
+}

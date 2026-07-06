@@ -2,6 +2,7 @@
 
 ## 2026-07-05
 
+- **Suno 创建/下载全量重构**：逻辑迁至 `app/lib/features/web_shell/suno/`（`SunoAutomationController`、`SunoCreateBatch`、`SunoCompletionPolicy`、`SunoWebScripts`）。修复 Create 页表单歌词导致 `currentPageLyricsExactMatch` 假阳性、首首落盘后 batch 未跟踪第二首、CDN 403 记 `direct_media.not_ready` 等待、导航期 login 假阳性抑制。统一 `complete.blocked` / `complete.allowed` / `batch.sidebar_detected` 诊断日志。
 - 绘本单页重生成参考图：可选列表含当前重生成页已有图片（默认仍预选最近邻页）；UI 标注「当前页」。
 - **文章歌曲历史版本**：改原文或软隐藏后，已下载歌曲仍出现在创作中心/听力列表；`lyricsHash` 不再用于过滤列表；删除/更新就地改 `api_cache` 与 metadata，避免磁盘孤儿文件。规则见 `docs/article_song_version_retention.md`。
 - 听力字幕**软隐藏**：练习中心编辑字幕时清空英文并保存，将该槽位存为 `""`（index 不变、不顺位删除）。听力列表显示「（已隐藏）」并可恢复；播放/跟读/听力材料生成/视频导出跳过隐藏句；歌曲 metadata 不重算；绘本分镜不因软隐藏失效。规则见 `docs/listening_sentence_hide_rules.md`。
@@ -15,7 +16,9 @@
 - `flutter test test/article_song_version_retention_test.dart`（3 passed）
 - `flutter test test/listening_sentence_hide_test.dart test/listening_sentence_visibility_test.dart`
 - `npx vitest run src/App.test.tsx -t "opens single-page picture prompt review|submits multiple selected reference"`（2 passed）
-- `npx vitest run src/webViewFocusGuard.test.ts`
+- `flutter test test/suno_completion_policy_test.dart test/suno_create_batch_test.dart`
+- `flutter test test/suno_fixture_replay_test.dart`
+- `npx vitest run src/sunoFixtureReplay.test.ts`
 
 ## 2026-07-04
 
