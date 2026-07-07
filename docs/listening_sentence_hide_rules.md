@@ -25,13 +25,19 @@
 | 跟读 | 打开与步进跳过隐藏槽 |
 | 视频导出 | readiness 不要求隐藏句音频 |
 | 歌曲 | 仍用 metadata `submittedLyrics` / 时间轴，不自动重算；改正文后旧歌曲仍列出，由用户删或用。见 `docs/article_song_version_retention.md` |
-| 绘本分镜 | **不**因隐藏句失效 `summary_json` / `picture_book_pages` |
+| 绘本分镜 | **不**因隐藏句失效 `summary_json` / `picture_book_pages`；`sentenceStartIndex` / `sentenceEndIndex` 永远使用 `articles.sentences` 原始槽位下标，生成 prompt、保存分镜和创建 `picture_book_pages` 时都不能过滤空槽后重新编号 |
 | 对话提纲 | `contentHash` 忽略空句；隐藏后 hash 可能变化，下次对话或重生成提纲 |
 
 ## 与删文重建的区别
 
 - 软隐藏：槽位数不变，index 不变，可恢复，绘本/歌曲 metadata 不重算。
 - 删文重建：改变分句边界，需重新生成听力、绘本等依赖材料。
+
+## 绘本索引要求
+
+- 隐藏空槽不是删除句子。后续可见句仍保持原始 index，不能因为 prompt 或页面段落拼接过滤空字符串而前移。
+- 绘本章节计划、审核弹窗、`summary_json.scenes[]`、`picture_book_pages` 的句子范围都必须在同一套原始槽位坐标里流转。
+- 允许在分镜/图片 prompt 的正文片段中跳过空文本，但只跳过文本内容，不改变范围下标。
 
 ## 相关代码
 

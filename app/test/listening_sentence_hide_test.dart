@@ -132,8 +132,9 @@ void main() {
     expect(after.missing, isEmpty);
   });
 
-  test('listening video readiness skips hidden sentences', () async {
-    const hiddenSentences = ['Alpha.', '', 'Gamma.', '', ''];
+  test('listening video readiness keeps picture coverage on raw slots',
+      () async {
+    const hiddenSentences = ['Alpha.', '', 'Gamma.'];
     final articleId = await DatabaseService.saveArticle(
       Article(
         title: 'Recording hide sample',
@@ -182,14 +183,7 @@ void main() {
 
     expect(readiness.requiredEnglish, 2);
     expect(readiness.readyEnglish, 2);
-    expect(
-      readiness.reasons.where((reason) => reason.contains('句英文音频未生成')),
-      isEmpty,
-    );
-    expect(
-      readiness.reasons.where((reason) => reason.contains('绘本页未覆盖')),
-      isEmpty,
-    );
+    expect(readiness.reasons, contains('绘本页未覆盖第 3 句'));
   });
 }
 

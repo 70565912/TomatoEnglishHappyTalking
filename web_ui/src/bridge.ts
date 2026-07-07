@@ -18,7 +18,6 @@ import type {
   VoiceOption,
 } from './types';
 import { splitSentences } from './sentenceSplitter';
-import { isHiddenListeningItem, isHiddenListeningSentence } from './listeningSentenceVisibility';
 
 type NativeListener<T = unknown> = (payload: T) => void;
 type AiProvider = 'aliyun_bailian' | 'volcengine';
@@ -478,7 +477,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       content,
       sentences,
       sentenceCount: sentences.length,
-      visibleSentenceCount: visibleMockSentenceCount(sentences),
       createdAt: new Date().toISOString(),
       averageScore: 0,
       pictureBookEnabled,
@@ -778,11 +776,10 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return mockListening;
   }
   if (type === 'listening.audioStatus') {
-    const visibleItems = visibleMockListeningItems(mockListening.items);
     return {
       articleId: Number(payload.articleId ?? mockListening.article.id),
-      total: visibleItems.length,
-      ready: visibleItems.length,
+      total: mockListening.items.length,
+      ready: mockListening.items.length,
       missing: [],
       failed: 0,
       status: 'ready',
@@ -790,15 +787,14 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'listening.audioGenerate') {
     const articleId = Number(payload.articleId ?? mockListening.article.id);
-    const visibleItems = visibleMockListeningItems(mockListening.items);
     const result = {
       articleId,
-      total: visibleItems.length,
-      ready: visibleItems.length,
+      total: mockListening.items.length,
+      ready: mockListening.items.length,
       missing: [],
       failed: 0,
       status: 'ready',
-      requested: payload.overwrite === true ? visibleItems.length : 0,
+      requested: payload.overwrite === true ? mockListening.items.length : 0,
       overwrite: payload.overwrite === true,
     };
     window.setTimeout(() => {
@@ -1078,10 +1074,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const items = Array.isArray(payload.items) ? payload.items : mockListening.items;
     const startIndex = Number(payload.startIndex ?? 0);
     const lookaheadCount = Math.max(1, Math.min(4, Number(payload.lookaheadCount ?? 2)));
-    const visibleItems = visibleMockListeningItems(items);
-    const foundPosition = visibleItems.findIndex((item) => item.index >= startIndex);
-    const startPosition = foundPosition >= 0 ? foundPosition : visibleItems.length;
-    const requiredEnglish = visibleItems.slice(startPosition, startPosition + lookaheadCount).length;
+    const startPosition = Math.max(0, Math.min(items.length - 1, Number.isFinite(startIndex) ? startIndex : 0));
+    const requiredEnglish = items.slice(startPosition, startPosition + lookaheadCount).length;
     return {
       ready: true,
       reasons: [],
@@ -1095,7 +1089,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     };
   }
   if (type === 'listening.recordingReady') {
-    const visibleItems = visibleMockListeningItems(mockListening.items);
     return {
       ready: true,
       reasons: [],
@@ -1105,10 +1098,10 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition),
       subtitleMode: String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode),
       outputDirectory: mockRecordingSettings.outputDirectory,
-      requiredEnglish: visibleItems.length,
-      readyEnglish: visibleItems.length,
-      requiredChinese: String(payload.mode ?? 'english') === 'bilingual' ? visibleItems.length : 0,
-      readyChinese: String(payload.mode ?? 'english') === 'bilingual' ? visibleItems.length : 0,
+      requiredEnglish: mockListening.items.length,
+      readyEnglish: mockListening.items.length,
+      requiredChinese: String(payload.mode ?? 'english') === 'bilingual' ? mockListening.items.length : 0,
+      readyChinese: String(payload.mode ?? 'english') === 'bilingual' ? mockListening.items.length : 0,
       picturePageCount: 1,
     };
   }
@@ -1644,7 +1637,6 @@ const mockArticles: Article[] = [
       'He shares it with his team.',
     ],
     sentenceCount: 2,
-    visibleSentenceCount: 2,
     createdAt: new Date().toISOString(),
     averageScore: 86,
     coverImageUri: assetUrl('card-space-snacks.png'),
@@ -1813,14 +1805,6 @@ function normalizeMockBookCharacters(raw: unknown): BookCharacter[] {
 
 function assetUrl(name: string): string {
   return `assets/ui/${name}`;
-}
-
-function visibleMockSentenceCount(sentences: string[]): number {
-  return sentences.filter((sentence) => !isHiddenListeningSentence(sentence)).length;
-}
-
-function visibleMockListeningItems(items: ListeningOpenPayload['items']): ListeningOpenPayload['items'] {
-  return items.filter((item) => !isHiddenListeningItem(item));
 }
 
 const mockResult = {

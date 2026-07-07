@@ -3520,10 +3520,9 @@ describe('App', () => {
     const article = {
       id: 1,
       title: 'Space Snacks',
-      content: 'Tom finds a bright snack box. He shares it with his team.',
-      sentences: ['Tom finds a bright snack box.', '', 'He shares it with his team.'],
-      sentenceCount: 3,
-      visibleSentenceCount: 2,
+      content: 'Tom finds a bright snack box.',
+      sentences: ['Tom finds a bright snack box.'],
+      sentenceCount: 1,
       createdAt: new Date().toISOString(),
       averageScore: 86,
     };
@@ -3582,7 +3581,7 @@ describe('App', () => {
                 articleId: article.id,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
-                sentenceEndIndex: 2,
+                sentenceEndIndex: 0,
                 paragraphText: article.content,
                 imagePath: 'ready.png',
                 imageUri: 'data:image/png;base64,READY',
@@ -3596,16 +3595,6 @@ describe('App', () => {
             articleId: article.id,
             outputDirectory: 'F:\\Tomato\\recording-export',
             versions: videoVersions,
-          });
-        }
-        if (type === 'listening.audioStatus') {
-          return ok(message.id, type, {
-            articleId: article.id,
-            total: 2,
-            ready: 2,
-            missing: [],
-            failed: 0,
-            status: 'ready',
           });
         }
         if (type === 'recording.videoSetDefault') {
@@ -3677,8 +3666,8 @@ describe('App', () => {
             pageTransition: 'crossFade',
             subtitleMode: 'srt',
             outputDirectory: 'F:\\Tomato\\recording-export',
-            requiredEnglish: 2,
-            readyEnglish: 2,
+            requiredEnglish: 1,
+            readyEnglish: 1,
             requiredChinese: 0,
             readyChinese: 0,
             missingEnglish: [],
@@ -3706,7 +3695,7 @@ describe('App', () => {
           const response = ok(message.id, type, {
             outputPath: 'F:\\Tomato\\recording-export\\listening.mp4',
             durationMs: 3200,
-            segments: 2,
+            segments: 1,
           });
           return new Promise<BridgeResponse>((resolve) => {
             resolveRecordVideo = () => resolve(response);
@@ -3723,9 +3712,6 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: '资源库' })).not.toBeInTheDocument();
     await clickSelectedCreationAction('视频');
     const videoList = await screen.findByLabelText('已导出视频版本');
-    const videoPanel = screen.getByText('视频导出').closest('.creation-panel') as HTMLElement;
-    expect(within(videoPanel).getByText('2 句英文')).toBeInTheDocument();
-    expect(within(videoPanel).getByText('2 / 2 已生成')).toBeInTheDocument();
     expect(screen.queryByText('保存在 recording-export/')).not.toBeInTheDocument();
     expect(screen.queryByText('素材来源')).not.toBeInTheDocument();
     expect(screen.queryByText('听力视频已准备好')).not.toBeInTheDocument();

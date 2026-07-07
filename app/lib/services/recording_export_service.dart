@@ -1722,12 +1722,7 @@ class RecordingExportService {
     }
 
     final covered = <int>{};
-    int? lastCoveredSentenceIndex;
     for (final page in readyPages) {
-      if (lastCoveredSentenceIndex == null ||
-          page.sentenceEndIndex > lastCoveredSentenceIndex) {
-        lastCoveredSentenceIndex = page.sentenceEndIndex;
-      }
       for (var i = page.sentenceStartIndex;
           i <= page.sentenceEndIndex && i < sentences.length;
           i += 1) {
@@ -1736,20 +1731,11 @@ class RecordingExportService {
         }
       }
     }
-    final coveredHiddenSlotCount =
-        covered.where((i) => isHiddenListeningSentence(sentences[i])).length;
-    var trailingUncoveredVisibleCount = 0;
     for (var i = 0; i < sentences.length; i += 1) {
       if (isHiddenListeningSentence(sentences[i])) {
         continue;
       }
       if (!covered.contains(i)) {
-        if (lastCoveredSentenceIndex != null &&
-            i > lastCoveredSentenceIndex &&
-            trailingUncoveredVisibleCount < coveredHiddenSlotCount) {
-          trailingUncoveredVisibleCount += 1;
-          continue;
-        }
         reasons.add('绘本页未覆盖第 ${i + 1} 句');
         break;
       }

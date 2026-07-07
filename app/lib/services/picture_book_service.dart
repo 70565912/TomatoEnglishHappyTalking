@@ -539,8 +539,7 @@ class PictureBookService {
             referenceOptions.contains(referencePage.pageIndex)
         ? referencePage.pageIndex
         : referenceOptions.first;
-    final defaultReferenceImagePath =
-        await _referenceImagePathForPageIndex(
+    final defaultReferenceImagePath = await _referenceImagePathForPageIndex(
       articleId: articleId,
       pageIndex: defaultReferencePageIndex,
     );
@@ -1130,9 +1129,7 @@ class PictureBookService {
       throw const FormatException('请至少选择一张参考图片。');
     }
     if (requestedReferencePageIndexes.length > _maxSinglePageReferenceImages) {
-      throw FormatException(
-        '参考图最多选择 $_maxSinglePageReferenceImages 张，请减少选择后重试。',
-      );
+      throw const FormatException('参考图最多选择 14 张，请减少选择后重试。');
     }
     for (final pageIndex in requestedReferencePageIndexes) {
       if (!referenceOptions.contains(pageIndex)) {
@@ -1903,7 +1900,8 @@ class PictureBookService {
             ? await _displayImageUriForPath(targetPage.imagePath)
             : await _imageUriForPath(targetPage.imagePath);
     final imagePath = targetPage.imagePath?.trim() ?? '';
-    final resolvedVariant = useThumbnail ? 'thumbnail' : (useDisplay ? 'display' : 'full');
+    final resolvedVariant =
+        useThumbnail ? 'thumbnail' : (useDisplay ? 'display' : 'full');
     return {
       'articleId': articleId,
       'pageIndex': pageIndex,
@@ -1975,14 +1973,8 @@ class PictureBookService {
     required String bookDescription,
     required List<BookCharacter> relevantCharacters,
   }) {
-    final cleanSentences = article.sentences
-        .map((sentence) => sentence.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((sentence) => sentence.isNotEmpty)
-        .toList(growable: false);
-    final numberedSentences = [
-      for (var i = 0; i < cleanSentences.length; i += 1)
-        '$i. ${cleanSentences[i]}',
-    ].join('\n');
+    final sentenceSlots = _articleSentenceSlots(article);
+    final numberedSentences = _numberedChapterSentencesForPrompt(article);
     return [
       const TextGenerationTurn(
         role: 'system',
@@ -2044,7 +2036,8 @@ class PictureBookService {
           '- In sceneDescription, use character names only; do not describe character clothing, hair, age, facial features, accessories, or parenthesized character details.',
           '- Mention props only as active objects in the scene, not as repeated character appearance details.',
           '- Before returning JSON, remove all recurring character appearance details from chapterDescription and sceneDescription; those details belong only in Relevant characters or newCharacters.',
-          '- scenes must cover every sentence from 0 to ${cleanSentences.isEmpty ? 0 : cleanSentences.length - 1}, in order, without overlap.',
+          '- Empty numbered slots are hidden sentence placeholders. Keep their original indexes, merge them into neighboring visual scenes, and never renumber later sentences.',
+          '- scenes must cover every sentence slot from 0 to ${sentenceSlots.isEmpty ? 0 : sentenceSlots.length - 1}, in order, without overlap.',
           '- scenes[i].pageIndex must equal i.',
           '',
           'Chapter text:',
@@ -2102,17 +2095,59 @@ class PictureBookService {
     ];
   }
 
-  static String _numberedChapterSentencesForPrompt(Article article) {
-    final cleanSentences = article.sentences
+  /// Picture-book ranges always live in the raw `articles.sentences` index
+  /// space. Empty strings are soft-hidden slots; do not filter them before
+  /// calculating `sentenceStartIndex` / `sentenceEndIndex`, or later visible
+  /// sentences shift onto the wrong picture page.
+  static List<String> _articleSentenceSlots(Article article) {
+    return article.sentences
         .map((sentence) => sentence.replaceAll(RegExp(r'\s+'), ' ').trim())
+        .toList(growable: false);
+  }
+
+  static bool _hasVisibleSentenceSlot(List<String> sentenceSlots) {
+    return sentenceSlots.any((sentence) => sentence.isNotEmpty);
+  }
+
+  static List<String> _visibleSentenceTextsInRange(
+    List<String> sentenceSlots,
+    int start,
+    int end,
+  ) {
+    if (sentenceSlots.isEmpty) {
+      return const [];
+    }
+    final normalizedStart = start.clamp(0, sentenceSlots.length - 1).toInt();
+    final normalizedEnd = end
+        .clamp(
+          normalizedStart,
+          sentenceSlots.length - 1,
+        )
+        .toInt();
+    return sentenceSlots
+        .sublist(normalizedStart, normalizedEnd + 1)
         .where((sentence) => sentence.isNotEmpty)
         .toList(growable: false);
-    if (cleanSentences.isEmpty) {
+  }
+
+  static String _joinVisibleSentenceRange(
+    List<String> sentenceSlots,
+    int start,
+    int end,
+  ) {
+    return _visibleSentenceTextsInRange(sentenceSlots, start, end).join(' ');
+  }
+
+  static String _numberedChapterSentencesForPrompt(Article article) {
+    final sentenceSlots = _articleSentenceSlots(article);
+    if (!_hasVisibleSentenceSlot(sentenceSlots)) {
       return article.content.replaceAll(RegExp(r'\s+'), ' ').trim();
     }
     return [
-      for (var i = 0; i < cleanSentences.length; i += 1)
-        '$i. ${cleanSentences[i]}',
+      for (var i = 0; i < sentenceSlots.length; i += 1)
+        sentenceSlots[i].isEmpty
+            ? '$i. [hidden sentence slot]'
+            : '$i. ${sentenceSlots[i]}',
     ].join('\n');
   }
 
@@ -2409,30 +2444,27 @@ class PictureBookService {
       return null;
     }
 
-    final sentences = article.sentences
-        .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
-        .toList(growable: false);
-    final maxSentenceIndex = math.max(0, sentences.length - 1);
-    final start = sentences.isEmpty
+    final sentenceSlots = _articleSentenceSlots(article);
+    final maxSentenceIndex = math.max(0, sentenceSlots.length - 1);
+    final start = sentenceSlots.isEmpty
         ? math.max(0, page.sentenceStartIndex)
         : page.sentenceStartIndex.clamp(0, maxSentenceIndex).toInt();
-    final end = sentences.isEmpty
+    final end = sentenceSlots.isEmpty
         ? math.max(start, page.sentenceEndIndex)
         : page.sentenceEndIndex.clamp(start, maxSentenceIndex).toInt();
     final pageText = page.paragraphText.replaceAll(RegExp(r'\s+'), ' ').trim();
     final text = pageText.isNotEmpty
         ? pageText
-        : sentences.isEmpty
+        : sentenceSlots.isEmpty
             ? ''
-            : sentences.sublist(start, end + 1).join(' ');
+            : _joinVisibleSentenceRange(sentenceSlots, start, end);
     if (text.trim().isEmpty) {
       return null;
     }
 
     var summary = _pageSceneDescription(page);
-    if (summary.isEmpty && sentences.isNotEmpty) {
-      summary = _sceneDescriptionForRange(sentences, start, end);
+    if (summary.isEmpty && sentenceSlots.isNotEmpty) {
+      summary = _sceneDescriptionForRange(sentenceSlots, start, end);
     }
     if (summary.isEmpty) {
       summary = _promptExcerpt(text, maxWords: 28, maxChars: 180);
@@ -2823,20 +2855,17 @@ class PictureBookService {
     Article article,
     ChapterPicturePlan plan,
   ) {
-    final sentences = article.sentences
-        .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
-        .toList(growable: false);
-    if (sentences.isEmpty) {
+    final sentenceSlots = _articleSentenceSlots(article);
+    if (!_hasVisibleSentenceSlot(sentenceSlots)) {
       return const [];
     }
 
     return plan.scenes.map((scene) {
       final start =
-          scene.sentenceStartIndex.clamp(0, sentences.length - 1).toInt();
+          scene.sentenceStartIndex.clamp(0, sentenceSlots.length - 1).toInt();
       final end =
-          scene.sentenceEndIndex.clamp(start, sentences.length - 1).toInt();
-      final text = sentences.sublist(start, end + 1).join(' ');
+          scene.sentenceEndIndex.clamp(start, sentenceSlots.length - 1).toInt();
+      final text = _joinVisibleSentenceRange(sentenceSlots, start, end);
       return _PicturePageSegment(
         pageIndex: scene.pageIndex,
         pageCount: plan.scenes.length,
@@ -2854,14 +2883,11 @@ class PictureBookService {
     // These are editable placeholders for the review dialog, not an AI scene
     // plan. Keep descriptions empty and only derive ranges so users can see
     // what each draft row covers before they type or explicitly refresh AI.
-    final sentences = article.sentences
-        .map((sentence) => sentence.trim())
-        .where((sentence) => sentence.isNotEmpty)
-        .toList(growable: false);
-    if (sentences.isEmpty) {
+    final sentenceSlots = _articleSentenceSlots(article);
+    if (!_hasVisibleSentenceSlot(sentenceSlots)) {
       return const [];
     }
-    final ranges = _draftSceneRanges(article.content, sentences);
+    final ranges = _draftSceneRanges(article.content, sentenceSlots);
     return [
       for (var index = 0; index < ranges.length; index += 1)
         _PicturePageSegment(
@@ -2870,7 +2896,11 @@ class PictureBookService {
           sentenceStartIndex: ranges[index].$1,
           sentenceEndIndex: ranges[index].$2,
           text: _normalizeFullChapterStoryForPrompt(
-            sentences.sublist(ranges[index].$1, ranges[index].$2 + 1).join(' '),
+            _joinVisibleSentenceRange(
+              sentenceSlots,
+              ranges[index].$1,
+              ranges[index].$2,
+            ),
           ),
           summary: '',
         ),
@@ -2982,7 +3012,10 @@ class PictureBookService {
     int start,
     int end,
   ) {
-    final slice = sentences.sublist(start, end + 1);
+    final slice = _visibleSentenceTextsInRange(sentences, start, end);
+    if (slice.isEmpty) {
+      return '';
+    }
     final joined = slice.join(' ');
     if (joined.length <= 180) {
       return joined;
@@ -2996,16 +3029,13 @@ class PictureBookService {
 
   @visibleForTesting
   static List<Map<String, dynamic>> pictureSegmentsForTest(Article article) {
-    final sentences = article.sentences
-        .map((sentence) => sentence.replaceAll(RegExp(r'\s+'), ' ').trim())
-        .where((sentence) => sentence.isNotEmpty)
-        .toList(growable: false);
-    if (sentences.isEmpty) {
+    final sentenceSlots = _articleSentenceSlots(article);
+    if (!_hasVisibleSentenceSlot(sentenceSlots)) {
       return const [];
     }
     final ranges = _limitSceneRanges(
-      _paragraphSentenceRanges(article.content, sentences),
-      sentences.length,
+      _paragraphSentenceRanges(article.content, sentenceSlots),
+      sentenceSlots.length,
     );
     return [
       for (var index = 0; index < ranges.length; index += 1)
@@ -3014,13 +3044,15 @@ class PictureBookService {
           'sentenceStartIndex': ranges[index].$1,
           'sentenceEndIndex': ranges[index].$2,
           'summary': _sceneDescriptionForRange(
-            sentences,
+            sentenceSlots,
             ranges[index].$1,
             ranges[index].$2,
           ),
-          'text': sentences
-              .sublist(ranges[index].$1, ranges[index].$2 + 1)
-              .join(' '),
+          'text': _joinVisibleSentenceRange(
+            sentenceSlots,
+            ranges[index].$1,
+            ranges[index].$2,
+          ),
         },
     ];
   }

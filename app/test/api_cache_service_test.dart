@@ -1814,6 +1814,118 @@ but the three were all crowded together at one corner of it.
     expect(lastText, isNot(contains('[end of chapter]')));
   });
 
+  test('picture-book prompt review keeps raw slots for hidden sentences',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-hidden-slot-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Hidden Slot Chapter',
+        content: [
+          'Alice notices the little house.',
+          'The Duchess rocks the baby.',
+          'Smoke fills the kitchen.',
+          'The cook throws plates.',
+          'Alice catches the baby.',
+        ].join(' '),
+        sentences: const [
+          'Alice notices the little house.',
+          '',
+          'The Duchess rocks the baby.',
+          'Smoke fills the kitchen.',
+          'The cook throws plates.',
+          '',
+          'Alice catches the baby.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description: 'A surreal Victorian picture-book world.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+
+    String submittedBody = '';
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        submittedBody = jsonEncode(body);
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_scene_plan_v2',
+                  'chapterDescription':
+                      'Alice enters the Duchess kitchen and catches the baby.',
+                  'scenes': [
+                    {
+                      'pageIndex': 0,
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 1,
+                      'sceneDescription':
+                          'Alice stands outside the little house.',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'sentenceStartIndex': 2,
+                      'sentenceEndIndex': 6,
+                      'sceneDescription':
+                          'The Duchess kitchen turns chaotic as Alice catches the baby.',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final initialReview = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+    );
+    final refreshed = await _refreshChapterPlanFromReview(initialReview);
+    expect(submittedBody, contains('0. Alice notices the little house.'));
+    expect(submittedBody, contains('1. [hidden sentence slot]'));
+    expect(submittedBody, contains('2. The Duchess rocks the baby.'));
+    expect(submittedBody, contains('5. [hidden sentence slot]'));
+    expect(submittedBody, contains('6. Alice catches the baby.'));
+
+    final refreshedScenes = refreshed['scenes'] as List;
+    expect((refreshedScenes.first as Map)['sentenceEndIndex'], 1);
+    expect((refreshedScenes.last as Map)['sentenceStartIndex'], 2);
+    expect((refreshedScenes.last as Map)['sentenceEndIndex'], 6);
+    expect(
+      (refreshedScenes.last as Map)['paragraphText'],
+      contains('Alice catches the baby.'),
+    );
+
+    await PictureBookService.savePromptReview(
+      reviewId: refreshed['reviewId'].toString(),
+      groupPrompt: refreshed['groupPrompt'].toString(),
+      bookDescription: refreshed['bookDescription'].toString(),
+      bookCharacters: _charactersFromPayload(refreshed['bookCharacters']),
+      newCharacters: _charactersFromPayload(refreshed['newCharacters']),
+      chapterDescription: refreshed['chapterDescription'].toString(),
+      scenes: [
+        for (final scene in refreshedScenes)
+          Map<String, dynamic>.from(scene as Map),
+      ],
+    );
+
+    final savedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    final savedSummary =
+        jsonDecode(savedChapter?.summaryJson ?? '{}') as Map<String, dynamic>;
+    final savedScenes = savedSummary['scenes'] as List;
+    expect((savedScenes.last as Map)['sentenceEndIndex'], 6);
+  });
+
   test('picture-book prompt review does not call image API or delete old pages',
       () async {
     _writeImageArkKey(tempDir, 'ark-review-key-12345678901234567890');
@@ -3408,7 +3520,8 @@ but the three were all crowded together at one corner of it.
         'Edited only the Queen croquet scene.');
   });
 
-  test('picture-book single-page confirm honors multiple selected reference pages',
+  test(
+      'picture-book single-page confirm honors multiple selected reference pages',
       () async {
     _writeImageArkKey(tempDir, 'ark-page-refpick-key-12345678901234567890');
     final articleId = await DatabaseService.saveArticle(

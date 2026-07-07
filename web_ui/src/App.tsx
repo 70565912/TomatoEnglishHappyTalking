@@ -2647,7 +2647,7 @@ function PictureBookCreationPanel({
       </div>
       <p className="creation-panel-note">绘本生成使用整章连续分镜组图；提交前会先打开提示词审核。</p>
       <div className="creation-resource-grid" aria-label="绘本资源状态">
-        <ResourceRow label="章节正文" value={`${articleVisibleSentenceCount(article)} 句英文`} />
+        <ResourceRow label="章节正文" value={`${article.sentenceCount} 句英文`} />
         <ResourceRow label="绘本图片" value={state ? `${state.pages.length} 页 · ${pictureBookStatusLabel(state.status)}` : '读取中'} />
         <ResourceRow label="听力材料" value={audioMaterialStatusLabel(audioStatus, audioStatusLoading)} />
       </div>
@@ -4169,7 +4169,7 @@ function VideoCreationPanel({
         </div>
       </div>
       <div className="creation-resource-grid" aria-label="视频资源状态">
-        <ResourceRow label="章节正文" value={`${articleVisibleSentenceCount(article)} 句英文`} />
+        <ResourceRow label="章节正文" value={`${article.sentenceCount} 句英文`} />
         <ResourceRow label="听力材料" value={audioMaterialStatusLabel(audioStatus, audioStatusLoading)} />
         <ResourceRow
           label="视频准备"
@@ -4321,13 +4321,6 @@ function audioMaterialStatusLabel(status: ListeningAudioMaterialStatus | null, l
   if (status.total <= 0) return '无英文句子';
   const suffix = status.missing.length > 0 ? ` · 缺 ${status.missing.length} 句` : '';
   return `${status.ready} / ${status.total} 已生成${suffix}`;
-}
-
-function articleVisibleSentenceCount(article: Article) {
-  if (Number.isFinite(article.visibleSentenceCount)) {
-    return article.visibleSentenceCount ?? 0;
-  }
-  return article.sentences.filter((sentence) => !isHiddenListeningSentence(sentence)).length;
 }
 
 function AudioMaterialOverwriteConfirmDialog({
