@@ -429,6 +429,33 @@ D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe analyze <files>
 - Web UI `directImageSource` 只接受 `data:` / `blob:` / `http(s):` / bundled `assets/`；创作中心预览可先把 data URI 转成 Blob URL 再显示，并在 `onLoad` 后再露出图片。
 - 修改绘本图片加载或预览层样式后，用 Release + `TOMATO_QA_REMOTE=true` 验证：`pictureBook.pageImage` 前缀为 `data:image/`，`/listening/<id>` 与创作中心缩略图预览 `brokenImages=0`。详见 `docs/qa-remote-control.md`。
 
+## WebView2 静止页面仍持续占用 GPU
+
+症状：
+
+- Windows Release App 打开创作中心后，即使停止滚动、鼠标不动，主进程仍持续占用约 15%~20% GPU（任务管理器显示 GPU 0 - 3D）。
+- 最小化窗口后 GPU 会下降，但不会完全消失；禁用 WebView2 GPU 合成会把消耗转移或残留在其它链路，不能作为正式修复。
+- 去掉页面 CSS `backdrop-filter`、背景网格等静态样式后无明显改善；临时调用 `flutter_inappwebview_windows` 已有的 `setFpsLimit(1)` 能显著下降，说明应限制抓帧频率，而不是关闭 WebView2 GPU。
+
+原因：
+
+- 根因在 `flutter_inappwebview_windows` 的 Windows 自定义平台视图：WebView2 内容不是原生子窗口直接嵌入 Flutter，而是通过 `Windows.Graphics.Capture` 捕获到 Flutter texture；即使网页静止，捕获链路仍会持续触发 `FrameArrived` / `MarkTextureFrameAvailable`。
+- 上游已有同类问题 [flutter_inappwebview#2387](https://github.com/pichillilorenzo/flutter_inappwebview/issues/2387)，状态为 closed / not planned。WebView2 自身的 `IsVisible=false` / `TrySuspend` 只适用于隐藏或最小化场景，不能用于可见窗口，否则可能出现白屏、空白帧或画面不同步。
+- Microsoft WebView2 仍没有正式的 Flutter texture/offscreen surface 直连 API；相关能力请求见 [WebView2Feedback#20](https://github.com/MicrosoftEdge/WebView2Feedback/issues/20) 和 [WebView2Feedback#547](https://github.com/MicrosoftEdge/WebView2Feedback/issues/547)。`webview_windows` 也说明 WebView2 没有显式 offscreen rendering API，插件只能用捕获方式取像素。
+
+处理：
+
+- `WebShellScreen` 只对主 WebView 做自适应抓帧限速，不停止 capture：活动时调用 `setFpsLimit(0)` 回到插件原始不限帧；活动结束约 0.9 秒后降到 `12fps`；真正静止约 2.2 秒后降到 `5fps`。
+- 鼠标/滚轮、窗口尺寸变化、App 恢复、bridge 调用、native event push、QA 导航/点击/填表/截图前都会回到不限帧；听力/歌曲/预览播放、视频导出期间不降帧，避免字幕、进度和等待状态变卡。
+- Suno WebView 不使用该主窗口限速策略，避免登录、页面自动化和下载检测过程被降帧干扰。需要调优 Suno 资源占用时另行处理。
+- 不要把 `--disable-gpu`、`TextureBridge.Stop()`、永久 `TrySuspend` 或 CSS 静态样式删减当作根因修复。它们要么换汤不换药，要么会让可见窗口画面空白或影响动态画面。
+
+验证：
+
+- Release + `TOMATO_QA_REMOTE=true` 启动后打开创作中心，停止鼠标和滚动，等待 2~3 秒；任务管理器主进程 GPU 应明显下降，QA `/snapshot.runtimeState.webViewFrameRate.fpsLimit` 应为 `5`。
+- 执行 QA `/click`、物理点击、滚动或切换窗口后，`fpsLimit` 应短暂回到 `0`，画面应立即恢复更新；随后再次静止会降到 `12` 再降到 `5`。
+- 听力播放、歌曲播放、录制导出等待、Suno 自动化等动态场景必须单独复核，不要为了空闲 GPU 把这些场景冻结或降到肉眼明显卡顿。
+
 ## WebView2 输入框点击后失焦（偶发无法输入）
 
 症状：

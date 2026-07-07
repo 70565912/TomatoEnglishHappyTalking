@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -54,7 +55,8 @@ class WebShellScreen extends ConsumerStatefulWidget {
   ConsumerState<WebShellScreen> createState() => _WebShellScreenState();
 }
 
-class _WebShellScreenState extends ConsumerState<WebShellScreen> {
+class _WebShellScreenState extends ConsumerState<WebShellScreen>
+    with WidgetsBindingObserver {
   static const _devServerUrl = String.fromEnvironment(
     'TOMATO_WEB_UI_DEV_URL',
   );
@@ -69,12 +71,22 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   static const _articleContentMaxChars = 8000;
   static const _sunoSongPurpose = 'article_suno_song_v1';
   static const _bailianSongPurpose = BailianMusicService.cachePurpose;
+  static const _mainWebViewFrameRateSettleDelay = Duration(milliseconds: 900);
+  static const _mainWebViewFrameRateIdleDelay = Duration(milliseconds: 2200);
+  static const _mainWebViewActiveFpsLimit = 0;
+  static const _mainWebViewSettledFpsLimit = 12;
+  static const _mainWebViewIdleFpsLimit = 5;
   static const _englishVoicePreviewText =
       "Hello, I am your tomato tutor. Let's practice English together.";
   static const _chineseVoicePreviewText = '你好，我是番茄助教。让我们一起快乐练英语。';
 
   InAppWebViewController? _controller;
   WebShellQaServer? _qaServer;
+  Timer? _mainWebViewFrameRateTimer;
+  bool _mainWebViewFpsLimitUnsupported = false;
+  bool _mainWebViewFpsLimitWarningLogged = false;
+  int _mainWebViewCurrentFpsLimit = _mainWebViewActiveFpsLimit;
+  int _mainWebViewFrameRateActivityDepth = 0;
   ProviderSubscription<AsyncValue<FollowReadState>>? _followSubscription;
   ProviderSubscription<ChatState>? _chatSubscription;
   AudioPlayer? _listeningPlayer;
@@ -85,6 +97,146 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   final Map<String, String> _songTimelineErrors = {};
   InAppWebViewController? _sunoController;
   late final SunoAutomationController _sunoEngine;
+
+  bool get _supportsWindowsFrameRateLimit =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.windows &&
+      !_mainWebViewFpsLimitUnsupported;
+
+  bool get _canLimitMainWebViewFrameRate =>
+      _supportsWindowsFrameRateLimit &&
+      mounted &&
+      _controller != null &&
+      _webReady &&
+      _mainWebViewFrameRateActivityDepth == 0 &&
+      _listeningPlayer == null &&
+      _previewPlayer == null &&
+      _songPlayer == null &&
+      _recordingCancelToken == null;
+
+  // Visible idle GPU comes from flutter_inappwebview_windows copying WebView2
+  // frames into a Flutter texture. Do not Stop() the visible capture session:
+  // that can leave Flutter without a valid texture surface and flash blank.
+  Future<bool> _setWindowsFrameRateLimit(
+    InAppWebViewController controller,
+    int fpsLimit,
+  ) async {
+    if (!_supportsWindowsFrameRateLimit) {
+      return false;
+    }
+    final viewId = controller.getViewId();
+    if (viewId == null) {
+      return false;
+    }
+    final channel = MethodChannel(
+      'com.pichillilorenzo/custom_platform_view_$viewId',
+    );
+    try {
+      await channel.invokeMethod<void>('setFpsLimit', fpsLimit);
+      return true;
+    } on MissingPluginException catch (error, stackTrace) {
+      _mainWebViewFpsLimitUnsupported = true;
+      _logFrameRateLimitWarning(
+        error: error,
+        stackTrace: stackTrace,
+        message: 'Windows WebView frame-rate limit is not available.',
+      );
+      return false;
+    } on PlatformException catch (error, stackTrace) {
+      _logFrameRateLimitWarning(
+        error: error,
+        stackTrace: stackTrace,
+        message: 'Windows WebView frame-rate limit failed.',
+      );
+      return false;
+    }
+  }
+
+  void _logFrameRateLimitWarning({
+    required Object error,
+    required StackTrace stackTrace,
+    required String message,
+  }) {
+    if (_mainWebViewFpsLimitWarningLogged) {
+      return;
+    }
+    _mainWebViewFpsLimitWarningLogged = true;
+    TomatoLogger.warn(
+      category: 'webview',
+      event: 'frame_rate_limit_unavailable',
+      message: message,
+      error: error,
+      stackTrace: stackTrace,
+    );
+  }
+
+  void _markMainWebViewFrameRateActive() {
+    if (!_supportsWindowsFrameRateLimit) {
+      return;
+    }
+    _mainWebViewFrameRateTimer?.cancel();
+    unawaited(_applyMainWebViewFpsLimit(_mainWebViewActiveFpsLimit));
+    _scheduleMainWebViewFrameRateLimit();
+  }
+
+  Future<T> _runWithMainWebViewFrameRateActive<T>(
+    Future<T> Function() action,
+  ) async {
+    if (!_supportsWindowsFrameRateLimit) {
+      return action();
+    }
+    _mainWebViewFrameRateTimer?.cancel();
+    _mainWebViewFrameRateActivityDepth += 1;
+    try {
+      await _applyMainWebViewFpsLimit(_mainWebViewActiveFpsLimit);
+      return await action();
+    } finally {
+      _mainWebViewFrameRateActivityDepth -= 1;
+      if (_mainWebViewFrameRateActivityDepth < 0) {
+        _mainWebViewFrameRateActivityDepth = 0;
+      }
+      _scheduleMainWebViewFrameRateLimit();
+    }
+  }
+
+  void _scheduleMainWebViewFrameRateLimit() {
+    if (!_canLimitMainWebViewFrameRate) {
+      return;
+    }
+    _mainWebViewFrameRateTimer?.cancel();
+    _mainWebViewFrameRateTimer = Timer(_mainWebViewFrameRateSettleDelay, () {
+      _mainWebViewFrameRateTimer = null;
+      if (!_canLimitMainWebViewFrameRate) {
+        return;
+      }
+      unawaited(_applyMainWebViewFpsLimit(_mainWebViewSettledFpsLimit));
+      final idleDelay =
+          _mainWebViewFrameRateIdleDelay - _mainWebViewFrameRateSettleDelay;
+      _mainWebViewFrameRateTimer = Timer(idleDelay, () {
+        _mainWebViewFrameRateTimer = null;
+        if (!_canLimitMainWebViewFrameRate) {
+          return;
+        }
+        unawaited(_applyMainWebViewFpsLimit(_mainWebViewIdleFpsLimit));
+      });
+    });
+  }
+
+  Future<void> _applyMainWebViewFpsLimit(int fpsLimit) async {
+    if (!_supportsWindowsFrameRateLimit ||
+        _mainWebViewCurrentFpsLimit == fpsLimit) {
+      return;
+    }
+    final controller = _controller;
+    if (controller == null) {
+      return;
+    }
+    final changed = await _setWindowsFrameRateLimit(controller, fpsLimit);
+    if (changed) {
+      _mainWebViewCurrentFpsLimit = fpsLimit;
+    }
+  }
+
   RecordingCancelToken? _recordingCancelToken;
   int? _activeFollowArticleId;
   int? _activeListeningArticleId;
@@ -219,6 +371,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _sunoEngine = SunoAutomationController(host: _WebShellSunoHost(this));
     if (_qaRemoteEnabled) {
       TomatoLogger.info(
@@ -238,7 +391,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         navigate: _qaNavigate,
         click: _qaClick,
         fill: _qaFill,
-        dispatchBridge: (raw) => _bridgeRouter.dispatch(raw),
+        dispatchBridge: (raw) => _runWithMainWebViewFrameRateActive(
+          () => _bridgeRouter.dispatch(raw),
+        ),
       );
       unawaited(_qaServer!.start());
     }
@@ -252,6 +407,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _mainWebViewFrameRateTimer?.cancel();
     unawaited(_qaServer?.stop());
     _recordingCancelToken?.cancel();
     unawaited(_stopListeningPlayback());
@@ -271,6 +428,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _activeListeningArticleId = null;
     _closeChatSession();
     super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    _markMainWebViewFrameRateActive();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _markMainWebViewFrameRateActive();
+    } else {
+      _mainWebViewFrameRateTimer?.cancel();
+    }
   }
 
   @override
@@ -297,61 +468,74 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: InAppWebView(
-                initialUrlRequest: URLRequest(
-                  url: WebUri(
-                    _usesDevServer ? _devServerUrl.trim() : tomatoWebUiLocalUrl,
-                  ),
-                ),
-                initialSettings: InAppWebViewSettings(
-                  javaScriptEnabled: true,
-                  transparentBackground: false,
-                  allowFileAccessFromFileURLs: true,
-                  allowUniversalAccessFromFileURLs: true,
-                  mediaPlaybackRequiresUserGesture: false,
-                  isInspectable: kDebugMode,
-                ),
-                webViewEnvironment: tomatoWebViewEnvironment,
-                onWebViewCreated: (controller) {
-                  TomatoLogger.info(
-                    category: 'webview',
-                    event: 'main.created',
-                    data: {
-                      'usesDevServer': _usesDevServer,
-                      'initialUrl': _usesDevServer
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: (_) => _markMainWebViewFrameRateActive(),
+                onPointerMove: (_) => _markMainWebViewFrameRateActive(),
+                onPointerHover: (_) => _markMainWebViewFrameRateActive(),
+                onPointerSignal: (_) => _markMainWebViewFrameRateActive(),
+                child: InAppWebView(
+                  initialUrlRequest: URLRequest(
+                    url: WebUri(
+                      _usesDevServer
                           ? _devServerUrl.trim()
                           : tomatoWebUiLocalUrl,
-                    },
-                  );
-                  _controller = controller;
-                  controller.addJavaScriptHandler(
-                    handlerName: 'tomatoBridge',
-                    callback: (args) async {
-                      final raw = args.isEmpty ? null : args.first;
-                      return _bridgeRouter.dispatch(raw);
-                    },
-                  );
-                },
-                onReceivedError: (controller, request, error) {
-                  if (request.isForMainFrame == false) {
-                    return;
-                  }
-                  TomatoLogger.error(
-                    category: 'webview',
-                    event: 'main.load_error',
-                    message: error.description,
-                    data: {
-                      'url': request.url.toString(),
-                      'type': error.type.toString(),
-                    },
-                  );
-                  setState(() {
-                    _loadError = 'Web UI 加载失败：${error.description}';
-                  });
-                },
+                    ),
+                  ),
+                  initialSettings: InAppWebViewSettings(
+                    javaScriptEnabled: true,
+                    transparentBackground: false,
+                    allowFileAccessFromFileURLs: true,
+                    allowUniversalAccessFromFileURLs: true,
+                    mediaPlaybackRequiresUserGesture: false,
+                    isInspectable: kDebugMode,
+                  ),
+                  webViewEnvironment: tomatoWebViewEnvironment,
+                  onWebViewCreated: (controller) {
+                    TomatoLogger.info(
+                      category: 'webview',
+                      event: 'main.created',
+                      data: {
+                        'usesDevServer': _usesDevServer,
+                        'initialUrl': _usesDevServer
+                            ? _devServerUrl.trim()
+                            : tomatoWebUiLocalUrl,
+                      },
+                    );
+                    _controller = controller;
+                    _scheduleMainWebViewFrameRateLimit();
+                    controller.addJavaScriptHandler(
+                      handlerName: 'tomatoBridge',
+                      callback: (args) async {
+                        final raw = args.isEmpty ? null : args.first;
+                        return _runWithMainWebViewFrameRateActive(
+                          () => _bridgeRouter.dispatch(raw),
+                        );
+                      },
+                    );
+                  },
+                  onReceivedError: (controller, request, error) {
+                    if (request.isForMainFrame == false) {
+                      return;
+                    }
+                    TomatoLogger.error(
+                      category: 'webview',
+                      event: 'main.load_error',
+                      message: error.description,
+                      data: {
+                        'url': request.url.toString(),
+                        'type': error.type.toString(),
+                      },
+                    );
+                    setState(() {
+                      _loadError = 'Web UI 加载失败：${error.description}';
+                    });
+                  },
+                ),
               ),
             ),
-            if (_sunoEngine.state.visible) Positioned.fill(child: _buildSunoOverlay()),
+            if (_sunoEngine.state.visible)
+              Positioned.fill(child: _buildSunoOverlay()),
           ],
         ),
       ),
@@ -360,8 +544,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
 
   Widget _buildSunoOverlay() {
     final statusText = _sunoOverlayStatusText();
-    final canConfirm =
-        _sunoEngine.state.statusKey == 'waitingConfirm' && !_sunoEngine.state.createSubmitted;
+    final canConfirm = _sunoEngine.state.statusKey == 'waitingConfirm' &&
+        !_sunoEngine.state.createSubmitted;
     final isComplete = _sunoEngine.state.statusKey == 'complete';
     return Material(
       color: Colors.black.withValues(alpha: 0.42),
@@ -442,7 +626,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             child: Container(
               color: Colors.white,
               child: InAppWebView(
-                key: ValueKey('suno-webview-$_sunoEngine.state.webViewInstance'),
+                key:
+                    ValueKey('suno-webview-$_sunoEngine.state.webViewInstance'),
                 initialUrlRequest: URLRequest(
                   url: WebUri(_sunoEngine.state.initialUrl),
                 ),
@@ -472,8 +657,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
                     articleId: _sunoEngine.state.articleId,
                     data: {
                       'url': url?.toString(),
-                      'pageKind':
-                          url == null ? null : SunoUtilities.pageKind(url.toString()),
+                      'pageKind': url == null
+                          ? null
+                          : SunoUtilities.pageKind(url.toString()),
                     },
                   );
                   _sunoController = controller;
@@ -1560,11 +1746,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   Future<ArticleSongState?> _activeSunoSongState(int articleId) async {
-    if (_sunoEngine.state.articleId != articleId || _sunoEngine.state.statusKey == 'idle') {
+    if (_sunoEngine.state.articleId != articleId ||
+        _sunoEngine.state.statusKey == 'idle') {
       return null;
     }
-    final hasLocalAudio = (_sunoEngine.state.audioPath?.trim().isNotEmpty ?? false) ||
-        _sunoEngine.state.versions.isNotEmpty;
+    final hasLocalAudio =
+        (_sunoEngine.state.audioPath?.trim().isNotEmpty ?? false) ||
+            _sunoEngine.state.versions.isNotEmpty;
     final canPlayDownloaded = hasLocalAudio &&
         (_sunoEngine.state.statusKey == 'complete' ||
             _sunoEngine.state.statusKey == 'manualAction');
@@ -1581,19 +1769,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       stylePrompt: '',
       audioPath: (_sunoEngine.state.audioPath?.trim().isNotEmpty ?? false)
           ? _sunoEngine.state.audioPath
-          : (_sunoEngine.state.versions.isNotEmpty ? _sunoEngine.state.versions.first.audioPath : null),
+          : (_sunoEngine.state.versions.isNotEmpty
+              ? _sunoEngine.state.versions.first.audioPath
+              : null),
       errorMessage: _sunoEngine.state.errorMessage,
       source: 'suno',
       songUrl: SunoUtilities.canonicalSongUrl(_sunoEngine.state.songUrl) ??
           (_sunoEngine.state.versions.isNotEmpty
-              ? SunoUtilities.canonicalSongUrl(_sunoEngine.state.versions.first.songUrl)
+              ? SunoUtilities.canonicalSongUrl(
+                  _sunoEngine.state.versions.first.songUrl)
               : null),
       metadataPath: _sunoEngine.state.metadataPath,
       manualActionMessage: _sunoEngine.state.manualActionMessage,
       automationStatus: _sunoEngine.state.statusKey,
       creditsRemaining: _sunoEngine.state.creditsRemaining,
       downloadComplete: _currentSunoDownloadsComplete(),
-      detectedSongUrls: SunoUtilities.mergeSongUrls([_sunoEngine.state.detectedSongUrls]),
+      detectedSongUrls:
+          SunoUtilities.mergeSongUrls([_sunoEngine.state.detectedSongUrls]),
       versions: _songVersionsForPayload(
         articleId,
         _sunoEngine.state.versions,
@@ -1684,8 +1876,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       final songUrl = SunoUtilities.canonicalSongUrl(metadata['songUrl']) ??
           _firstNonEmptyString(builder.detectedSongUrls) ??
           _firstNonEmptyString(
-            builder.versions
-                .map((version) => SunoUtilities.canonicalSongUrl(version.songUrl)),
+            builder.versions.map(
+                (version) => SunoUtilities.canonicalSongUrl(version.songUrl)),
           );
       builder.songUrl ??= songUrl;
       builder.metadataPath ??= _nonEmptyString(resolvedMetadataPath);
@@ -1772,11 +1964,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
         continue;
       }
       final metadata = _decodeJsonObject(entry.jsonValue);
-      final entryLyricsHash =
-          _nonEmptyString(metadata['lyricsHash']) ??
-              _nonEmptyString(
-                _decodeJsonObject(entry.requestJson)['lyricsHash'],
-              );
+      final entryLyricsHash = _nonEmptyString(metadata['lyricsHash']) ??
+          _nonEmptyString(
+            _decodeJsonObject(entry.requestJson)['lyricsHash'],
+          );
       lyricsCompressed =
           lyricsCompressed || metadata['lyricsCompressed'] == true;
       metadataPath ??= _nonEmptyString(metadata['metadataPath']);
@@ -2296,6 +2487,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     } finally {
       if (_recordingCancelToken == token) {
         _recordingCancelToken = null;
+        _scheduleMainWebViewFrameRateLimit();
       }
     }
   }
@@ -2614,6 +2806,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       rethrow;
     } finally {
       _recordingCancelToken = null;
+      _scheduleMainWebViewFrameRateLimit();
     }
   }
 
@@ -3190,7 +3383,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     } else if (normalizedSource == AppConfig.songProviderBailianFunMusic) {
       await ArticleSongCacheService.updateVersionInArticleCache(
         articleId: articleId,
-        updated: updated.copyWith(source: AppConfig.songProviderBailianFunMusic),
+        updated:
+            updated.copyWith(source: AppConfig.songProviderBailianFunMusic),
         purpose: _bailianSongPurpose,
         kind: 'bailian_fun_music',
       );
@@ -3282,7 +3476,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final detectedSongUrlSet = SunoUtilities.mergeSongUrls([
       if (detectedSongUrlsOverride != null) detectedSongUrlsOverride,
       mergedVersions.map((version) => version.songUrl),
-      if (_sunoEngine.state.articleId == articleId) _sunoEngine.state.detectedSongUrls,
+      if (_sunoEngine.state.articleId == articleId)
+        _sunoEngine.state.detectedSongUrls,
       if (existingMetadata != null)
         SunoUtilities.songUrlList(existingMetadata['detectedSongUrls']),
     ]).toSet();
@@ -3290,7 +3485,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final downloadedSongUrls = mergedVersions
         .map(SunoUtilities.canonicalSongUrl)
         .whereType<String>()
-        .where((value) => value.isNotEmpty && !SunoUtilities.isSyntheticSongKey(value))
+        .where((value) =>
+            value.isNotEmpty && !SunoUtilities.isSyntheticSongKey(value))
         .toSet();
     final selected = _defaultSongVersion(mergedVersions) ??
         (mergedVersions.isNotEmpty ? mergedVersions.first : null);
@@ -3310,18 +3506,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'lyricsHash': lyricsHash,
       if (stylePrompt.isNotEmpty) 'stylePrompt': stylePrompt,
       'songUrl': _firstNonEmptyString([
-        SunoUtilities.canonicalSongUrl(_sunoEngine.state.articleId == articleId ? _sunoEngine.state.songUrl : null),
-        ...mergedVersions.map((version) => SunoUtilities.canonicalSongUrl(version.songUrl)),
+        SunoUtilities.canonicalSongUrl(_sunoEngine.state.articleId == articleId
+            ? _sunoEngine.state.songUrl
+            : null),
+        ...mergedVersions
+            .map((version) => SunoUtilities.canonicalSongUrl(version.songUrl)),
       ]),
       'detectedSongUrls': detectedSongUrls,
       'downloadComplete': downloadComplete,
       'audioPath': selected?.audioPath ??
-          (_sunoEngine.state.articleId == articleId ? _sunoEngine.state.audioPath : null),
+          (_sunoEngine.state.articleId == articleId
+              ? _sunoEngine.state.audioPath
+              : null),
       'metadataPath': metadataPath,
       'versions': mergedVersions.map((version) => version.toJson()).toList(),
       'manualActionMessage': manualActionMessage,
-      'createdAt': existingMetadata?['createdAt'] ??
-          DateTime.now().toIso8601String(),
+      'createdAt':
+          existingMetadata?['createdAt'] ?? DateTime.now().toIso8601String(),
     };
     await File(metadataPath).writeAsString(
       const JsonEncoder.withIndent('  ').convert(metadata),
@@ -3476,8 +3677,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     if (incomingVersions.isEmpty) {
       return;
     }
-    final selectedIncoming = _defaultSongVersion(incomingVersions) ??
-        incomingVersions.first;
+    final selectedIncoming =
+        _defaultSongVersion(incomingVersions) ?? incomingVersions.first;
     final lyricsHash =
         selectedIncoming.lyricsHash ?? await _articleSongLyricsHash(article);
     final submittedLyrics = (selectedIncoming.submittedLyrics ?? '').trim();
@@ -3535,8 +3736,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'articleTitle': article.title,
       'lyricsHash': lyricsHash,
       if (submittedLyrics.isNotEmpty) 'submittedLyrics': submittedLyrics,
-      if (lyricsCompressed ||
-          existingMetadata?['lyricsCompressed'] == true)
+      if (lyricsCompressed || existingMetadata?['lyricsCompressed'] == true)
         'lyricsCompressed': true,
       'model': model,
       'songUrl': songUrl ?? selected?.songUrl,
@@ -3546,8 +3746,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'metadataPath': metadataPath,
       'downloadComplete': true,
       'versions': mergedVersions.map((version) => version.toJson()).toList(),
-      'createdAt': existingMetadata?['createdAt'] ??
-          DateTime.now().toIso8601String(),
+      'createdAt':
+          existingMetadata?['createdAt'] ?? DateTime.now().toIso8601String(),
     };
     await File(metadataPath).writeAsString(
       const JsonEncoder.withIndent('  ').convert(metadata),
@@ -3661,7 +3861,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       };
     }
     final url = await controller.getUrl();
-    final inspect = await _evaluateSunoJson(controller, SunoWebScripts.inspectScript);
+    final inspect =
+        await _evaluateSunoJson(controller, SunoWebScripts.inspectScript);
     final diagnostics = await _evaluateSunoJson(
       controller,
       SunoWebScripts.domDiagnosticsScript,
@@ -3738,7 +3939,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final stem = _safeSunoSnapshotStem(url, timestamp);
     final warnings = <String>[];
 
-    final inspect = await _evaluateSunoJson(controller, SunoWebScripts.inspectScript);
+    final inspect =
+        await _evaluateSunoJson(controller, SunoWebScripts.inspectScript);
     final diagnostics = await _evaluateSunoJson(
       controller,
       SunoWebScripts.domDiagnosticsScript,
@@ -3771,7 +3973,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             controller,
             SunoWebScripts.downloadScript(
               downloadedSongUrls: _sunoEngine.state.downloadedSongUrls.toList(),
-              pendingSongUrl: _sunoEngine.state.pendingDownloadSongUrl ?? currentSongUrl,
+              pendingSongUrl:
+                  _sunoEngine.state.pendingDownloadSongUrl ?? currentSongUrl,
               allowedSongUrls:
                   currentSongUrl.isEmpty ? const <String>[] : [currentSongUrl],
               expectedStylePrompt: _sunoEngine.state.stylePrompt,
@@ -3788,7 +3991,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
             'reason': 'not-download-page',
             'pageKind': pageKind,
           };
-    final page = await _evaluateSunoJson(controller, SunoWebScripts.snapshotScript);
+    final page =
+        await _evaluateSunoJson(controller, SunoWebScripts.snapshotScript);
     final sanitizedHtml = (page.remove('sanitizedHtml') ?? '').toString();
 
     String? htmlPath;
@@ -5387,6 +5591,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     _listeningPlayer = null;
     _listeningPausedForWord = false;
     if (player == null) {
+      _scheduleMainWebViewFrameRateLimit();
       return;
     }
 
@@ -5400,12 +5605,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     } catch (_) {
       // Disposal is best effort; a fresh player is created for each segment.
     }
+    _scheduleMainWebViewFrameRateLimit();
   }
 
   Future<void> _disposePreviewPlayer() async {
     final player = _previewPlayer;
     _previewPlayer = null;
     if (player == null) {
+      _scheduleMainWebViewFrameRateLimit();
       return;
     }
 
@@ -5419,12 +5626,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     } catch (_) {
       // Disposal is best effort; a fresh player is created for each preview.
     }
+    _scheduleMainWebViewFrameRateLimit();
   }
 
   Future<void> _disposeSongPlayer() async {
     final player = _songPlayer;
     _songPlayer = null;
     if (player == null) {
+      _scheduleMainWebViewFrameRateLimit();
       return;
     }
 
@@ -5438,6 +5647,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     } catch (_) {
       // Disposal is best effort; a fresh player is created for each song.
     }
+    _scheduleMainWebViewFrameRateLimit();
   }
 
   bool _isActiveListeningPlayback(int token) =>
@@ -6376,10 +6586,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     }
 
     final encoded = jsonEncode(event);
+    await _applyMainWebViewFpsLimit(_mainWebViewActiveFpsLimit);
     await _controller!.evaluateJavascript(
       source:
           'window.__tomatoNativeEvent && window.__tomatoNativeEvent($encoded);',
     );
+    _scheduleMainWebViewFrameRateLimit();
   }
 
   Future<void> _flushPendingEvents() async {
@@ -6415,32 +6627,37 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   }
 
   Future<Map<String, dynamic>> _qaNavigate(String path) async {
-    await _bridgeRouter.dispatch({
-      'id': 'qa_nav_${DateTime.now().microsecondsSinceEpoch}',
-      'type': 'app.navigate',
-      'payload': {'path': path},
+    return _runWithMainWebViewFrameRateActive(() async {
+      await _bridgeRouter.dispatch({
+        'id': 'qa_nav_${DateTime.now().microsecondsSinceEpoch}',
+        'type': 'app.navigate',
+        'payload': {'path': path},
+      });
+      final controller = _requireWebController();
+      await controller.evaluateJavascript(
+        source: 'window.location.hash = ${jsonEncode(path)};',
+      );
+      return {
+        'ok': true,
+        'path': path,
+      };
     });
-    final controller = _requireWebController();
-    await controller.evaluateJavascript(
-      source: 'window.location.hash = ${jsonEncode(path)};',
-    );
-    return {
-      'ok': true,
-      'path': path,
-    };
   }
 
   Future<Uint8List> _qaScreenshot() async {
-    final bytes = await _requireWebController().takeScreenshot();
-    if (bytes == null || bytes.isEmpty) {
-      throw StateError('WebView screenshot is empty');
-    }
-    return bytes;
+    return _runWithMainWebViewFrameRateActive(() async {
+      final bytes = await _requireWebController().takeScreenshot();
+      if (bytes == null || bytes.isEmpty) {
+        throw StateError('WebView screenshot is empty');
+      }
+      return bytes;
+    });
   }
 
   Future<Map<String, dynamic>> _qaClick(Map<String, dynamic> payload) async {
-    final raw = await _requireWebController().evaluateJavascript(
-      source: '''
+    return _runWithMainWebViewFrameRateActive(() async {
+      final raw = await _requireWebController().evaluateJavascript(
+        source: '''
 (() => {
   const payload = ${jsonEncode(payload)};
   const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -6541,13 +6758,15 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   });
 })()
 ''',
-    );
-    return _decodeJavascriptJsonMap(raw);
+      );
+      return _decodeJavascriptJsonMap(raw);
+    });
   }
 
   Future<Map<String, dynamic>> _qaFill(Map<String, dynamic> payload) async {
-    final raw = await _requireWebController().evaluateJavascript(
-      source: '''
+    return _runWithMainWebViewFrameRateActive(() async {
+      final raw = await _requireWebController().evaluateJavascript(
+        source: '''
 (() => {
   const payload = ${jsonEncode(payload)};
   const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
@@ -6620,13 +6839,15 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   });
 })()
 ''',
-    );
-    return _decodeJavascriptJsonMap(raw);
+      );
+      return _decodeJavascriptJsonMap(raw);
+    });
   }
 
   Future<Map<String, dynamic>> _qaSnapshot() async {
-    final raw = await _requireWebController().evaluateJavascript(
-      source: '''
+    return _runWithMainWebViewFrameRateActive(() async {
+      final raw = await _requireWebController().evaluateJavascript(
+        source: '''
 (() => {
   const rectOf = (element) => {
     const rect = element.getBoundingClientRect();
@@ -6774,10 +6995,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
   });
 })()
 ''',
-    );
-    final payload = _decodeJavascriptJsonMap(raw);
-    payload['runtimeState'] = await _qaRuntimeState();
-    return payload;
+      );
+      final payload = _decodeJavascriptJsonMap(raw);
+      payload['runtimeState'] = await _qaRuntimeState();
+      return payload;
+    });
   }
 
   Future<Map<String, dynamic>> _qaRuntimeState() async {
@@ -6788,6 +7010,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
       'activeFollowArticleId': followArticleId,
       'activeListeningArticleId': listeningArticleId,
       'activeChatArticleId': chatArticleId,
+      'webViewFrameRate': {
+        'fpsLimit': _mainWebViewCurrentFpsLimit,
+        'unsupported': _mainWebViewFpsLimitUnsupported,
+        'activityDepth': _mainWebViewFrameRateActivityDepth,
+      },
     };
 
     if (followArticleId != null) {
@@ -7253,7 +7480,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
           if (version is! Map) {
             continue;
           }
-          final versionSongUrl = SunoUtilities.canonicalSongUrl(version['songUrl']);
+          final versionSongUrl =
+              SunoUtilities.canonicalSongUrl(version['songUrl']);
           if (versionSongUrl != null &&
               !SunoUtilities.isSyntheticSongKey(versionSongUrl)) {
             urls.add(versionSongUrl);
@@ -7275,7 +7503,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen> {
     final downloaded = _sunoEngine.state.versions
         .map((version) => SunoUtilities.canonicalSongUrl(version.songUrl))
         .whereType<String>()
-        .where((value) => value.isNotEmpty && !SunoUtilities.isSyntheticSongKey(value))
+        .where((value) =>
+            value.isNotEmpty && !SunoUtilities.isSyntheticSongKey(value))
         .toSet();
     return _sunoEngine.state.detectedSongUrls.every((value) {
       final songUrl = SunoUtilities.canonicalSongUrl(value);

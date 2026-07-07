@@ -298,9 +298,15 @@ function Invoke-WebUiBuildInTempWorkspace {
     $tempWebUiRoot = Join-Path $tempWorkspaceRoot "web_ui"
     $tempOutputRoot = Join-Path $tempWorkspaceRoot "app\assets\web"
     $workspaceOutputRoot = Join-Path $workspaceRoot "app\assets\web"
+    $workspaceSunoFixtureRoot = Join-Path $workspaceRoot "app\test\fixtures\suno"
+    $tempSunoFixtureRoot = Join-Path $tempWorkspaceRoot "app\test\fixtures\suno"
 
     New-Item -ItemType Directory -Path $tempWebUiRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $tempOutputRoot -Force | Out-Null
+    if (Test-Path $workspaceSunoFixtureRoot) {
+        New-Item -ItemType Directory -Path $tempSunoFixtureRoot -Force | Out-Null
+        Copy-Item -Path (Join-Path $workspaceSunoFixtureRoot "*") -Destination $tempSunoFixtureRoot -Recurse -Force
+    }
 
     try {
         Get-ChildItem -Path $WebUiRoot -Force | Where-Object {

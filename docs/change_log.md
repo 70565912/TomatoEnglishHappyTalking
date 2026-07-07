@@ -2,6 +2,7 @@
 
 ## 2026-07-07
 
+- 修复 Windows WebView2 静止页面持续占用 GPU：实测确认创作中心静止约 15%~20% GPU 的根因不是 CSS 或 WebView2 GPU 合成本身，而是 `flutter_inappwebview_windows` 使用 `Windows.Graphics.Capture` 持续把 WebView2 画面复制进 Flutter texture。最终采用插件已有 `setFpsLimit` 做主 WebView 自适应抓帧限速：活动时不限帧，活动结束后降到 `12fps`，静止后降到 `5fps`；不再停止可见窗口 capture，避免空白帧。Suno WebView 不纳入主窗口限速策略。坑位见 `docs/build-and-release-pitfalls.md`。
 - 实测确认 `AiBlockingOverlay` GPU 占用降频改动后可接受；旋转图标观感不佳，改为三点跳动样式：`web_ui/src/App.tsx` 的 `.ai-blocking-spinner` 内不再渲染 `Icon name="refresh"`，改为三个 `.blocking-dots span` 圆点；`web_ui/src/styles.css` 新增 `blocking-dot-bounce` 动画（`1s steps(5, end) infinite`，5 步 × 200ms = 1s，仍是 **5fps** 节奏，配合 `animation-delay` 错开三点），移除此前的 `blocking-overlay-spin` 旋转规则；`prefers-reduced-motion: reduce` 下停止动画并固定半透明。仅作用于阻塞遮罩等待图标，不影响歌曲按钮、绘本 placeholder 等其它 `.icon-refresh` loading 图标。详见 `docs/video_export_wait_dialog_gpu_optimization.md`。
 - `AiBlockingOverlay` 等待对话框旋转图标降频：`web_ui/src/styles.css` 将 `.ai-blocking-spinner .icon-refresh` 从 `picture-spin 900ms linear` 改为专用 `blocking-overlay-spin 2.4s steps(12, end)`（5fps 分步旋转）；`prefers-reduced-motion: reduce` 下停用动画。仅作用于阻塞遮罩 spinner，不影响歌曲按钮、绘本 placeholder 等其它 loading 图标。详见 `docs/video_export_wait_dialog_gpu_optimization.md`。（同日后续改为三点跳动样式，见上条）
 - `AiBlockingOverlay` 移除全屏 `backdrop-filter`：`.ai-blocking-backdrop` 删除 `blur(2px)`，底色改为 `rgba(15, 23, 42, 0.55)`，降低 WebView2 等待期间整窗模糊重合成开销。`RecordingProgressOverlay` / `.audio-material-progress-overlay` 仍保留原 blur，待后续统一评估。
