@@ -6,9 +6,11 @@ import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 import 'package:tomato_english_happy_talking/core/practice/listening_sentence_visibility.dart';
 import 'package:tomato_english_happy_talking/data/models/article_model.dart';
 import 'package:tomato_english_happy_talking/data/models/article_sentence_translation_model.dart';
+import 'package:tomato_english_happy_talking/data/models/picture_book_model.dart';
 import 'package:tomato_english_happy_talking/services/api_cache_service.dart';
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/listening_audio_material_service.dart';
+import 'package:tomato_english_happy_talking/services/recording_export_service.dart';
 import 'package:tomato_english_happy_talking/services/tts_service.dart';
 
 void main() {
@@ -45,7 +47,8 @@ void main() {
     }
   });
 
-  test('preserves empty slots and translation indexes after hiding middle sentence',
+  test(
+      'preserves empty slots and translation indexes after hiding middle sentence',
       () async {
     const sentences = ['First.', 'Second.', 'Third.'];
     final now = DateTime.utc(2026, 7, 5);
@@ -106,9 +109,12 @@ void main() {
       ),
     );
 
-    await _writeCachedListeningTts(articleId: articleId, text: 'Alpha.', bytes: [1]);
-    await _writeCachedListeningTts(articleId: articleId, text: 'Beta.', bytes: [2]);
-    await _writeCachedListeningTts(articleId: articleId, text: 'Gamma.', bytes: [3]);
+    await _writeCachedListeningTts(
+        articleId: articleId, text: 'Alpha.', bytes: [1]);
+    await _writeCachedListeningTts(
+        articleId: articleId, text: 'Beta.', bytes: [2]);
+    await _writeCachedListeningTts(
+        articleId: articleId, text: 'Gamma.', bytes: [3]);
 
     final before = await ListeningAudioMaterialService.status(articleId);
     expect(before.total, 3);
@@ -124,6 +130,66 @@ void main() {
     expect(after.total, 2);
     expect(after.ready, 2);
     expect(after.missing, isEmpty);
+  });
+
+  test('listening video readiness skips hidden sentences', () async {
+    const hiddenSentences = ['Alpha.', '', 'Gamma.', '', ''];
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Recording hide sample',
+        content: rebuildArticleContentFromSentences(hiddenSentences),
+        sentences: hiddenSentences,
+        createdAt: DateTime.utc(2026, 7, 5),
+      ),
+    );
+    await _writeCachedListeningTts(
+      articleId: articleId,
+      text: 'Alpha.',
+      bytes: [1],
+    );
+    await _writeCachedListeningTts(
+      articleId: articleId,
+      text: 'Gamma.',
+      bytes: [3],
+    );
+    final imagePath = '${tempDir.path}${Platform.pathSeparator}page-0.png';
+    await File(imagePath).writeAsBytes([1], flush: true);
+    final now = DateTime.utc(2026, 7, 5);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 1,
+        paragraphText: 'Alpha.',
+        promptJson: '{}',
+        imagePath: imagePath,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final readiness = await RecordingExportService.readiness(
+      RecordingExportRequest(
+        articleId: articleId,
+        mode: 'english',
+        codec: RecordingCodec.h264,
+        resolution: RecordingResolution.parse('1280x720'),
+        pageTransition: RecordingPageTransition.none,
+      ),
+    );
+
+    expect(readiness.requiredEnglish, 2);
+    expect(readiness.readyEnglish, 2);
+    expect(
+      readiness.reasons.where((reason) => reason.contains('句英文音频未生成')),
+      isEmpty,
+    );
+    expect(
+      readiness.reasons.where((reason) => reason.contains('绘本页未覆盖')),
+      isEmpty,
+    );
   });
 }
 
@@ -141,7 +207,11 @@ Future<void> _writeCachedListeningTts({
     cacheKey: keys.first,
     kind: 'tts',
     purpose: ListeningAudioMaterialService.cachePurpose,
-    request: {'service': 'unit_tts', 'text': text, 'purpose': ListeningAudioMaterialService.cachePurpose},
+    request: {
+      'service': 'unit_tts',
+      'text': text,
+      'purpose': ListeningAudioMaterialService.cachePurpose
+    },
     bytes: bytes,
     subdirectory: 'tts',
     extension: 'mp3',
