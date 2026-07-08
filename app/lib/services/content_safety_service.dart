@@ -69,6 +69,7 @@ class ContentSafetyService {
   static const serviceOpenAiText = 'openai_text';
   static const serviceArkText = 'ark_text';
   static const serviceBailianFunMusic = 'bailian_fun_music';
+  static const serviceElevenLabsMusic = 'elevenlabs_music';
   static const servicePictureBookImage = 'picture_book_image';
   static const serviceTts = 'tts';
   static const purposeAny = '*';

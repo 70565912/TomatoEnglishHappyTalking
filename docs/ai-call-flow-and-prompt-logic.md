@@ -16,12 +16,25 @@
 
 | 能力 | 读取入口 | 文件/配置 |
 | --- | --- | --- |
-| OpenAI-compatible 文本生成 | `AppConfig.openAiTextConfig` | secure storage：`ai_provider`、百炼或方舟文本配置 |
-| 图片生成 | `PictureBookImageService` / `AppConfig.aiProvider` | 阿里云万相或火山 Seedream，按当前平台分流 |
+| OpenAI-compatible 文本生成 | `AppConfig.textProvider` / `AppConfig.openAiTextConfig` | secure storage：`text_provider`；缺失时兼容读取旧 `ai_provider` |
+| 图片生成 | `PictureBookImageService` / `AppConfig.imageProvider` | secure storage：`image_provider`；缺失时兼容读取旧 `ai_provider` |
+| 语音合成 | `TtsService` / `AppConfig.ttsProvider` | secure storage：`tts_provider`；支持阿里云 CosyVoice、火山 Doubao TTS、ElevenLabs TTS |
+| ElevenLabs | `AppConfig.elevenLabs*` | secure storage：`elevenlabs_api_key` 等；启动时可从 `security/elevenlabs.txt` 读取纯 key 或 `ELEVENLABS_API_KEY=...` 并写入 secure storage |
 | 阿里云百聆（Fun-Music） | `AppConfig.aliyunBailianApiKey` / `AppConfig.aliyunBailianMusicModel` | secure storage：百炼 key 与音乐模型 |
-| TTS / ASR | `AppConfig.aiProvider` | 阿里云 CosyVoice / Qwen-ASR 或火山 Doubao TTS / BigASR |
+| 歌曲生成 | `AppConfig.songGenerationProvider` | secure storage：`song_provider`；支持 Suno、阿里云百聆、ElevenLabs Music |
+| ASR | `AppConfig.aiProvider` | 阿里云 Qwen-ASR 或火山 BigASR，仍沿用旧全局 provider |
 | 图片模型 | `AppConfig` / env | 阿里云默认 `wan2.7-image-pro`，火山默认 `doubao-seedream-5-0-260128` |
 | 图片尺寸 | `AppConfig` / `VolcImageService` env | 阿里云默认 `2K`；火山远程默认 `2560x1440`，本地显示按 16:9 缩放 |
+
+### 按能力拆分 provider
+
+- `ai_provider` 保留为旧设置兼容字段；新设置页按能力写入 `text_provider`、`image_provider`、`tts_provider` 和 `song_provider`。
+- 文本处理只允许 `aliyun_bailian` / `volcengine`，用于标题、翻译、单词释义、对话提纲和绘本章节规划。
+- 图片生成只允许 `aliyun_bailian` / `volcengine`，分别走阿里云万相和火山 Seedream。
+- 语音合成允许 `aliyun_bailian` / `volcengine` / `elevenlabs`。ElevenLabs 不参与文本生成或图片生成。
+- 歌曲生成允许 `suno` / `bailian_fun_music` / `elevenlabs_music`。Suno 仍是默认；ElevenLabs Music 不影响 Suno 下载检测规则。
+- `settings.load.cloud` 返回 `aiProvider`、`textProvider`、`imageProvider`、`ttsProvider` 和 `elevenLabs` 配置状态；UI 只显示 key mask，不回传明文 key。
+- `voiceCatalog.elevenLabs` 来自 ElevenLabs 在线声音列表，失败时返回空列表和展示错误；不会暴露 key。TTS 保存和试听 payload 使用 `ttsProvider`，旧 `aiProvider` payload 仍作为兼容 fallback。
 
 ## 调用矩阵
 
@@ -33,13 +46,13 @@
 | 单词释义 | 规范化单词与句子，缓存命中直接返回 | OpenAI-compatible 文本 | `word_lookup` / `openai_text` | JSON: 拼写、音标、含义、句中义 |
 | 对话提纲 | 同一章节教学提纲缓存命中直接返回 | OpenAI-compatible 文本 | `chapter_dialogue_guide_v2` / `openai_text` | 8 个以内章节覆盖点 |
 | AI 对话 | 完整 turns 转 textQuery，但 turns 只包含提纲、进度和历史，不重复带全文 | Realtime V3 | `chat_start` / `chat_reply` / `realtime` | AI 英文回复 |
-| 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | 当前云平台 TTS：阿里云 CosyVoice 或火山 Doubao TTS 2.0 | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
+| 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | 当前 TTS provider：阿里云 CosyVoice、火山 Doubao TTS 2.0 或 ElevenLabs TTS | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
 | 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | 当前云平台 ASR：阿里云 Qwen-ASR 或火山 BigASR | `asr_recognize` / `asr` | 识别文本 |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
 | 绘本提示词审核 | 打开时只读取本地持久化章节计划/章节描述；缺失时显示空草稿 | OpenAI-compatible 文本仅在用户点击刷新时调用 | `picture_book_chapter_scene_plan_v2` / `openai_text` | `chapterDescription`、`scenes[].sceneDescription`、group prompt |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 当前云平台图片：阿里云万相异步连续组图或火山 Seedream 顺序组图 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 | 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
-| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | 阿里云百聆（Fun-Music）或 Suno 网页自动化 | `bailian_fun_music_song` / `suno_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
+| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | Suno 网页自动化、阿里云百聆（Fun-Music）或 ElevenLabs Music | `suno_song` / `bailian_fun_music_song` / `elevenlabs_music_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
 
 ## 新增文章保存流程
 
@@ -363,8 +376,8 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - 页面策略版本为 `picture_book_group_prompt_scene_description_v2`，章节图片计划缓存为 `picture_book_chapter_scene_plan_v2`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
-- 打开审核框只读取本地持久化章节描述/章节计划；文本规划 API 只在用户点击“自动生成章节规划”时调用，让 AI 基于 `bookDescription`、完整章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。完整原文用于保留可见叙事细节，但输出描述必须排除直接引语、对话内容、歌词/喊话文本和内心独白原句；不要新增本地对话剔除器，也不要为去对话额外增加一次文本 AI 调用。
-- 场景数量不按章节长度或句子数量决定，而按“紧凑但完整的必要插画”与“视觉故事 beat”决定；12 只作为极端上限，不是目标值。分镜需要同时避免过度合并和过度拆分：只有相邻内容存在明确、不可组合的视觉边界理由时才拆分，例如地点变化、时间跳跃、主要角色组变化、故事目的变化、重大可见状态变化，或一个动作结果无法在同一张插画中表达；同一地点、时间、角色和故事目的的相邻句子合并为同一 scene；相邻内容如果可以用同一个前景/背景构图表达，就应保持为一个视觉 beat。不要拆分同一直接视觉结果下的叙述微阶段；当相邻内容共享设置、主要参与者、直接目的且能被同一个稳定构图表达时，这个边界就是弱边界。返回前先检查每个 scene 内部是否混入多个不可组合构图，再合并边界只是叙述微阶段的相邻 scene，同时避免为了减少数量把相隔较远的故事阶段或多个不可同时表达的可见状态塞进同一 scene。每个 scene 对应一张图片并按顺序覆盖完整句子范围。
+- 打开审核框只读取本地持久化章节描述/章节计划；文本规划 API 只在用户点击“自动生成章节规划”时调用，让 AI 基于 `bookDescription`、完整章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。完整原文作为可画细节来源；输出描述必须基于原文，但移除直接引语、对话内容、歌词/喊话文本、内心独白原句和对话语义摘要；不要新增本地对话剔除器，也不要为去对话额外增加一次文本 AI 调用。
+- 场景切分规则保持精简：先忽略直接引语、对话语义、歌词、喊话和内心独白内容，再按原始句子顺序构造 scene，把同一连续故事场景内的内容归入同一个 scene。同一连续故事场景指地点/时间、主要人物组和正在发生的事件/活动保持连续。只有场景发生实质变化时才开新 scene，例如地点/时间变化、人物组变化，或明确的非对话动作把故事推进到新的事件/活动；不要因为句子边界、对话轮次、提问、回答、谜语、争论、评价、玩笑、反应或情绪变化单独切分。对话、歌词、喊话和内心独白句只作为覆盖锚点并入周围故事场景；`chapterDescription` / `sceneDescription` 保留原文里的可见动作、反应、物件和状态，移除 speech/thought content，且不能用 `exchange`、`conversation`、`discuss`、`debate`、`ask`、`answer`、`question`、`reply`、`remark`、`riddle`、`argue`、`claim`、`mean`、`say`、`said`、`offer` 等词把被移除的对话语义写回描述。每个 scene 对应一张图片并按顺序覆盖完整句子范围，最多 12 个 scene。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 重新打开绘本提示词审核时优先读取 `story_chapters.summary_json` 中的 `picture_book_chapter_scene_plan_v2`。如果 summary 缺失或 hash 不匹配，但旧 `picture_book_pages` 仍有完整 prompt scene 信息，则从页面记录恢复章节计划并写回 summary。
 - 如果本地 summary 和页面记录都无法恢复，promptReview 仍先打开审核框：章节描述和分镜描述保持为空，只提供句子范围和原文片段供用户可视化编辑；用户可以手工填写，或在弹窗里显式刷新章节规划。这个入口不得因为缺少本地计划而静默提交远程文本生成。
@@ -381,7 +394,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - 单页 prompt 固定写 “Use the reference images only for visual consistency.”；`prompt_json` 持久化 `referencePageIndexes` 与首项 `referencePageIndex`。
 - 没有可用参考图时，单页审核回退为整章 `promptReview(regenerate: true)`。
 
-调优记录：2026-06-27 使用 `E10 - The Caucus Race` 作为人工评审样例，确认简单长度约束、固定数量目标或故事特例词都会让通用 prompt 变脆。正式 prompt 不写入 E10 专用词，也不按章节字数/句子数决定分镜数量；只保留可迁移的视觉构图判断：弱边界、同一直接视觉结果、不可组合视觉变化，以及“先拆内部混场，再合并弱边界”的最终审核顺序。后续继续调优时，应先用真实章节计划评审是否过度拆分或过度合并，再修改通用规则。
+调优记录：2026-07-08 起，旧版 `compact`、`smallest complete scene set`、弱边界合并和叙述微阶段合并规则不再作为正式章节规划策略。正式规则收敛为两步：先去掉 speech/thought 内容对边界判断的影响，再按“同一连续故事场景归入同一 scene、场景实质变化才切分”划分句子范围；`chapterDescription` / `sceneDescription` 基于原文保留可见内容并移除对话、歌词、喊话和内心独白内容，同时不能用对话语义摘要词把被移除内容写回描述。E22 茶桌段回归重点：同一茶桌场景里的酒、礼貌、个人评价、谜语、反驳和沉默不能被拆成多张语义 scene，也不能写成 `exchange` / `conversation` / `riddle` / `remark` 等描述。
 
 ### 计划中的书籍角色数组流程
 
@@ -425,13 +438,13 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - `bookDescription`：短书籍视觉世界描述，不承担角色外貌列表职责。
 - `relevantCharacters[]`：程序从书籍 `characters[]` 中筛选出本章相关角色后传入。筛选方式先用章节正文、章节描述草稿和分镜描述草稿中的角色名匹配；未命中的角色不传，避免 prompt 随全书变长。
-- 章节正文：当前章节完整故事内容。它作为可见细节来源完整提交给同一次章节规划 AI；AI 输出 `chapterDescription` 和 `sceneDescription` 时必须剔除直接引语、对话内容、歌词/喊话文本和内心独白原句，只保留动作、物体、地点、姿态、场景状态、人物关系、情绪表现等图片可表达信息。
+- 章节正文：当前章节完整故事内容。它作为可见细节来源完整提交给同一次章节规划 AI；AI 输出 `chapterDescription` 和 `sceneDescription` 时必须基于原文保留可见动作、物体、地点、姿态、位置关系、场景状态、人物关系和情绪表现，同时移除直接引语、对话内容、歌词/喊话文本、内心独白原句和对话语义摘要。
 - 规则约束：字段结构、段落切分、角色描述边界、新角色识别和安全表达要求。
 
 生成输出为章节计划 JSON：
 
-- `chapterDescription`：只描述本章整体剧情、地点、氛围和连续动作。它可以使用 `relevantCharacters[]` 里的角色名作为上下文，但不要重复角色外貌、服装、发色等描述，也不要复述对话、歌词、喊话或内心独白文字。
-- `scenes[]`：只做分镜场景描述，写场景、动作、物件、位置、构图、情绪和画面变化。可以使用角色名，但不要反复写 `Alice (blonde bob, blue pinafore)` 或 `White Rabbit (red waistcoat, pocket watch)` 这类已在 `relevantCharacters[]` 中出现的外貌锚点；不要把对话内容、字幕式文字或内心独白原句写进 `sceneDescription`。以对话为主的句子仍作为覆盖锚点并入相邻可见 scene，不单独形成 speech-only scene。
+- `chapterDescription`：只描述本章整体剧情、地点、氛围和连续动作。它可以使用 `relevantCharacters[]` 里的角色名作为上下文，但不要重复角色外貌、服装、发色等描述，也不要复述或概括对话、歌词、喊话、问答、谜语、争论、评价或内心独白。
+- `scenes[]`：只做分镜场景描述，写场景、动作、物件、位置、构图、情绪和画面变化，并保留该句子范围内的原文可见内容。可以使用角色名，但不要反复写 `Alice (blonde bob, blue pinafore)` 或 `White Rabbit (red waistcoat, pocket watch)` 这类已在 `relevantCharacters[]` 中出现的外貌锚点；不要把对话内容、字幕式文字、内心独白原句或对话语义摘要写进 `sceneDescription`。同一连续故事场景内容归入同一 scene；场景实质变化才开启新 scene。
 - `newCharacters[]`：本章正文中出现、但书籍角色数组没有覆盖的新视觉角色。每项包含 `name` 和 `description`。
 
 角色信息边界：
@@ -449,13 +462,13 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 ```json
 {
   "planKind": "picture_book_chapter_scene_plan_v2",
-  "chapterDescription": "Concise chapter description for image context.",
+  "chapterDescription": "Detail-preserving chapter description for image context.",
   "scenes": [
     {
       "pageIndex": 0,
       "sentenceStartIndex": 0,
       "sentenceEndIndex": 2,
-      "sceneDescription": "Concise paragraph-level story beat."
+      "sceneDescription": "Detail-preserving visual scene description."
     }
   ],
   "newCharacters": [
@@ -470,9 +483,9 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 规则：
 
 - 只认 `planKind == picture_book_chapter_scene_plan_v2` 且字段为 `chapterDescription` / `scenes[].sceneDescription` / `newCharacters[]`。
-- `chapterDescription` 描述当前章节作为一组连续图片的整体剧情。
+- `chapterDescription` 描述当前章节作为一组连续图片的整体剧情、地点、氛围和关键可见变化。
 - `scenes[]` 是唯一分镜来源，字段只包含 `pageIndex`、句子范围和 `sceneDescription`。
-- `sceneDescription` 只描述场景、动作、物件、位置、构图、情绪和画面变化；可以使用角色名，但不得重复 `relevantCharacters[]` 已有的角色外貌、服装、发色、年龄或括号式角色描述。
+- `sceneDescription` 只描述场景、动作、物件、位置、构图、情绪和画面变化；必须基于原文保留句子范围内的可见内容并移除对话/内心独白内容和对话语义摘要；同一连续故事场景内容合入同一 scene，场景实质变化才开启新 scene；可以使用角色名，但不得重复 `relevantCharacters[]` 已有的角色外貌、服装、发色、年龄或括号式角色描述。
 - `newCharacters[]` 只包含本章新增且会影响画面一致性的角色，不包含临时物品、地点、动作或普通背景元素。
 - 不输出 `title`、`story`、`visual`、`audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
 - 角色数组方案落地后，最终 `groupPrompt` 按审核后的短书籍简介、本章相关角色、章节描述和每张图的分镜描述完整拼装；不按场景数量压缩，也不设置词数或字符数截断。

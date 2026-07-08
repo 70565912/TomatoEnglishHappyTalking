@@ -17,15 +17,21 @@ class VoiceInfo {
   final String name;
   final String lang;
   final String scene;
+  final String? genderHint;
 
   const VoiceInfo({
     required this.id,
     required this.name,
     required this.lang,
     required this.scene,
+    this.genderHint,
   });
 
   String get gender {
+    final hintedGender = _normalizeGender(genderHint);
+    if (hintedGender != null) {
+      return hintedGender;
+    }
     if (id.contains('_female_') || id.contains('female')) {
       return 'female';
     }
@@ -43,6 +49,23 @@ class VoiceInfo {
     }
     return 'unknown';
   }
+
+  static String? _normalizeGender(String? value) {
+    final normalized = value?.trim().toLowerCase();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    if (normalized == 'female' || normalized == 'woman') {
+      return 'female';
+    }
+    if (normalized == 'male' || normalized == 'man') {
+      return 'male';
+    }
+    if (normalized == 'neutral' || normalized == 'non-binary') {
+      return 'neutral';
+    }
+    return null;
+  }
 }
 
 class TtsException implements Exception {
@@ -54,9 +77,32 @@ class TtsException implements Exception {
   String toString() => message;
 }
 
+typedef ElevenLabsTtsPostOverride = Future<List<int>> Function({
+  required String endpoint,
+  required Map<String, String> headers,
+  required Map<String, dynamic> body,
+});
+
+typedef ElevenLabsVoicesGetOverride = Future<Object?> Function({
+  required String endpoint,
+  required Map<String, String> headers,
+});
+
+class VoiceCatalogFetchResult {
+  const VoiceCatalogFetchResult({
+    required this.voices,
+    this.errorMessage,
+  });
+
+  final List<VoiceInfo> voices;
+  final String? errorMessage;
+}
+
 class TtsService {
   static const defaultVoiceType = 'en_female_dacey_uranus_bigtts';
   static const defaultAliyunVoiceType = AppConfig.defaultAliyunBailianTtsVoice;
+  static const defaultElevenLabsVoiceType =
+      AppConfig.defaultElevenLabsTtsVoiceId;
 
   static const _audioTraceEnabled = bool.fromEnvironment(
     'TOMATO_AUDIO_TRACE',
@@ -69,6 +115,32 @@ class TtsService {
       receiveTimeout: const Duration(seconds: 30),
     ),
   );
+
+  static ElevenLabsTtsPostOverride? _elevenLabsPostOverrideForTest;
+  static ElevenLabsVoicesGetOverride? _elevenLabsVoicesOverrideForTest;
+  static VoiceCatalogFetchResult? _elevenLabsVoiceCatalogCache;
+  static String? _elevenLabsVoiceCatalogCacheKey;
+  static DateTime? _elevenLabsVoiceCatalogCacheAt;
+  static const _elevenLabsVoiceCatalogCacheTtl = Duration(minutes: 10);
+
+  @visibleForTesting
+  static void setElevenLabsPostOverrideForTest(
+    ElevenLabsTtsPostOverride? override,
+  ) {
+    _elevenLabsPostOverrideForTest = override;
+  }
+
+  @visibleForTesting
+  static void setElevenLabsVoicesOverrideForTest(
+    ElevenLabsVoicesGetOverride? override,
+  ) {
+    _elevenLabsVoicesOverrideForTest = override;
+  }
+
+  @visibleForTesting
+  static void clearElevenLabsVoiceCatalogCacheForTest() {
+    _clearElevenLabsVoiceCatalogCache();
+  }
 
   static const List<VoiceInfo> voices = [
     VoiceInfo(
@@ -627,6 +699,214 @@ class TtsService {
   static bool isPresetVoice(String voiceType) =>
       voices.any((voice) => voice.id == voiceType.trim());
 
+  static Future<List<VoiceInfo>> elevenLabsVoices() async {
+    final result = await elevenLabsVoiceCatalog();
+    return result.voices;
+  }
+
+  static Future<VoiceCatalogFetchResult> elevenLabsVoiceCatalog() async {
+    final apiKey = await AppConfig.elevenLabsApiKey;
+    if (apiKey.isEmpty) {
+      _clearElevenLabsVoiceCatalogCache();
+      return const VoiceCatalogFetchResult(
+        voices: <VoiceInfo>[],
+        errorMessage: '未配置 ElevenLabs API Key',
+      );
+    }
+    final baseUrl = await AppConfig.elevenLabsBaseUrl;
+    final cacheKey = _elevenLabsVoiceCatalogKey(
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+    );
+    final cached = _cachedElevenLabsVoiceCatalog(cacheKey);
+    if (cached != null) {
+      return cached;
+    }
+    final endpoint = '$baseUrl/v2/voices';
+    final headers = {
+      'xi-api-key': apiKey,
+      'Content-Type': 'application/json',
+    };
+    try {
+      final override = _elevenLabsVoicesOverrideForTest;
+      Response<Object?>? response;
+      Object? payload;
+      if (override == null) {
+        response = await _dio.get<Object?>(
+          endpoint,
+          options: Options(
+            headers: headers,
+            responseType: ResponseType.json,
+            validateStatus: (_) => true,
+            connectTimeout: const Duration(seconds: 15),
+            receiveTimeout: const Duration(seconds: 20),
+          ),
+        );
+        payload = response.data;
+      } else {
+        payload = await override(endpoint: endpoint, headers: headers);
+      }
+      final statusCode = response?.statusCode;
+      if (statusCode != null && (statusCode < 200 || statusCode >= 300)) {
+        final serverMessage = _serverMessageFromPayload(payload);
+        final detail = serverMessage == null || serverMessage.isEmpty
+            ? '请检查网络或 API Key'
+            : serverMessage;
+        throw TtsException('ElevenLabs 声音列表加载失败 HTTP $statusCode：$detail');
+      }
+      final rawVoices = _elevenLabsVoicesFromPayload(payload);
+      if (rawVoices is! List) {
+        final serverMessage = _serverMessageFromPayload(payload);
+        final cachedOnFailure =
+            _cachedElevenLabsVoiceCatalog(cacheKey, allowExpired: true);
+        if (cachedOnFailure != null) {
+          return VoiceCatalogFetchResult(
+            voices: cachedOnFailure.voices,
+            errorMessage: serverMessage == null || serverMessage.isEmpty
+                ? 'ElevenLabs 声音列表响应格式不可识别，已保留上次列表'
+                : 'ElevenLabs 声音列表加载失败：$serverMessage',
+          );
+        }
+        return VoiceCatalogFetchResult(
+          voices: <VoiceInfo>[],
+          errorMessage: serverMessage == null || serverMessage.isEmpty
+              ? 'ElevenLabs 声音列表响应格式不可识别'
+              : 'ElevenLabs 声音列表加载失败：$serverMessage',
+        );
+      }
+      final result = VoiceCatalogFetchResult(
+        voices: rawVoices
+            .whereType<Map>()
+            .map((raw) => _elevenLabsVoiceFromJson(raw))
+            .whereType<VoiceInfo>()
+            .toList(growable: false),
+      );
+      if (result.voices.isNotEmpty) {
+        _rememberElevenLabsVoiceCatalog(cacheKey, result);
+      }
+      return result;
+    } catch (error) {
+      final message = _catalogErrorSummary(error);
+      TomatoLogger.warn(
+        category: 'tts',
+        event: 'elevenlabs.voices.failed',
+        message: message,
+        error: error,
+      );
+      final cachedOnFailure =
+          _cachedElevenLabsVoiceCatalog(cacheKey, allowExpired: true);
+      if (cachedOnFailure != null) {
+        return VoiceCatalogFetchResult(
+          voices: cachedOnFailure.voices,
+          errorMessage: '$message，已保留上次列表',
+        );
+      }
+      return VoiceCatalogFetchResult(
+        voices: const <VoiceInfo>[],
+        errorMessage: message,
+      );
+    }
+  }
+
+  static String _catalogErrorSummary(Object error) {
+    if (error is DioException) {
+      return _mapDioException(
+        error,
+        fallbackMessage: 'ElevenLabs 声音列表加载失败，请检查网络或 API Key',
+      ).message;
+    }
+    if (error is TtsException) {
+      return error.message;
+    }
+    return 'ElevenLabs 声音列表加载失败：${error.toString().split('\n').first}';
+  }
+
+  static String _elevenLabsVoiceCatalogKey({
+    required String baseUrl,
+    required String apiKey,
+  }) =>
+      '$baseUrl|${apiKey.length}|${apiKey.hashCode}';
+
+  static VoiceCatalogFetchResult? _cachedElevenLabsVoiceCatalog(
+    String cacheKey, {
+    bool allowExpired = false,
+  }) {
+    final cached = _elevenLabsVoiceCatalogCache;
+    final cachedAt = _elevenLabsVoiceCatalogCacheAt;
+    if (cached == null ||
+        cached.voices.isEmpty ||
+        cachedAt == null ||
+        _elevenLabsVoiceCatalogCacheKey != cacheKey) {
+      return null;
+    }
+    final isFresh =
+        DateTime.now().difference(cachedAt) <= _elevenLabsVoiceCatalogCacheTtl;
+    if (!allowExpired && !isFresh) {
+      return null;
+    }
+    return VoiceCatalogFetchResult(
+      voices: cached.voices,
+      errorMessage: allowExpired ? cached.errorMessage : null,
+    );
+  }
+
+  static void _rememberElevenLabsVoiceCatalog(
+    String cacheKey,
+    VoiceCatalogFetchResult result,
+  ) {
+    _elevenLabsVoiceCatalogCacheKey = cacheKey;
+    _elevenLabsVoiceCatalogCache = result;
+    _elevenLabsVoiceCatalogCacheAt = DateTime.now();
+  }
+
+  static void _clearElevenLabsVoiceCatalogCache() {
+    _elevenLabsVoiceCatalogCacheKey = null;
+    _elevenLabsVoiceCatalogCache = null;
+    _elevenLabsVoiceCatalogCacheAt = null;
+  }
+
+  static List? _elevenLabsVoicesFromPayload(Object? payload) {
+    final map = _mapValue(payload);
+    final voices = map['voices'];
+    if (voices is List) {
+      return voices;
+    }
+    final data = map['data'];
+    if (data is List) {
+      return data;
+    }
+    if (data is Map) {
+      final dataVoices = data['voices'];
+      if (dataVoices is List) {
+        return dataVoices;
+      }
+    }
+    final items = map['items'];
+    if (items is List) {
+      return items;
+    }
+    return null;
+  }
+
+  static VoiceInfo? _elevenLabsVoiceFromJson(Map raw) {
+    final id = raw['voice_id']?.toString().trim() ?? '';
+    final name = raw['name']?.toString().trim() ?? '';
+    if (id.isEmpty || name.isEmpty) {
+      return null;
+    }
+    final labels = _mapValue(raw['labels']);
+    final gender = labels['gender']?.toString().trim();
+    final accent = labels['accent']?.toString().trim();
+    final category = raw['category']?.toString().trim();
+    return VoiceInfo(
+      id: id,
+      name: name,
+      lang: accent?.isNotEmpty == true ? accent! : 'ElevenLabs',
+      scene: category?.isNotEmpty == true ? category! : (gender ?? 'voice'),
+      genderHint: gender,
+    );
+  }
+
   static const _v3Endpoint =
       'https://openspeech.bytedance.com/api/v3/tts/unidirectional';
 
@@ -674,6 +954,16 @@ class TtsService {
     final safeText = requestText.isEmpty ? trimmedText : requestText;
 
     final provider = await _providerForRequest(aiProviderOverride);
+    if (provider == AppConfig.aiProviderElevenLabs) {
+      return _synthesizeElevenLabsToCachedFile(
+        text: safeText,
+        requestedVoiceType: voiceType,
+        preferRequestedVoice: preferRequestedVoice,
+        articleId: articleId,
+        cachePurpose: cachePurpose,
+        forceRefresh: forceRefresh,
+      );
+    }
     if (provider == AppConfig.aiProviderAliyunBailian) {
       return _synthesizeAliyunToCachedFile(
         text: safeText,
@@ -806,10 +1096,125 @@ class TtsService {
   static Future<String> _providerForRequest(String? override) async {
     final value = override?.trim();
     if (value == AppConfig.aiProviderAliyunBailian ||
-        value == AppConfig.aiProviderVolcengine) {
+        value == AppConfig.aiProviderVolcengine ||
+        value == AppConfig.aiProviderElevenLabs) {
       return value!;
     }
-    return AppConfig.aiProvider;
+    return AppConfig.ttsProvider;
+  }
+
+  static Future<String> _synthesizeElevenLabsToCachedFile({
+    required String text,
+    required String requestedVoiceType,
+    required bool preferRequestedVoice,
+    required int? articleId,
+    required String cachePurpose,
+    required bool forceRefresh,
+  }) async {
+    final baseUrl = await AppConfig.elevenLabsBaseUrl;
+    final model = await AppConfig.elevenLabsTtsModel;
+    final configuredVoice = await AppConfig.elevenLabsTtsVoiceId;
+    final resolvedVoice = _resolveElevenLabsVoice(
+      configuredVoice: configuredVoice,
+      requestedVoiceType: requestedVoiceType,
+      preferRequestedVoice: preferRequestedVoice,
+    );
+    final outputFormat = await AppConfig.elevenLabsTtsOutputFormat;
+    final endpoint = _elevenLabsTtsEndpoint(
+      baseUrl: baseUrl,
+      voiceId: resolvedVoice,
+      outputFormat: outputFormat,
+    );
+    final candidates = await Future.wait(
+      _synthesisTextCandidates(text).map((candidate) async {
+        final request = _elevenLabsCacheRequest(
+          endpoint: endpoint,
+          model: model,
+          voiceId: resolvedVoice,
+          outputFormat: outputFormat,
+          text: candidate,
+        );
+        final cacheKey = await ApiCacheService.keyForJson('tts', request);
+        return _TtsCacheCandidate(
+          text: candidate,
+          cacheKey: cacheKey,
+          request: request,
+        );
+      }),
+    );
+
+    if (!forceRefresh) {
+      for (final candidate in candidates) {
+        final cachedPath = await ApiCacheService.getFilePath(
+          candidate.cacheKey,
+          articleId: articleId,
+          purpose: cachePurpose,
+        );
+        if (cachedPath != null) {
+          _trace(
+            'elevenlabs cache hit key=${candidate.cacheKey} path=$cachedPath',
+          );
+          return cachedPath;
+        }
+      }
+    }
+
+    final apiKey = await AppConfig.elevenLabsApiKey;
+    if (apiKey.isEmpty) {
+      throw const TtsException('未配置 ElevenLabs API Key，请在设置的云服务中配置。');
+    }
+
+    TtsException? firstError;
+    for (var i = 0; i < candidates.length; i += 1) {
+      final candidate = candidates[i];
+      try {
+        final bytes = await _synthesizeElevenLabs(
+          apiKey: apiKey,
+          endpoint: endpoint,
+          model: model,
+          text: candidate.text,
+        );
+        final filePath = await ApiCacheService.putFileBytes(
+          cacheKey: candidate.cacheKey,
+          kind: 'tts',
+          purpose: cachePurpose,
+          request: candidate.request,
+          bytes: bytes,
+          subdirectory: 'tts',
+          extension: _extensionForElevenLabsOutput(outputFormat),
+          contentType: _contentTypeForElevenLabsOutput(outputFormat),
+          articleId: articleId,
+        );
+        await ContentSafetyService.learnRulesFromLatestSuccessfulRetry(
+          serviceKind: ContentSafetyService.serviceTts,
+          purpose: cachePurpose,
+          articleId: articleId,
+          successfulText: candidate.text,
+        );
+        return filePath;
+      } on TtsException catch (error) {
+        firstError ??= error;
+        final canRetry = i == 0 &&
+            candidates.length > 1 &&
+            _shouldRetryWithReadableFallback(error);
+        if (!canRetry) {
+          final safety = ContentSafetyService.classifyFailure(error);
+          if (safety.suspectedSafetyBlock) {
+            await ContentSafetyService.recordFailure(
+              serviceKind: ContentSafetyService.serviceTts,
+              purpose: cachePurpose,
+              articleId: articleId,
+              failedText: text,
+              errorCode: safety.errorCode,
+              errorMessage: safety.message,
+            );
+          }
+          rethrow;
+        }
+      }
+    }
+
+    throw firstError ?? const TtsException('ElevenLabs 语音合成失败');
   }
 
   static Future<String> _synthesizeAliyunToCachedFile({
@@ -942,7 +1347,37 @@ class TtsService {
         .trim();
     final safeText = requestText.isEmpty ? trimmedText : requestText;
 
-    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
+    final provider = await AppConfig.ttsProvider;
+    if (provider == AppConfig.aiProviderElevenLabs) {
+      final baseUrl = await AppConfig.elevenLabsBaseUrl;
+      final model = await AppConfig.elevenLabsTtsModel;
+      final voice = _resolveElevenLabsVoice(
+        configuredVoice: await AppConfig.elevenLabsTtsVoiceId,
+        requestedVoiceType: voiceType,
+        preferRequestedVoice: preferRequestedVoice,
+      );
+      final outputFormat = await AppConfig.elevenLabsTtsOutputFormat;
+      final endpoint = _elevenLabsTtsEndpoint(
+        baseUrl: baseUrl,
+        voiceId: voice,
+        outputFormat: outputFormat,
+      );
+      return {
+        for (final candidate in _synthesisTextCandidates(safeText))
+          await ApiCacheService.keyForJson(
+            'tts',
+            _elevenLabsCacheRequest(
+              endpoint: endpoint,
+              model: model,
+              voiceId: voice,
+              outputFormat: outputFormat,
+              text: candidate,
+            ),
+          ),
+      };
+    }
+
+    if (provider == AppConfig.aiProviderAliyunBailian) {
       final endpoint = await AppConfig.aliyunCosyVoiceEndpoint;
       final model = await AppConfig.aliyunBailianTtsModel;
       final configuredVoice = await AppConfig.aliyunBailianTtsVoice;
@@ -1029,6 +1464,70 @@ class TtsService {
           'languageHints': ['en'],
         },
       };
+
+  static Map<String, dynamic> _elevenLabsCacheRequest({
+    required String endpoint,
+    required String model,
+    required String voiceId,
+    required String outputFormat,
+    required String text,
+  }) =>
+      {
+        'service': 'elevenlabs_tts',
+        'provider': AppConfig.aiProviderElevenLabs,
+        'endpoint': endpoint,
+        'model': model,
+        'voiceId': voiceId,
+        'outputFormat': outputFormat,
+        'text': text,
+      };
+
+  static String _resolveElevenLabsVoice({
+    required String configuredVoice,
+    required String requestedVoiceType,
+    required bool preferRequestedVoice,
+  }) {
+    if (preferRequestedVoice && requestedVoiceType.trim().isNotEmpty) {
+      return requestedVoiceType.trim();
+    }
+    final configured = configuredVoice.trim();
+    return configured.isNotEmpty
+        ? configured
+        : AppConfig.defaultElevenLabsTtsVoiceId;
+  }
+
+  static String _elevenLabsTtsEndpoint({
+    required String baseUrl,
+    required String voiceId,
+    required String outputFormat,
+  }) {
+    final encodedVoiceId = Uri.encodeComponent(voiceId.trim());
+    final encodedOutputFormat = Uri.encodeQueryComponent(outputFormat.trim());
+    return '$baseUrl/v1/text-to-speech/$encodedVoiceId'
+        '?output_format=$encodedOutputFormat';
+  }
+
+  static String _extensionForElevenLabsOutput(String outputFormat) {
+    final normalized = outputFormat.trim().toLowerCase();
+    if (normalized.startsWith('wav')) {
+      return 'wav';
+    }
+    if (normalized.startsWith('pcm')) {
+      return 'pcm';
+    }
+    return 'mp3';
+  }
+
+  static String _contentTypeForElevenLabsOutput(String outputFormat) {
+    final extension = _extensionForElevenLabsOutput(outputFormat);
+    if (extension == 'wav') {
+      return 'audio/wav';
+    }
+    if (extension == 'pcm') {
+      return 'audio/L16';
+    }
+    return 'audio/mpeg';
+  }
 
   @visibleForTesting
   static List<String> synthesisTextCandidatesForTest(String text) =>
@@ -1161,6 +1660,71 @@ class TtsService {
         error: e,
       );
       throw TtsException('阿里云 CosyVoice 合成失败：$e');
+    }
+  }
+
+  static Future<List<int>> _synthesizeElevenLabs({
+    required String apiKey,
+    required String endpoint,
+    required String model,
+    required String text,
+  }) async {
+    final headers = {
+      'xi-api-key': apiKey,
+      'Content-Type': 'application/json',
+    };
+    final body = {
+      'text': text,
+      'model_id': model,
+    };
+    try {
+      _trace(
+        'elevenlabs request start model=$model textLen=${text.length}',
+      );
+      final override = _elevenLabsPostOverrideForTest;
+      if (override != null) {
+        return await override(
+          endpoint: endpoint,
+          headers: headers,
+          body: body,
+        );
+      }
+      final response = await _dio.post<List<int>>(
+        endpoint,
+        options: Options(
+          headers: headers,
+          responseType: ResponseType.bytes,
+          validateStatus: (_) => true,
+          connectTimeout: const Duration(seconds: 20),
+          receiveTimeout: const Duration(seconds: 60),
+        ),
+        data: body,
+      );
+      final statusCode = response.statusCode ?? 0;
+      if (statusCode < 200 || statusCode >= 300) {
+        throw TtsException(
+          'ElevenLabs 请求失败 HTTP $statusCode：${_remoteErrorMessage(response.data)}',
+        );
+      }
+      final bytes = response.data ?? const <int>[];
+      if (bytes.isEmpty) {
+        throw const TtsException('ElevenLabs 未返回音频数据');
+      }
+      return bytes;
+    } on DioException catch (e) {
+      throw _mapDioException(
+        e,
+        fallbackMessage: 'ElevenLabs 网络请求失败，请检查网络或 API Key',
+      );
+    } on TtsException {
+      rethrow;
+    } catch (e) {
+      TomatoLogger.error(
+        category: 'tts',
+        event: 'elevenlabs_synthesize.failed',
+        error: e,
+      );
+      throw TtsException('ElevenLabs 语音合成失败：$e');
     }
   }
 
@@ -1317,19 +1881,7 @@ class TtsService {
     DioException exception, {
     required String fallbackMessage,
   }) {
-    final responseData = exception.response?.data;
-    String? serverMessage;
-
-    if (responseData is Map) {
-      final candidate = responseData['message'] ??
-          responseData['msg'] ??
-          responseData['error'];
-      if (candidate != null) {
-        serverMessage = candidate.toString();
-      }
-    } else if (responseData is String && responseData.trim().isNotEmpty) {
-      serverMessage = responseData.trim();
-    }
+    final serverMessage = _serverMessageFromPayload(exception.response?.data);
 
     TomatoLogger.warn(
       category: 'tts',
@@ -1348,6 +1900,42 @@ class TtsService {
     return TtsException(
       statusPart.isEmpty ? fallbackMessage : '$fallbackMessage$statusPart',
     );
+  }
+
+  static String? _serverMessageFromPayload(Object? payload) {
+    if (payload is String && payload.trim().isNotEmpty) {
+      return payload.trim();
+    }
+    final map = _mapValue(payload);
+    for (final key in const ['message', 'msg', 'error', 'detail', 'code']) {
+      final message = _serverMessageFromValue(map[key]);
+      if (message != null && message.isNotEmpty) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  static String? _serverMessageFromValue(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is String) {
+      final trimmed = value.trim();
+      return trimmed.isEmpty ? null : trimmed;
+    }
+    if (value is Map) {
+      final map = _mapValue(value);
+      final status = _serverMessageFromValue(map['status']);
+      final message = _serverMessageFromValue(map['message']) ??
+          _serverMessageFromValue(map['error']) ??
+          _serverMessageFromValue(map['detail']);
+      if (status != null && message != null) {
+        return '$status: $message';
+      }
+      return message ?? status;
+    }
+    return value.toString().trim();
   }
 
   static int? _parsePacketCode(Object? value) {

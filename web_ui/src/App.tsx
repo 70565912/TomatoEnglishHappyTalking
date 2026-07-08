@@ -59,6 +59,7 @@ import type {
   RecordingVideoVersion,
   SongSource,
   AiProvider,
+  TtsProvider,
   StorySeries,
 } from './types';
 import './styles.css';
@@ -119,6 +120,10 @@ const ALIYUN_TTS_MODEL_OPTIONS: SelectOption[] = [
   { value: 'cosyvoice-v3.5-plus', label: 'cosyvoice-v3.5-plus · 更高效果' },
 ];
 
+const ALIYUN_MUSIC_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'fun-music-v1', label: 'fun-music-v1 · 百聆 Fun-Music' },
+];
+
 const ALIYUN_ASR_MODEL_OPTIONS: SelectOption[] = [
   { value: 'qwen3-asr-flash', label: 'qwen3-asr-flash · 当前默认' },
   { value: 'fun-asr', label: 'fun-asr · 专业文件识别' },
@@ -142,6 +147,27 @@ const VOLC_IMAGE_MODEL_OPTIONS: SelectOption[] = [
 
 const VOLC_TTS_RESOURCE_OPTIONS: SelectOption[] = [
   { value: 'seed-tts-2.0', label: 'seed-tts-2.0 · Doubao TTS 2.0' },
+];
+
+const ELEVENLABS_TTS_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'eleven_multilingual_v2', label: 'eleven_multilingual_v2 · 多语言默认' },
+  { value: 'eleven_turbo_v2_5', label: 'eleven_turbo_v2_5 · 低延迟' },
+  { value: 'eleven_flash_v2_5', label: 'eleven_flash_v2_5 · 快速预览' },
+];
+
+const ELEVENLABS_TTS_OUTPUT_OPTIONS: SelectOption[] = [
+  { value: 'mp3_44100_128', label: 'mp3_44100_128 · 默认 MP3' },
+  { value: 'mp3_44100_192', label: 'mp3_44100_192 · 高码率 MP3' },
+  { value: 'mp3_22050_32', label: 'mp3_22050_32 · 小文件 MP3' },
+];
+
+const ELEVENLABS_MUSIC_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'music_v2', label: 'music_v2 · 默认音乐模型' },
+];
+
+const ELEVENLABS_MUSIC_OUTPUT_OPTIONS: SelectOption[] = [
+  { value: 'mp3_44100_128', label: 'mp3_44100_128 · 默认 MP3' },
+  { value: 'mp3_44100_192', label: 'mp3_44100_192 · 高码率 MP3' },
 ];
 
 const asset = (name: string) => `assets/ui/${name}`;
@@ -3694,6 +3720,17 @@ function SongCreationPanel({
       });
       return;
     }
+    if (source === 'elevenlabs_music') {
+      void runSongCommand('listening.songGenerate', {
+        source: 'elevenlabs_music',
+        lyrics: '',
+      }, '已提交 ElevenLabs Music 生成任务', {
+        title: '正在提交 ElevenLabs 歌曲',
+        detail: '正在向 ElevenLabs Music 提交歌曲生成，请等待服务返回。',
+        timeoutSeconds: 480,
+      });
+      return;
+    }
     void runSongCommand('listening.songGenerate', {
       source: 'suno',
       lyrics: '',
@@ -3744,22 +3781,33 @@ function SongCreationPanel({
       {songState?.status === 'error' && songState.errorMessage && (
         <p className="playback-cue error">{songState.errorMessage}</p>
       )}
-      <div className="button-row creation-actions">
+      <div className="button-row creation-actions song-generation-actions">
         <button
           className="primary-action"
           type="button"
+          aria-label="生成百聆歌曲"
           disabled={busy || songState?.status === 'generating'}
           onClick={() => setSongGenerateConfirm('bailian_fun_music')}
         >
-          <Icon name="music" /> 生成百聆歌曲
+          <Icon name="music" /> 百聆
+        </button>
+        <button
+          className="primary-action"
+          type="button"
+          aria-label="生成 ElevenLabs 歌曲"
+          disabled={busy || songState?.status === 'generating'}
+          onClick={() => setSongGenerateConfirm('elevenlabs_music')}
+        >
+          <Icon name="music" /> ElevenLabs
         </button>
         <button
           className="suno-action"
           type="button"
+          aria-label="生成 Suno 歌曲"
           disabled={busy || songState?.status === 'generating'}
           onClick={() => setSongGenerateConfirm('suno')}
         >
-          <Icon name="music" /> 生成 Suno 歌曲
+          <Icon name="music" /> Suno
         </button>
         {songState?.source === 'suno' && waitingConfirm && (
           <button
@@ -9325,8 +9373,14 @@ function SettingsPage({
   const [songProvider, setSongProvider] = useState<SongGenerationSource>(
     normalizeSongGenerationSource(settings?.song?.songProvider ?? 'suno'),
   );
-  const [aiProvider, setAiProvider] = useState<AiProvider>(
-    normalizeAiProvider(settings?.cloud?.aiProvider),
+  const [textProvider, setTextProvider] = useState<AiProvider>(
+    normalizeAiProvider(settings?.cloud?.textProvider ?? settings?.cloud?.aiProvider),
+  );
+  const [imageProvider, setImageProvider] = useState<AiProvider>(
+    normalizeAiProvider(settings?.cloud?.imageProvider ?? settings?.cloud?.aiProvider),
+  );
+  const [ttsProvider, setTtsProvider] = useState<TtsProvider>(
+    normalizeTtsProvider(settings?.cloud?.ttsProvider ?? settings?.cloud?.aiProvider),
   );
   const [aliyunBailianApiKey, setAliyunBailianApiKey] = useState('');
   const [clearAliyunBailianApiKey, setClearAliyunBailianApiKey] = useState(false);
@@ -9353,6 +9407,18 @@ function SettingsPage({
   const [clearVolcSpeechApiKey, setClearVolcSpeechApiKey] = useState(false);
   const [volcTtsResourceId, setVolcTtsResourceId] = useState(settings?.cloud?.volcengine.ttsResourceId ?? '');
   const [volcTtsSpeakerId, setVolcTtsSpeakerId] = useState(settings?.cloud?.volcengine.ttsSpeakerId ?? '');
+  const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
+  const [clearElevenLabsApiKey, setClearElevenLabsApiKey] = useState(false);
+  const [elevenLabsBaseUrl, setElevenLabsBaseUrl] = useState(settings?.cloud?.elevenLabs?.baseUrl ?? '');
+  const [elevenLabsTtsModel, setElevenLabsTtsModel] = useState(settings?.cloud?.elevenLabs?.ttsModel ?? '');
+  const [elevenLabsTtsVoiceId, setElevenLabsTtsVoiceId] = useState(settings?.cloud?.elevenLabs?.ttsVoiceId ?? '');
+  const [elevenLabsTtsOutputFormat, setElevenLabsTtsOutputFormat] = useState(
+    settings?.cloud?.elevenLabs?.ttsOutputFormat ?? '',
+  );
+  const [elevenLabsMusicModel, setElevenLabsMusicModel] = useState(settings?.cloud?.elevenLabs?.musicModel ?? '');
+  const [elevenLabsMusicOutputFormat, setElevenLabsMusicOutputFormat] = useState(
+    settings?.cloud?.elevenLabs?.musicOutputFormat ?? '',
+  );
   const [savingCloudSettings, setSavingCloudSettings] = useState(false);
   const [savingSongSettings, setSavingSongSettings] = useState(false);
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
@@ -9367,7 +9433,9 @@ function SettingsPage({
     setSunoOutputDirectory(payload.song?.sunoOutputDirectory ?? '');
     setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
     setSongProvider(normalizeSongGenerationSource(payload.song?.songProvider ?? 'suno'));
-    setAiProvider(normalizeAiProvider(payload.cloud?.aiProvider));
+    setTextProvider(normalizeAiProvider(payload.cloud?.textProvider ?? payload.cloud?.aiProvider));
+    setImageProvider(normalizeAiProvider(payload.cloud?.imageProvider ?? payload.cloud?.aiProvider));
+    setTtsProvider(normalizeTtsProvider(payload.cloud?.ttsProvider ?? payload.cloud?.aiProvider));
     setAliyunBailianApiKey('');
     setClearAliyunBailianApiKey(false);
     setAliyunBailianBaseUrl(payload.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1');
@@ -9391,6 +9459,14 @@ function SettingsPage({
     setClearVolcSpeechApiKey(false);
     setVolcTtsResourceId(payload.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0');
     setVolcTtsSpeakerId(payload.cloud?.volcengine.ttsSpeakerId ?? payload.tts.speakerId);
+    setElevenLabsApiKey('');
+    setClearElevenLabsApiKey(false);
+    setElevenLabsBaseUrl(payload.cloud?.elevenLabs?.baseUrl ?? 'https://api.elevenlabs.io');
+    setElevenLabsTtsModel(payload.cloud?.elevenLabs?.ttsModel ?? 'eleven_multilingual_v2');
+    setElevenLabsTtsVoiceId(payload.cloud?.elevenLabs?.ttsVoiceId ?? payload.tts.speakerId);
+    setElevenLabsTtsOutputFormat(payload.cloud?.elevenLabs?.ttsOutputFormat ?? 'mp3_44100_128');
+    setElevenLabsMusicModel(payload.cloud?.elevenLabs?.musicModel ?? 'music_v2');
+    setElevenLabsMusicOutputFormat(payload.cloud?.elevenLabs?.musicOutputFormat ?? 'mp3_44100_128');
   };
 
   useEffect(() => {
@@ -9425,9 +9501,14 @@ function SettingsPage({
     return <LoadingPanel text="正在打开声音设置" />;
   }
 
-  const activeVoices = aiProvider === 'aliyun_bailian'
+  const activeVoices = ttsProvider === 'aliyun_bailian'
     ? (current.voiceCatalog?.aliyunBailian ?? [])
-    : (current.voiceCatalog?.volcengine ?? current.voices);
+    : ttsProvider === 'elevenlabs'
+      ? (current.voiceCatalog?.elevenLabs ?? [])
+      : (current.voiceCatalog?.volcengine ?? current.voices);
+  const aliyunVoiceOptions = current.voiceCatalog?.aliyunBailian ?? [];
+  const volcVoiceOptions = current.voiceCatalog?.volcengine ?? current.voices;
+  const elevenLabsVoiceOptions = current.voiceCatalog?.elevenLabs ?? [];
   const selectedVoice = activeVoices.find((voice) => voice.id === selectedVoiceId);
   const unchanged = selectedVoiceId === current.tts.speakerId;
   const safetyRules = current.contentSafety?.rules ?? [];
@@ -9436,7 +9517,9 @@ function SettingsPage({
     Number(sunoTimeoutMinutes) === Number(current.song?.sunoTimeoutMinutes ?? 20) &&
     songProvider === normalizeSongGenerationSource(current.song?.songProvider ?? 'suno');
   const cloudSettingsUnchanged =
-    aiProvider === normalizeAiProvider(current.cloud?.aiProvider) &&
+    textProvider === normalizeAiProvider(current.cloud?.textProvider ?? current.cloud?.aiProvider) &&
+    imageProvider === normalizeAiProvider(current.cloud?.imageProvider ?? current.cloud?.aiProvider) &&
+    ttsProvider === normalizeTtsProvider(current.cloud?.ttsProvider ?? current.cloud?.aiProvider) &&
     !aliyunBailianApiKey.trim() &&
     !clearAliyunBailianApiKey &&
     aliyunBailianBaseUrl.trim() === (current.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1') &&
@@ -9459,22 +9542,44 @@ function SettingsPage({
     !volcSpeechApiKey.trim() &&
     !clearVolcSpeechApiKey &&
     volcTtsResourceId.trim() === (current.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0') &&
-    volcTtsSpeakerId.trim() === (current.cloud?.volcengine.ttsSpeakerId ?? current.tts.speakerId);
+    volcTtsSpeakerId.trim() === (current.cloud?.volcengine.ttsSpeakerId ?? current.tts.speakerId) &&
+    !elevenLabsApiKey.trim() &&
+    !clearElevenLabsApiKey &&
+    elevenLabsBaseUrl.trim() === (current.cloud?.elevenLabs?.baseUrl ?? 'https://api.elevenlabs.io') &&
+    elevenLabsTtsModel.trim() === (current.cloud?.elevenLabs?.ttsModel ?? 'eleven_multilingual_v2') &&
+    elevenLabsTtsVoiceId.trim() === (current.cloud?.elevenLabs?.ttsVoiceId ?? current.tts.speakerId) &&
+    elevenLabsTtsOutputFormat.trim() === (current.cloud?.elevenLabs?.ttsOutputFormat ?? 'mp3_44100_128') &&
+    elevenLabsMusicModel.trim() === (current.cloud?.elevenLabs?.musicModel ?? 'music_v2') &&
+    elevenLabsMusicOutputFormat.trim() === (current.cloud?.elevenLabs?.musicOutputFormat ?? 'mp3_44100_128');
 
-  const selectCloudProvider = (provider: AiProvider) => {
-    setAiProvider(provider);
+  const selectTextProvider = (provider: AiProvider) => {
+    setTextProvider(provider);
+    setStatus(null);
+  };
+
+  const selectImageProvider = (provider: AiProvider) => {
+    setImageProvider(provider);
+    setStatus(null);
+  };
+
+  const selectTtsProvider = (provider: TtsProvider) => {
+    setTtsProvider(provider);
     setSelectedVoiceId(
       provider === 'aliyun_bailian'
         ? (aliyunBailianTtsVoice.trim() || 'loongabby_v3')
-        : (volcTtsSpeakerId.trim() || current.tts.speakerId),
+        : provider === 'elevenlabs'
+          ? (elevenLabsTtsVoiceId.trim() || current.cloud?.elevenLabs?.ttsVoiceId || current.tts.speakerId)
+          : (volcTtsSpeakerId.trim() || current.tts.speakerId),
     );
     setStatus(null);
   };
 
   const selectVoice = (voiceId: string) => {
     setSelectedVoiceId(voiceId);
-    if (aiProvider === 'aliyun_bailian') {
+    if (ttsProvider === 'aliyun_bailian') {
       setAliyunBailianTtsVoice(voiceId);
+    } else if (ttsProvider === 'elevenlabs') {
+      setElevenLabsTtsVoiceId(voiceId);
     } else {
       setVolcTtsSpeakerId(voiceId);
     }
@@ -9489,7 +9594,7 @@ function SettingsPage({
     try {
       await sendNative<VoicePreviewPayload>('settings.previewVoice', {
         speakerId,
-        aiProvider,
+        ttsProvider,
       });
       setStatus('声音预览已播放');
     } catch (error) {
@@ -9508,7 +9613,7 @@ function SettingsPage({
     try {
       const payload = await sendNative<SettingsState>('settings.saveVoice', {
         speakerId: selectedVoiceId,
-        aiProvider,
+        ttsProvider,
       });
       syncSettingsDraft(payload);
       onLoaded(payload);
@@ -9544,7 +9649,10 @@ function SettingsPage({
     setStatus(null);
     try {
       const payload = await sendNative<SettingsState>('settings.saveCloud', {
-        aiProvider,
+        aiProvider: textProvider,
+        textProvider,
+        imageProvider,
+        ttsProvider,
         aliyunBailianApiKey: aliyunBailianApiKey.trim(),
         clearAliyunBailianApiKey,
         aliyunBailianBaseUrl: aliyunBailianBaseUrl.trim(),
@@ -9568,6 +9676,14 @@ function SettingsPage({
         clearVolcSpeechApiKey,
         volcTtsResourceId: volcTtsResourceId.trim(),
         volcTtsSpeakerId: volcTtsSpeakerId.trim(),
+        elevenLabsApiKey: elevenLabsApiKey.trim(),
+        clearElevenLabsApiKey,
+        elevenLabsBaseUrl: elevenLabsBaseUrl.trim(),
+        elevenLabsTtsModel: elevenLabsTtsModel.trim(),
+        elevenLabsTtsVoiceId: elevenLabsTtsVoiceId.trim(),
+        elevenLabsTtsOutputFormat: elevenLabsTtsOutputFormat.trim(),
+        elevenLabsMusicModel: elevenLabsMusicModel.trim(),
+        elevenLabsMusicOutputFormat: elevenLabsMusicOutputFormat.trim(),
       });
       syncSettingsDraft(payload);
       onLoaded(payload);
@@ -9660,7 +9776,7 @@ function SettingsPage({
                     <span className="voice-avatar">{voice.name.slice(0, 1)}</span>
                     <span>
                       <b>{voice.name}</b>
-                      <small>{displayVoiceLanguage(voice.lang)} · {voice.gender === 'female' ? '女声' : '男声'}</small>
+                      <small>{displayVoiceLanguage(voice.lang)} · {displayVoiceGender(voice.gender)}</small>
                     </span>
                     <button
                       className="voice-preview-button"
@@ -9687,82 +9803,79 @@ function SettingsPage({
               <span>当前声音</span>
               <b>{selectedVoice?.name ?? '未选择'}</b>
               {selectedVoice && (
-                <small>{displayVoiceLanguage(selectedVoice.lang)} · {selectedVoice.gender === 'female' ? '女声' : '男声'}</small>
+                <small>{displayVoiceLanguage(selectedVoice.lang)} · {displayVoiceGender(selectedVoice.gender)}</small>
               )}
             </aside>
           </div>
 
           <FieldGroup title="云服务">
-            <div className="settings-tabs" role="tablist" aria-label="AI 文本供应商">
-              <button
-                className={aiProvider === 'aliyun_bailian' ? 'active' : ''}
-                type="button"
-                role="tab"
-                aria-selected={aiProvider === 'aliyun_bailian'}
-                onClick={() => selectCloudProvider('aliyun_bailian')}
-              >
-                阿里云百炼
-              </button>
-              <button
-                className={aiProvider === 'volcengine' ? 'active' : ''}
-                type="button"
-                role="tab"
-                aria-selected={aiProvider === 'volcengine'}
-                onClick={() => selectCloudProvider('volcengine')}
-              >
-                火山引擎
-              </button>
-            </div>
             <div className="cloud-settings-panel">
-              {aiProvider === 'aliyun_bailian' ? (
-                <>
-                  <div className="settings-subsection">
-                    <h3>凭据</h3>
-                    <SecretKeyRow
-                      id="aliyun-bailian-api-key"
-                      label="百炼 Key"
-                      value={aliyunBailianApiKey}
-                      configured={Boolean(current.cloud?.aliyunBailian.apiKeyConfigured)}
-                      mask={current.cloud?.aliyunBailian.apiKeyMask}
-                      pending={clearAliyunBailianApiKey}
-                      disabled={savingCloudSettings}
-                      onValueChange={(value) => {
-                        setAliyunBailianApiKey(value);
-                        if (value.trim()) setClearAliyunBailianApiKey(false);
-                      }}
-                      onClear={() => {
-                        setAliyunBailianApiKey('');
-                        setClearAliyunBailianApiKey(Boolean(current.cloud?.aliyunBailian.apiKeyConfigured));
-                      }}
-                      onCancel={() => setClearAliyunBailianApiKey(false)}
+              <div className="settings-subsection">
+                <h3>文本处理</h3>
+                <div className="settings-tabs" role="tablist" aria-label="文本处理供应商">
+                  <button
+                    className={textProvider === 'aliyun_bailian' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-selected={textProvider === 'aliyun_bailian'}
+                    onClick={() => selectTextProvider('aliyun_bailian')}
+                  >
+                    阿里云百炼
+                  </button>
+                  <button
+                    className={textProvider === 'volcengine' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-selected={textProvider === 'volcengine'}
+                    onClick={() => selectTextProvider('volcengine')}
+                  >
+                    火山引擎
+                  </button>
+                </div>
+                <div className="settings-grid model-settings-grid">
+                  {textProvider === 'aliyun_bailian' ? (
+                    <ModelSelectField
+                      label="百炼文本模型"
+                      value={aliyunBailianTextModel}
+                      options={ALIYUN_TEXT_MODEL_OPTIONS}
+                      onChange={setAliyunBailianTextModel}
                     />
-                  </div>
-                  <div className="settings-subsection">
-                    <h3>平台地址</h3>
-                    <label className="settings-label">
-                      <span>百炼兼容模式 Base URL</span>
-                      <input
-                        value={aliyunBailianBaseUrl}
-                        onChange={(event) => setAliyunBailianBaseUrl(event.target.value)}
-                      />
-                    </label>
-                    <label className="settings-label">
-                      <span>DashScope API Base URL</span>
-                      <input
-                        value={aliyunBailianApiBaseUrl}
-                        onChange={(event) => setAliyunBailianApiBaseUrl(event.target.value)}
-                      />
-                    </label>
-                  </div>
-                  <div className="settings-subsection">
-                    <h3>模型与语音</h3>
-                    <div className="settings-grid model-settings-grid">
-                      <ModelSelectField
-                        label="百炼文本模型"
-                        value={aliyunBailianTextModel}
-                        options={ALIYUN_TEXT_MODEL_OPTIONS}
-                        onChange={setAliyunBailianTextModel}
-                      />
+                  ) : (
+                    <ModelSelectField
+                      label="方舟文本模型"
+                      value={volcArkTextModel}
+                      options={VOLC_TEXT_MODEL_OPTIONS}
+                      onChange={setVolcArkTextModel}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="settings-subsection">
+                <h3>图片生成</h3>
+                <div className="settings-tabs" role="tablist" aria-label="图片生成供应商">
+                  <button
+                    className={imageProvider === 'aliyun_bailian' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-selected={imageProvider === 'aliyun_bailian'}
+                    onClick={() => selectImageProvider('aliyun_bailian')}
+                  >
+                    阿里云万相
+                  </button>
+                  <button
+                    className={imageProvider === 'volcengine' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-selected={imageProvider === 'volcengine'}
+                    onClick={() => selectImageProvider('volcengine')}
+                  >
+                    火山 Seedream
+                  </button>
+                </div>
+                <div className="settings-grid model-settings-grid">
+                  {imageProvider === 'aliyun_bailian' ? (
+                    <>
                       <ModelSelectField
                         label="万相图片模型"
                         value={aliyunBailianImageModel}
@@ -9776,6 +9889,79 @@ function SettingsPage({
                         options={ALIYUN_IMAGE_SIZE_OPTIONS}
                         onChange={setAliyunBailianImageSize}
                       />
+                    </>
+                  ) : (
+                    <ModelSelectField
+                      label="Seedream 图片模型"
+                      value={volcArkImageModel}
+                      options={VOLC_IMAGE_MODEL_OPTIONS}
+                      onChange={setVolcArkImageModel}
+                      hint="仅列出当前顺序组图链路可用的 Seedream 模型。"
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="settings-subsection">
+                <h3>音乐生成模型</h3>
+                <div className="settings-grid model-settings-grid">
+                  <ModelSelectField
+                    label="百聆音乐模型"
+                    value={aliyunBailianMusicModel}
+                    options={ALIYUN_MUSIC_MODEL_OPTIONS}
+                    onChange={setAliyunBailianMusicModel}
+                  />
+                  <ModelSelectField
+                    label="ElevenLabs 音乐模型"
+                    value={elevenLabsMusicModel}
+                    options={ELEVENLABS_MUSIC_MODEL_OPTIONS}
+                    onChange={setElevenLabsMusicModel}
+                  />
+                  <ModelSelectField
+                    label="ElevenLabs 音乐输出"
+                    value={elevenLabsMusicOutputFormat}
+                    options={ELEVENLABS_MUSIC_OUTPUT_OPTIONS}
+                    onChange={setElevenLabsMusicOutputFormat}
+                  />
+                </div>
+              </div>
+
+              <div className="settings-subsection">
+                <h3>语音合成</h3>
+                <div className="settings-tabs compact-provider-tabs" role="tablist" aria-label="语音合成供应商">
+                  <button
+                    className={ttsProvider === 'aliyun_bailian' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-label="阿里云 CosyVoice"
+                    aria-selected={ttsProvider === 'aliyun_bailian'}
+                    onClick={() => selectTtsProvider('aliyun_bailian')}
+                  >
+                    百炼
+                  </button>
+                  <button
+                    className={ttsProvider === 'volcengine' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-label="火山 TTS"
+                    aria-selected={ttsProvider === 'volcengine'}
+                    onClick={() => selectTtsProvider('volcengine')}
+                  >
+                    火山
+                  </button>
+                  <button
+                    className={ttsProvider === 'elevenlabs' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-selected={ttsProvider === 'elevenlabs'}
+                    onClick={() => selectTtsProvider('elevenlabs')}
+                  >
+                    ElevenLabs
+                  </button>
+                </div>
+                <div className="settings-grid model-settings-grid">
+                  {ttsProvider === 'aliyun_bailian' && (
+                    <>
                       <ModelSelectField
                         label="CosyVoice 模型"
                         value={aliyunBailianTtsModel}
@@ -9788,7 +9974,7 @@ function SettingsPage({
                           value={aliyunBailianTtsVoice}
                           onChange={(event) => selectVoice(event.target.value)}
                         >
-                          {(current.voiceCatalog?.aliyunBailian ?? activeVoices).map((voice) => (
+                          {aliyunVoiceOptions.map((voice) => (
                             <option key={voice.id} value={voice.id}>{voice.name} · {voice.id}</option>
                           ))}
                         </select>
@@ -9800,95 +9986,10 @@ function SettingsPage({
                           onChange={(event) => setAliyunBailianTtsSampleRate(event.target.value)}
                         />
                       </label>
-                      <ModelSelectField
-                        label="Qwen-ASR 文件模型"
-                        value={aliyunBailianAsrModel}
-                        options={ALIYUN_ASR_MODEL_OPTIONS}
-                        onChange={setAliyunBailianAsrModel}
-                      />
-                      <ModelSelectField
-                        label="Qwen-ASR 实时模型"
-                        value={aliyunBailianRealtimeAsrModel}
-                        options={ALIYUN_REALTIME_ASR_MODEL_OPTIONS}
-                        onChange={setAliyunBailianRealtimeAsrModel}
-                      />
-                      <label className="settings-label wide-field">
-                        <span>Qwen-ASR 实时 WebSocket</span>
-                        <input
-                          value={aliyunBailianRealtimeAsrUrl}
-                          onChange={(event) => setAliyunBailianRealtimeAsrUrl(event.target.value)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="settings-subsection">
-                    <h3>凭据</h3>
-                    <SecretKeyRow
-                      id="volc-ark-api-key"
-                      label="方舟 Key"
-                      value={volcArkApiKey}
-                      configured={Boolean(current.cloud?.volcengine.arkApiKeyConfigured)}
-                      mask={current.cloud?.volcengine.arkApiKeyMask}
-                      pending={clearVolcArkApiKey}
-                      disabled={savingCloudSettings}
-                      onValueChange={(value) => {
-                        setVolcArkApiKey(value);
-                        if (value.trim()) setClearVolcArkApiKey(false);
-                      }}
-                      onClear={() => {
-                        setVolcArkApiKey('');
-                        setClearVolcArkApiKey(Boolean(current.cloud?.volcengine.arkApiKeyConfigured));
-                      }}
-                      onCancel={() => setClearVolcArkApiKey(false)}
-                    />
-                    <SecretKeyRow
-                      id="volc-speech-api-key"
-                      label="火山语音 Key"
-                      value={volcSpeechApiKey}
-                      configured={Boolean(current.cloud?.volcengine.speechApiKeyConfigured)}
-                      mask={current.cloud?.volcengine.speechApiKeyMask}
-                      pending={clearVolcSpeechApiKey}
-                      disabled={savingCloudSettings}
-                      onValueChange={(value) => {
-                        setVolcSpeechApiKey(value);
-                        if (value.trim()) setClearVolcSpeechApiKey(false);
-                      }}
-                      onClear={() => {
-                        setVolcSpeechApiKey('');
-                        setClearVolcSpeechApiKey(Boolean(current.cloud?.volcengine.speechApiKeyConfigured));
-                      }}
-                      onCancel={() => setClearVolcSpeechApiKey(false)}
-                    />
-                  </div>
-                  <div className="settings-subsection">
-                    <h3>平台地址</h3>
-                    <label className="settings-label">
-                      <span>方舟 Base URL</span>
-                      <input
-                        value={volcArkBaseUrl}
-                        onChange={(event) => setVolcArkBaseUrl(event.target.value)}
-                      />
-                    </label>
-                  </div>
-                  <div className="settings-subsection">
-                    <h3>模型与语音</h3>
-                    <div className="settings-grid model-settings-grid">
-                      <ModelSelectField
-                        label="方舟文本模型"
-                        value={volcArkTextModel}
-                        options={VOLC_TEXT_MODEL_OPTIONS}
-                        onChange={setVolcArkTextModel}
-                      />
-                      <ModelSelectField
-                        label="Seedream 图片模型"
-                        value={volcArkImageModel}
-                        options={VOLC_IMAGE_MODEL_OPTIONS}
-                        onChange={setVolcArkImageModel}
-                        hint="仅列出当前顺序组图链路可用的 Seedream 模型。"
-                      />
+                    </>
+                  )}
+                  {ttsProvider === 'volcengine' && (
+                    <>
                       <ModelSelectField
                         label="Doubao TTS Resource"
                         value={volcTtsResourceId}
@@ -9901,15 +10002,180 @@ function SettingsPage({
                           value={volcTtsSpeakerId}
                           onChange={(event) => selectVoice(event.target.value)}
                         >
-                          {(current.voiceCatalog?.volcengine ?? activeVoices).map((voice) => (
+                          {volcVoiceOptions.map((voice) => (
                             <option key={voice.id} value={voice.id}>{voice.name} · {voice.id}</option>
                           ))}
                         </select>
                       </label>
-                    </div>
-                  </div>
-                </>
-              )}
+                    </>
+                  )}
+                  {ttsProvider === 'elevenlabs' && (
+                    <>
+                      <ModelSelectField
+                        label="ElevenLabs TTS 模型"
+                        value={elevenLabsTtsModel}
+                        options={ELEVENLABS_TTS_MODEL_OPTIONS}
+                        onChange={setElevenLabsTtsModel}
+                      />
+                      <label className="settings-label">
+                        <span>ElevenLabs 声音</span>
+                        <select
+                          value={elevenLabsTtsVoiceId}
+                          onChange={(event) => selectVoice(event.target.value)}
+                        >
+                          {elevenLabsTtsVoiceId &&
+                            !elevenLabsVoiceOptions.some((voice) => voice.id === elevenLabsTtsVoiceId) && (
+                              <option value={elevenLabsTtsVoiceId}>{`当前声音 · ${elevenLabsTtsVoiceId}`}</option>
+                            )}
+                          {elevenLabsVoiceOptions.map((voice) => (
+                            <option key={voice.id} value={voice.id}>{voice.name} · {voice.id}</option>
+                          ))}
+                        </select>
+                        {elevenLabsVoiceOptions.length === 0 && (
+                          <small className="settings-hint">
+                            {current.voiceCatalogErrors?.elevenLabs ?? '未获取到在线声音列表，请先配置 ElevenLabs Key 后刷新设置页。'}
+                          </small>
+                        )}
+                      </label>
+                      <ModelSelectField
+                        label="ElevenLabs 输出格式"
+                        value={elevenLabsTtsOutputFormat}
+                        options={ELEVENLABS_TTS_OUTPUT_OPTIONS}
+                        onChange={setElevenLabsTtsOutputFormat}
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="settings-subsection">
+                <h3>凭据</h3>
+                <SecretKeyRow
+                  id="aliyun-bailian-api-key"
+                  label="百炼 Key"
+                  value={aliyunBailianApiKey}
+                  configured={Boolean(current.cloud?.aliyunBailian.apiKeyConfigured)}
+                  mask={current.cloud?.aliyunBailian.apiKeyMask}
+                  pending={clearAliyunBailianApiKey}
+                  disabled={savingCloudSettings}
+                  onValueChange={(value) => {
+                    setAliyunBailianApiKey(value);
+                    if (value.trim()) setClearAliyunBailianApiKey(false);
+                  }}
+                  onClear={() => {
+                    setAliyunBailianApiKey('');
+                    setClearAliyunBailianApiKey(Boolean(current.cloud?.aliyunBailian.apiKeyConfigured));
+                  }}
+                  onCancel={() => setClearAliyunBailianApiKey(false)}
+                />
+                <SecretKeyRow
+                  id="volc-ark-api-key"
+                  label="方舟 Key"
+                  value={volcArkApiKey}
+                  configured={Boolean(current.cloud?.volcengine.arkApiKeyConfigured)}
+                  mask={current.cloud?.volcengine.arkApiKeyMask}
+                  pending={clearVolcArkApiKey}
+                  disabled={savingCloudSettings}
+                  onValueChange={(value) => {
+                    setVolcArkApiKey(value);
+                    if (value.trim()) setClearVolcArkApiKey(false);
+                  }}
+                  onClear={() => {
+                    setVolcArkApiKey('');
+                    setClearVolcArkApiKey(Boolean(current.cloud?.volcengine.arkApiKeyConfigured));
+                  }}
+                  onCancel={() => setClearVolcArkApiKey(false)}
+                />
+                <SecretKeyRow
+                  id="volc-speech-api-key"
+                  label="火山语音 Key"
+                  value={volcSpeechApiKey}
+                  configured={Boolean(current.cloud?.volcengine.speechApiKeyConfigured)}
+                  mask={current.cloud?.volcengine.speechApiKeyMask}
+                  pending={clearVolcSpeechApiKey}
+                  disabled={savingCloudSettings}
+                  onValueChange={(value) => {
+                    setVolcSpeechApiKey(value);
+                    if (value.trim()) setClearVolcSpeechApiKey(false);
+                  }}
+                  onClear={() => {
+                    setVolcSpeechApiKey('');
+                    setClearVolcSpeechApiKey(Boolean(current.cloud?.volcengine.speechApiKeyConfigured));
+                  }}
+                  onCancel={() => setClearVolcSpeechApiKey(false)}
+                />
+                <SecretKeyRow
+                  id="elevenlabs-api-key"
+                  label="ElevenLabs Key"
+                  value={elevenLabsApiKey}
+                  configured={Boolean(current.cloud?.elevenLabs?.apiKeyConfigured)}
+                  mask={current.cloud?.elevenLabs?.apiKeyMask}
+                  pending={clearElevenLabsApiKey}
+                  disabled={savingCloudSettings}
+                  onValueChange={(value) => {
+                    setElevenLabsApiKey(value);
+                    if (value.trim()) setClearElevenLabsApiKey(false);
+                  }}
+                  onClear={() => {
+                    setElevenLabsApiKey('');
+                    setClearElevenLabsApiKey(Boolean(current.cloud?.elevenLabs?.apiKeyConfigured));
+                  }}
+                  onCancel={() => setClearElevenLabsApiKey(false)}
+                />
+              </div>
+
+              <div className="settings-subsection">
+                <h3>平台地址与识别</h3>
+                <div className="settings-grid model-settings-grid">
+                  <label className="settings-label">
+                    <span>百炼兼容模式 Base URL</span>
+                    <input
+                      value={aliyunBailianBaseUrl}
+                      onChange={(event) => setAliyunBailianBaseUrl(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>DashScope API Base URL</span>
+                    <input
+                      value={aliyunBailianApiBaseUrl}
+                      onChange={(event) => setAliyunBailianApiBaseUrl(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>方舟 Base URL</span>
+                    <input
+                      value={volcArkBaseUrl}
+                      onChange={(event) => setVolcArkBaseUrl(event.target.value)}
+                    />
+                  </label>
+                  <label className="settings-label">
+                    <span>ElevenLabs Base URL</span>
+                    <input
+                      value={elevenLabsBaseUrl}
+                      onChange={(event) => setElevenLabsBaseUrl(event.target.value)}
+                    />
+                  </label>
+                  <ModelSelectField
+                    label="Qwen-ASR 文件模型"
+                    value={aliyunBailianAsrModel}
+                    options={ALIYUN_ASR_MODEL_OPTIONS}
+                    onChange={setAliyunBailianAsrModel}
+                  />
+                  <ModelSelectField
+                    label="Qwen-ASR 实时模型"
+                    value={aliyunBailianRealtimeAsrModel}
+                    options={ALIYUN_REALTIME_ASR_MODEL_OPTIONS}
+                    onChange={setAliyunBailianRealtimeAsrModel}
+                  />
+                  <label className="settings-label wide-field">
+                    <span>Qwen-ASR 实时 WebSocket</span>
+                    <input
+                      value={aliyunBailianRealtimeAsrUrl}
+                      onChange={(event) => setAliyunBailianRealtimeAsrUrl(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
             <button
               className="ghost-action"
@@ -9922,24 +10188,36 @@ function SettingsPage({
           </FieldGroup>
 
           <FieldGroup title="歌曲生成">
-            <div className="settings-tabs" role="tablist" aria-label="默认歌曲来源">
+            <div className="settings-tabs compact-provider-tabs" role="tablist" aria-label="默认歌曲来源">
               <button
                 className={songProvider === 'suno' ? 'active' : ''}
                 type="button"
                 role="tab"
+                aria-label="Suno 网页自动化"
                 aria-selected={songProvider === 'suno'}
                 onClick={() => setSongProvider('suno')}
               >
-                Suno 网页自动化
+                Suno
               </button>
               <button
                 className={songProvider === 'bailian_fun_music' ? 'active' : ''}
                 type="button"
                 role="tab"
+                aria-label="阿里云百聆"
                 aria-selected={songProvider === 'bailian_fun_music'}
                 onClick={() => setSongProvider('bailian_fun_music')}
               >
-                阿里云百聆
+                百聆
+              </button>
+              <button
+                className={songProvider === 'elevenlabs_music' ? 'active' : ''}
+                type="button"
+                role="tab"
+                aria-label="ElevenLabs Music"
+                aria-selected={songProvider === 'elevenlabs_music'}
+                onClick={() => setSongProvider('elevenlabs_music')}
+              >
+                ElevenLabs
               </button>
             </div>
             <div className="song-settings-grid">
@@ -9964,7 +10242,7 @@ function SettingsPage({
                     />
                   </label>
                 </>
-              ) : (
+              ) : songProvider === 'bailian_fun_music' ? (
                 <div className="song-provider-summary">
                   <div>
                     <span>百炼 Key</span>
@@ -9973,6 +10251,21 @@ function SettingsPage({
                   <div>
                     <span>百聆音乐模型</span>
                     <b>{aliyunBailianMusicModel || current.cloud?.aliyunBailian.musicModel || 'fun-music-v1'}</b>
+                  </div>
+                </div>
+              ) : (
+                <div className="song-provider-summary">
+                  <div>
+                    <span>ElevenLabs Key</span>
+                    <b>{current.cloud?.elevenLabs?.apiKeyConfigured ? (current.cloud.elevenLabs.apiKeyMask || '已配置') : '未配置'}</b>
+                  </div>
+                  <div>
+                    <span>音乐模型</span>
+                    <b>{elevenLabsMusicModel || current.cloud?.elevenLabs?.musicModel || 'music_v2'}</b>
+                  </div>
+                  <div>
+                    <span>输出格式</span>
+                    <b>{elevenLabsMusicOutputFormat || current.cloud?.elevenLabs?.musicOutputFormat || 'mp3_44100_128'}</b>
                   </div>
                 </div>
               )}
@@ -10901,6 +11194,14 @@ function displayVoiceLanguage(lang: string): string {
   return lang.replaceAll('中文', '中文/英文');
 }
 
+function displayVoiceGender(gender?: string | null): string {
+  const normalized = gender?.trim().toLowerCase();
+  if (normalized === 'female') return '女声';
+  if (normalized === 'male') return '男声';
+  if (normalized === 'neutral') return '中性声';
+  return '未知声线';
+}
+
 function formatDurationMs(durationMs: number): string {
   const safeMs = Math.max(0, Math.round(durationMs));
   const totalSeconds = Math.floor(safeMs / 1000);
@@ -10980,11 +11281,15 @@ function formatRecordingVideoCreatedAt(value?: string | null): string {
 
 function normalizeSongSource(source?: string | null): SongSource {
   if (source === 'external_audio') return 'external_audio';
-  return source === 'bailian_fun_music' ? 'bailian_fun_music' : 'suno';
+  if (source === 'bailian_fun_music') return 'bailian_fun_music';
+  if (source === 'elevenlabs_music') return 'elevenlabs_music';
+  return 'suno';
 }
 
 function normalizeSongGenerationSource(source?: string | null): SongGenerationSource {
-  return source === 'bailian_fun_music' ? 'bailian_fun_music' : 'suno';
+  if (source === 'bailian_fun_music') return 'bailian_fun_music';
+  if (source === 'elevenlabs_music') return 'elevenlabs_music';
+  return 'suno';
 }
 
 function songGenerationConfirmCopy(source: SongGenerationSource): {
@@ -11002,11 +11307,20 @@ function songGenerationConfirmCopy(source: SongGenerationSource): {
       confirmLabel: '继续',
     };
   }
+  if (source === 'bailian_fun_music') {
+    return {
+      ariaLabel: '确认生成歌曲',
+      title: '确认生成歌曲',
+      message:
+        '将调用阿里云百聆（Fun-Music）根据当前英文歌词生成歌曲。若 Key 未开通该能力，供应商错误会直接显示，且不会自动回退到 Suno。是否继续？',
+      confirmLabel: '继续',
+    };
+  }
   return {
     ariaLabel: '确认生成歌曲',
     title: '确认生成歌曲',
     message:
-      '将调用阿里云百聆（Fun-Music）根据当前英文歌词生成歌曲。若 Key 未开通该能力，供应商错误会直接显示，且不会自动回退到 Suno。是否继续？',
+      '将调用 ElevenLabs Music 根据当前英文歌词生成 MP3。若 Key 或模型不可用，供应商错误会直接显示，且不会自动回退到 Suno。是否继续？',
     confirmLabel: '继续',
   };
 }
@@ -11029,10 +11343,17 @@ function normalizeAiProvider(provider?: string | null): AiProvider {
   return provider === 'volcengine' ? 'volcengine' : 'aliyun_bailian';
 }
 
+function normalizeTtsProvider(provider?: string | null): TtsProvider {
+  if (provider === 'elevenlabs') return 'elevenlabs';
+  return normalizeAiProvider(provider);
+}
+
 function songSourceLabel(source?: string | null): string {
   const normalized = normalizeSongSource(source);
   if (normalized === 'external_audio') return '外部导入';
-  return normalized === 'bailian_fun_music' ? '阿里云百聆' : 'Suno 网页自动化';
+  if (normalized === 'bailian_fun_music') return '阿里云百聆';
+  if (normalized === 'elevenlabs_music') return 'ElevenLabs Music';
+  return 'Suno 网页自动化';
 }
 
 function groupSongVersionsForDisplay(versions: SongVersionPayload[]): SongVersionGroup[] {
@@ -11101,6 +11422,9 @@ function songAutomationStatusText(state: ListeningSongStatePayload): string {
   if (manual) return manual;
   if (state.source === 'bailian_fun_music') {
     return '阿里云百聆正在生成歌曲...';
+  }
+  if (state.source === 'elevenlabs_music') {
+    return 'ElevenLabs Music 正在生成歌曲...';
   }
   switch ((state.automationStatus ?? '').trim()) {
     case 'waitingLogin':

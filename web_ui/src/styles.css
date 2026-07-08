@@ -1357,6 +1357,20 @@ img {
   align-items: stretch;
 }
 
+.song-generation-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.song-generation-actions > button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 8px;
+}
+
 .creation-resource-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -5271,6 +5285,11 @@ select:disabled {
   gap: 8px;
 }
 
+.settings-tabs.compact-provider-tabs {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
 .settings-tabs button {
   min-height: 42px;
   padding: 8px 10px;
@@ -5279,6 +5298,15 @@ select:disabled {
   color: var(--soft-ink);
   background: var(--panel);
   font-weight: 1000;
+}
+
+.settings-tabs.compact-provider-tabs button {
+  min-width: 0;
+  min-height: 38px;
+  padding: 7px 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-tabs button.active {

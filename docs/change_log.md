@@ -1,5 +1,19 @@
 # 修改日志
 
+## 2026-07-08
+
+- AI 供应商设置从旧 `ai_provider` 拆分为文本处理、图片生成、语音合成、音乐生成四个能力配置：`text_provider` / `image_provider` / `tts_provider` / `song_provider`。旧 `ai_provider` 继续作为文本、图片、TTS 的兼容 fallback；设置页改为四个能力分区。新增 ElevenLabs：TTS 走 `POST /v1/text-to-speech/:voice_id`，声音列表走在线 catalog 并缓存上次成功结果，音乐生成走 `POST /v1/music` 并保存为 `elevenlabs_music` 歌曲版本；`security/elevenlabs.txt` 可在启动时导入 key 到 secure storage。Suno、阿里云百聆、阿里云百炼、火山引擎路径保留。
+- 新增 E22 疯茶会原始课程稿回归 fixture，验证当前 `PracticeInputParser` 能从 `英文原文` 区块中跳过中途 `【拓展】` 后恢复正文，并在末尾 `【文化卡片】/生词好句` 前停止，不再把 `17.I meant what I said`、`See? I meant what I said.` 等学习材料例句写入文章句子。同步修复 `NlpService.splitSentences` 与 Web UI `sentenceSplitter.ts`：直接引语前的强制切分只有在引语前叙述已经是舒适朗读块时才生效；如果前段过长，先按逗号/分号等普通断点拆开，避免 E22 `It was so large a house... saying to herself, "Suppose..."` 这类句子形成超长朗读块。
+- 绘本章节规划改为精简的“同一连续故事场景归并 + 原文去对话”规则：移除 `picture_book_chapter_scene_plan_v2` prompt 中的 `compact`、`smallest complete scene set`、弱边界合并、叙述微阶段合并和其它泛化防错约束；scene 按原始句子顺序构造，先忽略直接引语、对话语义、歌词、喊话和内心独白内容，再把同一地点/时间、主要人物组和正在发生的事件/活动保持连续的内容归入同一场景，只有场景发生实质变化时才开启新 scene。`chapterDescription` / `sceneDescription` 基于原文保留可见内容，并移除对话、歌词、喊话、内心独白内容和对话语义摘要。E22 新分镜审核发现上一版把同一茶桌场景里的酒、礼貌、个人评价、谜语、反驳和沉默拆成 6 张对话语义 scene，导致达到 12 张上限；后续 10 张版本数量有所下降，但仍用 `exchange`、`conversation`、`riddle`、`remark` 等词把对话语义写回描述。本版明确禁止对话轮次、问答、谜语、争论、评价、反应或情绪变化在同一场景内单独切分，也禁止用 `exchange` / `conversation` / `discuss` / `debate` / `ask` / `answer` / `question` / `reply` / `remark` / `riddle` / `argue` / `claim` / `mean` / `say` / `said` / `offer` 等摘要词替代已移除的对话内容。旧 `story_chapters.summary_json` 不自动迁移，用户刷新章节规划后才使用新规则。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\api_cache_service_test.dart --name "picture-book"`
+- `D:\DevTools\flutter\bin\flutter.bat test test\app_config_test.dart test\tts_service_test.dart test\eleven_labs_music_service_test.dart`
+- `D:\DevTools\flutter\bin\flutter.bat test test\practice_input_parser_test.dart`
+- `npm test` in `web_ui`
+- `git diff --check`
+
 ## 2026-07-07
 
 - 修复 Windows WebView2 静止页面持续占用 GPU：实测确认创作中心静止约 15%~20% GPU 的根因不是 CSS 或 WebView2 GPU 合成本身，而是 `flutter_inappwebview_windows` 使用 `Windows.Graphics.Capture` 持续把 WebView2 画面复制进 Flutter texture。最终采用插件已有 `setFpsLimit` 做主 WebView 自适应抓帧限速：活动时不限帧，活动结束后降到 `12fps`，静止后降到 `5fps`；不再停止可见窗口 capture，避免空白帧。Suno WebView 不纳入主窗口限速策略。坑位见 `docs/build-and-release-pitfalls.md`。

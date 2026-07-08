@@ -1,0 +1,152 @@
+第七章｜E22 疯茶会实录：爱丽丝误入“抬杠现场”
+2025.12.30
+王芃芃
+难度：CSE6
+课程导读
+
+上节课，抱着婴儿走进林子的爱丽丝，发现孩子居然真变成了一头猪，于是赶忙放它走了。但怪事还没结束——就在几米开外，咧嘴笑的柴郡猫又现身了。和它对话了几个来回，爱丽丝得知，眼前这个岔路口，一边能把她引向疯帽匠，另一边则会把她带往三月兔，但问题来了：俩人都疯疯癫癫，这她没得选。而柴郡猫在透露自己会在槌球场地现身后，又突然消失得无影无踪了。对此，爱丽丝会作何反应呢？一起来听今天的故事。
+
+英文原文
+
+Alice was not much surprised at this, she was getting so used to queer things happening. While she was still looking at the place where it had been, it suddenly appeared again.
+"By-the-by, what became of the baby?" said the Cat. "I'd nearly forgotten to ask."
+"It turned into a pig," Alice answered very quietly, just as if the Cat had come back in a natural way.
+"I thought it would," said the Cat, and vanished again.
+
+Alice waited a little, half expecting to see it again, but it did not appear, and after a minute or two she walked on in the direction in which the March Hare was said to live. "I've seen Hatters before," she said to herself; "the March Hare will be much the most interesting and perhaps as this is May it won't be raving mad—at least not so mad as it was in March." As she said this, she looked up, and there was the Cat again, sitting on a branch of a tree.
+
+"Did you say pig, or fig?" said the Cat.
+"I said pig," replied Alice; "and I wish you wouldn't keep appearing and vanishing so suddenly; you make one quite giddy."
+"All right," said the Cat; and this time it vanished quite slowly, beginning with the end of the tail, and ending with the grin, which remained some time after the rest of it had gone.
+"Well, I've often seen a cat without a grin," thought Alice; "but a grin without a cat! It's the most curious thing I ever saw in my life!"
+
+【拓展】
+
+作者对“只有一个字母不一样的词”有浓厚兴趣，并据此发明了一种文字游戏，称为Doublets（中文可译作“对对变”）。游戏规则是：先确定一个起始词和一个结果词，两者字母数量相同；然后从起始词出发，每次仅替换一个字母，且每一步形成的都必须是一个有效词，最终变为结果词即算胜利。例如，将 boy（男孩）变为 pig（猪），可以按如下步骤进行：boy → bog → big → pig。这一游戏不仅考验词汇量，还需要玩家在每一步做出战略性的思考。
+
+关于“柴郡猫咧嘴笑”这一梗的来源，主流有两种猜测。这里更倾向于第二种，即源自Cheshire cheese（柴郡奶酪）。这种奶酪曾经被制作成咧嘴笑的猫的形状，由于奶酪体积较大，人们每次只削下一小块食用，通常从尾巴开始，最后吃到头部。这种吃法与柴郡猫在故事中身体逐步消失、最后只剩下笑容的顺序不谋而合，从而可能成为这一形象的来源。
+
+She had not gone much farther before she came in sight of the house of the March Hare: she thought it must be the right house, because the chimneys were shaped like ears and the roof was thatched with fur. It was so large a house, that she did not like to go nearer till she had nibbled some more of the left-hand bit of mushroom, and raised herself to about two feet high; even then she walked up toward it rather timidly, saying to herself, "Suppose it should be raving mad after all, I almost wish I'd gone to see the Hatter instead."
+
+Chapter Seven
+A Mad Tea-Party
+
+There was a table set out under a tree in front of the house, and the March Hare and the Hatter were having tea at it: a Dormouse was sitting between them, fast asleep, and the other two were using it as a cushion, resting their elbows on it, and talking over its head. "Very uncomfortable for the Dormouse," thought Alice:"only as it's asleep, I suppose it doesn't mind."
+
+The table was a large one, but the three were all crowded together at one corner of it: "No room! No room!" they cried out when they saw Alice coming. "There's plenty of room," said Alice indignantly, and she sat down in a large arm-chair at one end of the table.
+
+"Have some wine," the March Hare said in an encouraging tone.
+Alice looked all round the table, but there was nothing on it but tea. "I don't see any wine," she remarked.
+"There isn't any," said the March Hare.
+"Then it wasn't very civil of you to offer it," said Alice angrily.
+"It wasn't very civil of you to sit down without being invited," said the March Hare.
+"I didn't know it was your table," said Alice; "It's laid for a great many more than three."
+
+"Your hair wants cutting," said the Hatter. He had been looking at Alice for some time with great curiosity, and this was his first speech.
+"You should learn not to make personal remarks," Alice said with some severity: "It's very rude."
+The Hatter opened his eyes very wide on hearing this; but all he said was, "Why is a raven like a writing-desk?"
+
+"Come, we shall have some fun now!" thought Alice. "I'm glad they've begun asking riddles—I believe I can guess that," she added aloud.
+"Do you mean that you think you can find out the answer to it?" said the March Hare.
+"Exactly so," said Alice.
+"Then you should say what you mean," the March Hare went on.
+"I do," Alice hastily replied, "at least—at least I mean what I say—that's the same thing, you know."
+"Not the same thing a bit!" said the Hatter. "Why, you might just as well say that 'I see what I eat' is the same thing as 'I eat what I see!'"
+"You might just as well say," added the March Hare, "that 'I like what I get' is the same thing as 'I get what I like!'"
+"You might just as well say," added the Dormouse, who seemed to be talking in his sleep, "that 'I breathe when I sleep' is the same thing as 'I sleep when I breathe!'"
+"It is the same thing with you," said the Hatter, and here the conversation dropped, and the party sat silent for a minute, while Alice thought out all she could remember about ravens and writing-desks, which wasn't much.
+
+【拓展】
+
+故事出版后，由于有太多读者都想知道谜底，作者后来又自己设计了一个答案。答案有些弯弯绕绕，其中一个精彩的细节便是：“Because it can produce a few notes（因为它能发出几声音符）。” 因为如果“note”指的是乌鸦（ravens），它就代表乌鸦发出的鸣叫；而如果指的是书桌（desk），则可以表示在桌上写下的笔记、便条等等——本质上，这是一个双关。
+
+后来也有很多人给出了各种有趣的谜底。比如:“Because there is a 'b' in both and an 'n' in neither（因为'both'里有一个b，"neither'里有一个n）。”
+
+【文化卡片】
+
+生词好句
+
+1.by the by
+话说回来（by the way）
+拓展:
+I recently made a friend who, by the by, is a well-known author.
+我最近认识了个朋友，对了话说回来，ta还是个知名作家呢。
+
+2.What became of somebody?
+某人后来怎么样了？
+
+3.much the most...
+……得多（much the more, much more）
+
+4.raving mad
+疯得彻头彻尾；精神失常
+
+5.giddy
+英 [ˈɡɪdi]	美 [ˈɡɪdi]
+adj. 晕头转向的
+
+6.somebody comes in sight of something
+进入视野（something comes into sight）
+
+7.thatch
+英 [θætʃ]	美 [θætʃ]
+v. 用......覆盖屋顶（多指用茅草）
+
+8.have tea at it
+在桌边喝茶
+
+9.dormouse
+英 [ˈdɔːmaʊs]	美 [ˈdɔːrmaʊs]
+n. 睡鼠
+拓展:
+dorm（宿舍）与dormouse同源，均来自拉丁语，表示"to sleep"，意为"睡眠"。
+睡鼠因冬眠和夜行习性而得名。
+
+10.indignantly
+英 [ɪnˈdɪɡnəntli]	美 [ɪnˈdɪɡnəntli]
+adv. 愤慨地
+
+11.in an encouraging tone
+殷勤的语气
+
+12.civil
+英 [ˈsɪvəl]	美 [ˈsɪvəl]
+adj. 客气的，有礼貌的（polite in a formal but not very friendly way）
+拓展:
+Try at least to be civil.至少尽量做到礼貌吧。
+
+13.lay the table for+某数
+按某人数把餐具和椅子摆好
+
+14.make personal remarks
+进行人身攻击
+
+15.severity
+英 [sɪˈverəti]	美 [səˈverət̬i]
+n. 严厉；严重性
+
+16.hastily
+英 [ˈheɪstɪli]	美 [ˈheɪstəli]
+adv. 慌慌张张地
+
+17.I meant what I said
+说到做到
+拓展:
+See? I meant what I said.
+看见了吧？我这个人说到做到。
+
+18.might just as well
+还不如……
+拓展:
+There's nothing worth watching, so we might just as well go to bed.
+没有什么值得看的，所以我们不如去睡觉。
+The weather was so bad that we might just as well have stayed at home.
+天气太糟了，以至于我们当初还不如待在家里。
+
+19.I like what I get
+知足常乐
+拓展:
+If you don't get what you like, try to like what you get!要是你喜欢的东西没法到手，那就试着去喜欢你能到手的东西吧。
+
+20.think out
+认真思索

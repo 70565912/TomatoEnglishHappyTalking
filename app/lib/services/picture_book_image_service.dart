@@ -14,7 +14,7 @@ class PictureBookImageService {
     bool reusePartialCache = true,
     bool cacheOnly = false,
   }) async {
-    final provider = await AppConfig.aiProvider;
+    final provider = await AppConfig.imageProvider;
     if (provider == AppConfig.aiProviderVolcengine) {
       return VolcImageService.generatePictureBookImageGroup(
         requests: requests,

@@ -400,7 +400,12 @@ class NlpService {
       }
       final current = text.substring(start, phraseBreak.index).trim();
       final remaining = text.substring(phraseBreak.index).trim();
-      if (_wordCount(current) >= _shortConnectorMinWords &&
+      final currentWords = _wordCount(current);
+      // Only force a pre-quote split when the prose before the quote is
+      // already a comfortable read-aloud chunk; otherwise earlier punctuation
+      // should split the narration first.
+      if (currentWords >= _shortConnectorMinWords &&
+          currentWords <= _targetPhraseMaxWords &&
           _wordCount(remaining) >= 4) {
         return phraseBreak.index;
       }

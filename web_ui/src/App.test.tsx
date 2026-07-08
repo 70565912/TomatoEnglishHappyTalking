@@ -846,35 +846,50 @@ describe('App', () => {
     expect(within(field).getByRole('button', { name: '显示 Key' })).toBeInTheDocument();
   });
 
-  it('switches cloud and song settings with tabs instead of select lists', async () => {
+  it('shows split cloud capabilities and song provider tabs', async () => {
     window.location.hash = '/settings';
 
     render(<App />);
 
-    expect(await screen.findByRole('tab', { name: '阿里云百炼' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByText('文本处理')).toBeInTheDocument();
+    expect(screen.getByText('图片生成')).toBeInTheDocument();
+    expect(screen.getByText('语音合成')).toBeInTheDocument();
+    expect(screen.getByText('音乐生成模型')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '阿里云百炼' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '阿里云万相' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '阿里云 CosyVoice' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByLabelText(/^百炼 Key/)).toBeInTheDocument();
     expect(screen.queryAllByLabelText(/^百炼 Key/)).toHaveLength(1);
     expect(screen.getByText('百炼兼容模式 Base URL')).toBeInTheDocument();
     expect(screen.getByText('DashScope API Base URL')).toBeInTheDocument();
-    expect(screen.getByText('模型与语音')).toBeInTheDocument();
+    expect(screen.getByText('ElevenLabs Base URL')).toBeInTheDocument();
+    expect(screen.getByLabelText(/^ElevenLabs Key/)).toBeInTheDocument();
     expect(screen.queryByText('Key 操作')).not.toBeInTheDocument();
-    expect(screen.queryByText('方舟 Base URL')).not.toBeInTheDocument();
+    expect(screen.getByText('方舟 Base URL')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: '火山引擎' }));
     expect(screen.getByRole('tab', { name: '火山引擎' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('方舟文本模型')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '火山 Seedream' }));
+    expect(screen.getByRole('tab', { name: '火山 Seedream' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Seedream 图片模型')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'ElevenLabs' }));
+    expect(screen.getByRole('tab', { name: 'ElevenLabs' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('ElevenLabs TTS 模型')).toBeInTheDocument();
+    expect(screen.getAllByText('George').length).toBeGreaterThan(0);
     expect(screen.getByLabelText(/^方舟 Key/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^火山语音 Key/)).toBeInTheDocument();
-    expect(screen.getByText('方舟 Base URL')).toBeInTheDocument();
-    expect(screen.queryByText('百炼兼容模式 Base URL')).not.toBeInTheDocument();
-    expect(screen.queryByText('DashScope API Base URL')).not.toBeInTheDocument();
 
     expect(screen.getByRole('tab', { name: 'Suno 网页自动化' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByText('Suno 输出目录')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '阿里云百聆' }));
     expect(screen.getByRole('tab', { name: '阿里云百聆' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText('Suno 输出目录')).not.toBeInTheDocument();
-    expect(screen.getByText('百聆音乐模型')).toBeInTheDocument();
-    expect(screen.queryByLabelText(/^百炼 Key/)).not.toBeInTheDocument();
+    expect(screen.getAllByText('百聆音乐模型').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('tab', { name: 'ElevenLabs Music' }));
+    expect(screen.getByRole('tab', { name: 'ElevenLabs Music' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('音乐模型')).toBeInTheDocument();
+    expect(screen.getByText('输出格式')).toBeInTheDocument();
   });
 
   it('starts the new article editor empty and enables save after real content and book title', async () => {
@@ -2490,6 +2505,19 @@ describe('App', () => {
     expect(chunks.join(' ')).toContain('"No room! No room!"');
     expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 32)).toBe(true);
     expect(chunks.join(' ')).not.toContain('A Mad Tea-Party');
+  });
+
+  it('splits long pre-quote Alice narration before forcing direct quote breaks', () => {
+    const chunks = splitSentences(
+      'It was so large a house, that she did not like to go nearer till she had nibbled some more of the left-hand bit of mushroom, and raised herself to about two feet high; even then she walked up toward it rather timidly, saying to herself, "Suppose it should be raving mad after all, I almost wish I\'d gone to see the Hatter instead."',
+    );
+    const joined = chunks.join(' ');
+
+    expect(chunks.length).toBeGreaterThan(2);
+    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 32)).toBe(true);
+    expect(joined).toContain('left-hand bit of mushroom,');
+    expect(joined).toContain('and raised herself to about two feet high;');
+    expect(joined).toContain('"Suppose it should be raving mad after all');
   });
 
   it('auto-plays the first follow sentence and enables recording afterward', async () => {
@@ -5653,6 +5681,78 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.queryByText('正在提交百聆歌曲')).not.toBeInTheDocument());
     expect(await screen.findByText('阿里云百聆版本 1')).toBeInTheDocument();
+  });
+
+  it('submits ElevenLabs song generation from the creation center', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+    };
+    const generatePayloads: Array<Record<string, unknown>> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: article.id, enabled: true, status: 'empty', pages: [] });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'empty',
+            stylePrompt: '',
+            audioPath: null,
+            errorMessage: '',
+            source: 'elevenlabs_music',
+          });
+        }
+        if (type === 'listening.songGenerate') {
+          generatePayloads.push(payload);
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            source: 'elevenlabs_music',
+            versions: [
+              {
+                id: 'eleven-1',
+                audioPath: 'eleven.mp3',
+                title: 'ElevenLabs 版本 1',
+                source: 'elevenlabs_music',
+              },
+            ],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    await clickSelectedCreationAction('歌曲');
+    expect(await screen.findByText('歌曲生成')).toBeInTheDocument();
+    const generateButton = await screen.findByRole('button', { name: /生成 ElevenLabs 歌曲/ });
+    await waitFor(() => expect(generateButton).not.toBeDisabled());
+    fireEvent.click(generateButton);
+    await confirmDialogAction('确认生成歌曲', '继续', /ElevenLabs Music/);
+
+    await waitFor(() => expect(generatePayloads[0]).toMatchObject({ articleId: 1, source: 'elevenlabs_music' }));
+    expect(await screen.findByText('ElevenLabs 版本 1')).toBeInTheDocument();
   });
 
   it('imports external audio songs from the creation center', async () => {

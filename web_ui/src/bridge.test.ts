@@ -98,8 +98,40 @@ describe('bridge client', () => {
     expect(rawResponse.bigAsr).toBeUndefined();
     expect(rawResponse.realtime).toBeUndefined();
     expect((response.tts as unknown as Record<string, unknown>).apiKey).toBeUndefined();
+    expect(response.cloud?.textProvider).toBe('aliyun_bailian');
+    expect(response.cloud?.imageProvider).toBe('aliyun_bailian');
+    expect(response.cloud?.ttsProvider).toBe('aliyun_bailian');
+    expect(response.cloud?.elevenLabs?.apiKeyConfigured).toBe(false);
+    expect(response.cloud?.elevenLabs?.apiKeyMask).toBe('');
+    expect(response.cloud?.elevenLabs?.ttsModel).toBe('eleven_multilingual_v2');
+    expect(response.voiceCatalog?.elevenLabs?.length).toBeGreaterThan(0);
+    expect(response.voiceCatalogErrors?.elevenLabs).toBeNull();
+    expect(JSON.stringify(response)).not.toContain('eleven-music-key');
     expect(response.voices).toHaveLength(102);
     expect(response.voices[0].scene).toBeTruthy();
+  });
+
+  it('saves split cloud providers and masks ElevenLabs key in mock settings', async () => {
+    const response = await sendNative<SettingsState>('settings.saveCloud', {
+      textProvider: 'volcengine',
+      imageProvider: 'aliyun_bailian',
+      ttsProvider: 'elevenlabs',
+      elevenLabsApiKey: 'eleven-secret-key-123456',
+      elevenLabsTtsModel: 'eleven_turbo_v2_5',
+      elevenLabsTtsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
+      elevenLabsMusicModel: 'music_v2',
+    });
+
+    expect(response.cloud?.aiProvider).toBe('volcengine');
+    expect(response.cloud?.textProvider).toBe('volcengine');
+    expect(response.cloud?.imageProvider).toBe('aliyun_bailian');
+    expect(response.cloud?.ttsProvider).toBe('elevenlabs');
+    expect(response.cloud?.elevenLabs?.apiKeyConfigured).toBe(true);
+    expect(response.cloud?.elevenLabs?.apiKeyMask).toBe('****MOCK');
+    expect(response.cloud?.elevenLabs?.ttsModel).toBe('eleven_turbo_v2_5');
+    expect(response.tts.resourceId).toBe('eleven_turbo_v2_5');
+    expect(response.tts.speakerId).toBe('JBFqnCBsd6RMkjVDRZzb');
+    expect(JSON.stringify(response)).not.toContain('eleven-secret-key-123456');
   });
 
   it('saves selected voice in mock settings payload', async () => {
@@ -110,6 +142,30 @@ describe('bridge client', () => {
 
     expect(response.tts.speakerId).toBe('en_male_tim_uranus_bigtts');
     expect(response.cloud?.volcengine.ttsSpeakerId).toBe('en_male_tim_uranus_bigtts');
+  });
+
+  it('saves selected ElevenLabs voice in mock settings payload', async () => {
+    const response = await sendNative<SettingsState>('settings.saveVoice', {
+      speakerId: '21m00Tcm4TlvDq8ikWAM',
+      ttsProvider: 'elevenlabs',
+    });
+
+    expect(response.tts.speakerId).toBe('21m00Tcm4TlvDq8ikWAM');
+    expect(response.cloud?.elevenLabs?.ttsVoiceId).toBe('21m00Tcm4TlvDq8ikWAM');
+  });
+
+  it('mocks ElevenLabs song generation when Flutter bridge is unavailable', async () => {
+    const response = await sendNative<ListeningSongStatePayload>(
+      'listening.songGenerate',
+      { articleId: 12, source: 'elevenlabs_music' },
+    );
+
+    expect(response.articleId).toBe(12);
+    expect(response.source).toBe('elevenlabs_music');
+    expect(response.versions?.[0]).toMatchObject({
+      title: 'ElevenLabs 版本 1',
+      source: 'elevenlabs_music',
+    });
   });
 
   it('reports bridge success and failure summaries to native diagnostics', async () => {

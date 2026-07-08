@@ -286,7 +286,14 @@ function requiredPhraseBreak(text: string, start: number): number | null {
     if (phraseBreak.kind !== 'directQuote') continue;
     const current = text.slice(start, phraseBreak.index).trim();
     const remaining = text.slice(phraseBreak.index).trim();
-    if (words(current).length >= SHORT_CONNECTOR_MIN_WORDS && words(remaining).length >= 4) {
+    const currentWords = words(current).length;
+    // Only force a pre-quote split when the prose before the quote is already
+    // a comfortable read-aloud chunk; otherwise split that narration first.
+    if (
+      currentWords >= SHORT_CONNECTOR_MIN_WORDS &&
+      currentWords <= TARGET_PHRASE_MAX_WORDS &&
+      words(remaining).length >= 4
+    ) {
       return phraseBreak.index;
     }
   }

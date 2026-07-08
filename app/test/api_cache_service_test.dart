@@ -731,145 +731,137 @@ void main() {
     expect(planningPrompt, contains('do not repeat character appearance'));
     expect(
       planningPrompt,
-      contains('main visual story beats of the chapter'),
+      contains('picture-book scene plan from non-dialogue visual prose'),
     );
     expect(
       planningPrompt,
-      contains('numbered sentences are coverage anchors'),
-    );
-    expect(
-      planningPrompt,
-      contains('not scene candidates'),
-    );
-    expect(
-      planningPrompt,
-      contains('compact but complete set of illustrations'),
-    );
-    expect(
-      planningPrompt,
-      contains('balance compactness and completeness'),
-    );
-    expect(
-      planningPrompt,
-      contains('avoid over-merging unrelated phases'),
-    );
-    expect(
-      planningPrompt,
-      contains('avoid over-splitting consecutive beats'),
-    );
-    expect(
-      planningPrompt,
-      contains('do not decide the scene count from text length'),
-    );
-    expect(
-      planningPrompt,
-      contains('extreme upper bound, not a target'),
-    );
-    expect(
-      planningPrompt,
-      contains('genuinely different visual beats'),
-    );
-    expect(
-      planningPrompt,
-      contains('a scene boundary is valid only when'),
-    );
-    expect(
-      planningPrompt,
-      contains('clear visual boundary reason'),
-    );
-    expect(
-      planningPrompt,
-      contains('location change, time jump, main character group change'),
+      contains('chapter text is the source prose'),
     );
     expect(
       planningPrompt,
       contains(
-          'story purpose change, major visible state change, or an action result'),
+          'base chapterdescription and scenedescription on its visible details'),
+    );
+    expect(
+      planningPrompt,
+      contains('remove direct dialogue'),
+    );
+    expect(
+      planningPrompt,
+      contains('keep source-prose drawable details'),
     );
     expect(
       planningPrompt,
       contains(
-          'create a new scene only when the main visual story beat changes for one of those visual boundary reasons'),
+          'do not quote, paraphrase, or summarize speech or thought content'),
     );
     expect(
       planningPrompt,
-      contains('use the smallest complete scene set'),
-    );
-    expect(
-      planningPrompt,
-      contains('continuous action chain in one location'),
-    );
-    expect(
-      planningPrompt,
-      contains('same location, same character group, and same story purpose'),
-    );
-    expect(
-      planningPrompt,
-      contains('non-composable visual change'),
+      contains('before splitting scenes, mentally delete all quoted speech'),
     );
     expect(
       planningPrompt,
       contains(
-          'not from narration order, dialogue turns, or small sequential steps'),
+          'use only the remaining non-dialogue source prose to decide scene boundaries'),
+    );
+    expect(
+      planningPrompt,
+      contains('if deleting speech/thought leaves no new non-dialogue place'),
+    );
+    expect(
+      planningPrompt,
+      contains('those sentence slots must stay in the same scene'),
+    );
+    expect(
+      planningPrompt,
+      contains('build scenes by walking numbered sentences in order'),
+    );
+    expect(
+      planningPrompt,
+      contains('consecutive content from the same continuous story scene'),
+    );
+    expect(
+      planningPrompt,
+      contains('same continuous story scene means the same place/time'),
+    );
+    expect(
+      planningPrompt,
+      contains('main participant group, and ongoing situation or activity'),
     );
     expect(
       planningPrompt,
       contains(
-          'one coherent composition with foreground and background action'),
-    );
-    expect(
-      planningPrompt,
-      contains('one dominant drawable composition'),
-    );
-    expect(
-      planningPrompt,
-      contains('not a sequence of separate visible states'),
-    );
-    expect(
-      planningPrompt,
-      contains('do not split narrative micro-phases'),
-    );
-    expect(
-      planningPrompt,
-      contains('same immediate visual outcome'),
-    );
-    expect(
-      planningPrompt,
-      contains('a boundary is weak when neighboring parts share'),
-    );
-    expect(
-      planningPrompt,
-      contains('one stable composition'),
-    );
-    expect(
-      planningPrompt,
-      contains('dialogue turns, decision steps, brief responses'),
-    );
-    expect(
-      planningPrompt,
-      contains('not scene boundaries unless they create a new'),
-    );
-    expect(
-      planningPrompt,
-      contains('do not merge distant story phases only to reduce the count'),
-    );
-    expect(
-      planningPrompt,
-      contains('brief visible transitions still deserve their own scene'),
-    );
-    expect(
-      planningPrompt,
-      contains('run the final audit in this order'),
+          'start a new scene only when the continuous story scene changes'),
     );
     expect(
       planningPrompt,
       contains(
-          'split any scene that mixes multiple non-composable compositions'),
+          'new place/time, participant group change, or a concrete non-dialogue action'),
     );
     expect(
       planningPrompt,
-      contains('merge neighboring scenes whose boundary is only'),
+      contains(
+          'do not start a new scene for conversation turns, questions, answers'),
     );
+    expect(
+      planningPrompt,
+      contains(
+          'riddles, arguments, remarks, jokes, reactions, or emotion changes'),
+    );
+    expect(
+      planningPrompt,
+      contains('while the same story scene continues'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'dialogue, song, shout, and inner-thought sentences are coverage anchors'),
+    );
+    expect(
+      planningPrompt,
+      contains('remove speech/thought content'),
+    );
+    expect(
+      planningPrompt,
+      contains('keep only source-prose visible action or reaction'),
+    );
+    expect(
+      planningPrompt,
+      contains('do not write substitute dialogue-summary words'),
+    );
+    expect(
+      planningPrompt,
+      contains('exchange, conversation, discuss, debate, ask, answer'),
+    );
+    expect(
+      planningPrompt,
+      contains('question, reply, remark, riddle, argue, claim, mean, say'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+    );
+    expect(
+        planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('compact')));
+    expect(planningPrompt, isNot(contains('major drawable details')));
+    expect(planningPrompt, isNot(contains('generic summary beats')));
+    expect(planningPrompt, isNot(contains('same visible picture')));
+    expect(planningPrompt, isNot(contains('physical picture')));
+    expect(planningPrompt, isNot(contains('visible emotional state')));
+    expect(
+        planningPrompt, isNot(contains('do not summarize dialogue content')));
+    expect(planningPrompt, isNot(contains('dialogue-only span')));
+    expect(planningPrompt,
+        isNot(contains('would make the scenedescription vague')));
+    expect(planningPrompt, isNot(contains('detail-rich moments')));
+    expect(planningPrompt, isNot(contains('smallest complete scene set')));
+    expect(planningPrompt, isNot(contains('merge micro-phases')));
+    expect(planningPrompt, isNot(contains('micro-phases')));
+    expect(planningPrompt, isNot(contains('weak boundary')));
+    expect(planningPrompt, isNot(contains('even if several actions')));
+    expect(planningPrompt, isNot(contains('foreground and background action')));
     expect(planningPrompt, isNot(contains('object handoff')));
     expect(planningPrompt, isNot(contains('small ceremony')));
     expect(planningPrompt, isNot(contains('minimum number')));
@@ -2322,20 +2314,91 @@ but the three were all crowded together at one corner of it.
     expect(planningPrompt, contains("it's a cheshire cat"));
     expect(planningPrompt, contains("don't bother me"));
     expect(planningPrompt, contains('here! you may nurse it a bit'));
-    expect(planningPrompt, contains('must exclude direct dialogue'));
-    expect(planningPrompt, contains('spoken words'));
+    expect(planningPrompt, contains('chapter text is the source prose'));
+    expect(planningPrompt, contains('remove direct dialogue'));
     expect(planningPrompt, contains('song lyrics'));
-    expect(planningPrompt, contains('inner-monologue text'));
-    expect(planningPrompt, contains('preserve drawable prose details'));
-    expect(planningPrompt, contains('coverage anchor'));
-    expect(planningPrompt, contains('speech-only scene'));
-    expect(planningPrompt, contains('main visual story beats of the chapter'));
-    expect(planningPrompt, contains('numbered sentences are coverage anchors'));
+    expect(planningPrompt, contains('inner thoughts'));
+    expect(planningPrompt, contains('keep source-prose drawable details'));
     expect(
       planningPrompt,
-      contains('dialogue turns, decision steps, brief responses'),
+      contains('picture-book scene plan from non-dialogue visual prose'),
     );
-    expect(planningPrompt, contains('use the smallest complete scene set'));
+    expect(
+      planningPrompt,
+      contains('before splitting scenes, mentally delete all quoted speech'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'use only the remaining non-dialogue source prose to decide scene boundaries'),
+    );
+    expect(
+      planningPrompt,
+      contains('if deleting speech/thought leaves no new non-dialogue place'),
+    );
+    expect(
+      planningPrompt,
+      contains('those sentence slots must stay in the same scene'),
+    );
+    expect(
+      planningPrompt,
+      contains('consecutive content from the same continuous story scene'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'start a new scene only when the continuous story scene changes'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'do not start a new scene for conversation turns, questions, answers'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'dialogue, song, shout, and inner-thought sentences are coverage anchors'),
+    );
+    expect(planningPrompt, contains('remove speech/thought content'));
+    expect(planningPrompt, contains('keep only source-prose visible action'));
+    expect(
+      planningPrompt,
+      contains('do not write substitute dialogue-summary words'),
+    );
+    expect(
+      planningPrompt,
+      contains('exchange, conversation, discuss, debate, ask, answer'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+    );
+    expect(
+        planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('compact')));
+    expect(planningPrompt, isNot(contains('same visible picture')));
+    expect(planningPrompt, isNot(contains('physical picture')));
+    expect(planningPrompt, isNot(contains('visible emotional state')));
+    expect(planningPrompt,
+        isNot(contains('preserve every major drawable detail')));
+    expect(planningPrompt,
+        isNot(contains('important non-dialogue visible details')));
+    expect(
+        planningPrompt, isNot(contains('do not summarize dialogue content')));
+    expect(planningPrompt, isNot(contains('speech-only scene')));
+    expect(planningPrompt, isNot(contains('major drawable details')));
+    expect(planningPrompt,
+        isNot(contains('would make the scenedescription vague')));
+    expect(planningPrompt, isNot(contains('split that sentence range')));
+    expect(planningPrompt, isNot(contains('dialogue-only span')));
+    expect(planningPrompt, isNot(contains('smallest complete scene set')));
+    expect(planningPrompt, isNot(contains('merge micro-phases')));
+    expect(planningPrompt, isNot(contains('weak boundary')));
+    expect(
+      planningPrompt,
+      isNot(contains('even if several actions or props are mentioned')),
+    );
 
     final groupPrompt = refreshed['groupPrompt'].toString();
     expect(groupPrompt, contains('smoky pepper-filled kitchen'));
@@ -2346,6 +2409,410 @@ but the three were all crowded together at one corner of it.
     expect(groupPrompt, isNot(contains('Pig!')));
     expect(groupPrompt, isNot(contains("don't bother me")));
     expect(groupPrompt, isNot(contains('Here! you may nurse it a bit')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('exchange')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('conversation')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('remark')));
+  });
+
+  test('picture-book chapter plan preserves E22 tea-party drawable details',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-e22-tea-plan-key-12345678901234567890');
+    final sentences = [
+      'She had not gone much farther before she came in sight of the house of the March Hare.',
+      'She thought it must be the right house, because the chimneys were shaped like ears and the roof was thatched with fur.',
+      'It was so large a house, that she did not like to go nearer till she had nibbled some more of the left-hand bit of mushroom, and raised herself to about two feet high; even then she walked up toward it rather timidly.',
+      'There was a table set out under a tree in front of the house.',
+      'The March Hare and the Hatter were having tea at it.',
+      'A Dormouse was sitting between them, fast asleep, and the other two were using it as a cushion, resting their elbows on it, and talking over its head.',
+      'The table was a large one, but the three were all crowded together at one corner of it.',
+      '"No room! No room!" they cried out when they saw Alice coming.',
+      '"There is plenty of room," said Alice indignantly, and she sat down in a large arm-chair at one end of the table.',
+      '"Have some wine," the March Hare said in an encouraging tone.',
+      'Alice looked all round the table, but there was nothing on it but tea.',
+      'The Hatter had been looking at Alice for some time with great curiosity.',
+      'The Hatter opened his eyes very wide on hearing this.',
+      '"Why is a raven like a writing-desk?"',
+      'The conversation dropped, and the party sat silent for a minute, while Alice thought out all she could remember about ravens and writing-desks.',
+    ];
+
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'E22 Tea Party Detail Test',
+        content: sentences.join('\n'),
+        sentences: sentences,
+        createdAt: DateTime(2026, 7, 8),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    Map<String, dynamic>? textBody;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textBody = body;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_scene_plan_v2',
+                  'chapterDescription':
+                      'Alice reaches the March Hare house, studies its animal-like architecture, adjusts her size with the mushroom, and enters a detailed outdoor tea-party scene that grows tense and strange before the group falls silent.',
+                  'scenes': [
+                    {
+                      'pageIndex': 0,
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 2,
+                      'sceneDescription':
+                          'Alice faces the March Hare house with chimneys shaped like ears and a fur-thatched roof, holding the mushroom after raising herself to about two feet high and approaching timidly.',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'sentenceStartIndex': 3,
+                      'sentenceEndIndex': 6,
+                      'sceneDescription':
+                          'A large tea table stands under a tree in front of the house, with the March Hare and Hatter crowded at one corner while the sleeping Dormouse is used as a cushion beneath their elbows.',
+                    },
+                    {
+                      'pageIndex': 2,
+                      'sentenceStartIndex': 7,
+                      'sentenceEndIndex': 14,
+                      'sceneDescription':
+                          'Alice arrives at the oversized table, sits indignantly in a large armchair at one end, finds only tea on the table, while the Hatter watches Alice with great curiosity, Hatter opens eyes wide, and the tea party group sits silently at the table.',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final refreshed = await _refreshChapterPlanFromReview(review);
+    final textMessages = (textBody?['messages'] as List?) ?? const [];
+    final planningPrompt = textMessages
+        .map((message) => (message as Map)['content']?.toString() ?? '')
+        .join('\n')
+        .toLowerCase();
+
+    expect(planningPrompt, contains('chimneys were shaped like ears'));
+    expect(planningPrompt, contains('roof was thatched with fur'));
+    expect(planningPrompt, contains('there was nothing on it but tea'));
+    expect(planningPrompt, contains('hatter opened his eyes very wide'));
+    expect(
+      planningPrompt,
+      contains('before splitting scenes, mentally delete all quoted speech'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'use only the remaining non-dialogue source prose to decide scene boundaries'),
+    );
+    expect(
+      planningPrompt,
+      contains('if deleting speech/thought leaves no new non-dialogue place'),
+    );
+    expect(
+      planningPrompt,
+      contains('those sentence slots must stay in the same scene'),
+    );
+    expect(
+      planningPrompt,
+      contains('consecutive content from the same continuous story scene'),
+    );
+    expect(
+      planningPrompt,
+      contains('main participant group, and ongoing situation or activity'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'start a new scene only when the continuous story scene changes'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'do not start a new scene for conversation turns, questions, answers'),
+    );
+    expect(planningPrompt, contains('remove speech/thought content'));
+    expect(
+      planningPrompt,
+      contains('do not write substitute dialogue-summary words'),
+    );
+    expect(
+      planningPrompt,
+      contains('exchange, conversation, discuss, debate, ask, answer'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+    );
+    expect(
+        planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('create enough scenes')));
+    expect(planningPrompt, isNot(contains('same visible picture')));
+    expect(planningPrompt, isNot(contains('physical picture')));
+    expect(planningPrompt, isNot(contains('visible emotional state')));
+    expect(
+        planningPrompt, isNot(contains('do not summarize dialogue content')));
+    expect(planningPrompt, isNot(contains('split that sentence range')));
+    expect(planningPrompt, isNot(contains('dialogue-only span')));
+    expect(planningPrompt, isNot(contains('smallest complete scene set')));
+    expect(planningPrompt, isNot(contains('merge micro-phases')));
+    expect(planningPrompt, isNot(contains('weak boundary')));
+
+    final scenes = refreshed['scenes'] as List<dynamic>;
+    expect(scenes, hasLength(3));
+    expect((scenes.last as Map)['sentenceStartIndex'], 7);
+    expect((scenes.last as Map)['sentenceEndIndex'], 14);
+
+    final groupPrompt = refreshed['groupPrompt'].toString();
+    expect(groupPrompt, contains('chimneys shaped like ears'));
+    expect(groupPrompt, contains('fur-thatched roof'));
+    expect(groupPrompt, contains('only tea on the table'));
+    expect(groupPrompt, contains('Dormouse is used as a cushion'));
+    expect(groupPrompt, contains('large armchair'));
+    expect(groupPrompt, contains('Hatter opens eyes wide'));
+    expect(groupPrompt, isNot(contains('No room')));
+    expect(groupPrompt, isNot(contains('Have some wine')));
+    expect(groupPrompt, isNot(contains('Why is a raven')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('riddle')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('debate')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('remark')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('exchange')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('conversation')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('question')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('answer')));
+    expect(groupPrompt.toLowerCase(), isNot(contains('mean')));
+  });
+
+  test('picture-book chapter plan keeps full E22 at reasonable scene count',
+      () async {
+    _writeImageArkKey(tempDir, 'ark-full-e22-plan-key-12345678901234567890');
+    final sentences = [
+      'Alice was not much surprised at this, she was getting so used to queer things happening.',
+      'While she was still looking at the place where it had been, it suddenly appeared again.',
+      '"By-the-by, what became of the baby?" said the Cat. "I\'d nearly forgotten to ask."',
+      '"It turned into a pig," Alice answered very quietly, just as if the Cat had come back in a natural way.',
+      '"I thought it would," said the Cat, and vanished again.',
+      'Alice waited a little, half expecting to see it again, but it did not appear, and',
+      'after a minute or two she walked on in the direction in which the March Hare was said to live.',
+      '"I\'ve seen Hatters before," she said to herself; "the March Hare will be much the most interesting and perhaps as this is May it won\'t be raving mad—',
+      'at least not so mad as it was in March."',
+      'As she said this, she looked up, and there was the Cat again, sitting on a branch of a tree.',
+      '"Did you say pig, or fig?" said the Cat.',
+      '"I said pig," replied Alice; "and I wish you wouldn\'t keep appearing and vanishing so suddenly; you make one quite giddy."',
+      '"All right," said the Cat; and this time it vanished quite slowly, beginning with the end of the tail,',
+      'and ending with the grin, which remained some time after the rest of it had gone.',
+      '"Well, I\'ve often seen a cat without a grin," thought Alice; "but a grin without a cat!',
+      'It\'s the most curious thing I ever saw in my life!"',
+      'She had not gone much farther before she came in sight of the house of the March Hare:',
+      'she thought it must be the right house, because the chimneys were shaped like ears and the roof was thatched with fur.',
+      'It was so large a house, that she did not like to go nearer till she had nibbled some more of the left-hand bit of mushroom, and raised herself to about two feet high; even then she walked up toward it rather timidly, saying to herself,',
+      '"Suppose it should be raving mad after all, I almost wish I\'d gone to see the Hatter instead."',
+      'There was a table set out under a tree in front of the house,',
+      'and the March Hare and the Hatter were having tea at it:',
+      'a Dormouse was sitting between them, fast asleep, and the other two were using it as a cushion,',
+      'resting their elbows on it, and talking over its head.',
+      '"Very uncomfortable for the Dormouse," thought Alice:"only as it\'s asleep, I suppose it doesn\'t mind."',
+      'The table was a large one, but the three were all crowded together at one corner of it:',
+      '"No room! No room!" they cried out when they saw Alice coming.',
+      '"There\'s plenty of room," said Alice indignantly, and she sat down in a large arm-chair at one end of the table.',
+      '"Have some wine," the March Hare said in an encouraging tone.',
+      'Alice looked all round the table, but there was nothing on it but tea.',
+      '"I don\'t see any wine," she remarked. "There isn\'t any," said the March Hare.',
+      '"Then it wasn\'t very civil of you to offer it," said Alice angrily.',
+      '"It wasn\'t very civil of you to sit down without being invited," said the March Hare.',
+      '"I didn\'t know it was your table," said Alice; "It\'s laid for a great many more than three."',
+      '"Your hair wants cutting," said the Hatter.',
+      'He had been looking at Alice for some time with great curiosity, and this was his first speech.',
+      '"You should learn not to make personal remarks, " Alice said with some severity: "It\'s very rude."',
+      'The Hatter opened his eyes very wide on hearing this; but all he said was,',
+      '"Why is a raven like a writing-desk?"',
+      '"Come, we shall have some fun now!" thought Alice. "I\'m glad they\'ve begun asking riddles—I believe I can guess that," she added aloud.',
+      '"Do you mean that you think you can find out the answer to it?" said the March Hare.',
+      '"Exactly so," said Alice. "Then you should say what you mean," the March Hare went on.',
+      '"I do," Alice hastily replied, "at least—at least I mean what I say—that\'s the same thing, you know."',
+      '"Not the same thing a bit!" said the Hatter.',
+      '"Why, you might just as well say that \'I see what I eat\' is the same thing as \'I eat what I see!\'"',
+      '"You might just as well say," added the March Hare,',
+      '"that \'I like what I get\' is the same thing as \'I get what I like!\'"',
+      '"You might just as well say," added the Dormouse, who seemed to be talking in his sleep, "that \'I breathe',
+      'when I sleep\' is the same thing as \'I sleep when I breathe!\'"',
+      '"It is the same thing with you," said the Hatter, and here the conversation dropped, and the party sat silent for a minute,',
+      'while Alice thought out all she could remember about ravens and writing-desks, which wasn\'t much.',
+      '17.I meant what I said',
+      'See?',
+      'I meant what I said.',
+    ];
+
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'E22 Full Scene Plan Regression',
+        content: sentences.join('\n'),
+        sentences: sentences,
+        createdAt: DateTime(2026, 7, 8),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter,
+      regenerate: true,
+    );
+
+    Map<String, dynamic>? textBody;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textBody = body;
+        return {
+          'choices': [
+            {
+              'message': {
+                'content': jsonEncode({
+                  'planKind': 'picture_book_chapter_scene_plan_v2',
+                  'chapterDescription':
+                      'Alice sees the Cheshire Cat reappear and vanish along the path, watches its grin linger in mid-air, reaches the March Hare house, and joins the strange tea table under the tree before the group falls silent.',
+                  'scenes': [
+                    {
+                      'pageIndex': 0,
+                      'sentenceStartIndex': 0,
+                      'sentenceEndIndex': 4,
+                      'sceneDescription':
+                          'Alice stands calmly at the spot where the Cheshire Cat vanished; the Cat suddenly appears again nearby, then vanishes once more.',
+                    },
+                    {
+                      'pageIndex': 1,
+                      'sentenceStartIndex': 5,
+                      'sentenceEndIndex': 8,
+                      'sceneDescription':
+                          'Alice waits on the path half expecting the Cheshire Cat to return, then walks toward the March Hare home.',
+                    },
+                    {
+                      'pageIndex': 2,
+                      'sentenceStartIndex': 9,
+                      'sentenceEndIndex': 15,
+                      'sceneDescription':
+                          'The Cheshire Cat sits on a tree branch above Alice, then vanishes slowly from tail to grin, leaving only the grin floating in mid-air while Alice looks up at it.',
+                    },
+                    {
+                      'pageIndex': 3,
+                      'sentenceStartIndex': 16,
+                      'sentenceEndIndex': 19,
+                      'sceneDescription':
+                          'Alice reaches the March Hare house with chimneys shaped like ears and a fur-thatched roof, nibbles the mushroom to become about two feet high, and approaches timidly.',
+                    },
+                    {
+                      'pageIndex': 4,
+                      'sentenceStartIndex': 20,
+                      'sentenceEndIndex': 24,
+                      'sceneDescription':
+                          'A large tea table stands under a tree in front of the house; the March Hare and Hatter sit at it with the sleeping Dormouse between them as a cushion beneath their elbows.',
+                    },
+                    {
+                      'pageIndex': 5,
+                      'sentenceStartIndex': 25,
+                      'sentenceEndIndex': 53,
+                      'sceneDescription':
+                          'At the large tea table, the three guests remain crowded at one corner while Alice sits in a large armchair at the end; Alice sees only tea on the table, the Hatter watches her with curiosity and opens his eyes wide, and the whole tea party falls silent.',
+                    },
+                  ],
+                }),
+              },
+            }
+          ],
+        };
+      },
+    );
+
+    final refreshed = await _refreshChapterPlanFromReview(review);
+    final textMessages = (textBody?['messages'] as List?) ?? const [];
+    final planningPrompt = textMessages
+        .map((message) => (message as Map)['content']?.toString() ?? '')
+        .join('\n')
+        .toLowerCase();
+
+    expect(planningPrompt, contains('17.i meant what i said'));
+    expect(
+        planningPrompt, contains('if deleting speech/thought leaves no new'));
+    expect(
+      planningPrompt,
+      contains('those sentence slots must stay in the same scene'),
+    );
+    expect(
+      planningPrompt,
+      contains(
+          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+    );
+    expect(
+        planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(
+      planningPrompt,
+      contains('do not write substitute dialogue-summary words'),
+    );
+    expect(planningPrompt, isNot(contains('use at most 12 scenes')));
+    expect(planningPrompt, isNot(contains('compact')));
+    expect(planningPrompt, isNot(contains('smallest complete scene set')));
+
+    final scenes = refreshed['scenes'] as List<dynamic>;
+    expect(scenes, hasLength(6));
+    expect(
+      [
+        for (final scene in scenes)
+          [
+            (scene as Map)['sentenceStartIndex'],
+            scene['sentenceEndIndex'],
+          ],
+      ],
+      [
+        [0, 4],
+        [5, 8],
+        [9, 15],
+        [16, 19],
+        [20, 24],
+        [25, 53],
+      ],
+    );
+
+    final groupPrompt = refreshed['groupPrompt'].toString();
+    expect(groupPrompt, contains('Cheshire Cat'));
+    expect(groupPrompt, contains('grin floating in mid-air'));
+    expect(groupPrompt, contains('chimneys shaped like ears'));
+    expect(groupPrompt, contains('fur-thatched roof'));
+    expect(groupPrompt, contains('sleeping Dormouse'));
+    expect(groupPrompt, contains('large armchair'));
+    expect(groupPrompt, contains('only tea on the table'));
+    expect(groupPrompt, contains('opens his eyes wide'));
+    expect(groupPrompt, contains('falls silent'));
+    expect(groupPrompt, isNot(contains('No room')));
+    expect(groupPrompt, isNot(contains('Have some wine')));
+    expect(groupPrompt, isNot(contains('Why is a raven')));
+    expect(groupPrompt, isNot(contains('I meant what I said')));
+    _expectNoDialogueSummaryWords(groupPrompt);
   });
 
   test('picture-book prompt review draft rows follow paragraph cap without AI',
@@ -3919,6 +4386,35 @@ void _writeImageArkKey(Directory _, String key) {
     aiProvider: AppConfig.aiProviderVolcengine,
     volcArkApiKey: key,
   );
+}
+
+void _expectNoDialogueSummaryWords(String text) {
+  final lower = text.toLowerCase();
+  const forbidden = [
+    'exchange',
+    'conversation',
+    'discuss',
+    'debate',
+    'ask',
+    'answer',
+    'question',
+    'reply',
+    'remark',
+    'riddle',
+    'argue',
+    'claim',
+    'mean',
+    'say',
+    'said',
+    'offer',
+  ];
+  for (final word in forbidden) {
+    expect(
+      lower,
+      isNot(matches(RegExp('\\b${RegExp.escape(word)}\\b'))),
+      reason: 'scene text should not reintroduce dialogue summary word "$word"',
+    );
+  }
 }
 
 Future<void> _installTwoPageChapterPlanOverride() async {

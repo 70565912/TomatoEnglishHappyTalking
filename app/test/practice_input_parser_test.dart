@@ -358,6 +358,69 @@ The Queen said—
           contains('it was as much as she could do to hold it.'));
     });
 
+    test('extracts E22 tea-party story without learning-note examples', () {
+      final raw = File(
+        'test/fixtures/e22_mad_tea_party_raw_input.txt',
+      ).readAsStringSync();
+
+      final parsed = PracticeInputParser.parse(raw);
+      final sentences = NlpService.splitSentences(parsed.englishContent);
+      final joinedSentences = sentences.join(' ');
+
+      expect(parsed.sourceKind, PracticeInputSourceKind.english);
+      expect(parsed.usesLocalEnglish, isTrue);
+      expect(parsed.englishContent,
+          contains('Alice was not much surprised at this'));
+      expect(parsed.englishContent,
+          contains('She had not gone much farther before she came in sight'));
+      expect(parsed.englishContent,
+          contains('There was a table set out under a tree'));
+      expect(
+        parsed.englishContent.trim(),
+        endsWith("which wasn't much."),
+      );
+      expect(parsed.englishContent, isNot(contains('Because it can produce')));
+      expect(
+          parsed.englishContent, isNot(contains('I recently made a friend')));
+      expect(parsed.englishContent, isNot(contains('17.I meant what I said')));
+      expect(
+          parsed.englishContent, isNot(contains('See? I meant what I said')));
+
+      expect(sentences, isNotEmpty);
+      expect(sentences.last, contains("which wasn't much."));
+      expect(
+        sentences.every((sentence) => _englishWordCount(sentence) <= 32),
+        isTrue,
+      );
+      expect(
+        sentences,
+        isNot(contains(contains('17.I meant what I said'))),
+      );
+      expect(joinedSentences, isNot(contains('See? I meant what I said')));
+      expect(
+        joinedSentences,
+        contains(
+          'It was so large a house, that she did not like to go nearer '
+          'till she had nibbled some more of the left-hand bit of mushroom,',
+        ),
+      );
+      expect(
+        joinedSentences,
+        contains(
+          'and raised herself to about two feet high; even then she walked '
+          'up toward it rather timidly, saying to herself,',
+        ),
+      );
+      expect(
+        joinedSentences,
+        contains(
+          '"You might just as well say," added the Dormouse, who seemed '
+          'to be talking in his sleep, "that \'I breathe when I sleep\' '
+          'is the same thing as \'I sleep when I breathe!\'"',
+        ),
+      );
+    });
+
     test('extracts E29 Cat head dispute story before learning sections', () {
       final raw = File(
         'test/fixtures/e29_cat_head_dispute_raw_input.txt',
@@ -631,3 +694,8 @@ I can't stand it when people don't attend to the rules.
     });
   });
 }
+
+int _englishWordCount(String text) =>
+    RegExp(r"[A-Za-z][A-Za-z'’-]*(?:-[A-Za-z][A-Za-z'’-]*)*")
+        .allMatches(text)
+        .length;

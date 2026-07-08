@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,8 +29,10 @@ class AppConfig {
 
   static const aiProviderAliyunBailian = 'aliyun_bailian';
   static const aiProviderVolcengine = 'volcengine';
+  static const aiProviderElevenLabs = 'elevenlabs';
   static const songProviderSuno = 'suno';
   static const songProviderBailianFunMusic = 'bailian_fun_music';
+  static const songProviderElevenLabsMusic = 'elevenlabs_music';
 
   static const defaultAiProvider = aiProviderAliyunBailian;
   static const defaultSongProvider = songProviderSuno;
@@ -51,6 +55,12 @@ class AppConfig {
       'https://ark.cn-beijing.volces.com/api/v3';
   static const defaultVolcArkTextModel = 'doubao-seed-2-0-lite-260215';
   static const defaultVolcArkImageModel = 'doubao-seedream-5-0-260128';
+  static const defaultElevenLabsBaseUrl = 'https://api.elevenlabs.io';
+  static const defaultElevenLabsTtsModel = 'eleven_multilingual_v2';
+  static const defaultElevenLabsTtsVoiceId = 'JBFqnCBsd6RMkjVDRZzb';
+  static const defaultElevenLabsTtsOutputFormat = 'mp3_44100_128';
+  static const defaultElevenLabsMusicModel = 'music_v2';
+  static const defaultElevenLabsMusicOutputFormat = 'mp3_44100_128';
 
   // ===== Local non-key bootstrap via --dart-define =====
   static const _envVolcTtsResourceId =
@@ -64,6 +74,9 @@ class AppConfig {
 
   // ===== 实时语音与 BigASR =====
   static const _aiProvider = 'ai_provider';
+  static const _textProvider = 'text_provider';
+  static const _imageProvider = 'image_provider';
+  static const _ttsProvider = 'tts_provider';
   static const _aliyunBailianApiKey = 'aliyun_bailian_api_key';
   static const _aliyunBailianBaseUrl = 'aliyun_bailian_base_url';
   static const _aliyunBailianApiBaseUrl = 'aliyun_bailian_api_base_url';
@@ -83,6 +96,13 @@ class AppConfig {
   static const _volcArkBaseUrl = 'volc_ark_base_url';
   static const _volcArkTextModel = 'volc_ark_text_model';
   static const _volcArkImageModel = 'volc_ark_image_model';
+  static const _elevenLabsApiKey = 'elevenlabs_api_key';
+  static const _elevenLabsBaseUrl = 'elevenlabs_base_url';
+  static const _elevenLabsTtsModel = 'elevenlabs_tts_model';
+  static const _elevenLabsTtsVoiceId = 'elevenlabs_tts_voice_id';
+  static const _elevenLabsTtsOutputFormat = 'elevenlabs_tts_output_format';
+  static const _elevenLabsMusicModel = 'elevenlabs_music_model';
+  static const _elevenLabsMusicOutputFormat = 'elevenlabs_music_output_format';
   static const _recordingCodec = 'recording_codec';
   static const _recordingResolution = 'recording_resolution';
   static const _recordingPageTransition = 'recording_page_transition';
@@ -108,6 +128,30 @@ class AppConfig {
           defaultValue: defaultAiProvider,
         ),
       );
+
+  static Future<String> get textProvider async {
+    final stored = await _readSecret(key: _textProvider);
+    if (stored.trim().isNotEmpty) {
+      return _normalizeAiProvider(stored);
+    }
+    return aiProvider;
+  }
+
+  static Future<String> get imageProvider async {
+    final stored = await _readSecret(key: _imageProvider);
+    if (stored.trim().isNotEmpty) {
+      return _normalizeAiProvider(stored);
+    }
+    return aiProvider;
+  }
+
+  static Future<String> get ttsProvider async {
+    final stored = await _readSecret(key: _ttsProvider);
+    if (stored.trim().isNotEmpty) {
+      return _normalizeTtsProvider(stored);
+    }
+    return _normalizeTtsProvider(await aiProvider);
+  }
 
   static Future<String> get volcSpeechApiKey async =>
       _readSecret(key: _volcSpeechApiKey);
@@ -140,6 +184,42 @@ class AppConfig {
   static Future<String> get volcArkImageModel async {
     final stored = await _readSecret(key: _volcArkImageModel);
     return stored.isNotEmpty ? stored : defaultVolcArkImageModel;
+  }
+
+  static Future<String> get elevenLabsApiKey async =>
+      _stripBearerPrefix(await _readSecret(key: _elevenLabsApiKey));
+
+  static Future<String> get elevenLabsBaseUrl async => _normalizeBaseUrl(
+        await _readSecret(
+          key: _elevenLabsBaseUrl,
+          defaultValue: defaultElevenLabsBaseUrl,
+        ),
+        defaultElevenLabsBaseUrl,
+      );
+
+  static Future<String> get elevenLabsTtsModel async {
+    final stored = await _readSecret(key: _elevenLabsTtsModel);
+    return stored.isNotEmpty ? stored : defaultElevenLabsTtsModel;
+  }
+
+  static Future<String> get elevenLabsTtsVoiceId async {
+    final stored = await _readSecret(key: _elevenLabsTtsVoiceId);
+    return stored.isNotEmpty ? stored : defaultElevenLabsTtsVoiceId;
+  }
+
+  static Future<String> get elevenLabsTtsOutputFormat async {
+    final stored = await _readSecret(key: _elevenLabsTtsOutputFormat);
+    return stored.isNotEmpty ? stored : defaultElevenLabsTtsOutputFormat;
+  }
+
+  static Future<String> get elevenLabsMusicModel async {
+    final stored = await _readSecret(key: _elevenLabsMusicModel);
+    return stored.isNotEmpty ? stored : defaultElevenLabsMusicModel;
+  }
+
+  static Future<String> get elevenLabsMusicOutputFormat async {
+    final stored = await _readSecret(key: _elevenLabsMusicOutputFormat);
+    return stored.isNotEmpty ? stored : defaultElevenLabsMusicOutputFormat;
   }
 
   static Future<String> get volcArkImageEndpoint async =>
@@ -246,7 +326,7 @@ class AppConfig {
       );
 
   static Future<OpenAiTextConfig> get openAiTextConfig async {
-    final provider = await aiProvider;
+    final provider = await textProvider;
     if (provider == aiProviderVolcengine) {
       return OpenAiTextConfig(
         provider: aiProviderVolcengine,
@@ -276,6 +356,7 @@ class AppConfig {
           key: _volcTtsResourceId, value: _envVolcTtsResourceId);
       await _writeIfProvided(
           key: _volcTtsSpeakerId, value: _envVolcTtsSpeakerId);
+      await _seedElevenLabsKeyFromFile();
     } catch (e) {
       debugPrint('[AppConfig] secure storage bootstrap failed: $e');
     }
@@ -379,6 +460,9 @@ class AppConfig {
 
   static Future<void> saveCloudSettings({
     String? aiProvider,
+    String? textProvider,
+    String? imageProvider,
+    String? ttsProvider,
     String? aliyunBailianApiKey,
     bool clearAliyunBailianApiKey = false,
     String? aliyunBailianBaseUrl,
@@ -398,6 +482,14 @@ class AppConfig {
     String? volcArkBaseUrl,
     String? volcArkTextModel,
     String? volcArkImageModel,
+    String? elevenLabsApiKey,
+    bool clearElevenLabsApiKey = false,
+    String? elevenLabsBaseUrl,
+    String? elevenLabsTtsModel,
+    String? elevenLabsTtsVoiceId,
+    String? elevenLabsTtsOutputFormat,
+    String? elevenLabsMusicModel,
+    String? elevenLabsMusicOutputFormat,
     String? volcSpeechApiKey,
     bool clearVolcSpeechApiKey = false,
     String? volcTtsResourceId,
@@ -407,6 +499,21 @@ class AppConfig {
       final provider = _normalizeAiProvider(aiProvider);
       await _storage.write(key: _aiProvider, value: provider);
       _runtimeSecrets[_aiProvider] = provider;
+    }
+    if (textProvider != null) {
+      final provider = _normalizeAiProvider(textProvider);
+      await _storage.write(key: _textProvider, value: provider);
+      _runtimeSecrets[_textProvider] = provider;
+    }
+    if (imageProvider != null) {
+      final provider = _normalizeAiProvider(imageProvider);
+      await _storage.write(key: _imageProvider, value: provider);
+      _runtimeSecrets[_imageProvider] = provider;
+    }
+    if (ttsProvider != null) {
+      final provider = _normalizeTtsProvider(ttsProvider);
+      await _storage.write(key: _ttsProvider, value: provider);
+      _runtimeSecrets[_ttsProvider] = provider;
     }
     if (clearAliyunBailianApiKey) {
       await _deleteSecret(_aliyunBailianApiKey);
@@ -428,6 +535,14 @@ class AppConfig {
       await _deleteSecret(_volcSpeechApiKey);
     } else if (volcSpeechApiKey != null) {
       await _writeIfProvided(key: _volcSpeechApiKey, value: volcSpeechApiKey);
+    }
+    if (clearElevenLabsApiKey) {
+      await _deleteSecret(_elevenLabsApiKey);
+    } else if (elevenLabsApiKey != null) {
+      await _writeIfProvided(
+        key: _elevenLabsApiKey,
+        value: _stripBearerPrefix(elevenLabsApiKey),
+      );
     }
     await _writeConfigValue(
       key: _aliyunBailianBaseUrl,
@@ -505,6 +620,36 @@ class AppConfig {
       defaultValue: defaultVolcArkImageModel,
     );
     await _writeConfigValue(
+      key: _elevenLabsBaseUrl,
+      value: elevenLabsBaseUrl,
+      defaultValue: defaultElevenLabsBaseUrl,
+    );
+    await _writeConfigValue(
+      key: _elevenLabsTtsModel,
+      value: elevenLabsTtsModel,
+      defaultValue: defaultElevenLabsTtsModel,
+    );
+    await _writeConfigValue(
+      key: _elevenLabsTtsVoiceId,
+      value: elevenLabsTtsVoiceId,
+      defaultValue: defaultElevenLabsTtsVoiceId,
+    );
+    await _writeConfigValue(
+      key: _elevenLabsTtsOutputFormat,
+      value: elevenLabsTtsOutputFormat,
+      defaultValue: defaultElevenLabsTtsOutputFormat,
+    );
+    await _writeConfigValue(
+      key: _elevenLabsMusicModel,
+      value: elevenLabsMusicModel,
+      defaultValue: defaultElevenLabsMusicModel,
+    );
+    await _writeConfigValue(
+      key: _elevenLabsMusicOutputFormat,
+      value: elevenLabsMusicOutputFormat,
+      defaultValue: defaultElevenLabsMusicOutputFormat,
+    );
+    await _writeConfigValue(
       key: _volcTtsResourceId,
       value: volcTtsResourceId,
       defaultValue: 'seed-tts-2.0',
@@ -520,8 +665,12 @@ class AppConfig {
     final aliyunKey = await aliyunBailianApiKey;
     final volcArkKey = await volcArkTextApiKey;
     final volcSpeechKey = await volcSpeechApiKey;
+    final elevenLabsKey = await elevenLabsApiKey;
     return {
       'aiProvider': await aiProvider,
+      'textProvider': await textProvider,
+      'imageProvider': await imageProvider,
+      'ttsProvider': await ttsProvider,
       'aliyunBailian': {
         'apiKeyConfigured': aliyunKey.isNotEmpty,
         'apiKeyMask': maskSecret(aliyunKey),
@@ -548,6 +697,16 @@ class AppConfig {
         'speechApiKeyMask': maskSecret(volcSpeechKey),
         'ttsResourceId': await volcTtsResourceId,
         'ttsSpeakerId': await volcTtsSpeakerId,
+      },
+      'elevenLabs': {
+        'apiKeyConfigured': elevenLabsKey.isNotEmpty,
+        'apiKeyMask': maskSecret(elevenLabsKey),
+        'baseUrl': await elevenLabsBaseUrl,
+        'ttsModel': await elevenLabsTtsModel,
+        'ttsVoiceId': await elevenLabsTtsVoiceId,
+        'ttsOutputFormat': await elevenLabsTtsOutputFormat,
+        'musicModel': await elevenLabsMusicModel,
+        'musicOutputFormat': await elevenLabsMusicOutputFormat,
       },
     };
   }
@@ -638,11 +797,23 @@ class AppConfig {
         : aiProviderAliyunBailian;
   }
 
+  static String _normalizeTtsProvider(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == aiProviderElevenLabs) {
+      return aiProviderElevenLabs;
+    }
+    return _normalizeAiProvider(normalized);
+  }
+
   static String _normalizeSongProvider(String value) {
     final normalized = value.trim().toLowerCase();
-    return normalized == songProviderBailianFunMusic
-        ? songProviderBailianFunMusic
-        : songProviderSuno;
+    if (normalized == songProviderBailianFunMusic) {
+      return songProviderBailianFunMusic;
+    }
+    if (normalized == songProviderElevenLabsMusic) {
+      return songProviderElevenLabsMusic;
+    }
+    return songProviderSuno;
   }
 
   static String _normalizeBaseUrl(String value, String fallback) {
@@ -653,6 +824,81 @@ class AppConfig {
   static String _trimTrailingSlash(String value) =>
       value.trim().replaceFirst(RegExp(r'/+$'), '');
 
+  static Future<void> _seedElevenLabsKeyFromFile() async {
+    final apiKey = await _readElevenLabsKeyFile();
+    if (apiKey.isEmpty) {
+      return;
+    }
+    _runtimeSecrets[_elevenLabsApiKey] = apiKey;
+    try {
+      await _storage.write(key: _elevenLabsApiKey, value: apiKey);
+    } catch (e) {
+      final message = e.toString().split('\n').first;
+      debugPrint(
+          '[AppConfig] secure storage write failed for elevenlabs: $message');
+    }
+  }
+
+  static Future<String> _readElevenLabsKeyFile() async {
+    final paths = <String>{};
+    void addAncestorSecurityPaths(String startPath) {
+      var directory = Directory(startPath).absolute;
+      for (var depth = 0; depth < 8; depth += 1) {
+        paths.add(_joinPath(directory.path, 'security/elevenlabs.txt'));
+        final parent = directory.parent.absolute;
+        if (parent.path == directory.path) {
+          break;
+        }
+        directory = parent;
+      }
+    }
+
+    addAncestorSecurityPaths(Directory.current.path);
+    addAncestorSecurityPaths(File(Platform.resolvedExecutable).parent.path);
+    for (final path in paths) {
+      try {
+        final file = File(path);
+        if (!await file.exists()) {
+          continue;
+        }
+        final value = _parseElevenLabsKeyFile(await file.readAsString());
+        if (value.isNotEmpty) {
+          return value;
+        }
+      } catch (e) {
+        final message = e.toString().split('\n').first;
+        debugPrint('[AppConfig] elevenlabs key file read failed: $message');
+      }
+    }
+    return '';
+  }
+
+  static String _parseElevenLabsKeyFile(String raw) {
+    for (final line in raw.split(RegExp(r'\r?\n'))) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty || trimmed.startsWith('#')) {
+        continue;
+      }
+      final match = RegExp(
+        r'^(?:ELEVENLABS_API_KEY|XI_API_KEY)\s*=\s*(.+)$',
+        caseSensitive: false,
+      ).firstMatch(trimmed);
+      final value = match?.group(1)?.trim() ?? trimmed;
+      return _stripBearerPrefix(value).replaceAll('"', '').replaceAll("'", '');
+    }
+    return '';
+  }
+
+  static String _joinPath(String basePath, String childPath) {
+    final separator = Platform.pathSeparator;
+    final normalizedChild =
+        childPath.replaceAll('/', separator).replaceAll(r'\', separator);
+    if (basePath.endsWith(separator)) {
+      return '$basePath$normalizedChild';
+    }
+    return '$basePath$separator$normalizedChild';
+  }
+
   @visibleForTesting
   static void resetRuntimeConfigForTest() {
     _runtimeSecrets.clear();
@@ -661,6 +907,9 @@ class AppConfig {
   @visibleForTesting
   static void setRuntimeConfigForTest({
     String? aiProvider,
+    String? textProvider,
+    String? imageProvider,
+    String? ttsProvider,
     String? aliyunBailianApiKey,
     String? aliyunBailianBaseUrl,
     String? aliyunBailianApiBaseUrl,
@@ -679,6 +928,15 @@ class AppConfig {
     String? volcArkBaseUrl,
     String? volcArkTextModel,
     String? volcArkImageModel,
+    String? volcTtsResourceId,
+    String? volcTtsSpeakerId,
+    String? elevenLabsApiKey,
+    String? elevenLabsBaseUrl,
+    String? elevenLabsTtsModel,
+    String? elevenLabsTtsVoiceId,
+    String? elevenLabsTtsOutputFormat,
+    String? elevenLabsMusicModel,
+    String? elevenLabsMusicOutputFormat,
     String? songProvider,
     String? sunoOutputDirectory,
     String? sunoTimeoutMinutes,
@@ -696,6 +954,9 @@ class AppConfig {
     }
 
     put(_aiProvider, aiProvider);
+    put(_textProvider, textProvider);
+    put(_imageProvider, imageProvider);
+    put(_ttsProvider, ttsProvider);
     put(_aliyunBailianApiKey, aliyunBailianApiKey);
     put(_aliyunBailianBaseUrl, aliyunBailianBaseUrl);
     put(_aliyunBailianApiBaseUrl, aliyunBailianApiBaseUrl);
@@ -714,6 +975,15 @@ class AppConfig {
     put(_volcArkBaseUrl, volcArkBaseUrl);
     put(_volcArkTextModel, volcArkTextModel);
     put(_volcArkImageModel, volcArkImageModel);
+    put(_volcTtsResourceId, volcTtsResourceId);
+    put(_volcTtsSpeakerId, volcTtsSpeakerId);
+    put(_elevenLabsApiKey, elevenLabsApiKey);
+    put(_elevenLabsBaseUrl, elevenLabsBaseUrl);
+    put(_elevenLabsTtsModel, elevenLabsTtsModel);
+    put(_elevenLabsTtsVoiceId, elevenLabsTtsVoiceId);
+    put(_elevenLabsTtsOutputFormat, elevenLabsTtsOutputFormat);
+    put(_elevenLabsMusicModel, elevenLabsMusicModel);
+    put(_elevenLabsMusicOutputFormat, elevenLabsMusicOutputFormat);
     put(_songProvider, songProvider);
     put(_sunoOutputDirectory, sunoOutputDirectory);
     put(_sunoTimeoutMinutes, sunoTimeoutMinutes);
@@ -722,9 +992,11 @@ class AppConfig {
 
 /// Riverpod provider — 判断是否已配置新版语音 API Key
 final configReadyProvider = FutureProvider<bool>((ref) async {
-  final provider = await AppConfig.aiProvider;
-  final apiKey = provider == AppConfig.aiProviderVolcengine
-      ? await AppConfig.volcSpeechApiKey
-      : await AppConfig.aliyunBailianApiKey;
+  final provider = await AppConfig.ttsProvider;
+  final apiKey = provider == AppConfig.aiProviderElevenLabs
+      ? await AppConfig.elevenLabsApiKey
+      : provider == AppConfig.aiProviderVolcengine
+          ? await AppConfig.volcSpeechApiKey
+          : await AppConfig.aliyunBailianApiKey;
   return apiKey.isNotEmpty;
 });

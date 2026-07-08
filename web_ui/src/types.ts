@@ -247,8 +247,13 @@ export interface ListeningAudioMaterialProgress {
   requested?: number;
 }
 
-export type SongSource = 'suno' | 'bailian_fun_music' | 'external_audio';
+export type SongSource =
+  | 'suno'
+  | 'bailian_fun_music'
+  | 'elevenlabs_music'
+  | 'external_audio';
 export type AiProvider = 'aliyun_bailian' | 'volcengine';
+export type TtsProvider = AiProvider | 'elevenlabs';
 
 export interface ListeningSongStatePayload {
   articleId: number;
@@ -491,6 +496,9 @@ export interface SettingsState {
   };
   cloud?: {
     aiProvider: AiProvider | string;
+    textProvider?: AiProvider | string;
+    imageProvider?: AiProvider | string;
+    ttsProvider?: TtsProvider | string;
     aliyunBailian: {
       apiKeyConfigured: boolean;
       apiKeyMask?: string;
@@ -518,6 +526,16 @@ export interface SettingsState {
       ttsResourceId: string;
       ttsSpeakerId: string;
     };
+    elevenLabs?: {
+      apiKeyConfigured: boolean;
+      apiKeyMask?: string;
+      baseUrl: string;
+      ttsModel: string;
+      ttsVoiceId: string;
+      ttsOutputFormat: string;
+      musicModel: string;
+      musicOutputFormat: string;
+    };
   };
   song?: {
     sunoOutputDirectory: string;
@@ -528,6 +546,10 @@ export interface SettingsState {
   voiceCatalog?: {
     aliyunBailian?: VoiceOption[];
     volcengine?: VoiceOption[];
+    elevenLabs?: VoiceOption[];
+  };
+  voiceCatalogErrors?: {
+    elevenLabs?: string | null;
   };
   contentSafety?: {
     rules: ContentSafetyRule[];

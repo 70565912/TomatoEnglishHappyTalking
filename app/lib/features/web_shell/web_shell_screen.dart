@@ -27,6 +27,7 @@ import '../../services/bailian_music_service.dart';
 import '../../services/book_transfer_service.dart';
 import '../../services/database_service.dart';
 import '../../services/content_safety_service.dart';
+import '../../services/eleven_labs_music_service.dart';
 import '../../services/external_song_import_service.dart';
 import '../../services/listening_audio_material_service.dart';
 import '../../services/nlp_service.dart';
@@ -71,6 +72,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   static const _articleContentMaxChars = 8000;
   static const _sunoSongPurpose = 'article_suno_song_v1';
   static const _bailianSongPurpose = BailianMusicService.cachePurpose;
+  static const _elevenLabsSongPurpose = ElevenLabsMusicService.cachePurpose;
   static const _mainWebViewFrameRateSettleDelay = Duration(milliseconds: 900);
   static const _mainWebViewFrameRateIdleDelay = Duration(milliseconds: 2200);
   static const _mainWebViewActiveFpsLimit = 0;
@@ -2063,6 +2065,127 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     );
   }
 
+  Future<ArticleSongState?> _cachedElevenLabsSongState(Article article) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      return null;
+    }
+    final entries = await ApiCacheService.getEntriesForArticlePurpose(
+      articleId: articleId,
+      purpose: _elevenLabsSongPurpose,
+      limit: 80,
+    );
+    if (entries.isEmpty) {
+      return null;
+    }
+    final versions = <ArticleSongVersion>[];
+    var lyricsCompressed = false;
+    String? metadataPath;
+    String? songUrl;
+    for (final entry in entries) {
+      if ((entry.jsonValue ?? '').trim().isEmpty) {
+        continue;
+      }
+      final metadata = _decodeJsonObject(entry.jsonValue);
+      final entryLyricsHash = _nonEmptyString(metadata['lyricsHash']) ??
+          _nonEmptyString(
+            _decodeJsonObject(entry.requestJson)['lyricsHash'],
+          );
+      lyricsCompressed =
+          lyricsCompressed || metadata['lyricsCompressed'] == true;
+      metadataPath ??= _nonEmptyString(metadata['metadataPath']);
+      songUrl ??= _nonEmptyString(metadata['songUrl']);
+      final rawVersions = metadata['versions'];
+      if (rawVersions is List) {
+        for (final rawVersion in rawVersions) {
+          final version = ArticleSongVersion.fromJson(rawVersion);
+          if (version == null) {
+            continue;
+          }
+          final audioPath =
+              await ApiCacheService.migrateLegacyCacheFileIfNeeded(
+            version.audioPath,
+          );
+          if (!await File(audioPath).exists()) {
+            continue;
+          }
+          final timelinePath = version.timelinePath == null
+              ? null
+              : await ApiCacheService.migrateLegacyCacheFileIfNeeded(
+                  version.timelinePath!,
+                );
+          final timelineStatus = await _songTimelineStatusForPath(timelinePath);
+          final hasTimeline = timelineStatus != 'missing';
+          final timelineReady = timelineStatus == 'ready';
+          versions.add(
+            version.copyWith(
+              audioPath: audioPath,
+              lyricsHash: version.lyricsHash ?? entryLyricsHash,
+              source: AppConfig.songProviderElevenLabsMusic,
+              timelinePath: hasTimeline ? timelinePath : null,
+              timelineStatus: timelineStatus,
+              timelineConfidence:
+                  timelineReady ? version.timelineConfidence : null,
+              timelineError: timelineReady
+                  ? version.timelineError
+                  : timelineStatus == 'stale'
+                      ? SongSubtitleTimelineService.staleTimelineMessage
+                      : null,
+            ),
+          );
+        }
+      }
+      if (versions.isEmpty) {
+        final legacyAudioPath =
+            await ApiCacheService.migrateLegacyCacheFileIfNeeded(
+          (metadata['audioPath'] ?? '').toString(),
+        );
+        if (legacyAudioPath.trim().isNotEmpty &&
+            await File(legacyAudioPath).exists()) {
+          versions.add(
+            ArticleSongVersion(
+              id: 'elevenlabs_music_${articleId}_${legacyAudioPath.hashCode}',
+              audioPath: legacyAudioPath,
+              title: 'ElevenLabs 版本 1',
+              songUrl: _nonEmptyString(metadata['songUrl']),
+              durationMs: (metadata['durationMs'] as num?)?.toInt(),
+              createdAt: _nonEmptyString(metadata['createdAt']),
+              stylePrompt: _nonEmptyString(metadata['model']),
+              styleKey: _nonEmptyString(metadata['model']),
+              lyricsHash: entryLyricsHash,
+              source: AppConfig.songProviderElevenLabsMusic,
+              isDefault: true,
+            ),
+          );
+        }
+      }
+    }
+    if (versions.isEmpty) {
+      return null;
+    }
+    final payloadVersions = _songVersionsForPayload(
+      articleId,
+      _dedupeSongVersions(versions),
+      requireDefault: false,
+    );
+    final selected =
+        _defaultSongVersion(payloadVersions) ?? payloadVersions.first;
+    return ArticleSongState(
+      articleId: articleId,
+      status: 'ready',
+      stylePrompt: '',
+      audioPath: selected.audioPath,
+      durationMs: selected.durationMs,
+      source: AppConfig.songProviderElevenLabsMusic,
+      lyricsCompressed: lyricsCompressed,
+      songUrl: selected.songUrl ?? songUrl,
+      metadataPath: metadataPath,
+      versions: payloadVersions,
+      downloadComplete: true,
+      automationStatus: 'complete',
+    );
+  }
+
   Future<ArticleSongState?> _cachedExternalSongState(Article article) {
     return ExternalSongImportService.loadState(
       article,
@@ -2141,10 +2264,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         _normalizeSongSource(sourceOverride ?? AppConfig.songProviderSuno) ==
             AppConfig.songProviderSuno) {
       final cachedBailian = await _cachedBailianSongState(article);
+      final cachedElevenLabs = await _cachedElevenLabsSongState(article);
       final cachedExternal = await _cachedExternalSongState(article);
       final combinedVersions = <ArticleSongVersion>[
         ...activeSuno.versions,
         ...?cachedBailian?.versions,
+        ...?cachedElevenLabs?.versions,
         ...?cachedExternal?.versions,
       ];
       var state = activeSuno;
@@ -2171,16 +2296,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     }
     final cachedSuno = await _cachedSunoSongState(article);
     final cachedBailian = await _cachedBailianSongState(article);
+    final cachedElevenLabs = await _cachedElevenLabsSongState(article);
     final cachedExternal = await _cachedExternalSongState(article);
     final statesBySource = <String, ArticleSongState?>{
       AppConfig.songProviderSuno: cachedSuno,
       AppConfig.songProviderBailianFunMusic: cachedBailian,
+      AppConfig.songProviderElevenLabsMusic: cachedElevenLabs,
       ExternalSongImportService.source: cachedExternal,
     };
     final orderedSources = <String>[
       preferredSource,
       AppConfig.songProviderSuno,
       AppConfig.songProviderBailianFunMusic,
+      AppConfig.songProviderElevenLabsMusic,
       ExternalSongImportService.source,
     ].fold<List<String>>(<String>[], (sources, source) {
       if (!sources.contains(source)) {
@@ -2624,6 +2752,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         lyrics: lyrics.isEmpty ? _articleSongLyrics(article) : lyrics,
       );
     }
+    if (source == AppConfig.songProviderElevenLabsMusic) {
+      return _generateElevenLabsMusic(
+        article: article,
+        lyrics: lyrics.isEmpty ? _articleSongLyrics(article) : lyrics,
+      );
+    }
     return _startSunoAutomation(
       article: article,
       stylePrompt: '',
@@ -3017,6 +3151,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
           purpose: _bailianSongPurpose,
           kind: 'bailian_fun_music',
         );
+      case AppConfig.songProviderElevenLabsMusic:
+        await ArticleSongCacheService.setDefaultVersionInArticleCaches(
+          articleId: articleId,
+          versionId: versionId,
+          purpose: _elevenLabsSongPurpose,
+          kind: 'elevenlabs_music',
+        );
       case ExternalSongImportService.source:
         final article = await _songArticle(articleId);
         final payload = await _songStatePayload(articleId);
@@ -3114,6 +3255,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         versionId: versionId,
         purpose: _bailianSongPurpose,
         kind: 'bailian_fun_music',
+      );
+    } else if (deletedSource == AppConfig.songProviderElevenLabsMusic) {
+      await ArticleSongCacheService.removeVersionFromArticleCache(
+        articleId: articleId,
+        versionId: versionId,
+        purpose: _elevenLabsSongPurpose,
+        kind: 'elevenlabs_music',
       );
     }
     final deletedSongUrl = deletedSource == AppConfig.songProviderSuno
@@ -3388,6 +3536,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         purpose: _bailianSongPurpose,
         kind: 'bailian_fun_music',
       );
+    } else if (normalizedSource == AppConfig.songProviderElevenLabsMusic) {
+      await ArticleSongCacheService.updateVersionInArticleCache(
+        articleId: articleId,
+        updated:
+            updated.copyWith(source: AppConfig.songProviderElevenLabsMusic),
+        purpose: _elevenLabsSongPurpose,
+        kind: 'elevenlabs_music',
+      );
     }
   }
 
@@ -3657,6 +3813,117 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         .trim();
   }
 
+  Future<Map<String, dynamic>> _generateElevenLabsMusic({
+    required Article article,
+    required String lyrics,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      throw const FormatException('文章尚未保存，不能生成歌曲');
+    }
+    final trimmedLyrics = lyrics.trim();
+    if (trimmedLyrics.isEmpty) {
+      throw const FormatException('文章没有可用于 ElevenLabs 的英文歌词');
+    }
+    _stopSunoAutomation(clearVisible: false);
+    await _pushEvent(
+      'listening.song.state',
+      ArticleSongState(
+        articleId: articleId,
+        status: 'generating',
+        source: AppConfig.songProviderElevenLabsMusic,
+        manualActionMessage: 'ElevenLabs 正在根据当前英文内容生成歌曲。',
+      ).toJson(),
+    );
+    final result = await ElevenLabsMusicService.generateFromLyrics(
+      lyrics: trimmedLyrics,
+      title: article.title,
+      articleId: articleId,
+    );
+    if (result.source == ElevenLabsMusicResultSource.skippedNoKey ||
+        result.source == ElevenLabsMusicResultSource.failed ||
+        (result.filePath ?? '').trim().isEmpty) {
+      final message = _providerErrorMessage(
+        result.errorMessage,
+        fallback: 'ElevenLabs Music 生成失败',
+      );
+      await _pushSongState(
+        articleId,
+        statusOverride: 'error',
+        errorMessageOverride: message,
+        sourceOverride: AppConfig.songProviderElevenLabsMusic,
+      );
+      throw FormatException(message);
+    }
+
+    final existingState = await _cachedElevenLabsSongState(article);
+    final existingVersions = existingState?.versions.toList(growable: true) ??
+        <ArticleSongVersion>[];
+    final cacheId = (result.cacheKey ?? DateTime.now().millisecondsSinceEpoch)
+        .toString()
+        .replaceAll(RegExp(r'[^A-Za-z0-9_]+'), '_');
+    final submittedLyrics = (result.submittedLyrics ?? trimmedLyrics).trim();
+    final lyricsHash = await ApiCacheService.hashUtf8(submittedLyrics);
+    final model = await AppConfig.elevenLabsMusicModel;
+    final resultPath = result.filePath!.trim();
+    ArticleSongVersion? existingMatch;
+    for (final version in existingVersions) {
+      if (version.audioPath.trim() == resultPath) {
+        existingMatch = version;
+        break;
+      }
+    }
+    final newVersion = (existingMatch ??
+            ArticleSongVersion(
+              id: 'elevenlabs_music_$cacheId',
+              audioPath: resultPath,
+              title: 'ElevenLabs 版本 ${existingVersions.length + 1}',
+              createdAt: DateTime.now().toIso8601String(),
+            ))
+        .copyWith(
+      songUrl: result.songId ?? existingMatch?.songUrl,
+      stylePrompt: model,
+      styleKey: model,
+      lyricsHash: lyricsHash,
+      submittedLyrics: submittedLyrics,
+      source: AppConfig.songProviderElevenLabsMusic,
+      isDefault: true,
+    );
+    final sameHashExisting = existingVersions
+        .where((version) => (version.lyricsHash ?? '') == lyricsHash)
+        .toList(growable: false);
+    final versions = <ArticleSongVersion>[
+      newVersion,
+      for (final version in sameHashExisting)
+        if (version.id != newVersion.id &&
+            version.audioPath.trim() != newVersion.audioPath.trim())
+          version.copyWith(isDefault: false),
+    ];
+    await _saveElevenLabsMusicMetadataForVersions(
+      article: article,
+      versions: versions,
+      songId: result.songId,
+      model: model,
+      lyricsCompressed: result.lyricsCompressed,
+    );
+    return _songStatePayload(
+      articleId,
+      statusOverride: 'ready',
+      sourceOverride: AppConfig.songProviderElevenLabsMusic,
+    );
+  }
+
+  String _providerErrorMessage(String? rawMessage, {required String fallback}) {
+    final raw = (rawMessage ?? '').trim();
+    if (raw.isEmpty) {
+      return fallback;
+    }
+    return raw
+        .replaceFirst(RegExp(r'^FormatException:\s*'), '')
+        .replaceFirst(RegExp(r'^FormatException:\s*'), '')
+        .trim();
+  }
+
   Future<void> _saveBailianMusicMetadataForVersions({
     required Article article,
     required List<ArticleSongVersion> versions,
@@ -3759,6 +4026,110 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       cacheKey: cacheKey,
       kind: 'bailian_fun_music',
       purpose: _bailianSongPurpose,
+      request: request,
+      jsonValue: metadata,
+      articleId: articleId,
+    );
+  }
+
+  Future<void> _saveElevenLabsMusicMetadataForVersions({
+    required Article article,
+    required List<ArticleSongVersion> versions,
+    String? songId,
+    required String model,
+    bool lyricsCompressed = false,
+  }) async {
+    final articleId = article.id;
+    if (articleId == null) {
+      return;
+    }
+    final incomingVersions = versions
+        .map((version) =>
+            version.copyWith(source: AppConfig.songProviderElevenLabsMusic))
+        .toList(growable: false);
+    if (incomingVersions.isEmpty) {
+      return;
+    }
+    final selectedIncoming =
+        _defaultSongVersion(incomingVersions) ?? incomingVersions.first;
+    final lyricsHash =
+        selectedIncoming.lyricsHash ?? await _articleSongLyricsHash(article);
+    final submittedLyrics = (selectedIncoming.submittedLyrics ?? '').trim();
+    final existingEntry = await ArticleSongCacheService.findEntryForLyricsHash(
+      articleId: articleId,
+      purpose: _elevenLabsSongPurpose,
+      lyricsHash: lyricsHash,
+    );
+    final directory = Directory(await _resolvedSunoOutputDirectorySetting());
+    await directory.create(recursive: true);
+    Map<String, dynamic> request;
+    Map<String, dynamic>? existingMetadata;
+    String metadataPath;
+    List<ArticleSongVersion> mergedVersions;
+    if (existingEntry != null) {
+      existingMetadata = ArticleSongCacheService.decodeJsonObject(
+        existingEntry.jsonValue,
+      );
+      request = ArticleSongCacheService.decodeRequest(existingEntry);
+      metadataPath = (existingMetadata['metadataPath'] ?? '').toString().trim();
+      if (metadataPath.isEmpty) {
+        metadataPath = path_lib.join(
+          directory.path,
+          'article_${articleId}_elevenlabs_music_${DateTime.now().millisecondsSinceEpoch}.json',
+        );
+      }
+      mergedVersions = _dedupeSongVersions([
+        ...ArticleSongCacheService.versionsFromMetadata(existingMetadata),
+        ...incomingVersions,
+      ]);
+    } else {
+      request = {
+        'version': 1,
+        'provider': AppConfig.songProviderElevenLabsMusic,
+        'articleId': articleId,
+        'articleTitle': article.title,
+        'contentHash': await _articleSongContentHash(article),
+        'lyricsHash': lyricsHash,
+        if (submittedLyrics.isNotEmpty)
+          'submittedLyricsHash':
+              await ApiCacheService.hashUtf8(submittedLyrics),
+        'model': model,
+      };
+      metadataPath = path_lib.join(
+        directory.path,
+        'article_${articleId}_elevenlabs_music_${DateTime.now().millisecondsSinceEpoch}.json',
+      );
+      mergedVersions = _dedupeSongVersions(incomingVersions);
+    }
+    final selected = _defaultSongVersion(mergedVersions) ??
+        (mergedVersions.isNotEmpty ? mergedVersions.first : null);
+    final metadata = {
+      'provider': AppConfig.songProviderElevenLabsMusic,
+      'articleId': articleId,
+      'articleTitle': article.title,
+      'lyricsHash': lyricsHash,
+      if (submittedLyrics.isNotEmpty) 'submittedLyrics': submittedLyrics,
+      if (lyricsCompressed || existingMetadata?['lyricsCompressed'] == true)
+        'lyricsCompressed': true,
+      'model': model,
+      'songUrl': songId ?? selected?.songUrl,
+      'audioPath': selected?.audioPath,
+      'metadataPath': metadataPath,
+      'downloadComplete': true,
+      'versions': mergedVersions.map((version) => version.toJson()).toList(),
+      'createdAt':
+          existingMetadata?['createdAt'] ?? DateTime.now().toIso8601String(),
+    };
+    await File(metadataPath).writeAsString(
+      const JsonEncoder.withIndent('  ').convert(metadata),
+      flush: true,
+    );
+    final cacheKey = existingEntry?.cacheKey ??
+        await ApiCacheService.keyForJson('article_elevenlabs_music', request);
+    await ApiCacheService.putJson(
+      cacheKey: cacheKey,
+      kind: 'elevenlabs_music',
+      purpose: _elevenLabsSongPurpose,
       request: request,
       jsonValue: metadata,
       articleId: articleId,
@@ -4549,14 +4920,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     final speakerId = _payloadString(message.payload, 'speakerId').trim();
     final provider = _payloadString(
       message.payload,
-      'aiProvider',
-      fallback: await AppConfig.aiProvider,
+      'ttsProvider',
+      fallback: _payloadString(
+        message.payload,
+        'aiProvider',
+        fallback: await AppConfig.ttsProvider,
+      ),
     ).trim();
     if (provider == AppConfig.aiProviderAliyunBailian) {
       if (!TtsService.isAliyunPresetVoice(speakerId)) {
         throw const FormatException('请选择支持的阿里云声音');
       }
       await AppConfig.saveCloudSettings(aliyunBailianTtsVoice: speakerId);
+    } else if (provider == AppConfig.aiProviderElevenLabs) {
+      if (speakerId.isEmpty) {
+        throw const FormatException('请选择支持的 ElevenLabs 声音');
+      }
+      await AppConfig.saveCloudSettings(elevenLabsTtsVoiceId: speakerId);
     } else if (TtsService.isPresetVoice(speakerId)) {
       await AppConfig.saveVolcTtsSpeakerId(speakerId);
     } else {
@@ -4604,6 +4984,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         : null;
     await AppConfig.saveCloudSettings(
       aiProvider: optionalString('aiProvider'),
+      textProvider: optionalString('textProvider'),
+      imageProvider: optionalString('imageProvider'),
+      ttsProvider: optionalString('ttsProvider'),
       aliyunBailianApiKey: optionalString('aliyunBailianApiKey'),
       clearAliyunBailianApiKey: _payloadBool(
         message.payload,
@@ -4631,6 +5014,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       volcArkBaseUrl: optionalString('volcArkBaseUrl'),
       volcArkTextModel: optionalString('volcArkTextModel'),
       volcArkImageModel: optionalString('volcArkImageModel'),
+      elevenLabsApiKey: optionalString('elevenLabsApiKey'),
+      clearElevenLabsApiKey: _payloadBool(
+        message.payload,
+        'clearElevenLabsApiKey',
+      ),
+      elevenLabsBaseUrl: optionalString('elevenLabsBaseUrl'),
+      elevenLabsTtsModel: optionalString('elevenLabsTtsModel'),
+      elevenLabsTtsVoiceId: optionalString('elevenLabsTtsVoiceId'),
+      elevenLabsTtsOutputFormat: optionalString('elevenLabsTtsOutputFormat'),
+      elevenLabsMusicModel: optionalString('elevenLabsMusicModel'),
+      elevenLabsMusicOutputFormat:
+          optionalString('elevenLabsMusicOutputFormat'),
       volcSpeechApiKey: optionalString('volcSpeechApiKey'),
       clearVolcSpeechApiKey: _payloadBool(
         message.payload,
@@ -4735,12 +5130,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     final speakerId = _payloadString(message.payload, 'speakerId').trim();
     final provider = _payloadString(
       message.payload,
-      'aiProvider',
-      fallback: await AppConfig.aiProvider,
+      'ttsProvider',
+      fallback: _payloadString(
+        message.payload,
+        'aiProvider',
+        fallback: await AppConfig.ttsProvider,
+      ),
     ).trim();
-    final validVoice = provider == AppConfig.aiProviderAliyunBailian
-        ? TtsService.isAliyunPresetVoice(speakerId)
-        : TtsService.isPresetVoice(speakerId);
+    final validVoice = provider == AppConfig.aiProviderElevenLabs
+        ? speakerId.isNotEmpty
+        : provider == AppConfig.aiProviderAliyunBailian
+            ? TtsService.isAliyunPresetVoice(speakerId)
+            : TtsService.isPresetVoice(speakerId);
     if (!validVoice) {
       throw const FormatException('请选择支持的声音');
     }
@@ -6264,7 +6665,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   }
 
   Future<Map<String, dynamic>> _settingsPayload() async {
-    final provider = await AppConfig.aiProvider;
+    final provider = await AppConfig.ttsProvider;
     final volcSpeakerId = await AppConfig.volcTtsSpeakerId;
     final resolvedVolcSpeakerId = TtsService.isPresetVoice(volcSpeakerId)
         ? volcSpeakerId.trim()
@@ -6273,15 +6674,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     final resolvedAliyunVoice = aliyunVoice.trim().isNotEmpty
         ? aliyunVoice.trim()
         : TtsService.defaultAliyunVoiceType;
-    final activeSpeakerId = provider == AppConfig.aiProviderAliyunBailian
-        ? resolvedAliyunVoice
-        : resolvedVolcSpeakerId;
+    final elevenLabsVoice = await AppConfig.elevenLabsTtsVoiceId;
+    final activeSpeakerId = provider == AppConfig.aiProviderElevenLabs
+        ? (elevenLabsVoice.trim().isNotEmpty
+            ? elevenLabsVoice.trim()
+            : TtsService.defaultElevenLabsVoiceType)
+        : provider == AppConfig.aiProviderAliyunBailian
+            ? resolvedAliyunVoice
+            : resolvedVolcSpeakerId;
     final songSettings = await _songSettingsPayload();
+    final elevenLabsVoiceCatalog = await TtsService.elevenLabsVoiceCatalog();
     return {
       'tts': {
-        'resourceId': provider == AppConfig.aiProviderAliyunBailian
-            ? await AppConfig.aliyunBailianTtsModel
-            : await AppConfig.volcTtsResourceId,
+        'resourceId': provider == AppConfig.aiProviderElevenLabs
+            ? await AppConfig.elevenLabsTtsModel
+            : provider == AppConfig.aiProviderAliyunBailian
+                ? await AppConfig.aliyunBailianTtsModel
+                : await AppConfig.volcTtsResourceId,
         'speakerId': activeSpeakerId,
       },
       'song': songSettings,
@@ -6320,6 +6729,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
               },
             )
             .toList(growable: false),
+        'elevenLabs': elevenLabsVoiceCatalog.voices
+            .map(
+              (voice) => {
+                'id': voice.id,
+                'name': voice.name,
+                'lang': voice.lang,
+                'gender': voice.gender,
+                'scene': voice.scene,
+              },
+            )
+            .toList(growable: false),
+      },
+      'voiceCatalogErrors': {
+        'elevenLabs': elevenLabsVoiceCatalog.errorMessage,
       },
       'contentSafety': {
         'rules': await ContentSafetyService.listRules(),
@@ -7237,9 +7660,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
 
   String _normalizeSongProvider(String value) {
     final normalized = value.trim().toLowerCase();
-    return normalized == AppConfig.songProviderBailianFunMusic
-        ? AppConfig.songProviderBailianFunMusic
-        : AppConfig.songProviderSuno;
+    if (normalized == AppConfig.songProviderBailianFunMusic) {
+      return AppConfig.songProviderBailianFunMusic;
+    }
+    if (normalized == AppConfig.songProviderElevenLabsMusic) {
+      return AppConfig.songProviderElevenLabsMusic;
+    }
+    return AppConfig.songProviderSuno;
   }
 
   String _normalizeSongSource(String value) {

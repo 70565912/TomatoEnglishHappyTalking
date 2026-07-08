@@ -3,7 +3,7 @@
 ## 归属边界
 
 - 歌曲版本归属 **`articleId`**，不按当前正文 `lyricsHash` / `contentHash` 从 UI 隐藏。
-- `listening.songState` 与创作中心展示该文章下**全部**本地有效版本（Suno / 阿里云百聆 / 外部导入），**单一列表**，不分「当前歌词 / 历史歌词」区块。
+- `listening.songState` 与创作中心展示该文章下**全部**本地有效版本（Suno / 阿里云百聆 / ElevenLabs Music / 外部导入），**单一列表**，不分「当前歌词 / 历史歌词」区块。
 - 改字幕、软隐藏、微调正文**不会**自动删除或隐藏已有歌曲；用户自行决定继续播放或删除。
 
 ## hash 的用途（禁止用于列表过滤）
@@ -29,7 +29,7 @@
 
 1. 音频文件（`audioPath`）
 2. 字幕时间轴（`timelinePath`，若有）
-3. 对应 `suno-music/` 或百聆 metadata JSON
+3. 对应 Suno / 百聆 / ElevenLabs metadata JSON
 4. 对应 `api_cache_entries` + `api_cache_article_refs` 行
 
 实现：`ArticleSongCacheService.removeVersionFromArticleCache` 就地更新含该版本的 cache 行；组内无版本时整行删除。
@@ -58,5 +58,6 @@
 ## 相关代码
 
 - `app/lib/services/article_song_cache_service.dart` — cache 行查找、就地更新、删除；`loadAllCachedVersions` 按 article 全量读取
-- `app/lib/features/web_shell/web_shell_screen.dart` — `_cachedSunoSongGroups`、`_cachedBailianSongState`、歌曲 bridge 命令
+- `app/lib/features/web_shell/web_shell_screen.dart` — `_cachedSunoSongGroups`、`_cachedBailianSongState`、`_cachedElevenLabsSongState`、歌曲 bridge 命令
+- `app/lib/services/eleven_labs_music_service.dart` — ElevenLabs Music 生成、缓存 key 和音频落盘
 - `app/lib/data/models/article_song_model.dart` — `ArticleSongVersion`、`SunoCachedSongGroup`

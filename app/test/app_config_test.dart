@@ -4,11 +4,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 
 void main() {
-  setUp(AppConfig.resetRuntimeConfigForTest);
-  tearDown(AppConfig.resetRuntimeConfigForTest);
+  setUp(() async {
+    await AppConfig.saveCloudSettings(clearElevenLabsApiKey: true);
+    AppConfig.resetRuntimeConfigForTest();
+  });
+  tearDown(() async {
+    await AppConfig.saveCloudSettings(clearElevenLabsApiKey: true);
+    AppConfig.resetRuntimeConfigForTest();
+  });
 
   test('defaults text provider to Aliyun Bailian and songs to Suno', () async {
     expect(await AppConfig.aiProvider, AppConfig.aiProviderAliyunBailian);
+    expect(await AppConfig.textProvider, AppConfig.aiProviderAliyunBailian);
+    expect(await AppConfig.imageProvider, AppConfig.aiProviderAliyunBailian);
+    expect(await AppConfig.ttsProvider, AppConfig.aiProviderAliyunBailian);
     expect(await AppConfig.aliyunBailianBaseUrl,
         AppConfig.defaultAliyunBailianBaseUrl);
     expect(await AppConfig.aliyunBailianTextModel,
@@ -25,6 +34,14 @@ void main() {
         AppConfig.defaultAliyunBailianTtsVoice);
     expect(await AppConfig.aliyunBailianAsrModel,
         AppConfig.defaultAliyunBailianAsrModel);
+    expect(
+        await AppConfig.elevenLabsBaseUrl, AppConfig.defaultElevenLabsBaseUrl);
+    expect(await AppConfig.elevenLabsTtsModel,
+        AppConfig.defaultElevenLabsTtsModel);
+    expect(await AppConfig.elevenLabsTtsOutputFormat,
+        AppConfig.defaultElevenLabsTtsOutputFormat);
+    expect(await AppConfig.elevenLabsMusicModel,
+        AppConfig.defaultElevenLabsMusicModel);
     expect(await AppConfig.songGenerationProvider, AppConfig.songProviderSuno);
   });
 
@@ -47,7 +64,7 @@ void main() {
 
   test('openAI text config switches to Volcengine Ark settings', () async {
     AppConfig.setRuntimeConfigForTest(
-      aiProvider: AppConfig.aiProviderVolcengine,
+      textProvider: AppConfig.aiProviderVolcengine,
       volcArkApiKey: 'Bearer volc-ark-key-987654',
       volcArkBaseUrl: 'https://ark.example.com/api/v3/',
       volcArkTextModel: 'doubao-test',
@@ -63,6 +80,34 @@ void main() {
     expect(config.model, 'doubao-test');
   });
 
+  test('split providers fall back to legacy aiProvider when unset', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aiProvider: AppConfig.aiProviderVolcengine,
+    );
+
+    expect(await AppConfig.textProvider, AppConfig.aiProviderVolcengine);
+    expect(await AppConfig.imageProvider, AppConfig.aiProviderVolcengine);
+    expect(await AppConfig.ttsProvider, AppConfig.aiProviderVolcengine);
+  });
+
+  test('text provider is independent from image and tts providers', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aiProvider: AppConfig.aiProviderVolcengine,
+      textProvider: AppConfig.aiProviderAliyunBailian,
+      imageProvider: AppConfig.aiProviderVolcengine,
+      ttsProvider: AppConfig.aiProviderElevenLabs,
+      aliyunBailianApiKey: 'bailian-text-key',
+      volcArkApiKey: 'volc-image-key',
+      elevenLabsApiKey: 'elevenlabs-tts-key',
+    );
+
+    final config = await AppConfig.openAiTextConfig;
+
+    expect(config.provider, AppConfig.aiProviderAliyunBailian);
+    expect(await AppConfig.imageProvider, AppConfig.aiProviderVolcengine);
+    expect(await AppConfig.ttsProvider, AppConfig.aiProviderElevenLabs);
+  });
+
   test('cloud settings payload masks keys and never returns plaintext',
       () async {
     AppConfig.setRuntimeConfigForTest(
@@ -70,6 +115,10 @@ void main() {
       aliyunBailianApiKey: 'bailian-secret-1234567890',
       volcArkApiKey: 'volc-ark-secret-abcdefgh',
       volcSpeechApiKey: 'speech-secret-abcdef',
+      elevenLabsApiKey: 'elevenlabs-secret-xyz987',
+      textProvider: AppConfig.aiProviderVolcengine,
+      imageProvider: AppConfig.aiProviderAliyunBailian,
+      ttsProvider: AppConfig.aiProviderElevenLabs,
       aliyunBailianTextModel: 'qwen-live',
       aliyunBailianMusicModel: 'fun-music-v1',
       aliyunBailianImageModel: 'wan-test',
@@ -85,6 +134,9 @@ void main() {
     final text = payload.toString();
 
     expect(payload['aiProvider'], AppConfig.aiProviderAliyunBailian);
+    expect(payload['textProvider'], AppConfig.aiProviderVolcengine);
+    expect(payload['imageProvider'], AppConfig.aiProviderAliyunBailian);
+    expect(payload['ttsProvider'], AppConfig.aiProviderElevenLabs);
     expect(payload['aliyunBailian']['apiKeyConfigured'], isTrue);
     expect(payload['aliyunBailian']['apiKeyMask'], '****7890');
     expect(payload['aliyunBailian']['textModel'], 'qwen-live');
@@ -100,9 +152,68 @@ void main() {
     expect(payload['volcengine']['speechApiKeyMask'], '****cdef');
     expect(payload['volcengine']['arkTextModel'], 'doubao-live');
     expect(payload['volcengine']['arkImageModel'], 'seedream-live');
+    expect(payload['elevenLabs']['apiKeyConfigured'], isTrue);
+    expect(payload['elevenLabs']['apiKeyMask'], '****z987');
+    expect(
+        payload['elevenLabs']['ttsModel'], AppConfig.defaultElevenLabsTtsModel);
+    expect(payload['elevenLabs']['musicModel'],
+        AppConfig.defaultElevenLabsMusicModel);
     expect(text, isNot(contains('bailian-secret-1234567890')));
     expect(text, isNot(contains('volc-ark-secret-abcdefgh')));
     expect(text, isNot(contains('speech-secret-abcdef')));
+    expect(text, isNot(contains('elevenlabs-secret-xyz987')));
+  });
+
+  test('seeds ElevenLabs key from security file without switching provider',
+      () async {
+    final previousDirectory = Directory.current;
+    final tempDirectory =
+        Directory.systemTemp.createTempSync('tomato_elevenlabs_key_test_');
+    addTearDown(() {
+      Directory.current = previousDirectory;
+      if (tempDirectory.existsSync()) {
+        tempDirectory.deleteSync(recursive: true);
+      }
+    });
+
+    final securityDirectory =
+        Directory(_joinPath(tempDirectory.path, 'security'))..createSync();
+    File(_joinPath(securityDirectory.path, 'elevenlabs.txt')).writeAsStringSync(
+      'ELEVENLABS_API_KEY=elevenlabs-file-key\n',
+    );
+    Directory.current = tempDirectory;
+
+    await AppConfig.seedSecureStorageFromEnvironment();
+
+    expect(await AppConfig.elevenLabsApiKey, 'elevenlabs-file-key');
+    expect(await AppConfig.ttsProvider, AppConfig.aiProviderAliyunBailian);
+  });
+
+  test('seeds ElevenLabs key from ancestor security file', () async {
+    final previousDirectory = Directory.current;
+    final tempDirectory =
+        Directory.systemTemp.createTempSync('tomato_elevenlabs_key_test_');
+    addTearDown(() {
+      Directory.current = previousDirectory;
+      if (tempDirectory.existsSync()) {
+        tempDirectory.deleteSync(recursive: true);
+      }
+    });
+
+    final securityDirectory =
+        Directory(_joinPath(tempDirectory.path, 'security'))..createSync();
+    File(_joinPath(securityDirectory.path, 'elevenlabs.txt')).writeAsStringSync(
+      'elevenlabs-ancestor-key\n',
+    );
+    final packagedWorkingDirectory = Directory(
+      _joinPath(tempDirectory.path, 'release/windows/app'),
+    )..createSync(recursive: true);
+    Directory.current = packagedWorkingDirectory;
+
+    await AppConfig.seedSecureStorageFromEnvironment();
+
+    expect(await AppConfig.elevenLabsApiKey, 'elevenlabs-ancestor-key');
+    expect(await AppConfig.ttsProvider, AppConfig.aiProviderAliyunBailian);
   });
 
   test('does not read legacy security key files from working directory',
