@@ -2523,6 +2523,108 @@ function useListeningAudioMaterial(
   };
 }
 
+function useRecordingExportFeedback(
+  articleId: number,
+  onNotice: (message: string) => void,
+) {
+  const [recordingProgress, setRecordingProgress] = useState<ListeningRecordingProgressPayload | null>(null);
+  const [recordingResult, setRecordingResult] = useState<ListeningRecordingResultPayload | null>(null);
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const cancelRequestedRef = useRef(false);
+
+  useEffect(() => {
+    setRecordingProgress(null);
+    setRecordingResult(null);
+    setRecordingBusy(false);
+    cancelRequestedRef.current = false;
+  }, [articleId]);
+
+  useEffect(() => {
+    const offProgress = onNativeEvent<ListeningRecordingProgressPayload>('listening.recording.progress', (payload) => {
+      if (payload.articleId !== articleId) return;
+      setRecordingProgress(payload);
+      setRecordingBusy(payload.phase !== 'completed');
+    });
+    const offCompleted = onNativeEvent<ListeningRecordingResultPayload>('listening.recording.completed', (payload) => {
+      if (payload.articleId !== articleId) return;
+      cancelRequestedRef.current = false;
+      setRecordingResult(payload);
+      setRecordingProgress(null);
+      setRecordingBusy(false);
+    });
+    const offError = onNativeEvent<{ articleId: number; message: string }>('listening.recording.error', (payload) => {
+      if (payload.articleId !== articleId) return;
+      setRecordingProgress(null);
+      setRecordingBusy(false);
+    });
+    return () => {
+      offProgress();
+      offCompleted();
+      offError();
+    };
+  }, [articleId]);
+
+  const beginRecording = (message: string) => {
+    cancelRequestedRef.current = false;
+    setRecordingBusy(true);
+    setRecordingResult(null);
+    setRecordingProgress({
+      articleId,
+      phase: 'preparing',
+      progress: 0,
+      completedFrames: 0,
+      totalFrames: 0,
+      message,
+    });
+  };
+
+  const completeRecording = (result: ListeningRecordingResultPayload) => {
+    cancelRequestedRef.current = false;
+    setRecordingResult(result);
+    setRecordingProgress(null);
+    setRecordingBusy(false);
+  };
+
+  const failRecording = () => {
+    const cancelled = cancelRequestedRef.current;
+    cancelRequestedRef.current = false;
+    setRecordingProgress(null);
+    setRecordingBusy(false);
+    return cancelled;
+  };
+
+  const cancelRecording = async () => {
+    cancelRequestedRef.current = true;
+    try {
+      const payload = await sendNative<{ cancelled?: boolean }>('listening.cancelRecording');
+      if (!payload.cancelled) {
+        cancelRequestedRef.current = false;
+        onNotice('当前没有正在导出的录制任务');
+        return false;
+      }
+      setRecordingProgress(null);
+      setRecordingBusy(false);
+      onNotice('录制已取消');
+      return true;
+    } catch (error) {
+      cancelRequestedRef.current = false;
+      onNotice(error instanceof Error ? error.message : '取消录制失败');
+      return false;
+    }
+  };
+
+  return {
+    recordingProgress,
+    recordingResult,
+    recordingBusy,
+    beginRecording,
+    completeRecording,
+    failRecording,
+    cancelRecording,
+    setRecordingResult,
+  };
+}
+
 function PictureBookCreationPanel({
   article,
   pictureBookRetryGate,
@@ -3533,6 +3635,16 @@ function SongCreationPanel({
       .catch((error) => onNotice(error instanceof Error ? error.message : '歌曲状态加载失败'))
       .finally(() => setBusy(false));
   };
+  const {
+    recordingProgress,
+    recordingResult,
+    recordingBusy,
+    beginRecording,
+    completeRecording,
+    failRecording,
+    cancelRecording,
+    setRecordingResult,
+  } = useRecordingExportFeedback(article.id, onNotice);
 
   useEffect(() => {
     setPlayingSongVersionId(null);
@@ -3606,13 +3718,9 @@ function SongCreationPanel({
 
   const recordSongVideoFromCreation = async (versionId: string, selectedSettings: RecordingSettings) => {
     setBusy(true);
-    onBlockingOverlayChange({
-      title: '正在导出歌曲视频',
-      detail: '正在合成歌曲音频、字幕和绘本画面，请等待导出完成。',
-      timeoutSeconds: 900,
-    });
+    beginRecording('正在准备歌曲视频');
     try {
-      await sendNative<ListeningRecordingResultPayload>('listening.songRecordVideo', {
+      const result = await sendNative<ListeningRecordingResultPayload>('listening.songRecordVideo', {
         articleId: article.id,
         versionId,
         codec: selectedSettings.codec,
@@ -3621,16 +3729,18 @@ function SongCreationPanel({
         subtitleMode: selectedSettings.subtitleMode,
         fps: selectedSettings.fps || 25,
       });
+      completeRecording(result);
       const next = await sendNative<ListeningSongStatePayload>('listening.songState', {
         articleId: article.id,
       });
       setSongState(next);
       onNotice('歌曲视频导出完成');
     } catch (error) {
-      onNotice(error instanceof Error ? error.message : '歌曲视频导出失败');
+      if (!failRecording()) {
+        onNotice(error instanceof Error ? error.message : '歌曲视频导出失败');
+      }
     } finally {
       setBusy(false);
-      onBlockingOverlayChange(null);
     }
   };
 
@@ -3681,6 +3791,13 @@ function SongCreationPanel({
       onNotice(error instanceof Error ? error.message : '录制设置保存失败');
     } finally {
       setRecordingDialogSaving(false);
+    }
+  };
+
+  const cancelSongRecording = async () => {
+    const cancelled = await cancelRecording();
+    if (cancelled) {
+      setBusy(false);
     }
   };
 
@@ -3946,6 +4063,18 @@ function SongCreationPanel({
           onConfirm={() => void confirmSongRecordingDialog()}
         />
       )}
+      {(recordingBusy || recordingProgress) && (
+        <RecordingProgressOverlay
+          progress={recordingProgress}
+          onCancel={cancelSongRecording}
+        />
+      )}
+      {recordingResult && (
+        <RecordingResultCard
+          result={recordingResult}
+          onClose={() => setRecordingResult(null)}
+        />
+      )}
       {songDeleteConfirm && (
         <ConfirmDialog
           ariaLabel="删除歌曲确认"
@@ -4019,13 +4148,22 @@ function VideoCreationPanel({
   const [videoLibrary, setVideoLibrary] = useState<RecordingVideoLibraryPayload | null>(null);
   const [busy, setBusy] = useState(false);
   const [videoBusy, setVideoBusy] = useState(false);
-  const [exportingListeningVideo, setExportingListeningVideo] = useState(false);
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
   const [videoDeleteConfirm, setVideoDeleteConfirm] = useState<{
     version: RecordingVideoVersion;
     title: string;
   } | null>(null);
+  const {
+    recordingProgress,
+    recordingResult,
+    recordingBusy,
+    beginRecording,
+    completeRecording,
+    failRecording,
+    cancelRecording,
+    setRecordingResult,
+  } = useRecordingExportFeedback(article.id, onNotice);
 
   const checkReady = () => {
     const selectedSettings = recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings);
@@ -4077,9 +4215,9 @@ function VideoCreationPanel({
 
   const recordListeningVideo = async (selectedSettings: RecordingSettings) => {
     setBusy(true);
-    setExportingListeningVideo(true);
+    beginRecording('正在准备录制');
     try {
-      await sendNative<ListeningRecordingResultPayload>('listening.recordVideo', {
+      const result = await sendNative<ListeningRecordingResultPayload>('listening.recordVideo', {
         articleId: article.id,
         codec: selectedSettings.codec,
         resolution: selectedSettings.resolution,
@@ -4087,14 +4225,23 @@ function VideoCreationPanel({
         subtitleMode: selectedSettings.subtitleMode,
         fps: selectedSettings.fps || 25,
       });
+      completeRecording(result);
       onNotice('听力视频导出完成');
       await loadVideoLibrary();
       onArticlesUpdated({});
     } catch (error) {
-      onNotice(error instanceof Error ? error.message : '听力视频导出失败');
+      if (!failRecording()) {
+        onNotice(error instanceof Error ? error.message : '听力视频导出失败');
+      }
     } finally {
       setBusy(false);
-      setExportingListeningVideo(false);
+    }
+  };
+
+  const cancelListeningRecording = async () => {
+    const cancelled = await cancelRecording();
+    if (cancelled) {
+      setBusy(false);
     }
   };
 
@@ -4272,20 +4419,13 @@ function VideoCreationPanel({
         )}
       </div>
       <div className="button-row">
-        <button className="primary-action" type="button" disabled={busy || exportingListeningVideo} onClick={openRecordingDialog}>
+        <button className="primary-action" type="button" disabled={busy || recordingBusy} onClick={openRecordingDialog}>
           <Icon name="recordVideo" /> 导出听力视频
         </button>
         <button className="ghost-action" type="button" disabled>
           <Icon name="recordVideo" /> 歌曲视频请在歌曲标签选择版本
         </button>
       </div>
-      {exportingListeningVideo && (
-        <AiBlockingOverlay
-          title="正在导出听力视频"
-          detail="正在渲染听力视频文件，请等待导出完成。"
-          timeoutSeconds={900}
-        />
-      )}
       {audioOverwriteConfirm && (
         <AudioMaterialOverwriteConfirmDialog
           status={audioOverwriteConfirm}
@@ -4309,6 +4449,18 @@ function VideoCreationPanel({
             setRecordingDialogDraft(null);
           }}
           onConfirm={() => void confirmRecordingDialog()}
+        />
+      )}
+      {(recordingBusy || recordingProgress) && (
+        <RecordingProgressOverlay
+          progress={recordingProgress}
+          onCancel={cancelListeningRecording}
+        />
+      )}
+      {recordingResult && (
+        <RecordingResultCard
+          result={recordingResult}
+          onClose={() => setRecordingResult(null)}
         />
       )}
       {videoDeleteConfirm && (

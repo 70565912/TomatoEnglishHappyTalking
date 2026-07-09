@@ -1,6 +1,6 @@
 # 生成视频等待对话框 GPU 占用优化方案
 
-状态：P0 第 2 项（等待图标 5fps 降频，先后落地过 `steps(12)` 旋转和三点跳动两版视觉）已实施并经实测 GPU 占用可接受；P0 第 1 项已对 `AiBlockingOverlay` 移除 `backdrop-filter` 并加深底色（`rgba(15, 23, 42, 0.55)`），`RecordingProgressOverlay` / `.audio-material-progress-overlay` 仍保留 blur；P1、P2 视后续需要再评估。
+状态：P0 第 2 项（等待图标 5fps 降频，先后落地过 `steps(12)` 旋转和三点跳动两版视觉）已实施并经实测 GPU 占用可接受；P0 第 1 项已对 `AiBlockingOverlay` 移除 `backdrop-filter` 并加深底色（`rgba(15, 23, 42, 0.55)`），`RecordingProgressOverlay` / `.audio-material-progress-overlay` 仍保留 blur；创作中心的听力视频和歌曲视频导出已统一改用 `RecordingProgressOverlay`，与练习中心共享实时进度、取消和完成报告；P1、P2 视后续需要再评估。
 
 ## 1. 背景与现象
 
@@ -19,8 +19,8 @@
 
 | 入口 | 组件 | 关键样式 | 持续动画 / 更新 |
 | --- | --- | --- | --- |
-| 创作中心「导出听力视频」「导出歌曲视频」、绘本组图提交等 | `AiBlockingOverlay`（`web_ui/src/App.tsx`） | `.ai-blocking-backdrop`：全屏半透明底色（已移除 `backdrop-filter`） | `.blocking-dots` 三点 5fps 分步跳动；倒计时每 1s `setState` 重渲染 |
-| 书籍播放器（听力页）录制视频 | `RecordingProgressOverlay`（`web_ui/src/App.tsx`） | `.recording-progress-overlay`：全屏 `backdrop-filter: blur(3px)` | `listening.recording.progress` 事件驱动重渲染（编码阶段 ffmpeg `-progress pipe:1` 约 2Hz；渲染阶段每句/每段一次） |
+| 创作中心「生成组图」、百聆/其它阻塞式歌曲提交等 | `AiBlockingOverlay`（`web_ui/src/App.tsx`） | `.ai-blocking-backdrop`：全屏半透明底色（已移除 `backdrop-filter`） | `.blocking-dots` 三点 5fps 分步跳动；倒计时每 1s `setState` 重渲染 |
+| 书籍播放器（练习中心听力/歌曲模式）和创作中心（视频标签导出听力视频、歌曲标签导出歌曲视频） | `RecordingProgressOverlay`（`web_ui/src/App.tsx`） | `.recording-progress-overlay`：全屏 `backdrop-filter: blur(3px)` | `listening.recording.progress` 事件驱动重渲染（编码阶段 ffmpeg `-progress pipe:1` 约 2Hz；渲染阶段每句/每段一次），支持取消与完成报告 |
 
 同一 CSS 规则还覆盖 `.audio-material-progress-overlay`（生成听力材料等待框），同样受益于本方案。
 
@@ -89,7 +89,7 @@
 
 ## 6. 回归检查项
 
-- `web_ui`：`npx vitest run src/App.test.tsx -t "导出|recording|progress"` 相关用例通过；等待对话框仍渲染在 `document.body` portal 且阻挡底层操作。
+- `web_ui`：`npm test` 或 `npx vitest run src/App.test.tsx -t "导出|recording|progress"` 相关用例通过；等待/进度对话框仍渲染在 `document.body` portal 且阻挡底层操作。
 - 视觉：无模糊后遮罩仍能清晰区分前后层级（Windows / Android 各看一次）；取消按钮可点击；`AiBlockingOverlay` 等待图标为三点 5fps 分步跳动（非平滑），`prefers-reduced-motion` 下静止。
 - 冻结底层（P1）后：导出完成/取消能正确恢复底层页面可见性与动画；导出期间收到的其它 native 事件（如 notice）不被冻结逻辑吞掉。
 - `AiBlockingOverlay` 其它使用点（绘本组图提交、保存章节、百聆歌曲提交等）同样生效且无副作用。

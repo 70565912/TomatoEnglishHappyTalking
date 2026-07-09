@@ -1,5 +1,14 @@
 # 修改日志
 
+## 2026-07-10
+
+- 创作中心视频导出体验与练习中心统一：创作中心“视频”标签导出听力视频、歌曲标签按具体歌曲版本导出歌曲视频，两者都复用录制设置框、`listening.recording.progress/completed/error` 事件、`RecordingProgressOverlay` 进度条、取消按钮和 `RecordingResultCard` 完成报告；不再用只显示等待文案的 `AiBlockingOverlay` 反馈视频导出。
+
+验证：
+
+- `npm run build` in `web_ui`
+- `npm test` in `web_ui`
+
 ## 2026-07-08
 
 - AI 供应商设置从旧 `ai_provider` 拆分为文本处理、图片生成、语音合成、音乐生成四个能力配置：`text_provider` / `image_provider` / `tts_provider` / `song_provider`。旧 `ai_provider` 继续作为文本、图片、TTS 的兼容 fallback；设置页改为四个能力分区。新增 ElevenLabs：TTS 走 `POST /v1/text-to-speech/:voice_id`，声音列表走在线 catalog 并缓存上次成功结果，音乐生成走 `POST /v1/music` 并保存为 `elevenlabs_music` 歌曲版本；`security/elevenlabs.txt` 可在启动时导入 key 到 secure storage。Suno、阿里云百聆、阿里云百炼、火山引擎路径保留。

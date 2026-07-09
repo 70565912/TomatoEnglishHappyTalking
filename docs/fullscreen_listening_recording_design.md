@@ -24,7 +24,7 @@
 
 推荐不要做传统意义上的“屏幕录制”，而是做“全屏播放内容导出”：
 
-1. Web UI 仍负责用户入口、准备状态展示、进度展示和完成报告。
+1. Web UI 仍负责用户入口、准备状态展示、进度展示、取消和完成报告；练习中心与创作中心共用同一套录制设置框、`listening.recording.*` 事件和 `RecordingProgressOverlay`。
 2. Flutter bridge 新增录制命令，读取当前文章的绘本页、字幕、TTS 缓存和设置。
 3. Flutter native service 负责把同一套全屏播放数据按用户选择的分辨率离屏渲染为临时帧/片段。
 4. 外部 `ffmpeg.exe` 负责把帧序列编码为 H.264/H.265，并写入 MP4。
@@ -85,9 +85,16 @@ interface RecordingSettings {
 
 Native 只保存编码、分辨率、转场三个偏好；输出目录和 FFmpeg 路径每次按程序目录实时计算，不放云端，也不写入文章数据。
 
-### 听力页
+### 练习中心播放器
 
-全屏播放按钮旁新增“录制视频”按钮，或者在全屏播放层里新增录制入口。
+练习中心播放器按当前模式决定导出类型：
+
+- 选择“听力”模式时，“导出视频”调用 `listening.recordVideo`，导出听力视频。
+- 选择“歌曲”模式时，“导出视频”针对当前选中的歌曲版本调用 `listening.songRecordVideo`，导出歌曲视频。
+
+两个入口都先打开同一个录制设置框，确认后显示同一个进度对话框，支持 `listening.cancelRecording` 取消，并在 `listening.recording.completed` 后展示同一套完成报告。
+
+全屏播放按钮旁保留“导出视频”按钮；全屏播放层如需增加录制入口，也必须复用同一命令和反馈组件。
 
 进入录制前必须满足：
 
@@ -98,6 +105,14 @@ Native 只保存编码、分辨率、转场三个偏好；输出目录和 FFmpeg
 - 程序目录下的 `ffmpeg.exe` 可用，且目标 H.264/H.265 编码器可用。
 
 如果任一条件不满足，显示明确原因，不开始录制。
+
+### 创作中心
+
+创作中心保留生产和资源管理入口，但视频导出体验必须与练习中心一致：
+
+- “视频”标签只导出听力视频，调用 `listening.recordVideo`，并刷新本地导出视频列表。
+- “歌曲”标签在具体歌曲版本行上导出歌曲视频，调用 `listening.songRecordVideo`。
+- 两处都复用录制设置框、`RecordingProgressOverlay`、取消按钮和 `RecordingResultCard`，不得再用只显示等待文案的 `AiBlockingOverlay` 作为视频导出反馈。
 
 ## Bridge / Native 接口
 

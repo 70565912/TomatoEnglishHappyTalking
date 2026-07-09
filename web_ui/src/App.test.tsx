@@ -3721,9 +3721,17 @@ describe('App', () => {
             ...videoVersions,
           ];
           const response = ok(message.id, type, {
-            outputPath: 'F:\\Tomato\\recording-export\\listening.mp4',
+            articleId: article.id,
+            videoPath: 'F:\\Tomato\\recording-export\\listening.mp4',
+            subtitlePath: 'F:\\Tomato\\recording-export\\listening.srt',
             durationMs: 3200,
-            segments: 1,
+            frameCount: 80,
+            droppedFrameCount: 0,
+            encoderName: 'ffmpeg',
+            codec: payload.codec,
+            resolution: payload.resolution,
+            pageTransition: payload.pageTransition,
+            warnings: [],
           });
           return new Promise<BridgeResponse>((resolve) => {
             resolveRecordVideo = () => resolve(response);
@@ -3794,13 +3802,15 @@ describe('App', () => {
         subtitleMode: 'both',
       });
     });
-    expect(await screen.findByText('正在导出听力视频')).toBeInTheDocument();
-    expect(screen.getByText(/预计超时倒计时/)).toBeInTheDocument();
+    expect(await screen.findByText('正在离线渲染录制视频')).toBeInTheDocument();
+    expect(screen.getByText('正在准备录制')).toBeInTheDocument();
+    expect(screen.getByText('录制进度 0%')).toBeInTheDocument();
     await act(async () => {
       resolveRecordVideo?.();
     });
     expect(await screen.findByText('听力视频导出完成')).toBeInTheDocument();
-    await waitFor(() => expect(screen.queryByText('正在导出听力视频')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('正在离线渲染录制视频')).not.toBeInTheDocument());
+    expect(screen.getByText('录制完成')).toBeInTheDocument();
     expect(await within(videoList).findByText('2 个版本')).toBeInTheDocument();
     expect(screen.queryByRole('dialog', { name: '录制视频设置' })).not.toBeInTheDocument();
   });
@@ -7310,10 +7320,17 @@ describe('App', () => {
           return new Promise<BridgeResponse>((resolve) => {
             resolveRecordCommand = () => {
               resolve(ok(message.id, type, {
-                outputPath: 'F:\\Tomato\\recording-export\\song.mp4',
-                srtPath: 'F:\\Tomato\\recording-export\\song.srt',
+                articleId: article.id,
+                videoPath: 'F:\\Tomato\\recording-export\\song.mp4',
+                subtitlePath: '',
                 durationMs: 3200,
-                segments: 1,
+                frameCount: 80,
+                droppedFrameCount: 0,
+                encoderName: 'ffmpeg',
+                codec: payload.codec,
+                resolution: payload.resolution,
+                pageTransition: payload.pageTransition,
+                warnings: [],
               }));
             };
           });
@@ -7359,15 +7376,14 @@ describe('App', () => {
       subtitleMode: 'burnedIn',
     }));
     expect(settingsPayloads[0]).toMatchObject({ subtitleMode: 'burnedIn' });
-    expect(screen.getByText('正在导出歌曲视频')).toBeInTheDocument();
-    expect(screen.getByText(/预计超时倒计时/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '设置' }));
-    expect(window.location.hash).toBe('#/creation?articleId=1');
-    expect(screen.getByText('正在导出歌曲视频')).toBeInTheDocument();
+    expect(screen.getByText('正在离线渲染录制视频')).toBeInTheDocument();
+    expect(screen.getByText('正在准备歌曲视频')).toBeInTheDocument();
+    expect(screen.getByText('录制进度 0%')).toBeInTheDocument();
     await act(async () => {
       resolveRecordCommand?.();
     });
-    await waitFor(() => expect(screen.queryByText('正在导出歌曲视频')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('正在离线渲染录制视频')).not.toBeInTheDocument());
+    expect(screen.getByText('录制完成')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Suno 版本 1' })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: '字幕已生成' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '导出歌曲视频' })).not.toBeDisabled();
