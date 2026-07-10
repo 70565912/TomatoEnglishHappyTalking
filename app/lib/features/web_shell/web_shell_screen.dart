@@ -393,6 +393,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         navigate: _qaNavigate,
         click: _qaClick,
         fill: _qaFill,
+        eval: _qaEval,
         dispatchBridge: (raw) => _runWithMainWebViewFrameRateActive(
           () => _bridgeRouter.dispatch(raw),
         ),
@@ -7044,6 +7045,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'POST /navigate {"path":"/settings"}',
         'POST /click {"text":"保存任务"}',
         'POST /fill {"selector":"input","value":"Space Snacks"}',
+        'POST /eval {"source":"(() => JSON.stringify({ok:true}))()"}',
         'POST /bridge {"type":"article.list","payload":{}}',
       ],
     };
@@ -7069,12 +7071,201 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
 
   Future<Uint8List> _qaScreenshot() async {
     return _runWithMainWebViewFrameRateActive(() async {
+      final cdpBytes = await _qaCdpFullPageScreenshot();
+      if (cdpBytes != null && cdpBytes.isNotEmpty) {
+        return cdpBytes;
+      }
       final bytes = await _requireWebController().takeScreenshot();
       if (bytes == null || bytes.isEmpty) {
         throw StateError('WebView screenshot is empty');
       }
       return bytes;
     });
+  }
+
+  Future<Uint8List?> _qaCdpFullPageScreenshot() async {
+    if (defaultTargetPlatform != TargetPlatform.windows) {
+      return null;
+    }
+
+    final controller = _requireWebController();
+    try {
+      await controller.evaluateJavascript(
+        source: _qaPrepareFullPageCaptureJs,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+
+      final metricsRaw = await controller.evaluateJavascript(
+        source: _qaMeasureFullPageCaptureJs,
+      );
+      final metrics = _decodeJavascriptJsonMap(metricsRaw);
+      if (metrics['ok'] != true) {
+        return null;
+      }
+
+      final clipX = _jsonDouble(metrics['x']);
+      final clipY = _jsonDouble(metrics['y']);
+      final clipWidth = _jsonDouble(metrics['width']);
+      final clipHeight = _jsonDouble(metrics['height']);
+      final scale = _jsonDouble(metrics['scale'], fallback: 1);
+      if (clipWidth <= 0 || clipHeight <= 0) {
+        return null;
+      }
+
+      final result = await controller.callDevToolsProtocolMethod(
+        methodName: 'Page.captureScreenshot',
+        parameters: {
+          'format': 'png',
+          'captureBeyondViewport': true,
+          'clip': {
+            'x': clipX,
+            'y': clipY,
+            'width': clipWidth,
+            'height': clipHeight,
+            'scale': scale,
+          },
+        },
+      );
+      if (result is! Map) {
+        return null;
+      }
+      final data = result['data'];
+      if (data is! String || data.isEmpty) {
+        return null;
+      }
+      return base64Decode(data);
+    } catch (error, stack) {
+      TomatoLogger.warn(
+        category: 'qa',
+        event: 'screenshot.cdp_failed',
+        message: 'CDP full-page screenshot failed; falling back to viewport capture',
+        error: error,
+        stackTrace: stack,
+      );
+      return null;
+    } finally {
+      try {
+        await controller.evaluateJavascript(
+          source: _qaRestoreFullPageCaptureJs,
+        );
+      } catch (_) {
+        // Best effort restore for the next UI interaction.
+      }
+    }
+  }
+
+  static const String _qaPrepareFullPageCaptureJs = '''
+(() => {
+  const TOKEN = '__tomatoQaFullPageCapture';
+  if (!window[TOKEN]) {
+    window[TOKEN] = { entries: [] };
+  }
+  const bag = window[TOKEN];
+  const remember = (element, properties) => {
+    if (!element) return;
+    const previous = {};
+    for (const property of properties) {
+      previous[property] = element.style.getPropertyValue(property);
+    }
+    bag.entries.push({ element, properties, previous });
+  };
+
+  const shell = document.querySelector('.app-shell');
+  const stage = document.querySelector('.main-stage');
+  const rail = document.querySelector('.side-rail');
+  const html = document.documentElement;
+  const body = document.body;
+
+  remember(shell, ['overflow', 'height', 'min-height']);
+  remember(stage, ['overflow', 'height', 'min-height', 'max-height']);
+  remember(rail, ['min-height', 'height']);
+  remember(html, ['overflow', 'height']);
+  remember(body, ['overflow', 'height']);
+
+  if (shell) {
+    shell.style.overflow = 'visible';
+    shell.style.height = 'auto';
+    shell.style.minHeight = 'auto';
+  }
+  if (stage) {
+    stage.style.overflow = 'visible';
+    stage.style.height = 'auto';
+    stage.style.minHeight = 'auto';
+    stage.style.maxHeight = 'none';
+    stage.scrollTop = 0;
+  }
+  if (rail) {
+    rail.style.minHeight = 'auto';
+    rail.style.height = 'auto';
+  }
+  html.style.overflow = 'visible';
+  html.style.height = 'auto';
+  body.style.overflow = 'visible';
+  body.style.height = 'auto';
+  return true;
+})()
+''';
+
+  static const String _qaMeasureFullPageCaptureJs = '''
+(() => {
+  const shell = document.querySelector('.app-shell');
+  if (!shell) {
+    return JSON.stringify({ ok: false, error: { message: 'app-shell not found' } });
+  }
+  const rect = shell.getBoundingClientRect();
+  const x = Math.max(0, rect.left + (window.scrollX || 0));
+  const y = Math.max(0, rect.top + (window.scrollY || 0));
+  const width = Math.max(1, Math.ceil(shell.offsetWidth || rect.width));
+  const height = Math.max(
+    1,
+    Math.ceil(
+      Math.max(
+        shell.scrollHeight,
+        shell.offsetHeight,
+        rect.height,
+        document.documentElement.scrollHeight,
+      ),
+    ),
+  );
+  return JSON.stringify({
+    ok: true,
+    x,
+    y,
+    width,
+    height,
+    scale: window.devicePixelRatio || 1,
+  });
+})()
+''';
+
+  static const String _qaRestoreFullPageCaptureJs = '''
+(() => {
+  const TOKEN = '__tomatoQaFullPageCapture';
+  const bag = window[TOKEN];
+  if (!bag) {
+    return true;
+  }
+  for (const entry of bag.entries.reverse()) {
+    const { element, properties, previous } = entry;
+    for (const property of properties) {
+      const value = previous[property];
+      if (value) {
+        element.style.setProperty(property, value);
+      } else {
+        element.style.removeProperty(property);
+      }
+    }
+  }
+  delete window[TOKEN];
+  return true;
+})()
+''';
+
+  double _jsonDouble(Object? value, {double fallback = 0}) {
+    if (value is num) {
+      return value.toDouble();
+    }
+    return double.tryParse('$value') ?? fallback;
   }
 
   Future<Map<String, dynamic>> _qaClick(Map<String, dynamic> payload) async {
@@ -7181,6 +7372,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   });
 })()
 ''',
+      );
+      return _decodeJavascriptJsonMap(raw);
+    });
+  }
+
+  Future<Map<String, dynamic>> _qaEval(Map<String, dynamic> payload) async {
+    return _runWithMainWebViewFrameRateActive(() async {
+      final source = payload['source'];
+      if (source is! String || source.trim().isEmpty) {
+        throw const FormatException('eval.source is required');
+      }
+      final raw = await _requireWebController().evaluateJavascript(
+        source: source,
       );
       return _decodeJavascriptJsonMap(raw);
     });

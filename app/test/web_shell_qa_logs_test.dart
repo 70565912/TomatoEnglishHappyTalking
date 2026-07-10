@@ -33,6 +33,7 @@ void main() {
       navigate: (route) async => {'ok': true, 'route': route},
       click: (payload) async => {'ok': true, 'payload': payload},
       fill: (payload) async => {'ok': true, 'payload': payload},
+      eval: (payload) async => {'ok': true, 'payload': payload},
       dispatchBridge: (raw) async => {'ok': true, 'raw': raw},
     );
     await server.start();

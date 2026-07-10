@@ -12,6 +12,9 @@ typedef QaScreenshotProducer = Future<Uint8List> Function();
 typedef QaDomOperator = Future<Map<String, dynamic>> Function(
   Map<String, dynamic> payload,
 );
+typedef QaEvalOperator = Future<Map<String, dynamic>> Function(
+  Map<String, dynamic> payload,
+);
 
 class WebShellQaServer {
   WebShellQaServer({
@@ -23,6 +26,7 @@ class WebShellQaServer {
     required this.navigate,
     required this.click,
     required this.fill,
+    required this.eval,
     required this.dispatchBridge,
   });
 
@@ -34,6 +38,7 @@ class WebShellQaServer {
   final QaNavigator navigate;
   final QaDomOperator click;
   final QaDomOperator fill;
+  final QaEvalOperator eval;
   final QaBridgeDispatcher dispatchBridge;
 
   HttpServer? _server;
@@ -180,6 +185,12 @@ class WebShellQaServer {
         return;
       }
 
+      if (request.method == 'POST' && path == '/eval') {
+        final body = await _readJsonBody(request);
+        await _writeJson(request, await eval(body));
+        return;
+      }
+
       if (request.method == 'POST' && path == '/bridge') {
         final body = await _readJsonBody(request);
         final type = body['type'];
@@ -215,6 +226,7 @@ class WebShellQaServer {
             'POST /navigate',
             'POST /click',
             'POST /fill',
+            'POST /eval',
             'POST /bridge',
           ],
         },

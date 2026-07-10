@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tomato English Happy Talking 使用说明</title>
+  <style>
+    :root {
+      --primary: #ff6b35;
+      --primary-soft: #fff1eb;
+      --dark-blue: #1a237e;
+      --accent: #ffd54f;
+      --bg: #f6f8fc;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #5b6472;
+      --border: #e6ebf2;
+      --shadow: 0 12px 32px rgba(26, 35, 126, 0.08);
+      --radius: 18px;
+      --max-width: 980px;
+      --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(255, 107, 53, 0.08), transparent 28%),
+        radial-gradient(circle at top right, rgba(26, 35, 126, 0.06), transparent 24%),
+        var(--bg);
+      line-height: 1.75;
+    }
+
+    a { color: var(--dark-blue); }
+
+    .hero {
+      background: linear-gradient(135deg, #1a237e 0%, #283593 55%, #ff6b35 140%);
+      color: #fff;
+      padding: 56px 24px 72px;
+    }
+
+    .hero-inner,
+    .container,
+    .toc-wrap {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    .hero-badge {
+      display: inline-block;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    .hero h1 {
+      margin: 0 0 12px;
+      font-size: clamp(2rem, 4vw, 3rem);
+      line-height: 1.2;
+    }
+
+    .hero p {
+      margin: 0;
+      max-width: 720px;
+      font-size: 1.05rem;
+      color: rgba(255, 255, 255, 0.92);
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 24px;
+    }
+
+    .hero-meta span {
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 14px;
+    }
+
+    .toc-wrap {
+      margin-top: -36px;
+      padding: 0 24px 24px;
+    }
+
+    .toc {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px 28px;
+    }
+
+    .toc h2 {
+      margin: 0 0 12px;
+      font-size: 1.15rem;
+      color: var(--dark-blue);
+    }
+
+    .toc ol {
+      margin: 0;
+      padding-left: 20px;
+      columns: 2;
+      column-gap: 32px;
+    }
+
+    .toc li {
+      break-inside: avoid;
+      margin: 6px 0;
+    }
+
+    .container {
+      padding: 8px 24px 80px;
+    }
+
+    section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 28px 30px;
+      margin-bottom: 24px;
+    }
+
+    section h2 {
+      margin: 0 0 8px;
+      color: var(--dark-blue);
+      font-size: 1.55rem;
+    }
+
+    section h3 {
+      margin: 24px 0 10px;
+      color: #24304a;
+      font-size: 1.12rem;
+    }
+
+    .lead {
+      margin-top: 0;
+      color: var(--muted);
+      font-size: 1.02rem;
+    }
+
+    .figure {
+      margin: 22px 0;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      background: #fafbfd;
+    }
+
+    .figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      cursor: zoom-in;
+    }
+
+    .figure a.figure-link {
+      display: block;
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .figure figcaption {
+      padding: 12px 16px;
+      font-size: 0.95rem;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+      background: #fff;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin: 18px 0;
+    }
+
+    .card {
+      background: var(--primary-soft);
+      border: 1px solid #ffd8c8;
+      border-radius: 14px;
+      padding: 16px 18px;
+    }
+
+    .card strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #b8431d;
+    }
+
+    .steps {
+      counter-reset: step;
+      list-style: none;
+      padding: 0;
+      margin: 16px 0 0;
+    }
+
+    .steps li {
+      position: relative;
+      padding: 0 0 18px 52px;
+      margin: 0;
+    }
+
+    .steps li::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 2px;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+    }
+
+    .tip,
+    .warn,
+    .note {
+      border-radius: 14px;
+      padding: 14px 16px;
+      margin: 16px 0;
+    }
+
+    .tip {
+      background: #eef8f1;
+      border: 1px solid #cfe8d7;
+    }
+
+    .warn {
+      background: #fff8e8;
+      border: 1px solid #f2dfaa;
+    }
+
+    .note {
+      background: #eef2ff;
+      border: 1px solid #d5dcf7;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 0.98rem;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f3f6fb;
+      color: var(--dark-blue);
+    }
+
+    ul.compact {
+      margin: 8px 0;
+      padding-left: 20px;
+    }
+
+    .tag {
+      display: inline-block;
+      background: #eef2ff;
+      color: var(--dark-blue);
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 0.88rem;
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+
+    footer {
+      max-width: var(--max-width);
+      margin: 0 auto;
+      padding: 0 24px 48px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 720px) {
+      .toc ol { columns: 1; }
+      section { padding: 22px 18px; }
+      .hero { padding: 40px 18px 64px; }
+    }
+
+    @media print {
+      body { background: #fff; }
+      .hero { color: #000; background: #fff; border-bottom: 2px solid #ddd; }
+      .toc-wrap { margin-top: 0; padding: 0; }
+      section, .toc { box-shadow: none; break-inside: avoid; }
+      .figure img { max-height: 420px; object-fit: contain; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="hero-inner">
+      <div class="hero-badge">面向学生 · 家长 · 普通使用者</div>
+      <h1>Tomato English Happy Talking<br />软件介绍与功能使用说明</h1>
+      <p>
+        这是一款帮助孩子用英文故事、绘本、听力、跟读和对话进行英语学习的桌面/平板应用。
+        您可以把教材、课外读物或中英对照故事整理成“书籍 + 章节”，再按章节进行听、说、练、唱、导出。
+      </p>
+      <div class="hero-meta">
+        <span>适用平台：Windows 电脑 / Android 平板或手机</span>
+        <span>文档版本：2026-07-10</span>
+        <span>界面语言：中文为主，学习内容以英文为主</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="toc-wrap">
+    <nav class="toc" aria-label="目录">
+      <h2>目录</h2>
+      <ol>
+        <li><a href="#intro">1. 软件能做什么</a></li>
+        <li><a href="#start">2. 安装与启动</a></li>
+        <li><a href="#layout">3. 界面总览</a></li>
+        <li><a href="#library">4. 书库：管理书籍与章节</a></li>
+        <li><a href="#new-chapter">5. 新增章节：导入英文内容</a></li>
+        <li><a href="#book-detail">6. 书籍详情：查看整本书</a></li>
+        <li><a href="#listening">7. 听力：边看绘本边听</a></li>
+        <li><a href="#song">8. 歌曲模式：用歌曲复习</a></li>
+        <li><a href="#follow">9. 跟读：听一句、读一句</a></li>
+        <li><a href="#chat">10. 对话：和番茄助教聊天</a></li>
+        <li><a href="#creation">11. 创作中心：生成绘本/歌曲/视频</a></li>
+        <li><a href="#practice">12. 练习中心：集中练习入口</a></li>
+        <li><a href="#settings">13. 设置：声音与云服务</a></li>
+        <li><a href="#tips">14. 给家长与学生的学习建议</a></li>
+        <li><a href="#faq">15. 常见问题</a></li>
+      </ol>
+    </nav>
+  </div>
+
+  <main class="container">
+    <section id="intro">
+      <h2>1. 软件能做什么</h2>
+      <p class="lead">
+        Tomato English Happy Talking（番茄英语快乐说）不是网络游戏，而是一个“英文学习工作台”。
+        它把一本书拆成多个章节，每个章节都可以进行听力、跟读、对话，并配套绘本插图、英文朗读、中文对照和歌曲。
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <strong>适合谁用</strong>
+          小学到初中学生、家长陪读、想自己整理英文读物的家庭用户。
+        </div>
+        <div class="card">
+          <strong>核心学习方式</strong>
+          先听、再跟读、再对话；也可以用歌曲和视频复习。
+        </div>
+        <div class="card">
+          <strong>内容来源</strong>
+          可导入自己的英文故事、教材段落、中英对照文本。
+        </div>
+        <div class="card">
+          <strong>是否需要联网</strong>
+          首次生成绘本、朗读、歌曲、对话时需要联网；已生成的内容会保存在本机，可反复使用。
+        </div>
+      </div>
+
+      <h3>主要功能一览</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>功能</th>
+            <th>适合做什么</th>
+            <th>适合阶段</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>书库</td>
+            <td>查看所有书籍、章节数量、学习进度</td>
+            <td>每天开始学习的入口</td>
+          </tr>
+          <tr>
+            <td>听力</td>
+            <td>看绘本插图，听英文朗读，显示中英字幕</td>
+            <td>第一遍理解内容</td>
+          </tr>
+          <tr>
+            <td>跟读</td>
+            <td>播放原音后自己录音，系统给出跟读分数</td>
+            <td>练习发音和流利度</td>
+          </tr>
+          <tr>
+            <td>对话</td>
+            <td>和“番茄助教”围绕本章内容进行英语问答</td>
+            <td>检验理解和表达能力</td>
+          </tr>
+          <tr>
+            <td>歌曲</td>
+            <td>把章节内容变成歌曲，边听边跟唱</td>
+            <td>趣味复习</td>
+          </tr>
+          <tr>
+            <td>创作中心</td>
+            <td>生成绘本、歌曲、导出学习视频</td>
+            <td>家长准备资料时使用</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="start">
+      <h2>2. 安装与启动</h2>
+      <h3>Windows 电脑</h3>
+      <ol class="steps">
+        <li>解压或安装发布包后，找到程序 <strong>tomato_english_happy_talking.exe</strong> 并双击打开。</li>
+        <li>首次启动时，Windows 可能需要安装 <strong>Microsoft Edge WebView2</strong> 运行库。按系统提示安装即可。</li>
+        <li>如果电脑有麦克风，跟读和对话功能才能正常使用。请在系统设置中允许本程序使用麦克风。</li>
+        <li>建议把程序固定在任务栏，方便孩子每天打开学习。</li>
+      </ol>
+
+      <h3>Android 手机或平板</h3>
+      <ol class="steps">
+        <li>安装 APK 后，首次打开请允许“麦克风”和“存储”相关权限。</li>
+        <li>界面与 Windows 版基本一致，左侧导航在窄屏上会自动适配。</li>
+        <li>跟读和对话建议使用耳机，减少环境噪音影响识别。</li>
+      </ol>
+
+      <div class="tip">
+        <strong>给家长的提示：</strong>
+        本软件的学习数据、绘本图片、朗读音频、歌曲文件都保存在本机，不会自动上传到您自己的网盘。
+        更换电脑前，请备份整个程序数据目录。
+      </div>
+    </section>
+
+    <section id="layout">
+      <h2>3. 界面总览</h2>
+      <p class="lead">打开软件后，左侧是固定导航栏，右侧是当前页面内容。大多数学习操作都可以从左侧五个入口进入。</p>
+
+      <figure class="figure">
+        <a class="figure-link" href="screenshots/01-home.png" target="_blank" rel="noopener">
+          <img src="screenshots/01-home.png" alt="书库首页界面截图" />
+        </a>
+        <figcaption>图 1：书库首页（宽屏整页截图，含完整章节列表）。点击图片可在新窗口查看原图。</figcaption>
+      </figure>
+
+      <h3>左侧导航说明</h3>
+      <table>
+        <thead>
+          <tr><th>按钮</th><th>作用</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>书库</td><td>查看所有书籍、继续上次学习、浏览章节</td></tr>
+          <tr><td>新增章节</td><td>导入或输入新的英文内容，保存为章节</td></tr>
+          <tr><td>创作中心</td><td>为章节生成绘本、歌曲、导出视频</td></tr>
+          <tr><td>练习中心</td><td>按书籍查看章节，并快速进入听力/跟读/对话</td></tr>
+          <tr><td>设置</td><td>选择朗读声音、配置云服务、歌曲相关选项</td></tr>
+        </tbody>
+      </table>
+
+      <h3>首页顶部三个数字</h3>
+      <ul class="compact">
+        <li><strong>章节</strong>：当前书库中一共有多少章。</li>
+        <li><strong>句子</strong>：所有章节拆分成多少句英文短句。软件会自动把长段落切成适合跟读的长度。</li>
+        <li><strong>平均跟读分</strong>：孩子跟读练习的平均得分，可用于观察长期进步。</li>
+      </ul>
+    </section>
+
+    <section id="library">
+      <h2>4. 书库：管理书籍与章节</h2>
+      <p class="lead">书库是每天学习的起点。一本书可以包含很多章节，例如《爱丽丝梦游仙境》可以按 E01、E02……分开学习。</p>
+
+      <h3>如何开始继续学习</h3>
+      <ol class="steps">
+        <li>打开软件后默认进入书库。</li>
+        <li>点击一本书的封面卡片，进入这本书的详情页。</li>
+        <li>也可以直接点首页上方的 <strong>继续听力</strong>，从上次进度接着听。</li>
+      </ol>
+
+      <h3>章节列表</h3>
+      <p>首页底部有“章节列表”，可以分页浏览所有章节。每一行通常会显示：</p>
+      <ul class="compact">
+        <li>章节标题，例如 <em>E30 - The Duchess's Morals</em></li>
+        <li>本章句子数量</li>
+        <li>最近学习时间</li>
+        <li>学习进度百分比</li>
+        <li>右侧快捷按钮：听力、跟读、对话、视频</li>
+      </ul>
+
+      <div class="note">
+        <strong>说明：</strong>
+        章节列表支持“倒序”和分页。如果章节很多，不必一次找完，按书名进入书籍详情页通常更方便。
+      </div>
+    </section>
+
+    <section id="new-chapter">
+      <h2>5. 新增章节：导入英文内容</h2>
+      <p class="lead">家长或老师可以在这里把一篇英文故事、教材段落或导入文件保存为新的学习章节。</p>
+
+      <figure class="figure">
+        <img src="screenshots/02-article-new.png" alt="新增章节页面截图" />
+        <figcaption>图 2：新增章节页面。选择书籍、填写标题和正文后，下方会自动显示句子预览。</figcaption>
+      </figure>
+
+      <h3>操作步骤</h3>
+      <ol class="steps">
+        <li>点击左侧 <strong>新增章节</strong>。</li>
+        <li>在“书籍”下拉框中选择已有书籍，或选择“新建书籍”并填写书名。</li>
+        <li>填写 <strong>文章标题</strong>。如果不填，软件会尽量自动从内容中提取短标题。</li>
+        <li>在 <strong>文章内容</strong> 中粘贴英文正文，也可以点右上角 <strong>导入文件</strong> 导入 `.txt` / `.md` 文件。</li>
+        <li>观察下方 <strong>句子预览（本地分句）</strong>，确认长文已被切成适合跟读的短句。</li>
+        <li>内容填写完整后，点击 <strong>保存章节</strong>。</li>
+      </ol>
+
+      <h3>保存后会发生什么</h3>
+      <ul class="compact">
+        <li>章节会加入对应书籍。</li>
+        <li>如果开启了绘本功能，保存后通常会先弹出 <strong>绘本提示词审核</strong> 窗口，让家长确认分镜描述，再开始生成插图。</li>
+        <li>听力朗读不会立刻全部生成，通常需要到创作中心或首次打开听力时触发生成。</li>
+      </ul>
+
+      <div class="tip">
+        <strong>导入建议：</strong>
+        <ul class="compact">
+          <li>标准“英文一段 + 中文一段”的对照文本，软件会尽量自动识别，不必先手工拆句。</li>
+          <li>正文请尽量只保留故事内容，不要混入词汇表、讲解、课后练习说明。</li>
+          <li>一篇内容过长时，建议按章节分开保存，孩子更容易每天坚持。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="book-detail">
+      <h2>6. 书籍详情：查看整本书</h2>
+      <p class="lead">进入某一本书后，可以看到封面、简介、章节总数、句子总数和平均跟读分。</p>
+
+      <figure class="figure">
+        <img src="screenshots/03-book-detail.png" alt="书籍详情页面截图" />
+        <figcaption>图 3：书籍详情页。可从这里进入连续听力、歌曲模式、练习，或查看章节目录。</figcaption>
+      </figure>
+
+      <h3>顶部三个常用按钮</h3>
+      <table>
+        <thead>
+          <tr><th>按钮</th><th>用途</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>连续听力</td>
+            <td>从本书某一章开始，按章节顺序连续播放听力内容，适合 bedtime story 或整块阅读时间。</td>
+          </tr>
+          <tr>
+            <td>歌曲模式</td>
+            <td>进入当前章节的歌曲播放界面，用音乐方式复习。</td>
+          </tr>
+          <tr>
+            <td>练习章节</td>
+            <td>跳到练习中心，并选中这本书，方便逐章做听力/跟读/对话。</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>章节目录中的四个彩色按钮</h3>
+      <p>每一章右侧通常有四个入口：</p>
+      <p>
+        <span class="tag">听力</span>
+        <span class="tag">跟读</span>
+        <span class="tag">对话</span>
+        <span class="tag">视频</span>
+      </p>
+      <p>其中“视频”用于查看或导出已生成的视频，不会直接开始跟读。</p>
+    </section>
+
+    <section id="listening">
+      <h2>7. 听力：边看绘本边听</h2>
+      <p class="lead">听力模式是最常用的入门方式。孩子可以看到与句子配套的绘本插图，同时听英文朗读，并阅读中英文字幕。</p>
+
+      <figure class="figure">
+        <img src="screenshots/04-listening.png" alt="听力模式界面截图" />
+        <figcaption>图 4：听力模式。中间是绘本插图和双语字幕，下方是播放控制按钮。</figcaption>
+      </figure>
+
+      <h3>如何使用</h3>
+      <ol class="steps">
+        <li>从书库、书籍详情或练习中心进入某一章的 <strong>听力</strong>。</li>
+        <li>确认顶部显示的是当前书名和章节名。</li>
+        <li>点击 <strong>开始播放</strong>，软件会按句子顺序朗读。</li>
+        <li>想重复当前句时，点 <strong>重听本句</strong>。</li>
+        <li>想沉浸式观看时，点 <strong>全屏播放</strong>。</li>
+        <li>需要复制整章英文时，可使用 <strong>复制全文</strong>。</li>
+      </ol>
+
+      <h3>页面顶部信息</h3>
+      <ul class="compact">
+        <li><strong>第 X / Y 章</strong>：当前是本书第几章。</li>
+        <li><strong>上一章 / 下一章</strong>：在章节div间切换。</li>
+        <li><strong>章节</strong>：打开章节列表抽屉，快速跳转。</li>
+        <li><strong>听力进度</strong>：当前听到本章第几句。</li>
+      </ul>
+
+      <div class="warn">
+        <strong>首次使用注意：</strong>
+        如果某章还没有生成听力音频，页面可能提示“正在生成”或部分句子尚未就绪。请耐心等待，或先到创作中心点击“生成听力”。
+      </div>
+    </section>
+
+    <section id="song">
+      <h2>8. 歌曲模式：用歌曲复习</h2>
+      <p class="lead">歌曲模式会把章节内容配上音乐，适合孩子熟悉内容后做趣味复习。界面与听力类似，但播放的是歌曲音频和歌曲字幕。</p>
+
+      <figure class="figure">
+        <img src="screenshots/05-song.png" alt="歌曲模式界面截图" />
+        <figcaption>图 5：歌曲模式。可播放本地已下载的歌曲，并查看歌曲字幕进度。</figcaption>
+      </figure>
+
+      <h3>使用前先准备歌曲</h3>
+      <p>歌曲不会凭空出现，需要先在创作中心生成或下载。常见方式有：</p>
+      <ul class="compact">
+        <li><strong>Suno</strong>：会打开网页，需要家长自行登录 Suno 账号，由软件辅助填写歌词并创建歌曲。</li>
+        <li><strong>百聆</strong>：通过阿里云百聆服务直接生成歌曲。</li>
+        <li><strong>ElevenLabs Music</strong>：通过 ElevenLabs 音乐服务生成歌曲。</li>
+      </ul>
+
+      <h3>进入歌曲模式后</h3>
+      <ol class="steps">
+        <li>在书籍详情点击 <strong>歌曲模式</strong>，或在播放器顶部切换到 <strong>歌曲</strong> 标签。</li>
+        <li>如果本章已有本地歌曲，在歌曲列表中选择一首。</li>
+        <li>点击 <strong>开始播放</strong> 收听。</li>
+        <li>可使用 <strong>全屏播放</strong> 进入沉浸式界面。</li>
+        <li>如果歌曲和视频素材都已准备好，可点击 <strong>导出视频</strong> 生成歌曲学习视频。</li>
+      </ol>
+    </section>
+
+    <section id="follow">
+      <h2>9. 跟读：听一句、读一句</h2>
+      <p class="lead">跟读练习帮助孩子把“听懂”变成“说出来”。每一句都会先播放标准发音，再让孩子录音，系统会给出分数。</p>
+
+      <figure class="figure">
+        <img src="screenshots/08-follow.png" alt="跟读练习界面截图" />
+        <figcaption>图 6：跟读练习。下方有播放原音、录音、播放录音、下一句等控制按钮。</figcaption>
+      </figure>
+
+      <h3>推荐练习流程</h3>
+      <ol class="steps">
+        <li>先完成本章听力，至少熟悉内容。</li>
+        <li>从练习中心或章节行点击 <strong>跟读</strong> 进入。</li>
+        <li>点击 <strong>播放原音</strong>，认真听当前句子。</li>
+        <li>点击 <strong>录音</strong>，清晰朗读同样内容。</li>
+        <li>录音结束后查看分数，可点 <strong>播放录音</strong> 对比自己的发音。</li>
+        <li>满意后点击 <strong>下一句</strong>；最后一页按钮会显示 <strong>完成</strong>。</li>
+      </ol>
+
+      <h3>自动停止录音</h3>
+      <p>
+        软件会根据识别到的英文内容判断孩子是否读完当前句。只有当识别结果基本覆盖整句时，才会自动停止录音并评分。
+        这样可以避免孩子只读最后几个词就结束。
+      </p>
+
+      <div class="tip">
+        <strong>练习环境建议：</strong>
+        尽量在安静环境使用耳机麦克风；让孩子整句读完再停；如果得分偏低，先重听原音，再录第二次。
+      </div>
+    </section>
+
+    <section id="chat">
+      <h2>10. 对话：和番茄助教聊天</h2>
+      <p class="lead">对话模式会围绕当前章节内容进行多轮英语问答。页面中的“番茄助教”会先提问，孩子用英语回答，再继续下一轮。</p>
+
+      <figure class="figure">
+        <img src="screenshots/09-chat.png" alt="对话练习界面截图" />
+        <figcaption>图 7：对话练习。顶部显示对话进度和对话提纲，中间是章节配图。</figcaption>
+      </figure>
+
+      <h3>使用步骤</h3>
+      <ol class="steps">
+        <li>从练习中心或章节行进入 <strong>对话</strong>。</li>
+        <li>等待页面显示“番茄助教正在准备问题...”。</li>
+        <li>听助教说完后，在输入框中用英语回答，或按提示开始录音。</li>
+        <li>顶部会显示 <strong>对话进度</strong> 和 <strong>对话提纲</strong>，帮助孩子知道一共要进行几轮。</li>
+        <li>完成后点击右上角 <strong>结束对话</strong> 退出。</li>
+      </ol>
+
+      <h3>常见状态提示</h3>
+      <table>
+        <thead>
+          <tr><th>提示</th><th>含义</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>番茄助教正在说，认真听。</td><td>请先听完，不要急着回答。</td></tr>
+          <tr><td>轮到你说英语啦。</td><td>现在可以输入或录音回答。</td></tr>
+          <tr><td>正在听你说英语。</td><td>系统正在识别孩子的语音。</td></tr>
+          <tr><td>番茄助教正在想答案。</td><td>请稍等，助教正在生成下一轮问题或反馈。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="creation">
+      <h2>11. 创作中心：生成绘本、歌曲、视频</h2>
+      <p class="lead">创作中心主要供家长或老师准备学习资料。学生平时学习时，更多使用的是书库、听力和练习中心。</p>
+
+      <figure class="figure">
+        <img src="screenshots/06-creation-picture.png" alt="创作中心绘本页截图" />
+        <figcaption>图 8：创作中心。选中书籍和章节后，可为该章生成绘本、歌曲或导出视频。</figcaption>
+      </figure>
+
+      <figure class="figure">
+        <img src="screenshots/06b-creation-song.png" alt="创作中心歌曲页截图" />
+        <figcaption>图 9：创作中心歌曲页。可生成百聆、ElevenLabs 或 Suno 歌曲，并管理本地歌曲版本。</figcaption>
+      </figure>
+
+      <figure class="figure">
+        <img src="screenshots/06c-creation-video.png" alt="创作中心视频导出页截图" />
+        <figcaption>图 10：创作中心视频导出页。可把听力和歌曲导出为本地学习视频。</figcaption>
+      </figure>
+
+      <h3>三个标签页</h3>
+      <table>
+        <thead>
+          <tr><th>标签</th><th>作用</th><th>适合什么时候用</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>绘本</td>
+            <td>查看绘本生成状态、生成听力、重新生成绘本图</td>
+            <td>新章节保存后，或插图效果不满意时</td>
+          </tr>
+          <tr>
+            <td>歌曲</td>
+            <td>生成歌曲、检测下载 Suno 歌曲、管理本地歌曲版本</td>
+            <td>孩子熟悉原文后，想做趣味复习时</td>
+          </tr>
+          <tr>
+            <td>视频导出</td>
+            <td>导出听力视频或歌曲视频</td>
+            <td>想分享到平板、电视或课堂展示时</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>绘本生成流程（家长操作）</h3>
+      <ol class="steps">
+        <li>在创作中心选中书籍和章节。</li>
+        <li>进入 <strong>绘本</strong> 标签，查看当前页数和状态。</li>
+        <li>如果是新章节，先完成 <strong>绘本提示词审核</strong>，检查章节描述和分镜内容。</li>
+        <li>确认后再提交生成。整章绘本图可能需要较长时间，请耐心等待。</li>
+        <li>生成完成后，再到听力模式查看效果。</li>
+      </ol>
+
+      <h3>生成听力</h3>
+      <p>
+        如果某一章还没有朗读音频，可在绘本页点击 <strong>生成听力</strong>。
+        若之前已经生成过，软件会询问是否覆盖原内容。覆盖会重新提交语音合成，一般只有在更换声音或修改句子后才需要。
+      </p>
+
+      <h3>歌曲相关按钮说明</h3>
+      <ul class="compact">
+        <li><strong>百聆 / ElevenLabs / Suno</strong>：三种不同的歌曲生成方式。</li>
+        <li><strong>确认创建歌曲</strong>：Suno 流程中，歌词和风格填好后由家长确认创建。</li>
+        <li><strong>检测下载</strong>：到 Suno 网站手动创建歌曲后，回到软件检测并下载未保存版本。</li>
+      </ul>
+
+      <div class="warn">
+        <strong>费用与账号说明：</strong>
+        绘本、朗读、对话、歌曲等功能会调用云服务，可能产生平台费用。
+        Suno 需要家长自行登录；软件不会保存 Suno 密码。
+        生成过程中请保持网络畅通，不要反复连续点击生成按钮。
+      </div>
+    </section>
+
+    <section id="practice">
+      <h2>12. 练习中心：集中练习入口</h2>
+      <p class="lead">如果孩子已经知道今天要学哪本书，练习中心是最方便的入口。它按书籍列出章节，并直接提供听力、跟读、对话、视频四个按钮。</p>
+
+      <figure class="figure">
+        <img src="screenshots/07-practice.png" alt="练习中心界面截图" />
+        <figcaption>图 11：练习中心。上方选择书籍，下方按章节进入不同练习模式。</figcaption>
+      </figure>
+
+      <h3>推荐使用方式</h3>
+      <ol class="steps">
+        <li>点击左侧 <strong>练习中心</strong>。</li>
+        <li>在“我的书箱”中选择今天要学的书。</li>
+        <li>在章节列表中找到目标章节。</li>
+        <li>按学习顺序依次使用：
+          <ul class="compact">
+            <li>第一次学：点 <strong>听力</strong></li>
+            <li>第二遍练嘴：点 <strong>跟读</strong></li>
+            <li>第三遍检验：点 <strong>对话</strong></li>
+          </ul>
+        </li>
+      </ol>
+
+      <div class="note">
+        练习中心只负责“进入练习”，不会在这里直接生成绘本或歌曲。
+        如果按钮不可用或内容未准备好，请先到创作中心检查素材状态。
+      </div>
+    </section>
+
+    <section id="settings">
+      <h2>13. 设置：声音与云服务</h2>
+      <p class="lead">设置页主要分两部分：一是选择孩子喜欢的英语朗读声音，二是配置云服务。普通用户最常使用的是“选择番茄助教的发音”。</p>
+
+      <figure class="figure">
+        <img src="screenshots/10-settings.png" alt="设置页面截图" />
+        <figcaption>图 12：设置页面。可选择朗读声音，并在下方配置云服务与歌曲相关选项。</figcaption>
+      </figure>
+
+      <h3>选择朗读声音</h3>
+      <ol class="steps">
+        <li>进入 <strong>设置</strong>。</li>
+        <li>在“可选声音”列表中浏览不同发音人。</li>
+        <li>点击 <strong>预览</strong> 试听效果。</li>
+        <li>选中合适的声音后，点击保存。</li>
+        <li>保存后，听力、跟读和对话中的英语朗读都会使用这个声音。</li>
+      </ol>
+
+      <h3>云服务配置（家长操作）</h3>
+      <p>如果您是第一次使用，需要由家长或管理员配置云服务密钥。常见分区包括：</p>
+      <ul class="compact">
+        <li><strong>文本处理</strong>：用于标题生成、对话提纲、绘本分镜规划等。</li>
+        <li><strong>图片生成</strong>：用于生成绘本插图。</li>
+        <li><strong>语音合成</strong>：用于听力朗读、助教说话。</li>
+        <li><strong>音乐生成</strong>：用于百聆等平台生成歌曲。</li>
+      </ul>
+
+      <p>软件支持在不同平台之间切换，例如阿里云百炼、火山引擎、ElevenLabs。请根据您已有的账号和套餐选择，不需要把所有平台都配置一遍。</p>
+
+      <h3>歌曲设置</h3>
+      <ul class="compact">
+        <li><strong>Suno 输出目录</strong>：指定 Suno 歌曲保存位置。</li>
+        <li><strong>Suno 生成超时（分钟）</strong>：等待网页生成歌曲的最长时间。</li>
+        <li><strong>百聆音乐模型</strong>：使用阿里云百聆时的歌曲模型。</li>
+      </ul>
+
+      <div class="warn">
+        <strong>安全提醒：</strong>
+        请不要把 API 密钥告诉他人，也不要截图分享到群聊。
+        设置页只应显示密钥是否已配置的掩码信息，不会长期展示完整密钥。
+      </div>
+    </section>
+
+    <section id="tips">
+      <h2>14. 给家长与学生的学习建议</h2>
+
+      <h3>给家长</h3>
+      <ul class="compact">
+        <li>一本书不要一次导入太多章节，按周计划分批添加，更容易坚持。</li>
+        <li>新章节建议顺序：先保存 → 审核绘本 → 生成听力 → 让孩子开始听 → 再做跟读和对话。</li>
+        <li>跟读分数用于观察趋势，不必要求每句都满分，重点是鼓励孩子完整读完。</li>
+        <li>对话环节允许孩子用简单句回答，不要要求一次就说得很复杂。</li>
+        <li>若生成失败，先检查网络、账号额度和设置页密钥，再重试。</li>
+      </ul>
+
+      <h3>给学生</h3>
+      <ul class="compact">
+        <li>第一次学新章节时，先完整听一遍，不要急着录音。</li>
+        <li>跟读时看着英文句子，尽量模仿语音语调，而不是只求快。</li>
+        <li>不会读的单词，可以先点“播放原音”多听几次。</li>
+        <li>对话时听不懂，可以回到听力模式重听相关段落。</li>
+        <li>歌曲模式适合复习，不适合第一次接触新课文。</li>
+      </ul>
+
+      <h3>一套简单学习流程</h3>
+      <table>
+        <thead>
+          <tr><th>步骤</th><th>功能</th><th>时间建议</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>第 1 步</td><td>听力 1 遍</td><td>10–15 分钟</td></tr>
+          <tr><td>第 2 步</td><td>跟读重点句或整章</td><td>10–20 分钟</td></tr>
+          <tr><td>第 3 步</td><td>对话 1 轮</td><td>5–10 分钟</td></tr>
+          <tr><td>第 4 步</td><td>歌曲或视频复习</td><td>可选，5 分钟</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="faq">
+      <h2>15. 常见问题</h2>
+
+      <h3>为什么保存章节后看不到图片？</h3>
+      <p>绘本图需要单独生成。新章节保存后，通常会先进入“绘本提示词审核”，确认后才会开始生成整章插图。生成期间请耐心等待，不要重复提交。</p>
+
+      <h3>为什么听力播放没有声音？</h3>
+      <p>常见原因有：该章尚未生成听力音频、系统音量被静音、正在生成中、或云服务密钥未配置。请先到创作中心查看“听力材料”状态。</p>
+
+      <h3>跟读录音没有反应怎么办？</h3>
+      <p>请检查电脑或平板是否允许麦克风权限，尽量使用耳机，并在安静环境下重试。如果识别结果太短，系统不会立刻结束，请尽量读完一整句。</p>
+
+      <h3>对话一直显示“正在准备”怎么办？</h3>
+      <p>这通常表示网络或服务正在初始化。请确认网络正常、设置页云服务可用，并稍等片刻后重试。</p>
+
+      <h3>Suno 歌曲怎么用？</h3>
+      <p>点击生成 Suno 歌曲后，软件会打开 Suno 网页。家长需要先自行登录 Suno，软件会帮助填写歌词和风格。创建完成后，可回到软件点击“检测下载”把歌曲保存到本地。</p>
+
+      <h3>可以离线使用吗？</h3>
+      <p>已经生成好的绘本、朗读、歌曲和对话记录可以离线反复使用；但首次生成新内容、进行新的 AI 对话、重新合成语音时仍需要联网。</p>
+
+      <h3>换电脑后资料还在吗？</h3>
+      <p>学习记录和生成素材保存在本机程序数据目录中。换设备前请整体备份，不要只复制 exe 文件。</p>
+
+      <h3>中文翻译从哪里来？</h3>
+      <p>如果导入的是中英对照文本，软件会优先使用原文中的中文翻译；如果没有，部分字幕可能为空，需要家长重新导入带中文对照的内容，或在后续版本中补充翻译。</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      文档文件位置：<code>docs/user-guide/index.html</code>。
+      截图文件位于同目录下 <code>screenshots/</code> 文件夹。
+      所有配图均为<strong>宽屏整页截图</strong>（1920×1080 窗口，通过浏览器引擎一次性截取完整页面，无拼接）。
+      如需打印，请使用浏览器“打印”功能；长图建议直接在新窗口中查看原图。
+    </p>
+    <p>Tomato English Happy Talking · 用户说明文档 · 非开发者版本</p>
+  </footer>
+</body>
+</html>
