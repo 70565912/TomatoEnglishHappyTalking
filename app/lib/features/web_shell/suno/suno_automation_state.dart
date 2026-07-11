@@ -19,6 +19,13 @@ class SunoAutomationState {
   String? metadataPath;
   int? creditsRemaining;
   DateTime? styleMagicRequestedAt;
+  bool lyricsPasteAttempted = false;
+  bool lyricsPasteOk = false;
+  bool lyricsPasteInFlight = false;
+  String? lyricsPasteMethod;
+  bool manualPasteTest = false;
+  bool manualPasteReady = false;
+  int lyricsCdpRetryCount = 0;
   final List<ArticleSongVersion> versions = <ArticleSongVersion>[];
   final Set<String> downloadedSongUrls = <String>{};
   final Set<String> downloadedDownloadKeys = <String>{};
@@ -174,6 +181,13 @@ class SunoAutomationState {
     completedStandby = false;
     completedStandbyFilled = false;
     styleMagicRequestedAt = null;
+    lyricsPasteAttempted = false;
+    lyricsPasteOk = false;
+    lyricsPasteInFlight = false;
+    lyricsPasteMethod = null;
+    manualPasteTest = false;
+    manualPasteReady = false;
+    lyricsCdpRetryCount = 0;
     ignoredStylePrompt = '';
     pendingDownloadSongUrl = null;
     pendingDownloadTitle = null;

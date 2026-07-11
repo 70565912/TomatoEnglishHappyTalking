@@ -32,6 +32,9 @@ abstract class SunoAutomationHost {
 
   String displayError(Object error);
 
+  /// Request OS focus on the Suno WebView before CDP clipboard paste.
+  Future<void> focusSunoWebView();
+
   Future<List<int>> downloadUrl(
     String url, {
     String? userAgent,

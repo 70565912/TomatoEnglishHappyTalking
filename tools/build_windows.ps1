@@ -206,7 +206,19 @@ function Get-OptionalFileHash {
         return $null
     }
 
-    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+        return (Get-FileHash -Path $Path -Algorithm SHA256).Hash
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $hashBytes = $sha.ComputeHash($stream)
+        return ([BitConverter]::ToString($hashBytes) -replace '-', '').ToLowerInvariant()
+    }
+    finally {
+        $stream.Dispose()
+    }
 }
 
 function Get-WebUiDependencyStatePath {
@@ -749,6 +761,22 @@ try {
     if (Test-Path $focusPatchScript) {
         Write-Host "`n=== Patch WebView focus (Windows) ===" -ForegroundColor Cyan
         & $focusPatchScript
+    }
+    $capturePatchScript = Join-Path $workspaceRoot "tools\patch_inappwebview_windows_capture.ps1"
+    if (Test-Path $capturePatchScript) {
+        Write-Host "`n=== Patch WebView capture pause (Windows) ===" -ForegroundColor Cyan
+        & $capturePatchScript
+    }
+    Push-Location (Join-Path $workspaceRoot "app")
+    try {
+        & $flutterExe pub get
+        Assert-LastExitCode -CommandName "flutter pub get"
+        if (Test-Path $capturePatchScript) {
+            Write-Host "`n=== Patch WebView capture pause (plugin symlinks) ===" -ForegroundColor Cyan
+            & $capturePatchScript
+        }
+    } finally {
+        Pop-Location
     }
     Clear-StaleWindowsBuildCache -AppRoot (Get-Location).Path -ExpectedBinaryName "tomato_english_happy_talking"
     $effectiveDartDefine = Add-DefaultQaDartDefines -Values $DartDefine

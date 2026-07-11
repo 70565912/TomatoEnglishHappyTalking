@@ -1,0 +1,61 @@
+{
+  "capturedAt": "2026-07-11T02:21:16Z",
+  "url": "https://suno.com/create",
+  "mode": "Advanced",
+  "loggedIn": true,
+  "plan": "Pro Plan",
+  "manualFillConfirmed": true,
+  "lyricsEditor": {
+    "selector": ".lyrics-editor-content[role=\"textbox\"][aria-label=\"Lyrics editor\"]",
+    "tag": "div",
+    "className": "lyrics-editor-content touch-pan-y",
+    "role": "textbox",
+    "ariaLabel": "Lyrics editor",
+    "contentEditable": "true",
+    "dataLexicalEditor": "true",
+    "isTextarea": false,
+    "innerTextLength": 3829,
+    "characterCounter": "3829 of 5000",
+    "paragraphCount": 55,
+    "lexicalTextNodeCount": 55,
+    "rect": { "width": 819, "height": 288 },
+    "textStart": "Then the Queen left off, quite out of breath, and said to Alice, \"Have you seen the Mock Turtle yet?\" \"No,\" said Alice,",
+    "textEnd": ",\" said the Mock Turtle. \"Hold your tongue!\" added the Gryphon, before Alice could speak again. The Mock Turtle went on."
+  },
+  "lyricsPanelChrome": {
+    "toolbarButtons": [
+      "Undo",
+      "Redo",
+      "New draft",
+      "Saved lyrics",
+      "Open full screen lyrics editor"
+    ],
+    "counterFormats": [
+      "3829 of 5000 characters used.",
+      "3829/5000"
+    ],
+    "cowriterArea": {
+      "promptAriaLabel": "Cowriter prompt",
+      "helpText": "Help me write lyrics"
+    }
+  },
+  "stylesField": {
+    "tag": "textarea",
+    "ariaLabel": "deep synths, soft male vocals, dark ambient, strong male vocal, mexican rap",
+    "note": "Styles 仍是原生 textarea；Lyrics 已改为 Lexical div"
+  },
+  "automationImplications": [
+    "旧版 textarea.value / setRangeText 对 Lyrics 不再适用",
+    "应定位 .lyrics-editor-content[aria-label=\"Lyrics editor\"][role=\"textbox\"]",
+    "真实文本在 55 个 <p> + [data-lexical-text] 节点中，不是单一 value",
+    "字符计数在编辑器外壳上：3829 of 5000 / 3829/5000",
+    "Cowriter prompt 是独立 textbox，必须排除",
+    "Styles 仍是 textarea，与 Lyrics 控件类型不同",
+    "人工粘贴可一次写入 3000+ 字；自动化需模拟 Lexical 输入链而非 DOM 硬写"
+  ],
+  "artifacts": {
+    "snapshot": "docs/fixtures/suno/lexical-v55-create-page-snapshot.txt",
+    "screenshot": "docs/fixtures/suno/lexical-v55-manual-fill-screenshot.png",
+    "outerHtmlSample": "docs/fixtures/suno/lexical-v55-lyrics-editor-outerhtml-sample.txt"
+  }
+}

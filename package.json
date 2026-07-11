@@ -12,7 +12,10 @@
     "qa:windows": "node tools/qa_windows_release.mjs",
     "qa:layout": "node tools/qa_layout_audit.mjs",
     "qa:picture-book-live": "node tools/qa_picture_book_live.mjs",
-    "qa:suno-live": "node tools/qa_suno_live.mjs"
+    "qa:suno-live": "node tools/qa_suno_live.mjs",
+    "qa:suno-fill": "node tools/qa_suno_fill_quick.mjs",
+    "qa:suno-fill-loop": "node tools/qa_suno_fill_loop.mjs --rebuild --attempts 3",
+    "qa:suno-manual-paste": "node tools/qa_suno_manual_paste_test.mjs"
   },
   "devDependencies": {
     "gifenc": "^1.0.3",

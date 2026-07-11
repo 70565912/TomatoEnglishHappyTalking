@@ -31,7 +31,7 @@
 - 用户确认 Create 并通过 Suno 真人审核后，Create 页右侧会出现新的 `/song/` 条目；Tomato 应打开候选**歌曲详情页**，在页面上等待生成完成、核对歌词，再进入下载流程。
 - Suno 一次 Create 通常会生成**两首**同歌词完整歌曲；post-create 使用 **`SunoCreateBatch`** 跟踪 Create 侧栏新 URL（排除 pre-create 快照）作为诊断和已下载标记来源，但 pending 残留不再驱动回 Create。
 - post-create 下载阶段与「检测下载」共用 **Library 广召回 + DOM 自上而下**扫描；首首落盘后统一回到或留在 Library 继续，不得在 Library 仍有候选时 `complete`。
-- **Create 页歌词探测**：completion 脚本只读侧栏 clip 文本做 `currentPageLyricsExactMatch`，**不得**用 Lyrics/Styles 表单 textarea 全文（否则会误判已匹配并过早打开第一首详情）。
+- **Create 页歌词探测**：completion 脚本只读侧栏 clip 文本做 `currentPageLyricsExactMatch`，**不得**用 Lyrics/Styles 表单全文（Lyrics 为 Lexical `[data-lexical-text]`，读 wrapper `innerText` 会虚高；Styles 为 textarea）。见 `docs/suno_lexical_lyrics_editor.md`。
 - completion 返回 `createSidebarSongUrls` / `createSidebarGeneratingCount`；Dart 记 `batch.sidebar_detected` 日志。
 - `_sunoCreateSubmitted == true` 时，**不得**再执行 Create 填表/魔法棒/等待 Styles 分支，也不得因 `manualAction`/`failed` 状态把 WebView 拉回 `/create`。
 - 点击 Create 前会用 `_snapshotSunoPreCreateSongUrls` 把 Create 页面上已有的旧歌 URL 记入 rejected，避免真人审核完成前误跳到旧歌详情页；只有审核后出现的新 URL 才作为 post-create 候选。

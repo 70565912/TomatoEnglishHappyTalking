@@ -98,6 +98,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   final Map<String, Future<ArticleSongVersion>> _songTimelineTasks = {};
   final Map<String, String> _songTimelineErrors = {};
   InAppWebViewController? _sunoController;
+  final FocusNode _sunoWebViewFocusNode = FocusNode(debugLabel: 'sunoWebView');
   late final SunoAutomationController _sunoEngine;
 
   bool get _supportsWindowsFrameRateLimit =>
@@ -340,6 +341,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'suno.debugRows': _handleSunoDebugRows,
         'suno.debugSnapshot': _handleSunoDebugSnapshot,
         'suno.continueAutomation': _handleSunoContinueAutomation,
+        'suno.manualPasteTest': _handleSunoManualPasteTest,
         'listening.updateSentence': _handleListeningUpdateSentence,
         'listening.resynthesizeSentence': _handleListeningResynthesizeSentence,
         'listening.stop': _handleListeningStop,
@@ -408,6 +410,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     }
   }
 
+  Future<void> focusSunoWebView() async {
+    if (!mounted) {
+      return;
+    }
+    _sunoWebViewFocusNode.requestFocus();
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+  }
+
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
@@ -415,6 +425,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     unawaited(_qaServer?.stop());
     _recordingCancelToken?.cancel();
     unawaited(_stopListeningPlayback());
+    _sunoWebViewFocusNode.dispose();
     unawaited(_stopVoicePreview());
     unawaited(_stopSongPlayback());
     _stopSunoAutomation(clearVisible: true);
@@ -628,7 +639,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
           Expanded(
             child: Container(
               color: Colors.white,
-              child: InAppWebView(
+              child: Focus(
+                focusNode: _sunoWebViewFocusNode,
+                child: InAppWebView(
                 key:
                     ValueKey('suno-webview-$_sunoEngine.state.webViewInstance'),
                 initialUrlRequest: URLRequest(
@@ -667,7 +680,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
                   );
                   _sunoController = controller;
                   _sunoEngine.attachWebController(controller);
-                  unawaited(_continueSunoAutomation());
+                  final skipLoadStopTick = _sunoEngine.state.lyricsPasteInFlight ||
+                      (_sunoEngine.state.statusKey == 'waitingConfirm' &&
+                          _sunoEngine.state.manualPasteReady) ||
+                      (_sunoEngine.state.statusKey == 'waitingConfirm' &&
+                          _sunoEngine.state.lyricsPasteOk);
+                  if (!skipLoadStopTick) {
+                    unawaited(_continueSunoAutomation());
+                  }
                 },
                 onDownloadStartRequest: (controller, request) {
                   TomatoLogger.info(
@@ -681,6 +701,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
                   );
                   unawaited(_handleSunoDownload(request));
                 },
+              ),
               ),
             ),
           ),
@@ -2730,7 +2751,24 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     if (articleId == null) {
       throw const FormatException('听力任务尚未打开');
     }
-    return _songStatePayload(articleId);
+    return _decorateSunoAutomationPayload(
+      await _songStatePayload(articleId),
+    );
+  }
+
+  Map<String, dynamic> _decorateSunoAutomationPayload(
+    Map<String, dynamic> payload,
+  ) {
+    if (_sunoEngine.state.articleId == null ||
+        _sunoEngine.state.statusKey == 'idle') {
+      return payload;
+    }
+    payload['manualPasteTest'] = _sunoEngine.state.manualPasteTest;
+    payload['manualPasteReady'] = _sunoEngine.state.manualPasteReady;
+    payload['expectedLyricsLength'] = _sunoEngine.state.lyrics.length;
+    payload['manualActionMessage'] ??= _sunoEngine.state.manualActionMessage;
+    payload['automationStatus'] ??= _sunoEngine.state.statusKey;
+    return payload;
   }
 
   Future<Map<String, dynamic>> _handleListeningSongGenerate(
@@ -4184,6 +4222,29 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     await _sunoEngine.tick();
   }
 
+  Future<Map<String, dynamic>> _handleSunoManualPasteTest(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadOptionalInt(message.payload, 'articleId') ??
+        _activeListeningArticleId;
+    if (articleId == null) {
+      throw const FormatException('听力任务尚未打开');
+    }
+    final article = await _songArticle(articleId);
+    final lyrics = _payloadString(message.payload, 'lyrics').trim();
+    await _sunoEngine.startAutomation(
+      article: article,
+      stylePrompt: '',
+      lyrics: lyrics.isEmpty ? _articleSongLyrics(article) : lyrics,
+      manualPasteTest: true,
+      loadGroups: _cachedSunoSongGroups,
+      loadCachedState: _cachedSunoSongState,
+    );
+    return _decorateSunoAutomationPayload(
+      await _songStatePayload(articleId),
+    );
+  }
+
   Future<Map<String, dynamic>> _handleSunoContinueAutomation(
     BridgeMessage message,
   ) async {
@@ -4472,6 +4533,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         allowMagicClick: true,
         magicAlreadyRequested: false,
         readOnly: _payloadBool(message.payload, 'readOnly', fallback: false),
+        skipStyles: _payloadBool(message.payload, 'skipStyles', fallback: false),
       ),
     );
   }
@@ -8336,6 +8398,9 @@ class _WebShellSunoHost implements SunoAutomationHost {
 
   @override
   String displayError(Object error) => _state._displayError(error);
+
+  @override
+  Future<void> focusSunoWebView() => _state.focusSunoWebView();
 
   @override
   Future<List<int>> downloadUrl(String url, {String? userAgent}) =>

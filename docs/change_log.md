@@ -1,5 +1,15 @@
 # 修改日志
 
+## 2026-07-11
+
+- **Suno Lyrics 自动粘贴（无人工）**：Create 填表经 `SunoWebViewPaste` 自动 `Clipboard.setData` + CDP WebView 内 `Ctrl+V`，失败时页内 paste fallback；probe 要求 `[data-lexical-text]` + counter ≥ 85%；Styles 仍关闭直到 `lyricsPasteOk`。见 `docs/suno_lexical_lyrics_editor.md`。
+- **Suno Lyrics 粘贴验证（Styles 关闭）**：Create 填表改为 `Clipboard.setData` → 聚焦 Lexical Lyrics → 用户 Ctrl+V → `readLexicalLyricsProbeScript` 探针；`skipStyles: true` 禁止展开/魔法棒/滚动 Styles。成功条件为 counter / lexicalLength ≥ 预期 85%，不以「已尝试」冒充写入。见 `docs/suno_lexical_lyrics_editor.md`；联调 `node tools/qa_suno_fill_quick.mjs --articleId 84`。
+- **Suno Lyrics Lexical 写入修复**：Suno Create v5.5 将 Lyrics 改为 Lexical `.lyrics-editor-content`（Styles 仍为 textarea）。移除 180 字分块 / `appendChild` 兜底；新增 `writeLexicalLyricsScript`（Clipboard + paste / 一次性 insertText）、`readLexicalLyricsValue`、`readSunoLyricsCounter`；控制器每轮自动化只写一次歌词，以 Suno 计数器为准、提示用户人工确认。分析、fixture 与禁止项见 `docs/suno_lexical_lyrics_editor.md`；联调 `node tools/qa_suno_fill_quick.mjs`。
+
+验证：
+
+- `flutter test test/suno_lexical_lyrics_test.dart`
+
 ## 2026-07-10
 
 - 创作中心视频导出体验与练习中心统一：创作中心“视频”标签导出听力视频、歌曲标签按具体歌曲版本导出歌曲视频，两者都复用录制设置框、`listening.recording.progress/completed/error` 事件、`RecordingProgressOverlay` 进度条、取消按钮和 `RecordingResultCard` 完成报告；不再用只显示等待文案的 `AiBlockingOverlay` 反馈视频导出。

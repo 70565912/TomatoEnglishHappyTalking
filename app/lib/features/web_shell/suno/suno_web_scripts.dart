@@ -9,7 +9,6 @@ class SunoWebScripts {
   static String get inspectScript => r'''
 (() => {
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-  const visibleText = document.body ? document.body.innerText || '' : '';
   const visible = (el) => {
     const rect = el.getBoundingClientRect?.();
     if (!rect || rect.width <= 0 || rect.height <= 0) return false;
@@ -18,19 +17,6 @@ class SunoWebScripts {
       style.display !== 'none' &&
       Number(style.opacity || '1') > 0.01;
   };
-  const controlText = Array.from(document.querySelectorAll('button,a,[role="button"],[aria-label],[title]'))
-    .filter(visible)
-    .map((el) => [
-      el.innerText || el.textContent || '',
-      el.getAttribute?.('aria-label') || '',
-      el.getAttribute?.('title') || '',
-      el.getAttribute?.('href') || ''
-    ].join(' '))
-    .join(' ');
-  const text = normalize(`${visibleText} ${controlText}`);
-  const creditsMatch = text.match(/Credits\s+remaining[:\s]+(\d+)/i) || text.match(/(\d+)\s+Credits/i);
-  const hasCreateSurface = /Create song|Create|Lyrics|Instrumental|Advanced|Style of Music|Song Description/i.test(text);
-  const hasLoginPrompt = /sign in|sign-in|signin|log in|log-in|login|join suno for free|join for free|sign up|sign-up|signup|create account|continue with google|continue with discord|continue with apple|get started|登录|登入|注册|註冊|免费加入/i.test(text);
   let host = '';
   let path = '';
   try {
@@ -39,6 +25,56 @@ class SunoWebScripts {
     path = url.pathname.toLowerCase();
   } catch (_) {}
   const isSunoHost = host === 'suno.com' || host === 'www.suno.com';
+  const onSunoCreate = isSunoHost && path === '/create';
+  const hasLexicalEditor = Boolean(
+    document.querySelector('.lyrics-editor-content[aria-label="Lyrics editor"], .lyrics-editor-content[role="textbox"]')
+  );
+  // Avoid document.body.innerText while Lexical holds large pasted lyrics (crashes WebView2).
+  const chromeText = (() => {
+    const parts = [];
+    const push = (el) => {
+      if (!el || !visible(el)) return;
+      parts.push(String(el.innerText || el.textContent || ''));
+    };
+    if (onSunoCreate && hasLexicalEditor) {
+      push(document.querySelector('header,[role="banner"]'));
+      push(document.querySelector('[class*="credit" i],[aria-label*="Credit" i]'));
+      return normalize(parts.join(' '));
+    }
+    push(document.querySelector('header,[role="banner"]'));
+    push(document.querySelector('[aria-label*="Profile" i],[data-testid*="profile" i]'));
+    push(document.querySelector('[class*="credit" i],[aria-label*="Credit" i]'));
+    for (const el of Array.from(document.querySelectorAll('button,a,[role="button"],[aria-label],[title]'))) {
+      if (!visible(el)) continue;
+      const label = normalize([
+        el.getAttribute?.('aria-label') || '',
+        el.getAttribute?.('title') || '',
+        el.innerText || el.textContent || '',
+      ].join(' '));
+      if (label.length > 180) continue;
+      parts.push(label);
+    }
+    return normalize(parts.join(' '));
+  })();
+  const visibleText = onSunoCreate && hasLexicalEditor
+    ? chromeText
+    : normalize(document.body ? document.body.innerText || '' : '');
+  const controlText = onSunoCreate && hasLexicalEditor ? '' : Array.from(document.querySelectorAll('button,a,[role="button"],[aria-label],[title]'))
+    .filter(visible)
+    .map((el) => [
+      el.innerText || el.textContent || '',
+      el.getAttribute?.('aria-label') || '',
+      el.getAttribute?.('title') || '',
+      el.getAttribute?.('href') || ''
+    ].join(' '))
+    .join(' ');
+  const text = onSunoCreate && hasLexicalEditor
+    ? visibleText
+    : normalize(`${visibleText} ${controlText}`);
+  const creditsMatch = text.match(/Credits\s+remaining[:\s]+(\d+)/i) || text.match(/(\d+)\s+Credits/i);
+  const hasCreateSurface = /Create song|Create|Lyrics|Instrumental|Advanced|Style of Music|Song Description/i.test(text) ||
+    (onSunoCreate && hasLexicalEditor);
+  const hasLoginPrompt = /sign in|sign-in|signin|log in|log-in|login|join suno for free|join for free|sign up|sign-up|signup|create account|continue with google|continue with discord|continue with apple|get started|登录|登入|注册|註冊|免费加入/i.test(text);
   const isSunoAuthHost = /(^|\.)suno\.com$/.test(host) && /auth|account|login|clerk/i.test(host);
   const isExternalAuthHost = !isSunoHost && (
     isSunoAuthHost ||
@@ -47,17 +83,23 @@ class SunoWebScripts {
   const isSunoAuthPath = isSunoHost && /\/(?:login|log-in|signin|sign-in|signup|sign-up|auth|oauth|sso)(?:\/|$)/i.test(path);
   const hasAccountSignal = /Profile menu button|\b\d+\s+Credits\b|Credits remaining[:\s]+\d+|Upgrade to Pro|Pro Plan|Library|Notifications|Workspaces/i.test(text);
   const hasSongDetail = /\/song\//i.test(location.href) && /Lyrics|Comments|Add a Caption|Show full styles|v\d/i.test(text);
-  const onSunoCreate = isSunoHost && path === '/create';
   const loginFlow =
     isExternalAuthHost ||
     isSunoAuthPath ||
-    (hasLoginPrompt && !hasAccountSignal && !onSunoCreate);
+    (hasLoginPrompt && !hasAccountSignal && !onSunoCreate && !hasLexicalEditor);
   return JSON.stringify({
-    loggedIn: !loginFlow && (hasAccountSignal || hasSongDetail || hasCreateSurface),
+    loggedIn: !loginFlow && (
+      hasAccountSignal ||
+      hasSongDetail ||
+      hasCreateSurface ||
+      (onSunoCreate && hasLexicalEditor)
+    ),
     creditsRemaining: creditsMatch ? Number(creditsMatch[1]) : null,
     loginFlow,
     hasLoginPrompt,
     hasAccountSignal,
+    hasLexicalEditor,
+    onSunoCreate,
     currentUrl: location.href,
     textSample: text.slice(0, 800)
   });
@@ -506,6 +548,524 @@ class SunoWebScripts {
 ''';
   }
 
+  /// Shared Lexical Lyrics helpers for Create-page scripts.
+  /// Styles remain textarea; Lyrics must use [data-lexical-text] reads.
+  ///
+  /// ## Dart → JavaScript 转义（反复踩坑，改 helper 前必读）
+  ///
+  /// 本常量使用 Dart **raw** 字符串 `r'''...'''`。写入 JS 的正则/转义规则：
+  ///
+  /// | 目标 JS | 在 `r'''` 里应写 | 错误写法（会 SyntaxError） |
+  /// |---------|----------------|---------------------------|
+  /// | `\d` 数字 | `\d` | `\\d` → JS 里变成 `\\d` 字面量 |
+  /// | `\s` 空白 | `\s` | `\\s` → 可能破坏 `/.../` 闭合 |
+  /// | `\/` 斜杠 | `\/` | `\\/` → `Invalid regular expression flags` |
+  /// | 换行 join | `'\n'` 或 `String.fromCharCode(10)` | `'\\n'` 是两字符非换行 |
+  ///
+  /// 嵌入到普通 `'''` 脚本（如 [createLyricsPasteTickScript]）时，**输出里**
+  /// 需要 `\s` 则 Dart 侧写 `\\s`；但 **不要** 把已按 raw 规则写好的 helper 再套一层转义。
+  ///
+  /// 典型症状（脚本语法错误时 WebView **静默**失败）：
+  /// - `evaluateJavascript` 返回 `null` / `{}`
+  /// - 日志 `create.clipboard_paste.focus_failed` 且 `data: {}`
+  /// - UI「未能定位 Suno Lyrics 编辑器」，但页面上 Lyrics 白框可见
+  ///
+  /// 改 helper 或任意 Suno 注入脚本后必须跑：
+  /// `flutter test test/suno_lexical_lyrics_test.dart`（含 `node --check`）。
+  /// 详见 `docs/suno_lexical_lyrics_editor.md`「Dart 嵌入 JS 转义坑」。
+  static const String _lexicalLyricsHelperJs = r'''
+  const isRenderedLexicalEditor = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const style = window.getComputedStyle(el);
+    return style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      Number(style.opacity || '1') > 0.01;
+  };
+  const findLexicalLyricsEditor = () => {
+    const direct = document.querySelector(
+      '.lyrics-editor-content[aria-label="Lyrics editor"], .lyrics-editor-content[role="textbox"]'
+    );
+    if (direct && isRenderedLexicalEditor(direct)) {
+      const label = String(direct.getAttribute?.('aria-label') || '');
+      if (!/cowriter/i.test(label)) return direct;
+    }
+    const candidates = Array.from(document.querySelectorAll(
+      '.lyrics-editor-content[role="textbox"],[data-lexical-editor="true"][role="textbox"],[aria-label="Lyrics editor"]'
+    )).filter(isRenderedLexicalEditor);
+    for (const el of candidates) {
+      const label = String(el.getAttribute?.('aria-label') || '');
+      if (/cowriter/i.test(label)) continue;
+      if (/lyrics editor/i.test(label)) return el;
+      if (el.classList?.contains?.('lyrics-editor-content')) return el;
+    }
+    return candidates.find((el) => {
+      const label = String(el.getAttribute?.('aria-label') || '');
+      return !/cowriter/i.test(label);
+    }) || null;
+  };
+  const activateLexicalLyricsEditor = () => {
+    const editor = findLexicalLyricsEditor();
+    if (!editor) return { ok: false, reason: 'missingEditor' };
+    try {
+      editor.scrollIntoView({ block: 'center', inline: 'nearest' });
+    } catch (_) {}
+    try {
+      editor.click?.();
+    } catch (_) {}
+    try {
+      editor.focus?.();
+    } catch (_) {}
+    return { ok: true, reason: 'focused' };
+  };
+  const isLexicalLyricsEditor = (el) => {
+    if (!el) return false;
+    const label = String(el.getAttribute?.('aria-label') || '');
+    if (/cowriter/i.test(label)) return false;
+    return el.getAttribute?.('data-lexical-editor') === 'true' ||
+      /lyrics-editor-content/i.test(String(el.className || '')) ||
+      /lyrics editor/i.test(label);
+  };
+  const readLexicalLyricsValue = (root) => {
+    const editor = root && isLexicalLyricsEditor(root) ? root : findLexicalLyricsEditor();
+    if (!editor) return '';
+    const nodes = Array.from(editor.querySelectorAll('[data-lexical-text="true"]'));
+    if (nodes.length > 0) {
+      return nodes.map((node) => String(node.textContent || '')).join('\n');
+    }
+    return String(editor.innerText || editor.textContent || '');
+  };
+  const readSunoLyricsCounter = (root) => {
+    // Counter 只读 aria-describedby / #lyrics-editor-char-count 小节点 textContent。
+    // 禁止读 body 全页 innerText 或 Lyrics 面板父链 innerText（大歌词 + 探针会崩 WebView）。
+    // 正则用 raw 单反斜杠：/(\d+)\s*\/\s*5000/（勿对 \d \s \/ 再套 Dart 双反斜杠）。
+    const editor = root && isLexicalLyricsEditor(root) ? root : findLexicalLyricsEditor();
+    const texts = [];
+    const describedBy = editor?.getAttribute?.('aria-describedby') || '';
+    if (describedBy) {
+      for (const id of String(describedBy).split(/\s+/)) {
+        const node = document.getElementById(id);
+        if (node) texts.push(String(node.textContent || ''));
+      }
+    }
+    if (texts.length === 0) {
+      const counterNode =
+        document.getElementById('lyrics-editor-char-count') ||
+        document.querySelector('[id*="lyrics-editor-char"]');
+      if (counterNode) texts.push(String(counterNode.textContent || ''));
+    }
+    const joined = texts.join('\n');
+    const ofMatch = joined.match(/(\d+)\s*of\s*5000/i);
+    if (ofMatch) {
+      return { count: Number(ofMatch[1]), limit: 5000, text: ofMatch[0] };
+    }
+    const slashMatch = joined.match(/(\d+)\s*\/\s*5000/);
+    if (slashMatch) {
+      return { count: Number(slashMatch[1]), limit: 5000, text: slashMatch[0] };
+    }
+    return { count: null, limit: 5000, text: '' };
+  };
+  const normalizeLyricsExact = (value) => String(value || '')
+    .replace(/\\r\\n/g, '\\n')
+    .replace(/\\u00a0/g, ' ')
+    .split('\\n')
+    .map((line) => line.replace(/[ \\t]+/g, ' ').trim())
+    .join('\\n')
+    .trim();
+  const lyricsExactMatch = (expected, actual) =>
+    normalizeLyricsExact(expected) === normalizeLyricsExact(actual);
+''';
+
+  static String focusLexicalLyricsEditorScript() {
+    return '''
+(() => {
+  try {
+  $_lexicalLyricsHelperJs
+  activateLexicalLyricsEditor();
+  const editor = findLexicalLyricsEditor();
+  if (!editor) {
+    return JSON.stringify({
+      ok: false,
+      focusOk: false,
+      message: 'Lexical Lyrics editor not found'
+    });
+  }
+  try {
+    editor.scrollIntoView({ block: 'center', inline: 'nearest' });
+  } catch (_) {}
+  const editorRect = editor.getBoundingClientRect();
+  const firstParagraph =
+    editor.querySelector('p.lyrics-paragraph') ||
+    editor.querySelector('[data-lexical-text="true"]')?.closest?.('p') ||
+    editor;
+  const paraRect = firstParagraph.getBoundingClientRect?.() || editorRect;
+  const lexicalTextNodes = editor.querySelectorAll('[data-lexical-text="true"]').length;
+  const counter = readSunoLyricsCounter(editor);
+  const counterCount = counter.count;
+  const isEmptyEditor =
+    lexicalTextNodes === 0 &&
+    (counterCount == null || counterCount === 0);
+  const clickX = Math.round(
+    isEmptyEditor
+        ? editorRect.left + Math.min(32, editorRect.width * 0.08)
+        : Math.max(editorRect.left + 16, paraRect.left + 12),
+  );
+  const clickY = Math.round(
+    isEmptyEditor
+        ? editorRect.top + Math.min(56, Math.max(24, editorRect.height * 0.28))
+        : Math.max(editorRect.top + 14, paraRect.top + Math.min(14, paraRect.height / 2)),
+  );
+  try {
+    editor.focus?.();
+  } catch (_) {}
+  if (!isEmptyEditor) {
+    try {
+      const selection = window.getSelection?.();
+      const range = document.createRange();
+      range.setStart(firstParagraph, 0);
+      range.collapse(true);
+      selection?.removeAllRanges?.();
+      selection?.addRange?.(range);
+    } catch (_) {}
+  }
+  return JSON.stringify({
+    ok: true,
+    focusOk: true,
+    editorFound: true,
+    activeInEditor: document.activeElement === editor,
+    clickX,
+    clickY,
+    centerX: Math.round(editorRect.left + editorRect.width / 2),
+    centerY: Math.round(editorRect.top + editorRect.height / 2),
+    width: Math.round(editorRect.width),
+    height: Math.round(editorRect.height),
+    isEmptyEditor,
+    lexicalTextNodeCount: lexicalTextNodes,
+    counterCount,
+    ariaLabel: editor.getAttribute?.('aria-label') || ''
+  });
+  } catch (error) {
+    return JSON.stringify({
+      ok: false,
+      focusOk: false,
+      error: String(error && error.message ? error.message : error)
+    });
+  }
+})()
+''';
+  }
+
+  /// Lightweight Create tick for lyrics auto-paste (no lyrics/style payload).
+  static String get createLyricsPasteTickScript => '''
+(() => {
+  try {
+  $_lexicalLyricsHelperJs
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const isCreatePage = (() => {
+    try {
+      const url = new URL(window.location.href);
+      const host = url.hostname.toLowerCase();
+      return (host === 'suno.com' || host === 'www.suno.com') &&
+        url.pathname.split('/').filter(Boolean).includes('create');
+    } catch (_) {
+      return false;
+    }
+  })();
+  if (!isCreatePage) {
+    return JSON.stringify({
+      ok: false,
+      retry: true,
+      lyricsEditorReady: false,
+      message: 'Suno 当前不在 Create 页面，Tomato 会重新打开 Create 后再填写。'
+    });
+  }
+  const rendered = (el) => {
+    if (!el) return false;
+    const rect = el.getBoundingClientRect();
+    const style = window.getComputedStyle(el);
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      Number(style.opacity || '1') > 0.01;
+  };
+  const visible = (el) => rendered(el);
+  const textOf = (el) => normalize([
+    el?.getAttribute?.('aria-label'),
+    el?.innerText,
+    el?.textContent
+  ].filter(Boolean).join(' '));
+  const isDisabled = (el) =>
+    Boolean(el?.disabled) || el?.getAttribute?.('aria-disabled') === 'true';
+  const clickableAncestor = (el) =>
+    el?.closest?.('button,[role="button"],[role="tab"],a,label') || el;
+  const clickCookieBanner = () => {
+    const candidates = Array.from(document.querySelectorAll('button,[role="button"],a,label'))
+      .filter(visible)
+      .map((el) => {
+        const clickable = clickableAncestor(el);
+        const label = textOf(el);
+        if (!/accept all|accept cookies|accept|agree|同意|接受|全部接受/i.test(label)) {
+          return null;
+        }
+        if (isDisabled(clickable)) return null;
+        return { clickable, score: /accept all|全部接受/i.test(label) ? 10 : 5 };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+    const match = candidates[0];
+    if (!match) return { clicked: false };
+    match.clickable.click();
+    return { clicked: true };
+  };
+  const isAdvancedActive = () =>
+    Array.from(document.querySelectorAll('button,[role="button"],[role="tab"],a,label'))
+      .filter(visible)
+      .some((el) => {
+        const label = textOf(el);
+        if (!/\\badvanced\\b/i.test(label)) return false;
+        return el.getAttribute('aria-selected') === 'true' ||
+          el.getAttribute('aria-pressed') === 'true' ||
+          el.getAttribute('data-state') === 'active';
+      });
+  const clickAdvanced = () => {
+    if (isAdvancedActive()) return { clicked: false, alreadyActive: true };
+    const candidates = Array.from(document.querySelectorAll('button,[role="button"],[role="tab"],a,label,span,div'))
+      .filter(visible)
+      .map((el) => {
+        const label = textOf(el);
+        if (label.toLowerCase() !== 'advanced' && !(/\\badvanced\\b/i.test(label) && label.length <= 120)) {
+          return null;
+        }
+        const clickable = clickableAncestor(el);
+        if (isDisabled(clickable)) return null;
+        return { clickable, score: label.toLowerCase() === 'advanced' ? 10 : 5 };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score);
+    const match = candidates[0];
+    if (!match) return { clicked: false, alreadyActive: false };
+    match.clickable.click();
+    return { clicked: true, alreadyActive: false };
+  };
+  const existingEditor = findLexicalLyricsEditor();
+  if (existingEditor) {
+    activateLexicalLyricsEditor();
+    return JSON.stringify({
+      ok: true,
+      retry: false,
+      lyricsEditorReady: true,
+      advancedActive: isAdvancedActive(),
+      message: 'Suno Advanced Lyrics 编辑器已就绪。'
+    });
+  }
+  const cookieResult = clickCookieBanner();
+  const advancedResult = clickAdvanced();
+  if (cookieResult.clicked || advancedResult.clicked) {
+    return JSON.stringify({
+      ok: false,
+      retry: true,
+      lyricsEditorReady: false,
+      cookieAccepted: cookieResult.clicked,
+      advancedClicked: advancedResult.clicked,
+      message: cookieResult.clicked
+        ? 'Tomato 已处理 Suno Cookies 提示，正在等待页面刷新后继续填写。'
+        : 'Tomato 已尝试切换 Suno Advanced，正在等待页面刷新后继续填写。'
+    });
+  }
+  activateLexicalLyricsEditor();
+  const editor = findLexicalLyricsEditor();
+  return JSON.stringify({
+    ok: Boolean(editor),
+    retry: !editor,
+    lyricsEditorReady: Boolean(editor),
+    advancedActive: isAdvancedActive(),
+    message: editor
+      ? 'Suno Advanced Lyrics 编辑器已就绪。'
+      : 'Tomato 正在等待 Suno Advanced Lyrics 编辑器就绪...'
+  });
+  } catch (error) {
+    return JSON.stringify({
+      ok: false,
+      retry: true,
+      lyricsEditorReady: false,
+      error: String(error && error.message ? error.message : error)
+    });
+  }
+})()
+''';
+
+  static String readLexicalLyricsProbeScript({required String expectedLyrics}) {
+    final expectedJson = jsonEncode(expectedLyrics);
+    return '''
+(() => {
+  try {
+  const expectedLyrics = $expectedJson;
+  $_lexicalLyricsHelperJs
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const editor = findLexicalLyricsEditor();
+  const lexicalRaw = readLexicalLyricsValue(editor);
+  const expectedNorm = normalizeLyricsExact(expectedLyrics);
+  const actualNorm = normalizeLyricsExact(lexicalRaw);
+  const expectedLength = expectedLyrics.length;
+  const lexicalLength = actualNorm.length;
+  const counter = readSunoLyricsCounter(editor);
+  const counterCount = counter.count;
+  const textExactMatch = actualNorm === expectedNorm;
+  const counterExact =
+    typeof counterCount === 'number' && counterCount === expectedLength;
+  const lexicalTextNodes = editor
+    ? editor.querySelectorAll('[data-lexical-text="true"]').length
+    : 0;
+  const hasLexicalTextNodes = lexicalTextNodes > 0;
+  const placeholderLike = Boolean(editor) && !hasLexicalTextNodes &&
+    lexicalLength > 0 && !textExactMatch;
+  const lyricsOk = Boolean(editor) && hasLexicalTextNodes &&
+    textExactMatch && counterExact;
+  return JSON.stringify({
+    ok: lyricsOk,
+    lyricsOk,
+    textExactMatch,
+    counterExact,
+    focusOk: Boolean(editor && document.activeElement === editor),
+    counterCount,
+    counterText: counter.text || '',
+    lexicalLength,
+    expectedLength,
+    editorFound: Boolean(editor),
+    hasLexicalTextNodes,
+    lexicalTextNodeCount: lexicalTextNodes,
+    placeholderLike,
+    ariaLabel: editor?.getAttribute?.('aria-label') || ''
+  });
+  } catch (error) {
+    return JSON.stringify({
+      ok: false,
+      lyricsOk: false,
+      error: String(error && error.message ? error.message : error)
+    });
+  }
+})()
+''';
+  }
+
+  /// Diagnostic-only: execCommand paste after [Clipboard.setData]. Production uses CDP Ctrl+V.
+  static String pasteLexicalLyricsFromClipboardScript() {
+    return '''
+(() => {
+  try {
+  $_lexicalLyricsHelperJs
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const editor = findLexicalLyricsEditor();
+  if (!editor) {
+    return JSON.stringify({ ok: false, method: 'missingEditor' });
+  }
+  try {
+    editor.scrollIntoView({ block: 'center', inline: 'nearest' });
+  } catch (_) {}
+  try {
+    editor.focus?.();
+  } catch (_) {}
+  try {
+    editor.click?.();
+  } catch (_) {}
+  let method = 'none';
+  try {
+    const pasted = Boolean(document.execCommand && document.execCommand('paste'));
+    if (pasted) method = 'execCommandPaste';
+  } catch (_) {}
+  const lexicalLength = normalize(readLexicalLyricsValue(editor)).length;
+  const counter = readSunoLyricsCounter(editor);
+  return JSON.stringify({
+    ok: lexicalLength > 0 || (typeof counter.count === 'number' && counter.count > 0),
+    method,
+    lexicalLength,
+    counterCount: counter.count
+  });
+  } catch (error) {
+    return JSON.stringify({
+      ok: false,
+      method: 'error',
+      error: String(error && error.message ? error.message : error)
+    });
+  }
+})()
+''';
+  }
+
+  /// Test / diagnostic write path only. Production Create flow uses auto CDP paste.
+  static String writeLexicalLyricsScript({required String lyrics}) {
+    final lyricsJson = jsonEncode(lyrics);
+    return '''
+(() => {
+  try {
+  const lyrics = $lyricsJson;
+  $_lexicalLyricsHelperJs
+  const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const writeLexicalLyricsOnce = (editor, value) => {
+    if (!editor) return { ok: false, method: 'missing' };
+    try {
+      editor.focus?.();
+    } catch (_) {}
+    const selection = window.getSelection?.();
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+    } catch (_) {}
+    let inserted = false;
+    let method = 'none';
+    try {
+      inserted = Boolean(document.execCommand && document.execCommand('insertText', false, value));
+      if (inserted) method = 'insertText';
+    } catch (_) {
+      inserted = false;
+    }
+    if (!inserted) {
+      try {
+        editor.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertFromPaste',
+          data: value
+        }));
+        editor.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertFromPaste',
+          data: value
+        }));
+        method = 'syntheticPaste';
+        inserted = normalize(readLexicalLyricsValue(editor)).length > 0;
+      } catch (_) {}
+    }
+    const lexicalLength = normalize(readLexicalLyricsValue(editor)).length;
+    const counter = readSunoLyricsCounter(editor);
+    return {
+      ok: lexicalLength > 0,
+      method,
+      lexicalLength,
+      counterCount: counter.count,
+      counterText: counter.text || ''
+    };
+  };
+  const editor = findLexicalLyricsEditor();
+  const result = writeLexicalLyricsOnce(editor, lyrics);
+  return JSON.stringify(result);
+  } catch (error) {
+    return JSON.stringify({
+      ok: false,
+      error: String(error && error.message ? error.message : error)
+    });
+  }
+})()
+''';
+  }
+
+  static String quickLyricsFillScript({required String lyrics}) =>
+      writeLexicalLyricsScript(lyrics: lyrics);
+
   static String fillScript({
     required String lyrics,
     required String stylePrompt,
@@ -513,6 +1073,8 @@ class SunoWebScripts {
     required bool allowMagicClick,
     required bool magicAlreadyRequested,
     bool readOnly = false,
+    bool skipStyles = false,
+    bool lyricsWriteAttempted = false,
   }) {
     final lyricsJson = jsonEncode(lyrics);
     final styleJson = jsonEncode(stylePrompt);
@@ -520,6 +1082,8 @@ class SunoWebScripts {
     final allowMagicClickJson = jsonEncode(allowMagicClick);
     final magicAlreadyRequestedJson = jsonEncode(magicAlreadyRequested);
     final readOnlyJson = jsonEncode(readOnly);
+    final skipStylesJson = jsonEncode(skipStyles);
+    final lyricsWriteAttemptedJson = jsonEncode(lyricsWriteAttempted);
     return '''
 (() => {
   try {
@@ -529,6 +1093,9 @@ class SunoWebScripts {
   const allowMagicClick = $allowMagicClickJson;
   const magicAlreadyRequested = $magicAlreadyRequestedJson;
   const readOnly = $readOnlyJson;
+  const skipStyles = $skipStylesJson;
+  const lyricsWriteAttempted = $lyricsWriteAttemptedJson;
+  $_lexicalLyricsHelperJs
   const normalize = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
   const ignoredStyle = normalize(ignoredStyleRaw);
   const isCreatePage = (() => {
@@ -762,9 +1329,11 @@ class SunoWebScripts {
       advancedClicked: advancedResult.clicked,
       advancedAlreadyActive: advancedResult.alreadyActive,
       advancedActive: isAdvancedActive(),
-      advancedTarget: advancedResult.target
+      advancedTarget: advancedResult.target,
+      lyricsEditorReady: Boolean(findLexicalLyricsEditor())
     });
   }
+  activateLexicalLyricsEditor();
   const editorSelector = [
     'textarea',
     'input:not([type])',
@@ -787,6 +1356,9 @@ class SunoWebScripts {
   ].filter(Boolean).join(' '));
   const isUtilityEditor = (el, context) => {
     const meta = utilityMeta(el);
+    if (/\\bcowriter\\b/i.test(meta)) {
+      return true;
+    }
     if (/\\bsearch\\b|current page|song title|enhance lyrics|搜索|页码|标题|增强歌词/i.test(meta)) {
       return true;
     }
@@ -884,6 +1456,7 @@ class SunoWebScripts {
     panelByTestId(/styles?|style|genre|music|风格|曲风/i, /lyrics?|歌词|歌詞/i) ||
     panelByTitle(/\\bstyles?\\b|style prompt|music style|genre|风格|曲风/i, /\\blyrics?\\b|歌词|歌詞/i);
   let lyricsField =
+    findLexicalLyricsEditor() ||
     editorIn(lyricsPanel, /styles?|style prompt|music style|genre|风格|曲风/i) ||
     fieldByExplicitMeta(/lyrics?|歌词|歌詞/i, /styles?|风格|曲风/i);
   let styleField =
@@ -922,6 +1495,10 @@ class SunoWebScripts {
   const setValue = (rawEl, value) => {
     const el = fillTarget(rawEl);
     if (!el) return false;
+    // Lexical Lyrics must not use setValue / textContent / chunked insert.
+    if (isLexicalLyricsEditor(el)) {
+      return false;
+    }
     const currentValue = el.matches?.('input,textarea')
       ? normalize(el.value || '')
       : normalize(el.innerText || el.textContent || el.value || '');
@@ -1005,6 +1582,9 @@ class SunoWebScripts {
   const getValue = (rawEl) => {
     const el = fillTarget(rawEl);
     if (!el) return '';
+    if (isLexicalLyricsEditor(el)) {
+      return normalize(readLexicalLyricsValue(el));
+    }
     if (el.matches?.('input,textarea')) return normalize(el.value || '');
     return normalize(el.innerText || el.textContent || el.value || '');
   };
@@ -1144,12 +1724,30 @@ class SunoWebScripts {
   const stylePanel = findStylePanel(styleField);
   const styleSurface = styleField || stylePanel;
   const styleLooksLikeLyrics = styleSurface ? containsLyricProbe(getStyleValue(styleSurface)) : false;
-  const lyricsValueAlreadyPresent = Array.from(document.querySelectorAll(editorSelector))
-    .some((el) => {
-      const labelText = normalize([textOf(el), contextText(el)].join(' '));
-      if (!/lyrics?|歌词|歌詞/i.test(labelText)) return false;
-      return containsLyricProbe(inputValue(el) || textOf(el) || el.innerText || el.textContent || '');
-    });
+  const lyricsValueAlreadyPresent = (() => {
+    if (lyricsField && isLexicalLyricsEditor(lyricsField)) {
+      const actual = readLexicalLyricsValue(lyricsField);
+      const counter = readSunoLyricsCounter(lyricsField);
+      const expectedNorm = normalizeLyricsExact(expectedLyrics);
+      const textExactMatch = lyricsExactMatch(expectedLyrics, actual);
+      const counterExact =
+        typeof counter.count === 'number' &&
+        counter.count === expectedLyrics.length;
+      const hasNodes =
+        lyricsField.querySelectorAll('[data-lexical-text="true"]').length > 0;
+      return textExactMatch && counterExact && hasNodes;
+    }
+    return Array.from(document.querySelectorAll(editorSelector))
+      .some((el) => {
+        const labelText = normalize([textOf(el), contextText(el)].join(' '));
+        if (!/lyrics?|歌词|歌詞/i.test(labelText)) return false;
+        if (isLexicalLyricsEditor(el)) {
+          return containsLyricProbe(readLexicalLyricsValue(el));
+        }
+        return containsLyricProbe(inputValue(el) || textOf(el) || el.innerText || el.textContent || '');
+      });
+  })();
+  // Never treat lyricsWriteAttempted alone as proof lyrics are present.
   const lyricsAlreadyPresent =
     lyricsValueAlreadyPresent || (containsLyricProbe(bodyText) && !styleLooksLikeLyrics);
   if (readOnly) {
@@ -1487,34 +2085,49 @@ class SunoWebScripts {
     missing.push('lyrics');
   } else if (!expectedLyrics) {
     missing.push('lyricsText');
-  } else if (lyricsField && getValue(lyricsField) !== expectedLyrics) {
-    const lyricsFilled = setValue(lyricsField, lyrics);
-    const lyricsValue = getValue(lyricsField);
-    if (!lyricsFilled || lyricsValue !== expectedLyrics) {
+  } else if (lyricsField && !lyricsAlreadyPresent) {
+    // Lexical: never setValue / inject. Clipboard + user Ctrl+V is the write path.
+    if (isLexicalLyricsEditor(lyricsField) || skipStyles || lyricsWriteAttempted) {
       missing.push('lyricsFill');
     } else {
-      return JSON.stringify({
-        ok: false,
-        retry: true,
-        magicClicked: false,
-        message: 'Tomato 已把歌词写入 Suno Lyrics，正在确认页面渲染。',
-        stylePrompt: '',
-        styleSource: '',
-        fieldCount: allFields.length,
-        lyricsField: summarize(lyricsField),
-        styleField: summarize(styleField),
-        fields,
-        textSample: normalize(document.body?.innerText || '').slice(0, 1000)
-      });
+      const lyricsFilled = setValue(lyricsField, lyrics);
+      const lyricsValue = getValue(lyricsField);
+      if (!lyricsFilled || lyricsValue !== expectedLyrics) {
+        missing.push('lyricsFill');
+      } else {
+        return JSON.stringify({
+          ok: false,
+          retry: true,
+          magicClicked: false,
+          skipStyles,
+          message: 'Tomato 已把歌词写入 Suno Lyrics，正在确认页面渲染。',
+          stylePrompt: '',
+          styleSource: '',
+          fieldCount: allFields.length,
+          lyricsField: summarize(lyricsField),
+          styleField: summarize(styleField),
+          fields,
+          textSample: normalize(document.body?.innerText || '').slice(0, 1000)
+        });
+      }
     }
   }
   if (missing.length > 0) {
+    const needsLyricsEditor = missing.some((item) =>
+      item === 'lyrics' || item === 'lyricsFill'
+    );
+    const editor = findLexicalLyricsEditor();
+    const waitingForLyricsEditor =
+      skipStyles && needsLyricsEditor && !lyricsAlreadyPresent && !editor;
     return JSON.stringify({
       ok: false,
       missing,
-      retry: false,
+      retry: waitingForLyricsEditor,
       magicClicked: false,
-      message: 'Suno Lyrics 尚未确认写入，暂不处理 Styles。',
+      skipStyles,
+      message: waitingForLyricsEditor
+        ? 'Tomato 正在等待 Suno Advanced Lyrics 编辑器就绪...'
+        : 'Suno Lyrics 尚未确认写入，暂不处理 Styles。',
       stylePrompt: '',
       styleSource: '',
       fieldCount: allFields.length,
@@ -1522,6 +2135,38 @@ class SunoWebScripts {
       styleField: summarize(styleField),
       stylePlaceholder,
       lyricsAlreadyPresent,
+      lyricsWriteAttempted,
+      lyricsEditorReady: Boolean(editor),
+      fields,
+      textSample: normalize(document.body?.innerText || '').slice(0, 1000)
+    });
+  }
+  if (skipStyles) {
+    const counter = lyricsField && isLexicalLyricsEditor(lyricsField)
+      ? readSunoLyricsCounter(lyricsField)
+      : { count: null, text: '' };
+    const lexicalLength = lyricsField && isLexicalLyricsEditor(lyricsField)
+      ? normalize(readLexicalLyricsValue(lyricsField)).length
+      : null;
+    return JSON.stringify({
+      ok: true,
+      missing: [],
+      retry: false,
+      magicClicked: false,
+      skipStyles: true,
+      message: 'Suno Lyrics 已确认，本轮跳过 Styles。',
+      stylePrompt: '',
+      styleSource: '',
+      lyricsAlreadyPresent: true,
+      lyricsWriteAttempted,
+      lyricsEditorReady: Boolean(findLexicalLyricsEditor()),
+      lyricsCounterCount: counter.count,
+      lyricsCounterText: counter.text || '',
+      lyricsLexicalLength: lexicalLength,
+      fieldCount: allFields.length,
+      lyricsField: summarize(lyricsField),
+      styleField: summarize(styleField),
+      stylePlaceholder,
       fields,
       textSample: normalize(document.body?.innerText || '').slice(0, 1000)
     });

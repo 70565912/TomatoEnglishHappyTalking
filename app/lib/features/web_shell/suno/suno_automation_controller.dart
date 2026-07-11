@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../../../core/config/app_config.dart';
@@ -16,7 +17,6 @@ import 'suno_utilities.dart';
 import 'suno_web_bridge.dart';
 import 'suno_web_scripts.dart';
 
-/// Suno WebView automation orchestrator (create, post-create download, detect-download).
 class SunoAutomationController {
   SunoAutomationController({
     required SunoAutomationHost host,
@@ -24,7 +24,7 @@ class SunoAutomationController {
     SunoCompletionPolicy? policy,
     SunoMediaDownloader? mediaDownloader,
   })  : _host = host,
-        _bridge = bridge ?? const SunoWebBridge(),
+        _bridge = bridge ?? SunoWebBridge(),
         _policy = policy ?? const SunoCompletionPolicy(),
         _mediaDownloader = mediaDownloader ?? SunoMediaDownloader(host: host);
 
@@ -207,7 +207,12 @@ class SunoAutomationController {
     stopPolling();
   }
 
-  Future<void> setStatus(String status, String? message) async {
+  Future<void> setStatus(
+    String status,
+    String? message, {
+    bool refreshUi = true,
+    bool pushSongStateToWeb = true,
+  }) async {
     final previous = state.statusKey;
     state.statusKey = status;
     state.manualActionMessage = message;
@@ -223,11 +228,15 @@ class SunoAutomationController {
         'songUrl': state.songUrl,
         'pendingSongUrl': state.pendingDownloadSongUrl,
         'versions': state.versions.length,
+        'refreshUi': refreshUi,
+        'pushSongStateToWeb': pushSongStateToWeb,
       },
     );
-    _host.requestSetState();
+    if (refreshUi) {
+      _host.requestSetState();
+    }
     final articleId = state.articleId;
-    if (articleId != null) {
+    if (articleId != null && pushSongStateToWeb) {
       await _host.pushSongState(articleId);
     }
   }
@@ -289,6 +298,12 @@ class SunoAutomationController {
     }
     state.automationBusy = true;
     try {
+      if (state.statusKey == 'waitingConfirm' && !state.createSubmitted) {
+        return;
+      }
+      if (state.manualPasteReady) {
+        return;
+      }
       final inspect =
           await _bridge.evaluateJson(controller, SunoWebScripts.inspectScript);
       final currentUrl = (inspect['currentUrl'] ??
@@ -304,6 +319,17 @@ class SunoAutomationController {
           await setStatus(
             state.statusKey == 'creating' ? 'creating' : 'downloading',
             'Suno 页面正在跳转，Tomato 会继续等待当前歌曲流程...',
+          );
+          return;
+        }
+        final onHydratingCreate =
+            inspect['onSunoCreate'] == true &&
+                SunoUtilities.pageKind(currentUrl) == 'create' &&
+                !SunoUtilities.isLoginFlowUrl(currentUrl);
+        if (onHydratingCreate) {
+          await setStatus(
+            'manualAction',
+            'Tomato 正在等待 Suno Create 页面加载（已登录会话将直接继续）...',
           );
           return;
         }
@@ -332,6 +358,8 @@ class SunoAutomationController {
                 ignoredStylePrompt: state.ignoredStylePrompt,
                 allowMagicClick: false,
                 magicAlreadyRequested: true,
+                skipStyles: true,
+                lyricsWriteAttempted: state.lyricsPasteAttempted,
               ),
             );
             final filledStyle = (fill['stylePrompt'] ?? '').toString().trim();
@@ -363,6 +391,7 @@ class SunoAutomationController {
               allowMagicClick: false,
               magicAlreadyRequested: state.styleMagicRequestedAt != null,
               readOnly: true,
+              skipStyles: true,
             ),
           );
           final currentStyle = (probe['stylePrompt'] ?? '').toString().trim();
@@ -455,87 +484,28 @@ class SunoAutomationController {
           );
           return;
         }
-        final allowMagicClick = state.styleMagicRequestedAt == null;
-        final fill = await _bridge.evaluateJson(
+        // Lyrics: manual paste only (auto CDP paste disabled for crash isolation).
+        final ready = await _bridge.evaluateJson(
           controller,
-          SunoWebScripts.fillScript(
-            lyrics: state.lyrics,
-            stylePrompt: state.stylePrompt,
-            ignoredStylePrompt: state.ignoredStylePrompt,
-            allowMagicClick: allowMagicClick,
-            magicAlreadyRequested: state.styleMagicRequestedAt != null,
-          ),
+          SunoWebScripts.createLyricsPasteTickScript,
         );
-        TomatoLogger.info(
-          category: 'suno',
-          event: 'create.fill_probe',
-          articleId: state.articleId,
-          status: state.statusKey,
-          data: {
-            'ok': fill['ok'],
-            'retry': fill['retry'],
-            'missing': fill['missing'],
-            'fieldCount': fill['fieldCount'],
-            'magicClicked': fill['magicClicked'],
-            'styleLength': (fill['stylePrompt'] ?? '').toString().length,
-            'magicTarget': fill['magicTarget'],
-            'magicTrigger': fill['magicTrigger'],
-            'styleExpandTarget': fill['styleExpandTarget'],
-            'stylePlaceholder': fill['stylePlaceholder'],
-            'lyricsField': fill['lyricsField'],
-            'styleField': fill['styleField'],
-          },
-        );
-        final ignoredStylePrompt =
-            (fill['ignoredStylePrompt'] ?? '').toString().trim();
-        if (ignoredStylePrompt.isNotEmpty && state.stylePrompt.trim().isEmpty) {
-          state.ignoredStylePrompt = ignoredStylePrompt;
-        }
-        final generatedStyle = (fill['stylePrompt'] ?? '').toString().trim();
-        if (generatedStyle.isNotEmpty) {
-          state.stylePrompt = generatedStyle;
-          state.ignoredStylePrompt = '';
-        }
-        if (fill['magicClicked'] == true) {
-          state.styleMagicRequestedAt = DateTime.now();
+        if (ready['retry'] == true) {
           await setStatus(
             'manualAction',
-            'Tomato 已点击 Suno 自动风格魔法棒，正在等待 Suno 根据歌词生成 Styles。',
+            (ready['message'] ?? '').toString().trim().isEmpty
+                ? 'Tomato 正在等待 Suno Advanced Create 页面就绪。'
+                : (ready['message'] ?? '').toString(),
           );
           return;
         }
-        if (fill['ok'] == true) {
-          await setStatus(
-            'waitingConfirm',
-            'Suno 歌词和自动风格已填写，请确认消耗 Suno credits 后创建。',
-          );
+
+        if (state.manualPasteReady) {
           return;
         }
-        if (fill['retry'] == true) {
-          await setStatus(
-            'manualAction',
-            (fill['message'] ?? '').toString().trim().isEmpty
-                ? 'Tomato 正在等待 Suno 页面完成当前自动操作。'
-                : (fill['message'] ?? '').toString(),
-          );
-          return;
+
+        if (!state.lyricsPasteAttempted) {
+          await _prepareManualLyricsPaste(controller);
         }
-        final missing = (fill['missing'] as List?)
-                ?.map((value) => value.toString())
-                .where((value) => value.trim().isNotEmpty)
-                .join(', ') ??
-            '';
-        final fieldCount = (fill['fieldCount'] as num?)?.toInt();
-        final diagnostics = [
-          if (missing.isNotEmpty) '缺少：$missing',
-          if (fieldCount != null) '候选输入框：$fieldCount 个',
-        ].join('；');
-        await setStatus(
-          'manualAction',
-          diagnostics.isEmpty
-              ? 'Tomato 没能准确找到 Suno Advanced 歌词或风格输入框，请在页面中手工填写后点击“继续检测”。'
-              : 'Tomato 没能准确找到 Suno Advanced 歌词或风格输入框（$diagnostics）。请在页面中手工填写后点击“继续检测”。',
-        );
         return;
       }
       if (state.createSubmitted) {
@@ -1142,7 +1112,7 @@ class SunoAutomationController {
       await failAutomation(_host.displayError(error));
     } finally {
       state.automationBusy = false;
-      if (_host.isMounted) {
+      if (_host.isMounted && !state.lyricsPasteInFlight) {
         _host.requestSetState();
       }
     }
@@ -1233,11 +1203,40 @@ class SunoAutomationController {
         text.contains('disposed');
   }
 
+  Future<void> _prepareManualLyricsPaste(
+    InAppWebViewController controller,
+  ) async {
+    await setStatus(
+      'manualAction',
+      'Tomato 正在把歌词复制到系统剪贴板，请稍候...',
+      pushSongStateToWeb: false,
+    );
+    await Clipboard.setData(ClipboardData(text: state.lyrics));
+    state.lyricsPasteAttempted = true;
+    state.manualPasteReady = true;
+    stopPolling();
+    await setStatus(
+      'waitingConfirm',
+      '整篇歌词（${state.lyrics.length} 字）已在系统剪贴板。\n'
+      '请点击 Suno Lyrics 编辑器获焦，按 Ctrl+V 粘贴；粘贴完成后点击「确认消耗 credits 并创建」。\n'
+      '（本轮跳过 Styles 自动填写）',
+      refreshUi: false,
+      pushSongStateToWeb: false,
+    );
+    TomatoLogger.info(
+      category: 'suno',
+      event: 'manual_lyrics_paste.ready',
+      articleId: state.articleId,
+      data: {'lyricsLength': state.lyrics.length},
+    );
+  }
+
   Future<Map<String, dynamic>> startAutomation({
     required Article article,
     required String stylePrompt,
     required String lyrics,
     bool completedStandby = false,
+    bool manualPasteTest = false,
     required Future<List<SunoCachedSongGroup>> Function(Article) loadGroups,
     required Future<ArticleSongState?> Function(Article) loadCachedState,
   }) async {
@@ -1256,15 +1255,23 @@ class SunoAutomationController {
     state.lyrics = lyrics.trim();
     state.initialUrl = 'https://suno.com/create';
     state.ignoredStylePrompt = '';
-    state.statusKey = completedStandby ? 'complete' : 'waitingLogin';
-    state.manualActionMessage =
-        completedStandby ? '这首歌词的 Suno 完整版已完成生成和下载。' : 'Suno 页面已打开，请先在页面中自行登录。';
+    state.statusKey = completedStandby ? 'complete' : 'manualAction';
+    state.manualPasteTest = manualPasteTest;
+    state.manualPasteReady = false;
+    state.manualActionMessage = completedStandby
+        ? '这首歌词的 Suno 完整版已完成生成和下载。'
+        : 'Tomato 正在打开 Suno Create，准备把歌词复制到剪贴板供手工粘贴（已登录会话将直接继续）。';
     state.errorMessage = null;
     state.songUrl = null;
     state.audioPath = null;
     state.metadataPath = null;
     state.creditsRemaining = null;
     state.styleMagicRequestedAt = null;
+    state.lyricsPasteAttempted = false;
+    state.lyricsPasteOk = false;
+    state.lyricsPasteInFlight = false;
+    state.lyricsPasteMethod = null;
+    state.lyricsCdpRetryCount = 0;
     state.versions.clear();
     state.downloadedSongUrls.clear();
     state.downloadedDownloadKeys.clear();
@@ -1310,6 +1317,7 @@ class SunoAutomationController {
         'styleLength': state.stylePrompt.length,
         'lyricsLength': state.lyrics.length,
         'cachedVersions': state.versions.length,
+        'manualPasteTest': manualPasteTest,
       },
     );
     _host.requestSetState();
@@ -1410,6 +1418,7 @@ class SunoAutomationController {
               allowMagicClick: false,
               magicAlreadyRequested: state.styleMagicRequestedAt != null,
               readOnly: true,
+              skipStyles: true,
             ),
           );
           final currentStyle = (probe['stylePrompt'] ?? '').toString().trim();
