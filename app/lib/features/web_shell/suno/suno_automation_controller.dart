@@ -68,6 +68,7 @@ class SunoAutomationController {
     if (clearVisible) {
       state.articleId = null;
       webController = null;
+      unawaited(_host.endSunoSession());
       _host.requestSetState();
     }
     TomatoLogger.info(
@@ -1250,7 +1251,6 @@ class SunoAutomationController {
     stopAutomation(clearVisible: false);
     state.articleId = articleId;
     webController = null;
-    state.webViewInstance += 1;
     state.stylePrompt = stylePrompt.trim();
     state.lyrics = lyrics.trim();
     state.initialUrl = 'https://suno.com/create';
@@ -1321,6 +1321,7 @@ class SunoAutomationController {
       },
     );
     _host.requestSetState();
+    await _host.beginSunoSession(state.initialUrl);
     await _host.pushSongState(articleId);
     startPolling();
     return {'articleId': articleId};
@@ -1348,7 +1349,6 @@ class SunoAutomationController {
     stopAutomation(clearVisible: false);
     state.articleId = articleId;
     webController = null;
-    state.webViewInstance += 1;
     state.stylePrompt = '';
     state.lyrics = lyrics;
     state.initialUrl = songUrl.isEmpty ? 'https://suno.com/me' : songUrl;
@@ -1391,6 +1391,7 @@ class SunoAutomationController {
     state.visible = true;
     state.createBatch = SunoCreateBatch();
     _host.requestSetState();
+    await _host.beginSunoSession(state.initialUrl);
     await _host.pushSongState(articleId);
     startPolling();
     return {'articleId': articleId};

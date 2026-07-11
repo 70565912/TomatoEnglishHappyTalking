@@ -53,6 +53,24 @@ class SunoUtilities {
     return urls;
   }
 
+  static bool isSunoAppUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    if (isLoginFlowUrl(trimmed)) {
+      return true;
+    }
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null) {
+      return false;
+    }
+    final host = uri.host.toLowerCase();
+    return host == 'suno.com' ||
+        host == 'www.suno.com' ||
+        host.endsWith('.suno.com');
+  }
+
   static bool isLoginFlowUrl(String value) {
     final uri = Uri.tryParse(value.trim());
     if (uri == null) {

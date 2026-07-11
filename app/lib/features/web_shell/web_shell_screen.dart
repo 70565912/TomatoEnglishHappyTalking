@@ -89,6 +89,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   bool _mainWebViewFpsLimitWarningLogged = false;
   int _mainWebViewCurrentFpsLimit = _mainWebViewActiveFpsLimit;
   int _mainWebViewFrameRateActivityDepth = 0;
+  bool _sunoSessionActive = false;
+  String? _savedWebUiHash;
   ProviderSubscription<AsyncValue<FollowReadState>>? _followSubscription;
   ProviderSubscription<ChatState>? _chatSubscription;
   AudioPlayer? _listeningPlayer;
@@ -97,8 +99,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   final Map<String, Future<String>> _listeningTtsPathFutures = {};
   final Map<String, Future<ArticleSongVersion>> _songTimelineTasks = {};
   final Map<String, String> _songTimelineErrors = {};
-  InAppWebViewController? _sunoController;
-  final FocusNode _sunoWebViewFocusNode = FocusNode(debugLabel: 'sunoWebView');
   late final SunoAutomationController _sunoEngine;
 
   bool get _supportsWindowsFrameRateLimit =>
@@ -410,12 +410,137 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     }
   }
 
-  Future<void> focusSunoWebView() async {
-    if (!mounted) {
+  String get _webUiBaseUrl =>
+      _usesDevServer ? _devServerUrl.trim() : tomatoWebUiLocalUrl;
+
+  bool _isWebUiUrl(String url) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) {
+      return false;
+    }
+    if (_usesDevServer) {
+      final devBase = _devServerUrl.trim();
+      return trimmed.startsWith(devBase);
+    }
+    return trimmed.startsWith(tomatoWebUiLocalUrl) ||
+        trimmed.contains('127.0.0.1:$tomatoWebUiServerPort');
+  }
+
+  Future<String> _readWebUiHash(InAppWebViewController controller) async {
+    if (!_webReady || _sunoSessionActive) {
+      return _savedWebUiHash ?? '#/';
+    }
+    try {
+      final raw = await controller.evaluateJavascript(
+        source: "window.location.hash || '#/'",
+      );
+      final hash = raw?.toString().trim();
+      if (hash != null && hash.isNotEmpty) {
+        return hash;
+      }
+    } catch (error, stackTrace) {
+      TomatoLogger.warn(
+        category: 'suno',
+        event: 'session.read_hash_failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+    return '#/';
+  }
+
+  Future<void> beginSunoWebSession(String initialUrl) async {
+    final controller = _controller;
+    if (controller == null) {
+      throw StateError('WebView is not ready');
+    }
+    if (!_sunoSessionActive) {
+      _savedWebUiHash = await _readWebUiHash(controller);
+      _sunoSessionActive = true;
+      _webReady = false;
+    }
+    TomatoLogger.info(
+      category: 'suno',
+      event: 'session.begin',
+      articleId: _sunoEngine.state.articleId,
+      data: {
+        'initialUrl': initialUrl,
+        'savedHash': _savedWebUiHash,
+      },
+    );
+    await controller.loadUrl(
+      urlRequest: URLRequest(url: WebUri(initialUrl)),
+    );
+  }
+
+  Future<void> endSunoWebSession() async {
+    if (!_sunoSessionActive) {
       return;
     }
-    _sunoWebViewFocusNode.requestFocus();
-    await Future<void>.delayed(const Duration(milliseconds: 80));
+    _sunoSessionActive = false;
+    _sunoEngine.attachWebController(null);
+    final controller = _controller;
+    final hash = _savedWebUiHash ?? '#/';
+    _savedWebUiHash = null;
+    if (controller == null) {
+      return;
+    }
+    TomatoLogger.info(
+      category: 'suno',
+      event: 'session.end',
+      articleId: _sunoEngine.state.articleId,
+      data: {'restoreHash': hash},
+    );
+    await controller.loadUrl(
+      urlRequest: URLRequest(url: WebUri('$_webUiBaseUrl$hash')),
+    );
+  }
+
+  Future<void> _handleMainWebViewLoadStop(
+    InAppWebViewController controller,
+    WebUri? url,
+  ) async {
+    final urlStr = url?.toString() ?? '';
+    if (_sunoSessionActive &&
+        (SunoUtilities.isSunoAppUrl(urlStr) ||
+            SunoUtilities.isLoginFlowUrl(urlStr))) {
+      _sunoEngine.onLoadStop(urlStr);
+      TomatoLogger.info(
+        category: 'suno',
+        event: 'webview.load_stop',
+        articleId: _sunoEngine.state.articleId,
+        data: {
+          'url': urlStr,
+          'pageKind': SunoUtilities.pageKind(urlStr),
+          'singleWebView': true,
+        },
+      );
+      _sunoEngine.attachWebController(controller);
+      final skipLoadStopTick = _sunoEngine.state.lyricsPasteInFlight ||
+          (_sunoEngine.state.statusKey == 'waitingConfirm' &&
+              _sunoEngine.state.manualPasteReady) ||
+          (_sunoEngine.state.statusKey == 'waitingConfirm' &&
+              _sunoEngine.state.lyricsPasteOk);
+      if (!skipLoadStopTick) {
+        unawaited(_continueSunoAutomation());
+      }
+      return;
+    }
+    if (_isWebUiUrl(urlStr)) {
+      _webReady = true;
+      _loadError = null;
+      await _flushPendingEvents();
+    }
+  }
+
+  Future<void> _hideSunoChrome() async {
+    _sunoEngine.stopPolling();
+    await endSunoWebSession();
+    if (mounted) {
+      setState(() {
+        _sunoEngine.state.visible = false;
+      });
+    }
   }
 
   @override
@@ -425,7 +550,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     unawaited(_qaServer?.stop());
     _recordingCancelToken?.cancel();
     unawaited(_stopListeningPlayback());
-    _sunoWebViewFocusNode.dispose();
     unawaited(_stopVoicePreview());
     unawaited(_stopSongPlayback());
     _stopSunoAutomation(clearVisible: true);
@@ -476,13 +600,18 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       return _NativeErrorView(message: _loadError!);
     }
 
+    final sunoChromeTopInset =
+        _sunoEngine.state.visible ? 56.0 : 0.0;
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       body: SafeArea(
         child: Stack(
           children: [
             Positioned.fill(
-              child: Listener(
+              child: Padding(
+                padding: EdgeInsets.only(top: sunoChromeTopInset),
+                child: Listener(
                 behavior: HitTestBehavior.translucent,
                 onPointerDown: (_) => _markMainWebViewFrameRateActive(),
                 onPointerMove: (_) => _markMainWebViewFrameRateActive(),
@@ -503,6 +632,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
                     allowUniversalAccessFromFileURLs: true,
                     mediaPlaybackRequiresUserGesture: false,
                     isInspectable: kDebugMode,
+                    useOnDownloadStart: true,
                   ),
                   webViewEnvironment: tomatoWebViewEnvironment,
                   onWebViewCreated: (controller) {
@@ -528,8 +658,40 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
                       },
                     );
                   },
+                  onLoadStop: (controller, url) {
+                    unawaited(_handleMainWebViewLoadStop(controller, url));
+                  },
+                  onDownloadStartRequest: (controller, request) {
+                    if (!_sunoSessionActive) {
+                      return;
+                    }
+                    TomatoLogger.info(
+                      category: 'suno',
+                      event: 'download.request',
+                      articleId: _sunoEngine.state.articleId,
+                      data: {
+                        'url': request.url.toString(),
+                        'suggestedFilename': request.suggestedFilename,
+                      },
+                    );
+                    unawaited(_handleSunoDownload(request));
+                  },
                   onReceivedError: (controller, request, error) {
                     if (request.isForMainFrame == false) {
+                      return;
+                    }
+                    if (_sunoSessionActive ||
+                        SunoUtilities.isSunoAppUrl(request.url.toString())) {
+                      TomatoLogger.warn(
+                        category: 'suno',
+                        event: 'webview.load_error',
+                        message: error.description,
+                        articleId: _sunoEngine.state.articleId,
+                        data: {
+                          'url': request.url.toString(),
+                          'type': error.type.toString(),
+                        },
+                      );
                       return;
                     }
                     TomatoLogger.error(
@@ -548,164 +710,96 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
                 ),
               ),
             ),
+            ),
             if (_sunoEngine.state.visible)
-              Positioned.fill(child: _buildSunoOverlay()),
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _buildSunoChrome(),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSunoOverlay() {
+  Widget _buildSunoChrome() {
     final statusText = _sunoOverlayStatusText();
     final canConfirm = _sunoEngine.state.statusKey == 'waitingConfirm' &&
         !_sunoEngine.state.createSubmitted;
     final isComplete = _sunoEngine.state.statusKey == 'complete';
     return Material(
-      color: Colors.black.withValues(alpha: 0.42),
-      child: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            color: AppTheme.darkBlue,
-            child: Row(
-              children: [
-                const Icon(Icons.music_note, color: Colors.white),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    statusText,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
-                    ),
+      elevation: 6,
+      color: AppTheme.darkBlue,
+      child: SafeArea(
+        bottom: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          color: AppTheme.darkBlue,
+          child: Row(
+            children: [
+              const Icon(Icons.music_note, color: Colors.white),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  statusText,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                if (canConfirm)
-                  ElevatedButton.icon(
-                    onPressed: _sunoEngine.state.automationBusy
-                        ? null
-                        : () => unawaited(_confirmSunoCreate()),
-                    icon: const Icon(Icons.check_circle_outline),
-                    label: const Text('确认消耗 credits 并创建'),
-                  ),
-                if (isComplete)
-                  ElevatedButton.icon(
-                    onPressed: () => _closeCompletedSunoOverlay(),
-                    icon: const Icon(Icons.check_circle_outline),
-                    label: const Text('确认并关闭 Suno 窗口'),
-                  ),
-                const SizedBox(width: 8),
-                if (!isComplete)
-                  TextButton(
-                    onPressed: () => unawaited(_continueSunoAutomation()),
-                    child: const Text(
-                      '继续检测',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                if (!isComplete)
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _sunoEngine.state.visible = false;
-                      });
-                    },
-                    child: const Text(
-                      '隐藏',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                if (!isComplete)
-                  TextButton(
-                    onPressed: () {
-                      final articleId = _sunoEngine.state.articleId;
-                      _stopSunoAutomation(clearVisible: true);
-                      _sunoController = null;
-                      if (articleId != null) {
-                        unawaited(_pushSongState(articleId));
-                      }
-                    },
-                    child: const Text(
-                      '取消',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Container(
-              color: Colors.white,
-              child: Focus(
-                focusNode: _sunoWebViewFocusNode,
-                child: InAppWebView(
-                key:
-                    ValueKey('suno-webview-$_sunoEngine.state.webViewInstance'),
-                initialUrlRequest: URLRequest(
-                  url: WebUri(_sunoEngine.state.initialUrl),
-                ),
-                initialSettings: InAppWebViewSettings(
-                  javaScriptEnabled: true,
-                  transparentBackground: false,
-                  mediaPlaybackRequiresUserGesture: false,
-                  isInspectable: kDebugMode,
-                  useOnDownloadStart: true,
-                ),
-                webViewEnvironment: tomatoWebViewEnvironment,
-                onWebViewCreated: (controller) {
-                  TomatoLogger.info(
-                    category: 'suno',
-                    event: 'webview.created',
-                    articleId: _sunoEngine.state.articleId,
-                    data: {'initialUrl': _sunoEngine.state.initialUrl},
-                  );
-                  _sunoController = controller;
-                  _sunoEngine.attachWebController(controller);
-                },
-                onLoadStop: (controller, url) {
-                  _sunoEngine.onLoadStop(url?.toString());
-                  TomatoLogger.info(
-                    category: 'suno',
-                    event: 'webview.load_stop',
-                    articleId: _sunoEngine.state.articleId,
-                    data: {
-                      'url': url?.toString(),
-                      'pageKind': url == null
-                          ? null
-                          : SunoUtilities.pageKind(url.toString()),
-                    },
-                  );
-                  _sunoController = controller;
-                  _sunoEngine.attachWebController(controller);
-                  final skipLoadStopTick = _sunoEngine.state.lyricsPasteInFlight ||
-                      (_sunoEngine.state.statusKey == 'waitingConfirm' &&
-                          _sunoEngine.state.manualPasteReady) ||
-                      (_sunoEngine.state.statusKey == 'waitingConfirm' &&
-                          _sunoEngine.state.lyricsPasteOk);
-                  if (!skipLoadStopTick) {
-                    unawaited(_continueSunoAutomation());
-                  }
-                },
-                onDownloadStartRequest: (controller, request) {
-                  TomatoLogger.info(
-                    category: 'suno',
-                    event: 'download.request',
-                    articleId: _sunoEngine.state.articleId,
-                    data: {
-                      'url': request.url.toString(),
-                      'suggestedFilename': request.suggestedFilename,
-                    },
-                  );
-                  unawaited(_handleSunoDownload(request));
-                },
               ),
-              ),
-            ),
+              if (canConfirm)
+                ElevatedButton.icon(
+                  onPressed: _sunoEngine.state.automationBusy
+                      ? null
+                      : () => unawaited(_confirmSunoCreate()),
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('确认消耗 credits 并创建'),
+                ),
+              if (isComplete)
+                ElevatedButton.icon(
+                  onPressed: () => _closeCompletedSunoOverlay(),
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text('确认并关闭 Suno 窗口'),
+                ),
+              const SizedBox(width: 8),
+              if (!isComplete)
+                TextButton(
+                  onPressed: () => unawaited(_continueSunoAutomation()),
+                  child: const Text(
+                    '继续检测',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              if (!isComplete)
+                TextButton(
+                  onPressed: () => unawaited(_hideSunoChrome()),
+                  child: const Text(
+                    '隐藏',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              if (!isComplete)
+                TextButton(
+                  onPressed: () {
+                    final articleId = _sunoEngine.state.articleId;
+                    _stopSunoAutomation(clearVisible: true);
+                    if (articleId != null) {
+                      unawaited(_pushSongState(articleId));
+                    }
+                  },
+                  child: const Text(
+                    '取消',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -4218,7 +4312,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   }
 
   Future<void> _continueSunoAutomation() async {
-    _sunoEngine.attachWebController(_sunoController);
+    if (!_sunoSessionActive) {
+      final lastUrl = (_sunoEngine.state.lastLoadStopUrl ?? '').trim();
+      await beginSunoWebSession(
+        lastUrl.isNotEmpty ? lastUrl : _sunoEngine.state.initialUrl,
+      );
+    }
+    _sunoEngine.attachWebController(_controller);
+    _sunoEngine.startPolling();
     await _sunoEngine.tick();
   }
 
@@ -4266,7 +4367,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   }
 
   Future<void> _confirmSunoCreate() async {
-    _sunoEngine.attachWebController(_sunoController);
+    _sunoEngine.attachWebController(_controller);
     await _sunoEngine.confirmCreate();
   }
 
@@ -4285,7 +4386,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<Map<String, dynamic>> _handleSunoDebugInspect(
     BridgeMessage message,
   ) async {
-    final controller = _sunoController;
+    final controller = _sunoSessionActive ? _controller : null;
     if (controller == null) {
       return {
         'ok': false,
@@ -4314,7 +4415,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<Map<String, dynamic>> _handleSunoDebugRows(
     BridgeMessage message,
   ) async {
-    final controller = _sunoController;
+    final controller = _sunoSessionActive ? _controller : null;
     if (controller == null) {
       return {
         'ok': false,
@@ -4340,7 +4441,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<Map<String, dynamic>> _handleSunoDebugSnapshot(
     BridgeMessage message,
   ) async {
-    final controller = _sunoController;
+    final controller = _sunoSessionActive ? _controller : null;
     if (controller == null) {
       return {
         'ok': false,
@@ -4498,7 +4599,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<Map<String, dynamic>> _handleSunoDebugFill(
     BridgeMessage message,
   ) async {
-    final controller = _sunoController;
+    final controller = _sunoSessionActive ? _controller : null;
     if (controller == null) {
       return {
         'ok': false,
@@ -7066,7 +7167,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       'type': type,
       'payload': payload ?? <String, dynamic>{},
     };
-    if (_controller == null || !_webReady) {
+    if (_controller == null || !_webReady || _sunoSessionActive) {
       _pendingEvents.add(event);
       return;
     }
@@ -8400,7 +8501,11 @@ class _WebShellSunoHost implements SunoAutomationHost {
   String displayError(Object error) => _state._displayError(error);
 
   @override
-  Future<void> focusSunoWebView() => _state.focusSunoWebView();
+  Future<void> beginSunoSession(String initialUrl) =>
+      _state.beginSunoWebSession(initialUrl);
+
+  @override
+  Future<void> endSunoSession() => _state.endSunoWebSession();
 
   @override
   Future<List<int>> downloadUrl(String url, {String? userAgent}) =>
