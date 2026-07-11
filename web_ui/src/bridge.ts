@@ -886,14 +886,17 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     }
     const sunoResult = {
       articleId,
-      status: 'generating',
+      status: 'ready',
       stylePrompt: '',
       audioPath: null,
       errorMessage: '',
       durationMs: null,
       source: 'suno',
-      automationStatus: 'waitingLogin',
-      manualActionMessage: 'Suno 页面已打开，请先在页面中自行登录。',
+      automationStatus: '',
+      manualActionMessage:
+        '整篇歌词（42 字）已复制到剪贴板，并已在系统浏览器打开 Suno Create。请在浏览器中登录、粘贴歌词、设置风格并 Create；在 Suno 下载 MP3 后，回到创作中心点击「导入本地音乐」添加歌曲版本。',
+      downloadComplete: false,
+      versions: [],
     };
     window.setTimeout(() => {
       emitNativeEvent({ type: 'listening.song.state', payload: sunoResult });
@@ -924,43 +927,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
           isDefault: true,
         },
       ],
-    };
-    window.setTimeout(() => {
-      emitNativeEvent({ type: 'listening.song.state', payload: result });
-    }, 40);
-    return result;
-  }
-  if (type === 'listening.songConfirmSunoCreate') {
-    const articleId = Number(payload.articleId ?? mockListening.article.id);
-    const result = {
-      articleId,
-      status: 'generating',
-      stylePrompt: '',
-      audioPath: null,
-      errorMessage: '',
-      durationMs: null,
-      source: 'suno',
-      automationStatus: 'creating',
-      manualActionMessage: 'Suno 正在生成歌曲...',
-    };
-    window.setTimeout(() => {
-      emitNativeEvent({ type: 'listening.song.state', payload: result });
-    }, 40);
-    return result;
-  }
-  if (type === 'listening.songDownloadSunoExisting') {
-    const articleId = Number(payload.articleId ?? mockListening.article.id);
-    const result = {
-      articleId,
-      status: 'generating',
-      stylePrompt: '',
-      audioPath: null,
-      errorMessage: '',
-      durationMs: null,
-      source: 'suno',
-      songUrl: 'https://suno.com/song/mock',
-      automationStatus: 'downloading',
-      manualActionMessage: '正在打开 Suno 已生成歌曲并尝试下载...',
     };
     window.setTimeout(() => {
       emitNativeEvent({ type: 'listening.song.state', payload: result });

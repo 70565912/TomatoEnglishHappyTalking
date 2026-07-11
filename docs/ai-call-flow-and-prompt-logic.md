@@ -579,7 +579,13 @@ Scene description: <sceneDescription>
 
 ## 歌曲生成流程
 
-入口：`listening.songGenerate` 根据 `source` 选择阿里云百聆（Fun-Music）或 Suno 网页自动化。Web UI 不直接访问任一歌曲 provider。
+入口：`listening.songGenerate` 根据 `source` 选择阿里云百聆（Fun-Music）、ElevenLabs Music 或 Suno（系统浏览器手动）。Web UI 不直接访问任一歌曲 provider。
+
+Suno（系统浏览器）：
+
+- `SunoExternalLauncher.launchManualCreate` 复制整篇英文歌词到剪贴板，并打开 `https://suno.com/create`。
+- 返回 `manualActionMessage` 指引用户在浏览器完成 Create 与 MP3 下载，再用「导入本地音乐」添加版本；不启动 App 内 WebView 自动化或 `generating` 轮询。
+- 历史 Suno cache 仍从 `suno-music/` 读取；Lexical 填表踩坑见 `docs/suno_lexical_lyrics_editor.md`。
 
 阿里云百聆（Fun-Music）：
 

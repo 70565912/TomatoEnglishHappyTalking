@@ -2,6 +2,15 @@
 
 ## 2026-07-11
 
+- **Suno 改为系统浏览器手动流程**：删除 App 内 WebView 自动化（`SunoAutomationController`、填表脚本、Library 扫描、媒体下载器）、创作中心「检测下载」「确认创建歌曲」、Suno 顶栏及相关 bridge 命令（`listening.songDownloadSunoExisting`、`listening.songConfirmSunoCreate`、`suno.debug*` 等）。`listening.songGenerate (suno)` 现仅复制歌词到剪贴板并用系统浏览器打开 Create；用户自行在 Suno 下载 MP3 后通过「导入本地音乐」添加版本。保留 `suno_external_launcher.dart`、`suno_utilities.dart` 与历史 `suno-music/` cache 播放/字幕/导出。Web UI 确认弹框、设置页 Suno 文案同步更新；删除 `sunoAutomationSimulator`、`qa_suno_*` 等自动化测试与工具。踩坑归档见 `docs/suno_lexical_lyrics_editor.md`。
+
+验证：
+
+- `flutter test`
+- `npm test` in `web_ui`
+
+## 2026-07-11（Lexical 自动化尝试，已 superseded）
+
 - **Suno Lyrics 自动粘贴（无人工）**：Create 填表经 `SunoWebViewPaste` 自动 `Clipboard.setData` + CDP WebView 内 `Ctrl+V`，失败时页内 paste fallback；probe 要求 `[data-lexical-text]` + counter ≥ 85%；Styles 仍关闭直到 `lyricsPasteOk`。见 `docs/suno_lexical_lyrics_editor.md`。
 - **Suno Lyrics 粘贴验证（Styles 关闭）**：Create 填表改为 `Clipboard.setData` → 聚焦 Lexical Lyrics → 用户 Ctrl+V → `readLexicalLyricsProbeScript` 探针；`skipStyles: true` 禁止展开/魔法棒/滚动 Styles。成功条件为 counter / lexicalLength ≥ 预期 85%，不以「已尝试」冒充写入。见 `docs/suno_lexical_lyrics_editor.md`；联调 `node tools/qa_suno_fill_quick.mjs --articleId 84`。
 - **Suno Lyrics Lexical 写入修复**：Suno Create v5.5 将 Lyrics 改为 Lexical `.lyrics-editor-content`（Styles 仍为 textarea）。移除 180 字分块 / `appendChild` 兜底；新增 `writeLexicalLyricsScript`（Clipboard + paste / 一次性 insertText）、`readLexicalLyricsValue`、`readSunoLyricsCounter`；控制器每轮自动化只写一次歌词，以 Suno 计数器为准、提示用户人工确认。分析、fixture 与禁止项见 `docs/suno_lexical_lyrics_editor.md`；联调 `node tools/qa_suno_fill_quick.mjs`。

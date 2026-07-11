@@ -3625,7 +3625,6 @@ function SongCreationPanel({
     title: string;
     timelineStatus: string;
   } | null>(null);
-  const [sunoCreateConfirmOpen, setSunoCreateConfirmOpen] = useState(false);
   const [songGenerateConfirm, setSongGenerateConfirm] = useState<SongGenerationSource | null>(null);
 
   const loadState = () => {
@@ -3851,7 +3850,7 @@ function SongCreationPanel({
     void runSongCommand('listening.songGenerate', {
       source: 'suno',
       lyrics: '',
-    }, '已打开 Suno 歌曲生成流程');
+    }, '已复制歌词并打开系统浏览器');
   };
 
   const deleteSongVersionFromCreation = async (versionId: string) => {
@@ -3875,13 +3874,6 @@ function SongCreationPanel({
 
   const versions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
   const groupedVersions = groupSongVersionsForDisplay(versions);
-  const waitingConfirm = isSunoWaitingConfirm(songState);
-  // 检测下载：每次点击都进 Suno 扫描（含用户在外站用新风格 Create 后的补拉）。
-  // 不因 downloadComplete / 本地已有版本隐藏或跳过；见 docs/suno_song_download_rules.md。
-  const canDownloadMissing =
-    songState?.source === 'suno' &&
-    songState.status !== 'generating' &&
-    !waitingConfirm;
 
   return (
     <section className="creation-panel">
@@ -3926,28 +3918,6 @@ function SongCreationPanel({
         >
           <Icon name="music" /> Suno
         </button>
-        {songState?.source === 'suno' && waitingConfirm && (
-          <button
-            className="primary-action"
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setSunoCreateConfirmOpen(true);
-            }}
-          >
-            <Icon name="music" /> 确认创建歌曲
-          </button>
-        )}
-        {songState?.source === 'suno' && canDownloadMissing && (
-          <button
-            className="suno-download-action"
-            type="button"
-            disabled={busy}
-            onClick={() => runSongCommand('listening.songDownloadSunoExisting', {}, '已开始检测并下载未保存版本')}
-          >
-            <Icon name="download" /> 检测下载
-          </button>
-        )}
         <button
           className="ghost-action"
           type="button"
@@ -4109,21 +4079,6 @@ function SongCreationPanel({
             setSongGenerateConfirm(null);
           }}
           onConfirm={() => startSongGenerationFromCreation(songGenerateConfirm)}
-        />
-      )}
-      {sunoCreateConfirmOpen && (
-        <ConfirmDialog
-          {...sunoCreateConfirmCopy()}
-          confirmIcon="music"
-          busy={busy}
-          onCancel={() => {
-            if (busy) return;
-            setSunoCreateConfirmOpen(false);
-          }}
-          onConfirm={() => {
-            setSunoCreateConfirmOpen(false);
-            void runSongCommand('listening.songConfirmSunoCreate', {}, '已确认创建 Suno 歌曲');
-          }}
         />
       )}
     </section>
@@ -6391,7 +6346,6 @@ function ListeningPage({
     recordingPictureReadiness,
   );
   const canRecordVideo = recordingReadiness.ready && !busy && !recordingBusy && visibleItems.length > 0;
-  const songWaitingConfirm = isSunoWaitingConfirm(songState);
   const songGenerating = songState?.status === 'generating';
   const songPlaying = songState?.status === 'playing';
   const songVersions = songState?.versions?.filter((version) => version.id && version.audioPath) ?? [];
@@ -6525,12 +6479,12 @@ function ListeningPage({
                     </button>
                   ) : (
                     <button
-                      className={`primary-action song-action ${songGenerating && !songWaitingConfirm ? 'loading' : ''}`}
+                      className={`primary-action song-action ${songGenerating ? 'loading' : ''}`}
                       onClick={() => void playSongVersion(selectedSongVersion?.id, currentIndex)}
                       disabled={busy || items.length === 0 || !selectedSongVersion || songGenerating}
                       title={songState?.status === 'error' ? songState.errorMessage?.trim() || '歌曲播放失败' : undefined}
                     >
-                      <Icon name={songGenerating && !songWaitingConfirm ? 'refresh' : 'play'} /> 开始播放
+                      <Icon name={songGenerating ? 'refresh' : 'play'} /> 开始播放
                     </button>
                   )}
                   <button
@@ -9666,7 +9620,6 @@ function SettingsPage({
   const safetyRules = current.contentSafety?.rules ?? [];
   const songSettingsUnchanged =
     sunoOutputDirectory.trim() === (current.song?.sunoOutputDirectory ?? '').trim() &&
-    Number(sunoTimeoutMinutes) === Number(current.song?.sunoTimeoutMinutes ?? 20) &&
     songProvider === normalizeSongGenerationSource(current.song?.songProvider ?? 'suno');
   const cloudSettingsUnchanged =
     textProvider === normalizeAiProvider(current.cloud?.textProvider ?? current.cloud?.aiProvider) &&
@@ -10345,7 +10298,7 @@ function SettingsPage({
                 className={songProvider === 'suno' ? 'active' : ''}
                 type="button"
                 role="tab"
-                aria-label="Suno 网页自动化"
+                aria-label="Suno（系统浏览器）"
                 aria-selected={songProvider === 'suno'}
                 onClick={() => setSongProvider('suno')}
               >
@@ -10374,26 +10327,14 @@ function SettingsPage({
             </div>
             <div className="song-settings-grid">
               {songProvider === 'suno' ? (
-                <>
-                  <label className="settings-label">
-                    <span>Suno 输出目录</span>
-                    <input
-                      value={sunoOutputDirectory}
-                      onChange={(event) => setSunoOutputDirectory(event.target.value)}
-                      placeholder="留空使用程序目录下的 suno-music；不要填写 .tmp 或系统临时目录"
-                    />
-                  </label>
-                  <label className="settings-label">
-                    <span>Suno 生成超时（分钟）</span>
-                    <input
-                      type="number"
-                      min={5}
-                      max={120}
-                      value={sunoTimeoutMinutes}
-                      onChange={(event) => setSunoTimeoutMinutes(Number(event.target.value) || 20)}
-                    />
-                  </label>
-                </>
+                <label className="settings-label">
+                  <span>Suno 输出目录</span>
+                  <input
+                    value={sunoOutputDirectory}
+                    onChange={(event) => setSunoOutputDirectory(event.target.value)}
+                    placeholder="留空使用程序目录下的 suno-music；不要填写 .tmp 或系统临时目录"
+                  />
+                </label>
               ) : songProvider === 'bailian_fun_music' ? (
                 <div className="song-provider-summary">
                   <div>
@@ -10424,7 +10365,7 @@ function SettingsPage({
             </div>
             {songProvider === 'suno' && (
               <p className="settings-help">
-                Suno 会打开页面让用户自行登录，登录态来自内置浏览器会话；Tomato 不保存 Suno 用户名、密码、验证码或 cookie 明文。
+                Suno 生成会复制歌词到剪贴板并在系统浏览器打开 Create 页；请在浏览器完成 Create 并下载 MP3，再用「导入本地音乐」添加版本。输出目录用于保存历史 Suno 缓存与 metadata。
               </p>
             )}
             <button
@@ -11455,7 +11396,7 @@ function songGenerationConfirmCopy(source: SongGenerationSource): {
       ariaLabel: '确认生成歌曲',
       title: '确认生成歌曲',
       message:
-        '即将打开 Suno 页面，请自行登录 Suno。登录后 Tomato 会自动填写歌词，并每次点击 Suno 蓝色魔法棒根据歌词重新生成风格；点击 Create 前会再次确认消耗 Suno credits。是否继续？',
+        '将把整篇英文歌词复制到系统剪贴板，并在系统浏览器打开 Suno Create。请在浏览器中自行登录、粘贴歌词、设置风格并 Create；在 Suno 下载 MP3 后，回到创作中心点击「导入本地音乐」添加歌曲版本。是否继续？',
       confirmLabel: '继续',
     };
   }
@@ -11477,20 +11418,6 @@ function songGenerationConfirmCopy(source: SongGenerationSource): {
   };
 }
 
-function sunoCreateConfirmCopy(): {
-  ariaLabel: string;
-  title: string;
-  message: string;
-  confirmLabel: string;
-} {
-  return {
-    ariaLabel: '确认创建 Suno 歌曲',
-    title: '确认创建歌曲',
-    message: '确认消耗 Suno credits 并创建歌曲？',
-    confirmLabel: '确认创建',
-  };
-}
-
 function normalizeAiProvider(provider?: string | null): AiProvider {
   return provider === 'volcengine' ? 'volcengine' : 'aliyun_bailian';
 }
@@ -11505,7 +11432,7 @@ function songSourceLabel(source?: string | null): string {
   if (normalized === 'external_audio') return '外部导入';
   if (normalized === 'bailian_fun_music') return '阿里云百聆';
   if (normalized === 'elevenlabs_music') return 'ElevenLabs Music';
-  return 'Suno 网页自动化';
+  return 'Suno（系统浏览器）';
 }
 
 function groupSongVersionsForDisplay(versions: SongVersionPayload[]): SongVersionGroup[] {
@@ -11561,14 +11488,6 @@ function songTimelineLabel(status?: string | null): string {
   }
 }
 
-function isSunoWaitingConfirm(state?: ListeningSongStatePayload | null): boolean {
-  return (
-    state?.source === 'suno' &&
-    state.status === 'generating' &&
-    (state.automationStatus ?? '').trim() === 'waitingConfirm'
-  );
-}
-
 function songAutomationStatusText(state: ListeningSongStatePayload): string {
   const manual = state.manualActionMessage?.trim();
   if (manual) return manual;
@@ -11578,22 +11497,10 @@ function songAutomationStatusText(state: ListeningSongStatePayload): string {
   if (state.source === 'elevenlabs_music') {
     return 'ElevenLabs Music 正在生成歌曲...';
   }
-  switch ((state.automationStatus ?? '').trim()) {
-    case 'waitingLogin':
-      return 'Suno 页面已打开，请先在页面中自行登录。';
-    case 'filling':
-      return '正在自动填写 Suno 歌词并生成风格...';
-    case 'waitingConfirm':
-      return '已填写完成，等待确认消耗 Suno credits。';
-    case 'creating':
-      return 'Suno 正在生成歌曲...';
-    case 'downloading':
-      return '正在下载 Suno 生成的歌曲...';
-    case 'manualAction':
-      return '需要在 Suno 页面手工完成当前步骤。';
-    default:
-      return 'Suno 自动操作中...';
+  if (state.source === 'suno') {
+    return '请在系统浏览器完成 Suno Create，并用「导入本地音乐」添加 MP3。';
   }
+  return '歌曲处理中...';
 }
 
 function tokenizeEnglishText(text: string): Array<{ text: string; word: boolean }> {

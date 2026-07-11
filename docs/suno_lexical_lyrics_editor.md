@@ -42,7 +42,40 @@ Playwright 人工填入 3829 字时，只读 `.lyrics-editor-content` 内 `[data
 - **粘贴后仍每 2s 跑 `inspectScript` / `readSunoLyricsCounter` 读 `document.body.innerText` 或 Lyrics 面板父链 `innerText`**：人工一次粘贴后没有这类 DOM 全量扫描；Lexical 正在落 3000+ 字白字节点时，WebView2 容易因此崩溃（白字已出现仍崩，即此因）
 - 人工一次粘贴 3829 字不崩 → 问题在自动化策略，不是 5000 上限
 
-### 人工 vs 自动化（粘贴成功后的区别）
+### Windows：App 内 WebView 键盘输入必崩（2026-07-11 确认）
+
+隔离测试（无自动化、无抓帧限速、`display_only` 纯展示）下，在 App WebView 的 Suno Lexical Lyrics 里**输入 1 个字符**约 14s 后进程仍会退出。根因在 `flutter_inappwebview_windows` 的 WebView2 + Lexical 键盘/IME 链路，**与 Tomato 自动化无关**。
+
+**2026-07-11 追加**：独立 [InAppBrowser] 弹窗（HWND WebView2，非主 WebView texture capture）在 Lexical Lyrics **手动输入字符同样导致 App 崩溃**（article 84 日志 `popup_create.open` → `popup_test.create_ready` 后进程退出）。弹窗**不能**作为 Create 正式路径。
+
+**Windows 正式方案（2026-07-11）**：不再在 App 内打开 Suno Create（主 WebView 或弹窗均会在 Lexical 键盘输入时崩溃）。产品改为：
+
+1. 歌词复制到系统剪贴板
+2. 用**系统浏览器**打开 `https://suno.com/create`（用户登录/粘贴/Create/下载 MP3）
+3. 用户回到 App，用「导入本地音乐」添加 MP3 版本
+
+实现：`SunoExternalLauncher.launchManualCreate`（`app/lib/features/web_shell/suno/suno_external_launcher.dart`）。
+
+历史环境变量（App 内 WebView 实验，已不作为正式路径）：
+
+| 变量 | 说明 |
+|------|------|
+| `TOMATO_SUNO_EXTERNAL_BROWSER=false` | 曾尝试 App 内主 WebView Create（Lexical 输入崩溃） |
+| `TOMATO_SUNO_POPUP_BROWSER=true` | 曾尝试弹窗 Create（同样崩溃） |
+| `TOMATO_SUNO_DISPLAY_ONLY=true` | 调试用纯展示 |
+
+## 最终方案：系统浏览器手动流程
+
+```text
+创作中心 → 生成 Suno 歌曲 → 剪贴板 + 系统浏览器 Create
+用户：登录 / 粘贴 / 风格 / Create / 在 Suno 下载 MP3
+创作中心 → 导入本地音乐 → 版本列表 / 字幕 / 播放 / 导出
+```
+
+- **已删除**：App 内 WebView 填表、`SunoAutomationController`、创作中心「检测下载」「确认创建歌曲」、Suno 顶栏、`tools/qa_suno_*` 联调脚本。
+- **保留文档**：本文 Lexical DOM、崩溃根因、粘贴/探针踩坑时间线，供理解为何放弃 in-app 自动化。
+
+以下「正确自动化策略 / Live 验证」章节为**历史归档**（代码已删）。
 
 | | 人工 Ctrl+V | 旧自动化 |
 |--|-----------|---------|
