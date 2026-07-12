@@ -731,7 +731,11 @@ void main() {
     expect(planningPrompt, contains('do not repeat character appearance'));
     expect(
       planningPrompt,
-      contains('picture-book scene plan from non-dialogue visual prose'),
+      contains('picture-book narrative scene plan'),
+    );
+    expect(
+      planningPrompt,
+      contains('convert speech into drawable visible action'),
     );
     expect(
       planningPrompt,
@@ -740,11 +744,31 @@ void main() {
     expect(
       planningPrompt,
       contains(
-          'base chapterdescription and scenedescription on its visible details'),
+          'base chapterdescription and scenedescription on its drawable details'),
     );
     expect(
       planningPrompt,
-      contains('remove direct dialogue'),
+      contains('convert all direct dialogue'),
+    );
+    expect(
+      planningPrompt,
+      contains('into third-person visible-scene narrative'),
+    );
+    expect(
+      planningPrompt,
+      contains('prefer visible action, pose, object, spatial relation'),
+    );
+    expect(
+      planningPrompt,
+      contains('avoid chaining ask, asks, explain, explains'),
+    );
+    expect(
+      planningPrompt,
+      contains('for riddles, songs, shouts, and wordplay'),
+    );
+    expect(
+      planningPrompt,
+      contains('do not restate the riddle wording'),
     );
     expect(
       planningPrompt,
@@ -752,21 +776,25 @@ void main() {
     );
     expect(
       planningPrompt,
+      contains('never write quoted speech'),
+    );
+    expect(
+      planningPrompt,
+      contains('speech bubbles'),
+    );
+    expect(
+      planningPrompt,
       contains(
-          'do not quote, paraphrase, or summarize speech or thought content'),
-    );
-    expect(
-      planningPrompt,
-      contains('before splitting scenes, mentally delete all quoted speech'),
+          'before splitting scenes, convert quoted speech'),
     );
     expect(
       planningPrompt,
       contains(
-          'use only the remaining non-dialogue source prose to decide scene boundaries'),
+          'use the resulting continuous story situation to decide scene boundaries'),
     );
     expect(
       planningPrompt,
-      contains('if deleting speech/thought leaves no new non-dialogue place'),
+      contains('if the converted narrative leaves no new place'),
     );
     expect(
       planningPrompt,
@@ -796,7 +824,7 @@ void main() {
     expect(
       planningPrompt,
       contains(
-          'new place/time, participant group change, or a concrete non-dialogue action'),
+          'new place/time, participant group change, or a concrete story action'),
     );
     expect(
       planningPrompt,
@@ -814,28 +842,24 @@ void main() {
     );
     expect(
       planningPrompt,
+      contains('keep one continuous tea-table, kitchen, roadside, or room gathering'),
+    );
+    expect(
+      planningPrompt,
       contains(
           'dialogue, song, shout, and inner-thought sentences are coverage anchors'),
     );
     expect(
       planningPrompt,
-      contains('remove speech/thought content'),
+      contains('convert their plot and scene meaning into visible narrative'),
     );
     expect(
       planningPrompt,
-      contains('keep only source-prose visible action or reaction'),
+      contains('do not replace converted speech with empty meta words only'),
     );
     expect(
       planningPrompt,
-      contains('do not write substitute dialogue-summary words'),
-    );
-    expect(
-      planningPrompt,
-      contains('exchange, conversation, discuss, debate, ask, answer'),
-    );
-    expect(
-      planningPrompt,
-      contains('question, reply, remark, riddle, argue, claim, mean, say'),
+      contains('exchange, conversation, discuss, debate'),
     );
     expect(
       planningPrompt,
@@ -844,6 +868,18 @@ void main() {
     );
     expect(
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('mentally delete')));
+    expect(planningPrompt, isNot(contains('remove direct dialogue')));
+    expect(planningPrompt, isNot(contains('non-dialogue visual prose')));
+    expect(
+      planningPrompt,
+      isNot(contains('do not quote, paraphrase, or summarize speech')),
+    );
+    expect(planningPrompt, isNot(contains('remove speech/thought content')));
+    expect(
+      planningPrompt,
+      isNot(contains('do not write substitute dialogue-summary words')),
+    );
     expect(planningPrompt, isNot(contains('compact')));
     expect(planningPrompt, isNot(contains('major drawable details')));
     expect(planningPrompt, isNot(contains('generic summary beats')));
@@ -2315,26 +2351,30 @@ but the three were all crowded together at one corner of it.
     expect(planningPrompt, contains("don't bother me"));
     expect(planningPrompt, contains('here! you may nurse it a bit'));
     expect(planningPrompt, contains('chapter text is the source prose'));
-    expect(planningPrompt, contains('remove direct dialogue'));
+    expect(planningPrompt, contains('convert all direct dialogue'));
     expect(planningPrompt, contains('song lyrics'));
     expect(planningPrompt, contains('inner thoughts'));
     expect(planningPrompt, contains('keep source-prose drawable details'));
     expect(
       planningPrompt,
-      contains('picture-book scene plan from non-dialogue visual prose'),
+      contains('picture-book narrative scene plan'),
     );
     expect(
       planningPrompt,
-      contains('before splitting scenes, mentally delete all quoted speech'),
+      contains('prefer visible action, pose, object, spatial relation'),
+    );
+    expect(
+      planningPrompt,
+      contains('before splitting scenes, convert quoted speech'),
     );
     expect(
       planningPrompt,
       contains(
-          'use only the remaining non-dialogue source prose to decide scene boundaries'),
+          'use the resulting continuous story situation to decide scene boundaries'),
     );
     expect(
       planningPrompt,
-      contains('if deleting speech/thought leaves no new non-dialogue place'),
+      contains('if the converted narrative leaves no new place'),
     );
     expect(
       planningPrompt,
@@ -2359,15 +2399,17 @@ but the three were all crowded together at one corner of it.
       contains(
           'dialogue, song, shout, and inner-thought sentences are coverage anchors'),
     );
-    expect(planningPrompt, contains('remove speech/thought content'));
-    expect(planningPrompt, contains('keep only source-prose visible action'));
     expect(
       planningPrompt,
-      contains('do not write substitute dialogue-summary words'),
+      contains('convert their plot and scene meaning into visible narrative'),
     );
     expect(
       planningPrompt,
-      contains('exchange, conversation, discuss, debate, ask, answer'),
+      contains('do not replace converted speech with empty meta words only'),
+    );
+    expect(
+      planningPrompt,
+      contains('exchange, conversation, discuss, debate'),
     );
     expect(
       planningPrompt,
@@ -2376,6 +2418,14 @@ but the three were all crowded together at one corner of it.
     );
     expect(
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('mentally delete')));
+    expect(planningPrompt, isNot(contains('remove direct dialogue')));
+    expect(planningPrompt, isNot(contains('non-dialogue visual prose')));
+    expect(planningPrompt, isNot(contains('remove speech/thought content')));
+    expect(
+      planningPrompt,
+      isNot(contains('do not write substitute dialogue-summary words')),
+    );
     expect(planningPrompt, isNot(contains('compact')));
     expect(planningPrompt, isNot(contains('same visible picture')));
     expect(planningPrompt, isNot(contains('physical picture')));
@@ -2515,16 +2565,16 @@ but the three were all crowded together at one corner of it.
     expect(planningPrompt, contains('hatter opened his eyes very wide'));
     expect(
       planningPrompt,
-      contains('before splitting scenes, mentally delete all quoted speech'),
+      contains('before splitting scenes, convert quoted speech'),
     );
     expect(
       planningPrompt,
       contains(
-          'use only the remaining non-dialogue source prose to decide scene boundaries'),
+          'use the resulting continuous story situation to decide scene boundaries'),
     );
     expect(
       planningPrompt,
-      contains('if deleting speech/thought leaves no new non-dialogue place'),
+      contains('if the converted narrative leaves no new place'),
     );
     expect(
       planningPrompt,
@@ -2548,14 +2598,17 @@ but the three were all crowded together at one corner of it.
       contains(
           'do not start a new scene for conversation turns, questions, answers'),
     );
-    expect(planningPrompt, contains('remove speech/thought content'));
     expect(
       planningPrompt,
-      contains('do not write substitute dialogue-summary words'),
+      contains('convert their plot and scene meaning into visible narrative'),
     );
     expect(
       planningPrompt,
-      contains('exchange, conversation, discuss, debate, ask, answer'),
+      contains('do not replace converted speech with empty meta words only'),
+    );
+    expect(
+      planningPrompt,
+      contains('exchange, conversation, discuss, debate'),
     );
     expect(
       planningPrompt,
@@ -2564,6 +2617,12 @@ but the three were all crowded together at one corner of it.
     );
     expect(
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('mentally delete')));
+    expect(planningPrompt, isNot(contains('remove speech/thought content')));
+    expect(
+      planningPrompt,
+      isNot(contains('do not write substitute dialogue-summary words')),
+    );
     expect(planningPrompt, isNot(contains('create enough scenes')));
     expect(planningPrompt, isNot(contains('same visible picture')));
     expect(planningPrompt, isNot(contains('physical picture')));
@@ -2758,7 +2817,7 @@ but the three were all crowded together at one corner of it.
 
     expect(planningPrompt, contains('17.i meant what i said'));
     expect(
-        planningPrompt, contains('if deleting speech/thought leaves no new'));
+        planningPrompt, contains('if the converted narrative leaves no new'));
     expect(
       planningPrompt,
       contains('those sentence slots must stay in the same scene'),
@@ -2772,8 +2831,9 @@ but the three were all crowded together at one corner of it.
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
     expect(
       planningPrompt,
-      contains('do not write substitute dialogue-summary words'),
+      contains('do not replace converted speech with empty meta words only'),
     );
+    expect(planningPrompt, isNot(contains('mentally delete')));
     expect(planningPrompt, isNot(contains('use at most 12 scenes')));
     expect(planningPrompt, isNot(contains('compact')));
     expect(planningPrompt, isNot(contains('smallest complete scene set')));

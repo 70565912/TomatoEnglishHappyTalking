@@ -376,8 +376,8 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - 页面策略版本为 `picture_book_group_prompt_scene_description_v2`，章节图片计划缓存为 `picture_book_chapter_scene_plan_v2`。
 - `story_series` 只保留 `title` 和 `description` 作为书籍层上下文；不再维护 `style_guide_json`、`bible_json`、角色卡或参考图。
-- 打开审核框只读取本地持久化章节描述/章节计划；文本规划 API 只在用户点击“自动生成章节规划”时调用，让 AI 基于 `bookDescription`、完整章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。完整原文作为可画细节来源；输出描述必须基于原文，但移除直接引语、对话内容、歌词/喊话文本、内心独白原句和对话语义摘要；不要新增本地对话剔除器，也不要为去对话额外增加一次文本 AI 调用。
-- 场景切分规则保持精简：先忽略直接引语、对话语义、歌词、喊话和内心独白内容，再按原始句子顺序构造 scene，把同一连续故事场景内的内容归入同一个 scene。同一连续故事场景指地点/时间、主要人物组和正在发生的事件/活动保持连续。只有场景发生实质变化时才开新 scene，例如地点/时间变化、人物组变化，或明确的非对话动作把故事推进到新的事件/活动；不要因为句子边界、对话轮次、提问、回答、谜语、争论、评价、玩笑、反应或情绪变化单独切分。对话、歌词、喊话和内心独白句只作为覆盖锚点并入周围故事场景；`chapterDescription` / `sceneDescription` 保留原文里的可见动作、反应、物件和状态，移除 speech/thought content，且不能用 `exchange`、`conversation`、`discuss`、`debate`、`ask`、`answer`、`question`、`reply`、`remark`、`riddle`、`argue`、`claim`、`mean`、`say`、`said`、`offer` 等词把被移除的对话语义写回描述。每个 scene 对应一张图片并按顺序覆盖完整句子范围，最多 12 个 scene。
+- 打开审核框只读取本地持久化章节描述/章节计划；文本规划 API 只在用户点击“自动生成章节规划”时调用，让 AI 基于 `bookDescription`、完整章节正文和规则约束生成 `chapterDescription` 和 `scenes[]`。完整原文作为可画细节来源；输出描述必须基于原文，并把直接引语、对话内容、歌词/喊话文本、内心独白转成第三人称可见画面叙事，保留情节与场景信息，但不得出现引号台词、气泡文案、谜面/歌词原文或可被生图画进图里的对话文本；优先写动作、姿态、物件与空间关系，少用 ask/explain/tell/reply/say 串场；不要新增本地对话剔除器，也不要为转写对话额外增加一次文本 AI 调用。
+- 场景切分规则保持精简：先把直接引语、对话、歌词、喊话和内心独白转成叙事事件，再按原始句子顺序构造 scene，把同一连续故事场景内的内容归入同一个 scene。同一连续故事场景指地点/时间、主要人物组和正在发生的事件/活动保持连续。只有场景发生实质变化时才开新 scene，例如地点/时间变化、人物组变化，或明确的故事动作把故事推进到新的事件/活动；不要因为句子边界、对话轮次、提问、回答、谜语、争论、评价、玩笑、反应或情绪变化单独切分。同一茶桌/厨房/路边聚会在劝酒、谜语、抬杠和沉默期间保持同一 scene。对话、歌词、喊话和内心独白句作为覆盖锚点并入周围故事场景；`chapterDescription` / `sceneDescription` 写入转写后的可见动作、反应、物件和状态，禁止原句/引号台词与谜面原文，也禁止只用 `exchange`、`conversation`、`discuss`、`debate` 等空洞 meta 词而不写清发生了什么。每个 scene 对应一张图片并按顺序覆盖完整句子范围，最多 12 个 scene。
 - promptReview 不调用图片 API，不删除旧 `picture_book_pages` 或图片缓存。
 - 重新打开绘本提示词审核时优先读取 `story_chapters.summary_json` 中的 `picture_book_chapter_scene_plan_v2`。如果 summary 缺失或 hash 不匹配，但旧 `picture_book_pages` 仍有完整 prompt scene 信息，则从页面记录恢复章节计划并写回 summary。
 - 如果本地 summary 和页面记录都无法恢复，promptReview 仍先打开审核框：章节描述和分镜描述保持为空，只提供句子范围和原文片段供用户可视化编辑；用户可以手工填写，或在弹窗里显式刷新章节规划。这个入口不得因为缺少本地计划而静默提交远程文本生成。
@@ -394,7 +394,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - 单页 prompt 固定写 “Use the reference images only for visual consistency.”；`prompt_json` 持久化 `referencePageIndexes` 与首项 `referencePageIndex`。
 - 没有可用参考图时，单页审核回退为整章 `promptReview(regenerate: true)`。
 
-调优记录：2026-07-08 起，旧版 `compact`、`smallest complete scene set`、弱边界合并和叙述微阶段合并规则不再作为正式章节规划策略。正式规则收敛为两步：先去掉 speech/thought 内容对边界判断的影响，再按“同一连续故事场景归入同一 scene、场景实质变化才切分”划分句子范围；`chapterDescription` / `sceneDescription` 基于原文保留可见内容并移除对话、歌词、喊话和内心独白内容，同时不能用对话语义摘要词把被移除内容写回描述。E22 茶桌段回归重点：同一茶桌场景里的酒、礼貌、个人评价、谜语、反驳和沉默不能被拆成多张语义 scene，也不能写成 `exchange` / `conversation` / `riddle` / `remark` 等描述。
+调优记录：2026-07-12 起，章节规划从“删除对话内容”改为“把对话/喊话/歌词/内心独白转成第三人称可见画面叙事”，保留情节与场景信息，同时禁止引号台词、气泡文案和谜面/歌词原文，避免生图画出对话文本。现场探针后进一步要求：优先写动作/姿态/物件/空间关系，少用 ask/explain/tell/reply/say 串场；同一茶桌/厨房/路边聚会在劝酒、谜语、抬杠和沉默期间保持同一 scene。场景切分仍按“同一连续故事场景归入同一 scene、场景实质变化才切分”，不因对话轮次拆分。E22 茶桌段回归重点：酒、礼貌、个人评价、谜语、反驳和沉默应写入可见叙事，但不能拆成多张语义 scene，也不能只写 `exchange` / `conversation` / `riddle` / `remark` 等空洞 meta，也不要复述乌鸦书桌谜面原文。旧 `story_chapters.summary_json` 不自动迁移，用户刷新章节规划后才使用新规则。此前（2026-07-08）旧版 `compact`、`smallest complete scene set`、弱边界合并和叙述微阶段合并规则已不再作为正式章节规划策略。
 
 ### 计划中的书籍角色数组流程
 
@@ -438,13 +438,13 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 
 - `bookDescription`：短书籍视觉世界描述，不承担角色外貌列表职责。
 - `relevantCharacters[]`：程序从书籍 `characters[]` 中筛选出本章相关角色后传入。筛选方式先用章节正文、章节描述草稿和分镜描述草稿中的角色名匹配；未命中的角色不传，避免 prompt 随全书变长。
-- 章节正文：当前章节完整故事内容。它作为可见细节来源完整提交给同一次章节规划 AI；AI 输出 `chapterDescription` 和 `sceneDescription` 时必须基于原文保留可见动作、物体、地点、姿态、位置关系、场景状态、人物关系和情绪表现，同时移除直接引语、对话内容、歌词/喊话文本、内心独白原句和对话语义摘要。
+- 章节正文：当前章节完整故事内容。它作为可见细节来源完整提交给同一次章节规划 AI；AI 输出 `chapterDescription` 和 `sceneDescription` 时必须基于原文保留可见动作、物体、地点、姿态、位置关系、场景状态、人物关系和情绪表现，并把直接引语、对话内容、歌词/喊话文本、内心独白转成第三人称叙事或可见画面描述；禁止引号台词、气泡文案和对话原文。
 - 规则约束：字段结构、段落切分、角色描述边界、新角色识别和安全表达要求。
 
 生成输出为章节计划 JSON：
 
-- `chapterDescription`：只描述本章整体剧情、地点、氛围和连续动作。它可以使用 `relevantCharacters[]` 里的角色名作为上下文，但不要重复角色外貌、服装、发色等描述，也不要复述或概括对话、歌词、喊话、问答、谜语、争论、评价或内心独白。
-- `scenes[]`：只做分镜场景描述，写场景、动作、物件、位置、构图、情绪和画面变化，并保留该句子范围内的原文可见内容。可以使用角色名，但不要反复写 `Alice (blonde bob, blue pinafore)` 或 `White Rabbit (red waistcoat, pocket watch)` 这类已在 `relevantCharacters[]` 中出现的外貌锚点；不要把对话内容、字幕式文字、内心独白原句或对话语义摘要写进 `sceneDescription`。同一连续故事场景内容归入同一 scene；场景实质变化才开启新 scene。
+- `chapterDescription`：只描述本章整体剧情、地点、氛围和连续动作。它可以使用 `relevantCharacters[]` 里的角色名作为上下文，但不要重复角色外貌、服装、发色等描述；对话/喊话/独白应转成叙事情节，不要写引号台词或空洞 meta。
+- `scenes[]`：只做分镜场景描述，写场景、动作、物件、位置、构图、情绪和画面变化，并保留该句子范围内的原文可见内容与对话转写后的情节。可以使用角色名，但不要反复写 `Alice (blonde bob, blue pinafore)` 或 `White Rabbit (red waistcoat, pocket watch)` 这类已在 `relevantCharacters[]` 中出现的外貌锚点；不要把引号台词、字幕式文字或内心独白原句写进 `sceneDescription`。同一连续故事场景内容归入同一 scene；场景实质变化才开启新 scene。
 - `newCharacters[]`：本章正文中出现、但书籍角色数组没有覆盖的新视觉角色。每项包含 `name` 和 `description`。
 
 角色信息边界：
@@ -485,7 +485,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - 只认 `planKind == picture_book_chapter_scene_plan_v2` 且字段为 `chapterDescription` / `scenes[].sceneDescription` / `newCharacters[]`。
 - `chapterDescription` 描述当前章节作为一组连续图片的整体剧情、地点、氛围和关键可见变化。
 - `scenes[]` 是唯一分镜来源，字段只包含 `pageIndex`、句子范围和 `sceneDescription`。
-- `sceneDescription` 只描述场景、动作、物件、位置、构图、情绪和画面变化；必须基于原文保留句子范围内的可见内容并移除对话/内心独白内容和对话语义摘要；同一连续故事场景内容合入同一 scene，场景实质变化才开启新 scene；可以使用角色名，但不得重复 `relevantCharacters[]` 已有的角色外貌、服装、发色、年龄或括号式角色描述。
+- `sceneDescription` 只描述场景、动作、物件、位置、构图、情绪和画面变化；必须基于原文保留句子范围内的可见内容，并把对话/内心独白转成叙事描述（禁止引号台词与气泡文案）；同一连续故事场景内容合入同一 scene，场景实质变化才开启新 scene；可以使用角色名，但不得重复 `relevantCharacters[]` 已有的角色外貌、服装、发色、年龄或括号式角色描述。
 - `newCharacters[]` 只包含本章新增且会影响画面一致性的角色，不包含临时物品、地点、动作或普通背景元素。
 - 不输出 `title`、`story`、`visual`、`audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
 - 角色数组方案落地后，最终 `groupPrompt` 按审核后的短书籍简介、本章相关角色、章节描述和每张图的分镜描述完整拼装；不按场景数量压缩，也不设置词数或字符数截断。

@@ -1,5 +1,15 @@
 # 修改日志
 
+## 2026-07-12
+
+- 绘本章节规划改为“对话转叙事”：`picture_book_chapter_scene_plan_v2` 的 `chapterDescription` / `sceneDescription` 不再 mentally delete 直接引语、对话、歌词/喊话和内心独白，而是把其中的情节与场景信息转成第三人称叙事/可见画面描述；仍禁止引号台词、气泡文案和对话原文，避免生图画出对话文本。场景切分仍按同一连续故事场景归并，不因对话轮次拆分；禁止只用 `exchange` / `conversation` 等空洞 meta。旧 `story_chapters.summary_json` 不自动迁移，用户刷新章节规划后才使用新规则。
+- 对话转叙事现场探针后继续收紧：优先写可见动作/姿态/物件/空间关系，少用 ask/explain/tell/reply/say 串场；谜语/歌词/喊话只保留事件结果，不复述谜面或歌词原文；同一茶桌/厨房/路边聚会在劝酒、谜语、抬杠和沉默期间保持同一 scene。新增 fixture `dialogue_to_narrative_probe_input.txt` 与 QA 脚本 `tools/qa_chapter_plan_dialogue_narrative.mjs`。
+
+验证：
+
+- `D:\DevTools\flutter\bin\flutter.bat test test\api_cache_service_test.dart --name "picture-book"`
+- `node tools/qa_chapter_plan_dialogue_narrative.mjs --cleanup`
+
 ## 2026-07-11
 
 - **Suno 改为系统浏览器手动流程**：删除 App 内 WebView 自动化（`SunoAutomationController`、填表脚本、Library 扫描、媒体下载器）、创作中心「检测下载」「确认创建歌曲」、Suno 顶栏及相关 bridge 命令（`listening.songDownloadSunoExisting`、`listening.songConfirmSunoCreate`、`suno.debug*` 等）。`listening.songGenerate (suno)` 现仅复制歌词到剪贴板并用系统浏览器打开 Create；用户自行在 Suno 下载 MP3 后通过「导入本地音乐」添加版本。保留 `suno_external_launcher.dart`、`suno_utilities.dart` 与历史 `suno-music/` cache 播放/字幕/导出。Web UI 确认弹框、设置页 Suno 文案同步更新；删除 `sunoAutomationSimulator`、`qa_suno_*` 等自动化测试与工具。踩坑归档见 `docs/suno_lexical_lyrics_editor.md`。
