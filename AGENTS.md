@@ -245,13 +245,14 @@ ExampleService exampleService(ExampleServiceRef ref) {
 - 正常 scene 数最多 12 段，`picture_book_pages` 必须覆盖完整句子范围；超长章节在章节场景规划阶段合并相邻场景，不拆成多组图片请求。
 - 章节组图 prompt 只使用 `bookDescription` / `chapterDescription` / `scenes[].sceneDescription`，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。角色外观锚点优先只放在书籍简介；章节中新出现且书籍简介没有覆盖的视觉角色，可在章节描述里简短补充，不要在每个分镜里重复角色外貌。
 - 章节规划 AI 使用完整原文作为可见细节来源；`chapterDescription` / `scenes[].sceneDescription` 必须把直接引语、对话内容、歌词/喊话文本和内心独白转成第三人称可见画面叙事，保留其中的情节与场景信息，但不得出现引号台词、气泡文案、谜面/歌词原文，或可被生图画进图里的对话文本；优先写动作、姿态、物件与空间关系，少用 ask/explain/tell/reply/say 串场。不要新增本地对话剔除器，也不要为转写对话额外增加一次文本 AI 调用；通过 `picture_book_chapter_scene_plan_v2` 的同一次规划 prompt 约束完成。分镜策略仍按 visual story beat，不因 dialogue turns 拆分；同一茶桌/厨房/路边聚会应合并保留。
-- Web UI 中“书籍”就是 `story_series`；书籍模型只保留 `title` / `description` / `cover_image_path`。新增章节保存后必须打开 `pictureBook.promptReview` 审核弹窗，用户确认 `pictureBook.confirmPromptReview` 后才提交顺序组图；`pictureBook.generate` / `retryPage` 只能作为打开审核流程的兼容入口，不得绕过审核直接消耗图片 API。
+- Web UI 中“书籍”就是 `story_series`；书籍模型只保留 `title` / `description` / `cover_image_path`。新增章节在 `article.create`（绘本开启）时会先生成并写入首次 `picture_book_chapter_scene_plan_v2` 到 `summary_json`，保存返回后必须打开 `pictureBook.promptReview` 审核弹窗；用户确认 `pictureBook.confirmPromptReview` 后才提交顺序组图；`pictureBook.generate` / `retryPage` 只能作为打开审核流程的兼容入口，不得绕过审核直接消耗图片 API。
 - 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
 - 绘本图片 prompt 使用 `picture_book_group_prompt_scene_description_v2` / `picture_book_chapter_scene_plan_v2`：最终提交图片模型的 `groupPrompt` 只拼接书籍描述、章节描述和每张图的分镜描述。不要重新引入 series Bible、角色卡、参考图、`styleGuide`、`audience`、`safety`、`negativePrompt`、字幕留白字段或旧分镜标题/视觉方向字段。
 - `pictureBook.pageImage` 支持 `variant: "full" | "display" | "thumbnail"`；创作中心和书籍封面应优先请求 `thumbnail`（`640x360`，`picture_book_thumbnails`），不要在列表页一次性把整章原图作为 data URI 加载。WebView 内所有大图展示（听力/跟读/对话内嵌场景图、全屏播放、创作中心大图预览）一律请求 `display`（`1280x720`，`picture_book_display`，本地缩放缓存已下载原图，不重新调用生成 API），这也是产品定义的用户侧体验分辨率；`full`（`2560x1440` 远程原图）**永远不要**交给 WebView `<img>` 渲染——WebView2 部分 Windows GPU 驱动在把大纹理降采样进窗口尺寸时会出现彩色小方块花屏（坑位见 `docs/build-and-release-pitfalls.md`），原图只保留在磁盘供视频导出等原生链路使用。图片一律通过 bridge 返回 data URI（不要把缓存目录 `file://` 路径直接交给 WebView `<img>`）。创作中心绘本组图缩略图可点击预览大图：预览层通过 portal 固定在视口中央，遮罩阻挡其它操作，仅点击大图关闭；预览层不要用 `backdrop-filter` 叠在大图上，可先把 data URI 转成 Blob URL 再显示；预览请求 display 时不要覆盖列表中的 thumbnail URI（变体按 `thumbnail < display < full` 分级，低分辨率不覆盖高分辨率）。
 - 创作中心「生成听力」在材料已完整时会弹出覆盖确认框；该对话框与其它阻塞弹窗一样应 `createPortal` 到 `document.body`，避免在长页面滚动后出现在可视区域外。
-- `pictureBook.promptReview` 只生成或读取章节场景规划，不调用图片 API、不删除旧 `picture_book_pages` 或图片缓存；刷新按钮只可重建书籍简介，或同次重建章节描述和 `scenes[]`。`pictureBook.savePromptReview` 只保存审核草稿和书籍简介，仍不调用图片 API、不删除旧图。`pictureBook.confirmPromptReview` 才保存审核后的章节场景计划，确认后删除旧页/旧缓存引用并提交顺序组图。不要恢复 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS`、`TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE` 或 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 旧开关。
-- 绘本章节分镜持久化规则：`story_chapters.summary_json` 是用户审核/保存后的显式产物，不是后台静默 AI 缓存。不要为绘本分镜引入 `contentHash`、正文指纹或“输入变更即自动作废”机制；下列操作不得自动让已保存分镜失效：`article.rename`、绘本审核里改书籍简介/角色、听力页 `listening.updateSentence` 的字幕微调（含**软隐藏**：清空英文字幕存空槽，不重排 index、不 invalidate 分镜）。绘本分镜、prompt 审核、`summary_json.scenes[]` 与 `picture_book_pages` 的 `sentenceStartIndex` / `sentenceEndIndex` 必须始终使用 `articles.sentences` 原始槽位下标；允许拼接 prompt 文本时跳过空字符串，但绝不能过滤空槽后重排编号，否则后续可见句会落到错误图片范围。当前产品没有整篇正文编辑，改变分句边界只能删文重建。需要新分镜时，只能由用户显式点 `pictureBook.refreshPromptReview(target: chapterPlan)`，或删文后重新走审核。打开 `pictureBook.promptReview` 时优先读取 `summary_json` 中非空 `scenes[].sceneDescription`；读不到才回退空占位草稿。不要在计划不可用时只保留 `chapterDescription` 却清空分镜并允许直接确认出图。对话练习提纲（`ChatChapterGuideService`）仍可使用自己的 `contentHash`，不要复用到绘本分镜。
+- `pictureBook.promptReview` 只读取本地已持久化的章节场景规划（含 `article.create` 首次写入的计划），不调用图片 API、不删除旧 `picture_book_pages` 或图片缓存；刷新按钮只可重建书籍简介，或同次重建章节描述和 `scenes[]`。`pictureBook.savePromptReview` 只保存审核草稿和书籍简介，仍不调用图片 API、不删除旧图。`pictureBook.confirmPromptReview` 才保存审核后的章节场景计划，确认后删除旧页/旧缓存引用并提交顺序组图。不要恢复 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS`、`TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE` 或 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 旧开关。
+- 「Relevant characters」匹配只在 Flutter `PictureBookService` 实现：按文章标题/正文/`articles.sentences` 做首字母大写整词人名命中；Web UI 不得本地重算。编辑书籍角色时走 `pictureBook.resolveRelevantCharacters`。小写普通名词（如 `bill`）不得匹配角色名 `Bill`。
+- 绘本章节分镜持久化规则：`story_chapters.summary_json` 在 `article.create`（绘本开启）时写入首次章节规划供审核展示，之后以用户保存/确认的审核内容为准；不要为绘本分镜引入 `contentHash`、正文指纹或“输入变更即自动作废”机制。下列操作不得自动让已保存分镜失效：`article.rename`、绘本审核里改书籍简介/角色、听力页 `listening.updateSentence` 的字幕微调（含**软隐藏**：清空英文字幕存空槽，不重排 index、不 invalidate 分镜）。绘本分镜、prompt 审核、`summary_json.scenes[]` 与 `picture_book_pages` 的 `sentenceStartIndex` / `sentenceEndIndex` 必须始终使用 `articles.sentences` 原始槽位下标；允许拼接 prompt 文本时跳过空字符串，但绝不能过滤空槽后重排编号，否则后续可见句会落到错误图片范围。当前产品没有整篇正文编辑，改变分句边界只能删文重建。首次规划之后需要新分镜时，只能由用户显式点 `pictureBook.refreshPromptReview(target: chapterPlan)`，或删文后重新走审核。打开 `pictureBook.promptReview` 时优先读取 `summary_json` 中非空 `scenes[].sceneDescription`；读不到才回退空占位草稿。不要在计划不可用时只保留 `chapterDescription` 却清空分镜并允许直接确认出图。对话练习提纲（`ChatChapterGuideService`）仍可使用自己的 `contentHash`，不要复用到绘本分镜。
 - 听力字幕软隐藏：`listening.updateSentence` 允许清空英文，DB 保留 `""` 空槽与原始 index；听力/跟读/导出/TTS 跳过隐藏句，歌曲仍用 metadata `submittedLyrics`。规则见 `docs/listening_sentence_hide_rules.md`。
 - 顺序组图是正式绘本链路：`PictureBookService` 通过 `PictureBookImageService.generatePictureBookImageGroup(...)` 按当前 `ai_provider` 分流，阿里云走万相异步连续组图（`enable_sequential: true`，`n` 等于已确认 scene 数），火山走 Seedream `sequential_image_generation`（`max_images` 等于已确认 scene 数）。组图失败不自动回退到另一平台或单图；失败页保存错误原因，重试按钮重新打开审核并在确认后重建整章组图。
 - 单页重生成（`pictureBook.pagePromptReview` / `confirmPagePromptReview`）在审核弹窗中让用户多选已生成页作参考图（含当前重生成页已有图片，默认最近邻 1 张，至少 1 张、最多 14 张）；确认时提交 `referencePageIndexes`，服务端按 `pageIndex` 升序解析本地图片路径并传入 `referenceImagePaths`。整章组图不传参考图。不要恢复 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 或固定全局参考图资产。
@@ -278,7 +279,8 @@ ExampleService exampleService(ExampleServiceRef ref) {
 2. 标准中英对照输入：优先本地解析英文原文和中文对照，不调用 AI 提取英文。典型格式是英文段落/中文翻译交替，前面有 `Chapter ...`、英文标题、中文标题，末尾可能有“注：”。英文原文应保留段落边界；中文对照应保存为可复用的字幕/翻译映射；译注不进入正文。
 3. 中英混杂但不是标准对照：不要把本地启发式结果直接当最终正文；这类输入必须调用当前文本 provider 提取英文故事原文。
 4. 纯中文故事：才调用 AI 转成英文练习文。
-5. 用户未输入标题：优先从导入文本的英文标题行、章节标题或系列信息本地生成；无法确定时再调用 AI 生成短标题。
+5. 标题：用户填写或本地标题候选优先；绘本开启且仍缺标题时，与首次章节规划同一次 AI（`includeTitle`）返回，不要再单独打 `suggest_article_title`；无绘本时才可回退独立标题调用或首句 fallback。
+6. 保存顺序：先写入 `articles` 与分句（可用临时 `Untitled Chapter`），再 upsert 中文对照、关联章节，最后写首次绘本规划；通过 `article.save.progress` 推送进度。译文/规划失败不再删文，错误带回 `resumeArticleId`，前端再次 `article.create` 带该 id 只续传剩余步骤。
 
 英文原文课程稿的特殊要求：
 
@@ -295,7 +297,7 @@ ExampleService exampleService(ExampleServiceRef ref) {
 
 Alice 回归测试用例：
 
-- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；除默认结构化分镜、v4 提示词审核和确认后的一组绘本图外，不应因正文提取/中文对照再产生无谓 AI 调用，`listening.open` 返回 75 项且没有空中文。
+- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；本地标题与导入译文不应再触发正文提取/翻译 AI；绘本开启时允许一次首次章节规划调用并写入 `summary_json`，随后走 v4 提示词审核与确认后的一组绘本图；`listening.open` 返回 75 项且没有空中文。
 - 数据库中旧 Alice 文章要作为回归样本保留：`Alice's Adventures in Wonderland - Episod 56`、`爱丽丝梦游仙境（原著领读版）- E61` 以及新导入的 `The Queen's Croquet-Ground`。这些文章都必须挂到同一本书籍 `Alice's Adventures in Wonderland` 下。
 - 对旧 Alice 混合正文不要重新整篇提交给 `article.create` 做 AI 提取；旧数据中已保存的英文句子/正文可以用于 `article.list`、`follow.open`、`pictureBook.state`、系列归属测试。若需要重新导入旧内容，优先使用已经提取出的纯英文内容，避免触发 mixed -> 方舟提取。
 - 整理已有文章的书籍归属时使用 `series.attachArticle`，不要用 `pictureBook.generate` 代替；`series.attachArticle` 只创建或更新 `story_chapters` 关系，不触发图片生成和其它云 API。
@@ -303,13 +305,15 @@ Alice 回归测试用例：
 
 相关实现入口：
 
-- 文章保存入口：`app/lib/features/web_shell/web_shell_screen.dart` 的 `article.create` / `_englishPracticeContent` / `_resolveArticleTitle`。
+- 文章保存入口：`app/lib/features/web_shell/web_shell_screen.dart` 的 `article.create` / `_resumeArticleCreate` / `_ensurePictureBookChapterPlanForCreate` / `_englishPracticeContent`。
+- 续传协议：`ArticleCreateResumeException`（`web_bridge_protocol.dart`）经 bridge `error.data.resumeArticleId` / `failedPhase` 回传；Web UI 用 `NativeCommandError` 保存后续传 id。
 - 本地输入解析：`app/lib/services/practice_input_parser.dart`，标准中英对照必须从这里本地解析直用。
-- 文本生成处理：`app/lib/services/practice_text_service.dart` / `app/lib/services/text_generation_service.dart`，只用于非标准 mixed、纯中文和必要标题生成。
+- 文本生成处理：`app/lib/services/practice_text_service.dart` / `app/lib/services/text_generation_service.dart`，只用于非标准 mixed、纯中文；缺标题且绘本开启时优先并入章节规划 `includeTitle`，无绘本才单独 `suggest_article_title`。
+- 译文 upsert：`DatabaseService.upsertArticleSentenceTranslations`，续传时合并已有行，不整表清删。
 - 持久缓存：`app/lib/services/api_cache_service.dart`。
 - 内容安全规则：`app/lib/services/content_safety_service.dart`，负责提交前替换、疑似安全失败记录和用户成功修正规则学习。
 - 分句：`app/lib/services/nlp_service.dart` 与 `web_ui/src/sentenceSplitter.ts`。这是 **朗读块（read-aloud chunk）** 生成器，不是语言学“真分句”；目标块长约 10–20 词（硬上限 32），避免过短碎片与悬挂尾句，规则必须通用，不得为单篇文章写死特例。E10/E11/E12 等只作回归样本。保存后 `articles.sentences` 为听力/跟读/歌曲字幕/绘本的持久化边界；改算法后须重建文章才会更新句库。
-- 绘本段落和提示词：`app/lib/services/picture_book_service.dart`。
+- 绘本段落和提示词：`app/lib/services/picture_book_service.dart`（含 `generateChapterPlanForArticle` / `persistChapterPlanForArticle` / `resolveRelevantCharacters`）。
 - Web UI 只能通过 `web_bridge_protocol.dart` / `bridge.ts` 协议提交原始内容，不要绕过 Flutter 直接访问云 API。
 
 ### 云服务端点

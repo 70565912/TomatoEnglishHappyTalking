@@ -284,6 +284,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'pictureBook.pagePromptReview': _handlePictureBookPagePromptReview,
         'pictureBook.refreshPromptReview':
             _handlePictureBookRefreshPromptReview,
+        'pictureBook.resolveRelevantCharacters':
+            _handlePictureBookResolveRelevantCharacters,
         'pictureBook.savePromptReview': _handlePictureBookSavePromptReview,
         'pictureBook.confirmPromptReview':
             _handlePictureBookConfirmPromptReview,
@@ -662,6 +664,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<Map<String, dynamic>> _handleArticleCreate(
     BridgeMessage message,
   ) async {
+    final resumeArticleId =
+        _payloadOptionalInt(message.payload, 'resumeArticleId');
     final requestedTitle = _payloadString(message.payload, 'title').trim();
     final content = _payloadString(message.payload, 'content').trim();
     final pictureBookEnabled = _payloadBool(
@@ -678,49 +682,83 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         message.payload.containsKey('seriesCharacters');
     final requestedSeriesCharacters =
         _payloadBookCharacters(message.payload, 'seriesCharacters');
+
+    Future<void> reportProgress({
+      required String phase,
+      required double progress,
+      required String message,
+    }) async {
+      await _pushEvent('article.save.progress', {
+        'phase': phase,
+        'progress': progress.clamp(0, 1),
+        'message': message,
+      });
+    }
+
+    if (resumeArticleId != null) {
+      return _resumeArticleCreate(
+        resumeArticleId: resumeArticleId,
+        pictureBookEnabled: pictureBookEnabled,
+        requestedSeriesId: requestedSeriesId,
+        requestedSeriesTitle: requestedSeriesTitle,
+        requestedSeriesDescription: requestedSeriesDescription,
+        requestedSeriesCharacters: requestedSeriesCharacters,
+        requestedSeriesCharactersProvided: requestedSeriesCharactersProvided,
+        reportProgress: reportProgress,
+      );
+    }
+
     if (content.isEmpty) {
       throw const FormatException('请填写文章内容');
     }
     _ensureArticleContentWithinLimit(content);
 
+    await reportProgress(
+      phase: 'parsing',
+      progress: 0.04,
+      message: '正在解析正文',
+    );
     final parsedInput = PracticeInputParser.parse(content);
+
+    await reportProgress(
+      phase: 'english',
+      progress: 0.12,
+      message: '正在提取英文练习正文',
+    );
     final englishContent = await _englishPracticeContent(
       content,
       parsedInput: parsedInput,
       strictAi: true,
     );
+
+    await reportProgress(
+      phase: 'sentences',
+      progress: 0.2,
+      message: '正在分句',
+    );
     final sentences = NlpService.splitSentences(englishContent);
     if (sentences.isEmpty) {
       throw const FormatException('文章内容需要能转换为英文练习句子');
     }
-    final title = await _resolveArticleTitle(
+
+    final localTitle = _resolveLocalArticleTitle(
       requestedTitle,
-      englishContent,
       titleCandidate: parsedInput.titleCandidate,
     );
-
-    final article = Article(
-      title: title,
-      content: englishContent,
-      sentences: sentences,
-      createdAt: DateTime.now(),
-    );
-    final id = await DatabaseService.saveArticle(article);
+    final needsAiTitle = localTitle.isEmpty;
+    var title = localTitle.isNotEmpty ? localTitle : 'Untitled Chapter';
     int? seriesIdForRollback;
-    var shouldRollbackArticle = true;
-    try {
-      // Translation stays inside the create path on purpose. If Ark rejects the
-      // text, the user must be able to edit the submitted content before the
-      // article appears as saved.
-      await _saveArticleTranslationsAtCreate(
-        articleId: id,
-        sentences: sentences,
-        parsedInput: parsedInput,
-      );
+    int? savedArticleId;
 
-      final savedArticle = article.copyWith(id: id);
+    try {
+      StorySeries? series;
       if (pictureBookEnabled) {
-        final series = await _resolveStorySeries(
+        await reportProgress(
+          phase: 'book',
+          progress: 0.28,
+          message: '正在准备书籍信息',
+        );
+        series = await _resolveStorySeries(
           requestedSeriesId: requestedSeriesId,
           requestedSeriesTitle: requestedSeriesTitle,
           requestedSeriesDescription: requestedSeriesDescription,
@@ -732,42 +770,374 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         if (seriesId == null) {
           throw const FormatException('书籍创建失败');
         }
-        final chapter = await PictureBookService.ensureChapterForArticle(
-          seriesId: seriesId,
-          article: savedArticle,
+
+        final draftArticle = Article(
+          title: title,
+          content: englishContent,
+          sentences: sentences,
+          createdAt: DateTime.now(),
         );
-        await _ensureStorySeriesDescription(
+        series = await _ensureStorySeriesDescription(
           series: series,
-          article: savedArticle,
+          article: draftArticle,
         );
-        // Saving only persists the chapter relationship. The Web UI must open
-        // pictureBook.promptReview next; image API calls happen only after the
-        // user confirms pictureBook.confirmPromptReview.
-        unawaited(_pushEvent(
-          'pictureBook.state',
-          await PictureBookService.statePayload(chapter.articleId),
-        ));
+      } else if (needsAiTitle) {
+        await reportProgress(
+          phase: 'title',
+          progress: 0.35,
+          message: '正在生成标题',
+        );
+        title = await _resolveArticleTitle(
+          requestedTitle,
+          englishContent,
+          titleCandidate: parsedInput.titleCandidate,
+        );
+      }
+
+      await reportProgress(
+        phase: 'saving',
+        progress: 0.55,
+        message: '正在写入书库',
+      );
+      final article = Article(
+        title: title,
+        content: englishContent,
+        sentences: sentences,
+        createdAt: DateTime.now(),
+      );
+      final id = await DatabaseService.saveArticle(article);
+      savedArticleId = id;
+      final savedArticle = article.copyWith(id: id);
+      final listPayload = await _articleListPayload();
+      unawaited(_pushEvent('article.state', listPayload));
+
+      try {
+        await reportProgress(
+          phase: 'translations',
+          progress: 0.72,
+          message: '正在保存中文对照',
+        );
+        await _saveArticleTranslationsAtCreate(
+          articleId: id,
+          sentences: sentences,
+          parsedInput: parsedInput,
+        );
+      } catch (error) {
+        throw ArticleCreateResumeException(
+          message:
+              '${_articleCreateFailureMessage(error)} 正文已写入书库，再次保存将继续补齐中文对照与后续步骤。',
+          resumeArticleId: id,
+          failedPhase: 'translations',
+          article: await _articleJsonWithStory(savedArticle, averageScore: 0),
+        );
+      }
+
+      var finalArticle = savedArticle;
+      if (pictureBookEnabled) {
+        final currentSeries = series;
+        if (currentSeries == null || currentSeries.id == null) {
+          throw ArticleCreateResumeException(
+            message: '书籍创建失败。正文已写入书库，再次保存将继续补齐章节规划。',
+            resumeArticleId: id,
+            failedPhase: 'linking',
+            article: await _articleJsonWithStory(savedArticle, averageScore: 0),
+          );
+        }
+        try {
+          finalArticle = await _ensurePictureBookChapterPlanForCreate(
+            article: savedArticle,
+            series: currentSeries,
+            needsAiTitle: needsAiTitle,
+            reportProgress: reportProgress,
+          );
+        } catch (error) {
+          if (error is ArticleCreateResumeException) {
+            rethrow;
+          }
+          throw ArticleCreateResumeException(
+            message:
+                '${_articleCreateFailureMessage(error)} 正文与中文对照已保存，再次保存将继续补齐章节规划。',
+            resumeArticleId: id,
+            failedPhase: 'chapterPlan',
+            article: await _articleJsonWithStory(savedArticle, averageScore: 0),
+          );
+        }
       }
 
       final payload = await _articleListPayload();
       unawaited(_pushEvent('article.state', payload));
-      shouldRollbackArticle = false;
+      await reportProgress(
+        phase: 'completed',
+        progress: 1,
+        message: '保存完成',
+      );
       return {
         'article': await _articleJsonWithStory(
-          savedArticle,
+          finalArticle,
           averageScore: 0,
         ),
         'articles': payload['articles'],
         'series': payload['series'],
       };
     } finally {
-      if (shouldRollbackArticle) {
-        await DatabaseService.deleteArticle(id);
-        if (seriesIdForRollback != null && requestedSeriesId == null) {
-          await DatabaseService.deleteStorySeriesIfEmpty(seriesIdForRollback);
-        }
+      // After the article row exists we keep it for resume. Only clean up an
+      // empty series created in this attempt when the article never landed.
+      if (savedArticleId == null &&
+          seriesIdForRollback != null &&
+          requestedSeriesId == null) {
+        await DatabaseService.deleteStorySeriesIfEmpty(seriesIdForRollback);
       }
     }
+  }
+
+  Future<Map<String, dynamic>> _resumeArticleCreate({
+    required int resumeArticleId,
+    required bool pictureBookEnabled,
+    required int? requestedSeriesId,
+    required String requestedSeriesTitle,
+    required String requestedSeriesDescription,
+    required List<BookCharacter> requestedSeriesCharacters,
+    required bool requestedSeriesCharactersProvided,
+    required Future<void> Function({
+      required String phase,
+      required double progress,
+      required String message,
+    }) reportProgress,
+  }) async {
+    final rawArticle = await DatabaseService.getArticleById(resumeArticleId);
+    if (rawArticle == null) {
+      throw const FormatException('续传章节不存在，请重新填写后保存。');
+    }
+    final article = await _articleWithPersistedSentences(rawArticle);
+    if (article.sentences.isEmpty) {
+      throw const FormatException('续传章节缺少分句，请删除后重新保存。');
+    }
+
+    await reportProgress(
+      phase: 'translations',
+      progress: 0.55,
+      message: '正在补齐中文对照',
+    );
+    try {
+      await _saveArticleTranslationsAtCreate(
+        articleId: resumeArticleId,
+        sentences: article.sentences,
+        parsedInput: PracticeInputParser.parse(article.content),
+      );
+    } catch (error) {
+      throw ArticleCreateResumeException(
+        message:
+            '${_articleCreateFailureMessage(error)} 正文已在书库中，再次保存将继续补齐中文对照与后续步骤。',
+        resumeArticleId: resumeArticleId,
+        failedPhase: 'translations',
+        article: await _articleJsonWithStory(article, averageScore: 0),
+      );
+    }
+
+    var finalArticle = article;
+    if (pictureBookEnabled) {
+      StorySeries series;
+      final existingChapter =
+          await DatabaseService.getStoryChapterForArticle(resumeArticleId);
+      if (existingChapter != null) {
+        final linked = await DatabaseService.getStorySeriesById(
+          existingChapter.seriesId,
+        );
+        if (linked == null) {
+          throw ArticleCreateResumeException(
+            message: '书籍信息不存在。正文已在书库中，请检查书籍设置后再次保存。',
+            resumeArticleId: resumeArticleId,
+            failedPhase: 'linking',
+            article: await _articleJsonWithStory(article, averageScore: 0),
+          );
+        }
+        series = linked;
+      } else {
+        series = await _resolveStorySeries(
+          requestedSeriesId: requestedSeriesId,
+          requestedSeriesTitle: requestedSeriesTitle,
+          requestedSeriesDescription: requestedSeriesDescription,
+          requestedSeriesCharacters: requestedSeriesCharacters,
+          requestedSeriesCharactersProvided: requestedSeriesCharactersProvided,
+        );
+        series = await _ensureStorySeriesDescription(
+          series: series,
+          article: article,
+        );
+      }
+      if (series.id == null) {
+        throw ArticleCreateResumeException(
+          message: '书籍创建失败。正文已在书库中，再次保存将继续补齐章节规划。',
+          resumeArticleId: resumeArticleId,
+          failedPhase: 'linking',
+          article: await _articleJsonWithStory(article, averageScore: 0),
+        );
+      }
+
+      final needsAiTitle = article.title.trim().isEmpty ||
+          article.title.trim() == 'Untitled Chapter';
+      try {
+        finalArticle = await _ensurePictureBookChapterPlanForCreate(
+          article: article,
+          series: series,
+          needsAiTitle: needsAiTitle,
+          reportProgress: reportProgress,
+        );
+      } catch (error) {
+        if (error is ArticleCreateResumeException) {
+          rethrow;
+        }
+        throw ArticleCreateResumeException(
+          message:
+              '${_articleCreateFailureMessage(error)} 正文与中文对照已保存，再次保存将继续补齐章节规划。',
+          resumeArticleId: resumeArticleId,
+          failedPhase: 'chapterPlan',
+          article: await _articleJsonWithStory(article, averageScore: 0),
+        );
+      }
+    }
+
+    final payload = await _articleListPayload();
+    unawaited(_pushEvent('article.state', payload));
+    await reportProgress(
+      phase: 'completed',
+      progress: 1,
+      message: '保存完成',
+    );
+    return {
+      'article': await _articleJsonWithStory(
+        finalArticle,
+        averageScore: 0,
+      ),
+      'articles': payload['articles'],
+      'series': payload['series'],
+    };
+  }
+
+  Future<Article> _ensurePictureBookChapterPlanForCreate({
+    required Article article,
+    required StorySeries series,
+    required bool needsAiTitle,
+    required Future<void> Function({
+      required String phase,
+      required double progress,
+      required String message,
+    }) reportProgress,
+  }) async {
+    final seriesId = series.id;
+    if (seriesId == null) {
+      throw const FormatException('书籍创建失败');
+    }
+    final articleId = article.id;
+    if (articleId == null) {
+      throw StateError('Article must be saved before chapter plan');
+    }
+
+    await reportProgress(
+      phase: 'linking',
+      progress: 0.84,
+      message: '正在关联书籍章节',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: seriesId,
+      article: article,
+    );
+
+    final summaryPlan = PictureBookService.readPersistedChapterPlan(
+      summaryJson: chapter.summaryJson,
+      sentenceCount: article.sentences.length,
+    );
+    if (summaryPlan != null) {
+      await reportProgress(
+        phase: 'chapterPlan',
+        progress: 0.95,
+        message: '章节规划已就绪',
+      );
+      unawaited(_pushEvent(
+        'pictureBook.state',
+        await PictureBookService.statePayload(articleId),
+      ));
+      return article;
+    }
+
+    await reportProgress(
+      phase: 'chapterPlan',
+      progress: 0.9,
+      message: needsAiTitle ? '正在生成标题与章节规划' : '正在生成章节规划',
+    );
+    final generated = await PictureBookService.generateChapterPlanForArticle(
+      article: article,
+      bookDescription: series.description,
+      relevantCharacters: PictureBookService.relevantCharactersForArticle(
+        article,
+        series.characters,
+      ),
+      includeTitle: needsAiTitle,
+    );
+    var updatedArticle = article;
+    if (needsAiTitle) {
+      final generatedTitle =
+          _normalizeEnglishWordJoiners(generated.title ?? '').trim();
+      if (generatedTitle.isEmpty) {
+        throw const TextGenerationException(
+          '标题生成失败：AI 未返回有效标题，请重试。',
+        );
+      }
+      final title = generatedTitle.length > 80
+          ? generatedTitle.substring(0, 80)
+          : generatedTitle;
+      await DatabaseService.updateArticleTitle(articleId, title);
+      updatedArticle = article.copyWith(title: title);
+    }
+    await PictureBookService.persistChapterPlanForArticle(
+      article: updatedArticle,
+      chapter: chapter,
+      plan: generated.plan,
+    );
+    unawaited(_pushEvent(
+      'pictureBook.state',
+      await PictureBookService.statePayload(articleId),
+    ));
+    return updatedArticle;
+  }
+
+  String _articleCreateFailureMessage(Object error) {
+    final text = error.toString().trim();
+    if (text.isEmpty) {
+      return '保存未完成。';
+    }
+    if (text.startsWith('Exception: ')) {
+      return text.substring('Exception: '.length);
+    }
+    if (text.startsWith('FormatException: ')) {
+      return text.substring('FormatException: '.length);
+    }
+    if (text.startsWith('TextGenerationException: ')) {
+      return text.substring('TextGenerationException: '.length);
+    }
+    return text;
+  }
+
+  String _resolveLocalArticleTitle(
+    String requestedTitle, {
+    String titleCandidate = '',
+  }) {
+    final normalizedRequested =
+        _normalizeEnglishWordJoiners(requestedTitle).trim();
+    if (normalizedRequested.isNotEmpty) {
+      return normalizedRequested.length > 80
+          ? normalizedRequested.substring(0, 80)
+          : normalizedRequested;
+    }
+
+    final normalizedCandidate =
+        _normalizeEnglishWordJoiners(titleCandidate).trim();
+    if (normalizedCandidate.isNotEmpty) {
+      return normalizedCandidate.length > 80
+          ? normalizedCandidate.substring(0, 80)
+          : normalizedCandidate;
+    }
+    return '';
   }
 
   Future<Map<String, dynamic>> _handleArticleDelete(
@@ -1140,6 +1510,19 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       chapterDescription:
           _payloadString(message.payload, 'chapterDescription').trim(),
       scenes: _payloadMapList(message.payload, 'scenes'),
+    );
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookResolveRelevantCharacters(
+    BridgeMessage message,
+  ) async {
+    final reviewId = _payloadString(message.payload, 'reviewId').trim();
+    if (reviewId.isEmpty) {
+      throw const FormatException('缺少绘本提示词审核 ID');
+    }
+    return PictureBookService.resolveRelevantCharacters(
+      reviewId: reviewId,
+      bookCharacters: _payloadBookCharacters(message.payload, 'bookCharacters'),
     );
   }
 
@@ -5643,44 +6026,77 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     }
 
     final createdAt = DateTime.now();
-    final rowsByIndex = <int, ArticleSentenceTranslation>{};
+    final existing =
+        await DatabaseService.getArticleSentenceTranslationsForSentences(
+      articleId: articleId,
+      sentences: sentences,
+    );
+    final rowsByIndex = <int, ArticleSentenceTranslation>{
+      for (final entry in existing.entries)
+        entry.key: ArticleSentenceTranslation(
+          articleId: articleId,
+          sentenceIndex: entry.key,
+          englishSentence: sentences[entry.key],
+          chineseText: entry.value,
+          source: 'existing',
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ),
+    };
+
     if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
+      final imported = <ArticleSentenceTranslation>[];
       for (final row in parsedInput.buildSentenceTranslations(
         articleId: articleId,
         sentences: sentences,
         now: createdAt,
       )) {
+        if (rowsByIndex.containsKey(row.sentenceIndex)) {
+          continue;
+        }
         rowsByIndex[row.sentenceIndex] = row;
+        imported.add(row);
       }
+      // Persist imported rows before the AI batch so a later failure does not
+      // lose bilingual mappings that were already known locally.
+      await DatabaseService.upsertArticleSentenceTranslations(
+        articleId,
+        imported,
+      );
     }
 
     final missingSentences = <int, String>{
       for (var index = 0; index < sentences.length; index += 1)
-        if (!rowsByIndex.containsKey(index)) index: sentences[index],
+        if (!rowsByIndex.containsKey(index) ||
+            rowsByIndex[index]!.chineseText.trim().isEmpty)
+          index: sentences[index],
     };
-    if (missingSentences.isNotEmpty) {
-      final batch = await PracticeTextService.translateSentencesToChineseStrict(
-        sentencesByIndex: missingSentences,
-        articleId: articleId,
-      );
-      for (final entry in batch.translationsByIndex.entries) {
-        rowsByIndex[entry.key] = ArticleSentenceTranslation(
-          articleId: articleId,
-          sentenceIndex: entry.key,
-          englishSentence: sentences[entry.key],
-          chineseText: entry.value,
-          source: 'generated_batch_at_create',
-          createdAt: createdAt,
-          updatedAt: createdAt,
-        );
-      }
+    if (missingSentences.isEmpty) {
+      return;
     }
 
-    final rows = rowsByIndex.values.toList(growable: false)
-      ..sort((a, b) => a.sentenceIndex.compareTo(b.sentenceIndex));
-    if (rows.isNotEmpty) {
-      await DatabaseService.saveArticleSentenceTranslations(articleId, rows);
+    final batch = await PracticeTextService.translateSentencesToChineseStrict(
+      sentencesByIndex: missingSentences,
+      articleId: articleId,
+    );
+    final generated = <ArticleSentenceTranslation>[];
+    for (final entry in batch.translationsByIndex.entries) {
+      final row = ArticleSentenceTranslation(
+        articleId: articleId,
+        sentenceIndex: entry.key,
+        englishSentence: sentences[entry.key],
+        chineseText: entry.value,
+        source: 'generated_batch_at_create',
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+      rowsByIndex[entry.key] = row;
+      generated.add(row);
     }
+    await DatabaseService.upsertArticleSentenceTranslations(
+      articleId,
+      generated,
+    );
   }
 
   Future<String> _englishPracticeContent(

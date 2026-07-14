@@ -381,6 +381,23 @@ export interface ListeningRecordingProgressPayload {
   message?: string;
 }
 
+export interface ArticleSaveProgressPayload {
+  phase:
+    | 'parsing'
+    | 'english'
+    | 'sentences'
+    | 'book'
+    | 'chapterPlan'
+    | 'title'
+    | 'saving'
+    | 'translations'
+    | 'linking'
+    | 'completed'
+    | string;
+  progress: number;
+  message: string;
+}
+
 export interface ListeningRecordingResultPayload {
   articleId: number;
   videoPath: string;
@@ -609,5 +626,23 @@ export interface BridgeResponse<T = unknown> {
   payload?: T;
   error?: {
     message: string;
+    data?: Record<string, unknown> & {
+      resumeArticleId?: number;
+      failedPhase?: string;
+      article?: Article;
+    };
   };
+}
+
+export class NativeCommandError extends Error {
+  readonly data?: NonNullable<BridgeResponse['error']>['data'];
+
+  constructor(
+    message: string,
+    data?: NonNullable<BridgeResponse['error']>['data'],
+  ) {
+    super(message);
+    this.name = 'NativeCommandError';
+    this.data = data;
+  }
 }

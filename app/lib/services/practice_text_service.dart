@@ -248,11 +248,15 @@ class PracticeTextService {
       skipCacheWrite: true,
     );
     return TextGenerationReply(
-      text: _cleanRequiredArticleTitle(reply.text),
+      text: cleanArticleTitle(reply.text),
       source: reply.source,
       errorMessage: reply.errorMessage,
     );
   }
+
+  /// Normalize a model-returned article title into a short English practice title.
+  static String cleanArticleTitle(String text) =>
+      _cleanRequiredArticleTitle(text);
 
   static List<TextGenerationTurn> _articleTitlePrompt(String text) {
     final excerpt = text.length > _titlePromptInputLimit

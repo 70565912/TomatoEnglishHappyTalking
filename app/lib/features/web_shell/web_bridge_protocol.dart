@@ -132,13 +132,42 @@ class BridgeRouter {
         error: error,
         stackTrace: stackTrace,
       );
+      final resumeData = error is ArticleCreateResumeException
+          ? error.toBridgeData()
+          : null;
       return BridgeResponse.error(
         id: message.id,
         type: '${message.type}.error',
         message: error.toString(),
+        data: resumeData,
       );
     }
   }
+}
+
+/// Raised when article body is already saved but a later create step failed.
+/// Bridge returns [toBridgeData] so the Web UI can resume without full redo.
+class ArticleCreateResumeException implements Exception {
+  const ArticleCreateResumeException({
+    required this.message,
+    required this.resumeArticleId,
+    required this.failedPhase,
+    this.article,
+  });
+
+  final String message;
+  final int resumeArticleId;
+  final String failedPhase;
+  final Map<String, dynamic>? article;
+
+  Map<String, dynamic> toBridgeData() => {
+        'resumeArticleId': resumeArticleId,
+        'failedPhase': failedPhase,
+        if (article != null) 'article': article,
+      };
+
+  @override
+  String toString() => message;
 }
 
 class BridgeResponse {
@@ -158,6 +187,7 @@ class BridgeResponse {
     required String id,
     required String type,
     required String message,
+    Map<String, dynamic>? data,
   }) =>
       {
         'id': id,
@@ -165,6 +195,7 @@ class BridgeResponse {
         'type': type,
         'error': {
           'message': message,
+          if (data != null && data.isNotEmpty) 'data': data,
         },
       };
 }

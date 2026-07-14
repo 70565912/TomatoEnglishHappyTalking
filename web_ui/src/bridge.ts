@@ -17,6 +17,7 @@ import type {
   StorySeries,
   VoiceOption,
 } from './types';
+import { NativeCommandError } from './types';
 import { splitSentences } from './sentenceSplitter';
 
 type NativeListener<T = unknown> = (payload: T) => void;
@@ -91,7 +92,10 @@ export async function sendNative<T>(
 
     const durationMs = Math.round(performanceNow() - startedAt);
     if (!response.ok) {
-      throw new Error(response.error?.message ?? `Native command failed: ${type}`);
+      throw new NativeCommandError(
+        response.error?.message ?? `Native command failed: ${type}`,
+        response.error?.data,
+      );
     }
     reportClientLog({
       level: 'debug',
@@ -452,6 +456,9 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return { articles: mockArticles, series: mockSeries };
   }
   if (type === 'article.create') {
+    const resumeArticleId = payload.resumeArticleId === undefined || payload.resumeArticleId === null
+      ? null
+      : Number(payload.resumeArticleId);
     const content = normalizePracticeContent(String(payload.content ?? ''));
     const sentences = splitSentences(content);
     const pictureBookEnabled = payload.pictureBookEnabled !== false;
@@ -473,7 +480,9 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       : existingSeries?.characters ?? [];
     const seriesId = requestedSeriesId ?? 12;
     const article: Article = {
-      id: 99,
+      id: Number.isFinite(resumeArticleId) && (resumeArticleId as number) > 0
+        ? (resumeArticleId as number)
+        : 99,
       title: resolvedTitle || 'New Chapter',
       content,
       sentences,
@@ -502,6 +511,32 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
           },
           ...mockSeries,
         ];
+    const isResume = Number.isFinite(resumeArticleId) && (resumeArticleId as number) > 0;
+    const progressSteps = isResume
+      ? ([
+          { phase: 'translations', progress: 0.55, message: '正在补齐中文对照' },
+          { phase: 'linking', progress: 0.84, message: '正在关联书籍章节' },
+          { phase: 'chapterPlan', progress: 0.9, message: '正在生成章节规划' },
+          { phase: 'completed', progress: 1, message: '保存完成' },
+        ] as const)
+      : ([
+          { phase: 'parsing', progress: 0.04, message: '正在解析正文' },
+          { phase: 'english', progress: 0.12, message: '正在提取英文练习正文' },
+          { phase: 'sentences', progress: 0.2, message: '正在分句' },
+          { phase: 'book', progress: 0.28, message: '正在准备书籍信息' },
+          { phase: 'saving', progress: 0.55, message: '正在写入书库' },
+          { phase: 'translations', progress: 0.72, message: '正在保存中文对照' },
+          { phase: 'linking', progress: 0.84, message: '正在关联书籍章节' },
+          {
+            phase: 'chapterPlan',
+            progress: 0.9,
+            message: requestedTitle ? '正在生成章节规划' : '正在生成标题与章节规划',
+          },
+          { phase: 'completed', progress: 1, message: '保存完成' },
+        ] as const);
+    for (const step of progressSteps) {
+      emitNativeEvent({ type: 'article.save.progress', payload: { ...step } });
+    }
     return { article, articles: [article, ...mockArticles], series: nextSeries };
   }
   if (type === 'article.rename') {
@@ -712,11 +747,16 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'pictureBook.refreshPromptReview') {
     const review = mockPictureBookPromptReview(1, false);
     const target = String(payload.target ?? '');
+    const bookCharacters = normalizeMockBookCharacters(payload.bookCharacters).length > 0
+      ? normalizeMockBookCharacters(payload.bookCharacters)
+      : review.bookCharacters ?? [];
+    const relevantCharacters = mockRelevantCharactersForArticle(bookCharacters);
     if (target === 'bookDescription') {
       return {
         ...review,
         bookDescription: 'Refreshed short picture-book world with a bright cozy spaceship interior.',
-        bookCharacters: review.bookCharacters,
+        bookCharacters,
+        relevantCharacters,
         groupPrompt:
           'Book name: Space Story Series\nBook description: Refreshed short picture-book world with a bright cozy spaceship interior.',
         refreshedTarget: target,
@@ -727,9 +767,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         ...review,
         chapterDescription:
           'Refreshed chapter description with one coherent visual sequence.',
-        bookCharacters: normalizeMockBookCharacters(payload.bookCharacters).length > 0
-          ? normalizeMockBookCharacters(payload.bookCharacters)
-          : review.bookCharacters,
+        bookCharacters,
+        relevantCharacters,
         newCharacters: normalizeMockBookCharacters(payload.newCharacters),
         scenes: review.scenes.map((scene, index) => ({
           ...scene,
@@ -740,7 +779,18 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         refreshedTarget: target,
       };
     }
-    return review;
+    return {
+      ...review,
+      bookCharacters,
+      relevantCharacters,
+    };
+  }
+  if (type === 'pictureBook.resolveRelevantCharacters') {
+    const bookCharacters = normalizeMockBookCharacters(payload.bookCharacters);
+    return {
+      reviewId: String(payload.reviewId ?? ''),
+      relevantCharacters: mockRelevantCharactersForArticle(bookCharacters),
+    };
   }
   if (type === 'pictureBook.confirmPromptReview') {
     return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
@@ -749,12 +799,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return mockPictureBook(Number(payload.articleId ?? 1), 'generating');
   }
   if (type === 'pictureBook.savePromptReview') {
+    const bookCharacters = normalizeMockBookCharacters(payload.bookCharacters);
     return {
       ...mockPictureBookPromptReview(Number(payload.articleId ?? 1), false),
       reviewId: String(payload.reviewId ?? 'mock-review-1'),
       bookDescription: String(payload.bookDescription ?? ''),
-      bookCharacters: normalizeMockBookCharacters(payload.bookCharacters),
-      relevantCharacters: normalizeMockBookCharacters(payload.bookCharacters),
+      bookCharacters,
+      relevantCharacters: mockRelevantCharactersForArticle(bookCharacters),
       newCharacters: normalizeMockBookCharacters(payload.newCharacters),
       chapterDescription: String(payload.chapterDescription ?? ''),
       groupPrompt: String(payload.groupPrompt ?? ''),
@@ -1784,14 +1835,38 @@ function mockPictureBookPromptReview(
     regenerate,
     bookDescription: mockSeries[0].description ?? '',
     bookCharacters: mockSeries[0].characters ?? [],
-    relevantCharacters: mockSeries[0].characters ?? [],
+    relevantCharacters: mockRelevantCharactersForArticle(mockSeries[0].characters ?? []),
     newCharacters: [],
     chapterDescription:
       'A gentle space-adventure chapter where Tom finds a bright snack box and turns the discovery into a warm sharing moment with his team.',
-    groupPrompt: mockGroupPrompt(scenes, mockSeries[0].characters ?? []),
+    groupPrompt: mockGroupPrompt(
+      scenes,
+      mockRelevantCharactersForArticle(mockSeries[0].characters ?? []),
+    ),
     scenes,
     createdAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Browser-mock mirror of PictureBookService relevant-character matching.
+ * Production App must only use the Dart implementation via bridge.
+ */
+function mockRelevantCharactersForArticle(
+  characters: BookCharacter[],
+): BookCharacter[] {
+  const articleText = [
+    'Tom finds a bright snack box.',
+    'He shares it with his team.',
+  ].join('\n');
+  return normalizeMockBookCharacters(characters).filter((character) => {
+    const name = character.name.trim();
+    if (name.length < 2 || !/^[A-Z]/.test(name)) return false;
+    const pattern = new RegExp(
+      `(?<![A-Za-z0-9])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9])`,
+    );
+    return pattern.test(articleText);
+  });
 }
 
 function mockGroupPrompt(

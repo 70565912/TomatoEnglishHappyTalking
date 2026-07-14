@@ -738,6 +738,37 @@ class DatabaseService {
     });
   }
 
+  /// Merge-insert translations without deleting existing rows for other indexes.
+  static Future<void> upsertArticleSentenceTranslations(
+    int articleId,
+    List<ArticleSentenceTranslation> translations,
+  ) async {
+    if (translations.isEmpty) {
+      return;
+    }
+    final db = await _database;
+    await db.transaction((txn) async {
+      for (final translation in translations) {
+        final row = translation.articleId == articleId
+            ? translation
+            : ArticleSentenceTranslation(
+                articleId: articleId,
+                sentenceIndex: translation.sentenceIndex,
+                englishSentence: translation.englishSentence,
+                chineseText: translation.chineseText,
+                source: translation.source,
+                createdAt: translation.createdAt,
+                updatedAt: translation.updatedAt,
+              );
+        await txn.insert(
+          'article_sentence_translations',
+          row.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    });
+  }
+
   static Future<String?> getArticleSentenceTranslation(
     int articleId,
     int sentenceIndex,

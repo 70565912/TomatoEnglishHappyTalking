@@ -14,12 +14,24 @@ import '../data/models/picture_book_model.dart';
 import 'api_cache_service.dart';
 import 'database_service.dart';
 import 'picture_book_image_service.dart';
+import 'practice_text_service.dart';
 import 'text_generation_service.dart';
 import 'volc_image_service.dart';
 
 typedef PictureBookProgressCallback = FutureOr<void> Function(
   Map<String, dynamic> state,
 );
+
+/// Result of a remote chapter-plan generation call.
+class GeneratedChapterPlanResult {
+  const GeneratedChapterPlanResult({
+    required this.plan,
+    this.title,
+  });
+
+  final ChapterPicturePlan plan;
+  final String? title;
+}
 
 class BookDescriptionSuggestion {
   const BookDescriptionSuggestion({
@@ -44,8 +56,9 @@ class BookDescriptionSuggestion {
 /// - **不要**为绘本分镜引入 `contentHash`、正文指纹或“输入变更即自动作废”机制。历史上因此导致 rename、改书籍简介后旧分镜被静默丢弃（E15）。
 /// - 下列操作**不得**自动让已保存分镜失效：`article.rename`、绘本审核里改书籍简介/角色、听力页 `listening.updateSentence` 微调字幕。
 /// - 当前产品没有整篇正文编辑；要改变文章只能删文重建，此时章节记录一并删除，无需 hash 判断。
-/// - 需要新分镜时，只能由用户显式触发：`pictureBook.refreshPromptReview(target: chapterPlan)`，或删文后重新走审核流程。
+/// - 首次章节规划可在 `article.create` 时生成并写入 `summary_json`；之后需要新分镜时，只能由用户显式触发：`pictureBook.refreshPromptReview(target: chapterPlan)`，或删文后重新走审核流程。
 /// - 打开 `pictureBook.promptReview` 时：优先读取 `summary_json` 中 `planKind=picture_book_chapter_scene_plan_v2` 且 `scenes[].sceneDescription` 非空的计划；读不到时才回退 `_blankPromptReviewSegments` 空占位。
+/// - 「Relevant characters」只由本服务按文章正文 + 书籍角色表匹配（首字母大写整词）；Web UI 不得再本地重算，编辑书籍角色时走 `pictureBook.resolveRelevantCharacters`。
 /// - **不要**在计划失效时只保留 `chapterDescription` 却清空分镜；这会让 UI 看起来像“有章节描述、没分镜”，并误导用户直接确认出图。
 /// - 对话练习提纲（`ChatChapterGuideService`）仍可使用自己的 `contentHash`；那是独立链路，不要复用到绘本分镜。
 class PictureBookService {
@@ -299,14 +312,38 @@ class PictureBookService {
       status: 'remote',
       data: {'summaryMissReason': summaryMissReason},
     );
+    final generated = await generateChapterPlanForArticle(
+      article: article,
+      bookDescription: currentSeries.description,
+      relevantCharacters: relevantCharacters,
+    );
+    await persistChapterPlanForArticle(
+      article: article,
+      chapter: chapter,
+      plan: generated.plan,
+    );
+    return generated.plan;
+  }
+
+  /// Generate a chapter scene plan via text AI.
+  ///
+  /// When [includeTitle] is true, the same JSON response also includes a short
+  /// English `title` so article create can avoid a separate title-only call.
+  static Future<GeneratedChapterPlanResult> generateChapterPlanForArticle({
+    required Article article,
+    required String bookDescription,
+    required List<BookCharacter> relevantCharacters,
+    bool includeTitle = false,
+  }) async {
     final reply = await TextGenerationService.generateStrict(
       turns: _chapterPlanPromptTurns(
         article: article,
-        bookDescription: currentSeries.description,
+        bookDescription: bookDescription,
         relevantCharacters: relevantCharacters,
+        includeTitle: includeTitle,
       ),
       cachePurpose: _chapterPlanCachePurpose,
-      articleId: articleId,
+      articleId: article.id,
       maxTokens: 5200,
       receiveTimeout: _chapterPlanReceiveTimeout(article),
       jsonResponse: true,
@@ -324,19 +361,97 @@ class PictureBookService {
         '文本提交处理失败：AI 未返回有效绘本分镜，请重试。',
       );
     }
-    await DatabaseService.updateStoryChapter(
-      chapter.copyWith(
-        summaryJson: ApiCacheService.canonicalJson(
-          _chapterPlanSummaryJson(
-            article: article,
-            plan: plan,
-          ),
-        ),
-        updatedAt: DateTime.now(),
-      ),
-    );
-    return plan;
+    String? title;
+    if (includeTitle) {
+      final rawTitle = raw['title']?.toString().trim() ?? '';
+      if (rawTitle.isEmpty) {
+        throw const TextGenerationException(
+          '标题生成失败：AI 未返回有效标题，请重试。',
+        );
+      }
+      title = PracticeTextService.cleanArticleTitle(rawTitle);
+    } else {
+      final rawTitle = raw['title']?.toString().trim() ?? '';
+      if (rawTitle.isNotEmpty) {
+        try {
+          title = PracticeTextService.cleanArticleTitle(rawTitle);
+        } catch (_) {
+          title = null;
+        }
+      }
+    }
+    return GeneratedChapterPlanResult(plan: plan, title: title);
   }
+
+  /// Persist a generated chapter plan into `story_chapters.summary_json`.
+  static Future<StoryChapter> persistChapterPlanForArticle({
+    required Article article,
+    required StoryChapter chapter,
+    required ChapterPicturePlan plan,
+  }) async {
+    final updated = chapter.copyWith(
+      summaryJson: ApiCacheService.canonicalJson(
+        _chapterPlanSummaryJson(
+          article: article,
+          plan: plan,
+        ),
+      ),
+      updatedAt: DateTime.now(),
+    );
+    await DatabaseService.updateStoryChapter(updated);
+    return updated;
+  }
+
+  /// Parse a chapter-plan JSON payload, optionally requiring a title field.
+  @visibleForTesting
+  static GeneratedChapterPlanResult? parseGeneratedChapterPlan(
+    Map<String, dynamic> json, {
+    required int sentenceCount,
+    required TextGenerationReplySource source,
+    bool requireTitle = false,
+  }) {
+    final plan = _chapterPlanFromJson(
+      json,
+      sentenceCount: sentenceCount,
+      source: source,
+    );
+    if (plan == null) {
+      return null;
+    }
+    String? title;
+    final rawTitle = json['title']?.toString().trim() ?? '';
+    if (rawTitle.isNotEmpty) {
+      try {
+        title = PracticeTextService.cleanArticleTitle(rawTitle);
+      } catch (_) {
+        if (requireTitle) {
+          return null;
+        }
+      }
+    } else if (requireTitle) {
+      return null;
+    }
+    return GeneratedChapterPlanResult(plan: plan, title: title);
+  }
+
+  /// Exposed for unit tests that assert includeTitle JSON shape wording.
+  @visibleForTesting
+  static String chapterPlanJsonShapeForTest({required bool includeTitle}) =>
+      _chapterPlanJsonShape(includeTitle: includeTitle);
+
+  @visibleForTesting
+  static List<TextGenerationTurn> chapterPlanPromptTurnsForTest({
+    required Article article,
+    required String bookDescription,
+    required List<BookCharacter> relevantCharacters,
+    bool includeTitle = false,
+  }) =>
+      _chapterPlanPromptTurns(
+        article: article,
+        bookDescription: bookDescription,
+        relevantCharacters: relevantCharacters,
+        includeTitle: includeTitle,
+      );
 
   static Future<ChapterPicturePlan?> _cachedChapterPlanForArticle({
     required Article article,
@@ -716,34 +831,17 @@ class PictureBookService {
         }
         break;
       case 'chapterPlan':
-        final reply = await TextGenerationService.generateStrict(
-          turns: _chapterPlanPromptTurns(
-            article: draft.article,
-            bookDescription: currentBookDescription,
-            relevantCharacters: currentRelevantCharacters,
-          ),
-          cachePurpose: _chapterPlanCachePurpose,
-          articleId: articleId,
-          maxTokens: 5200,
-          receiveTimeout: _chapterPlanReceiveTimeout(draft.article),
-          jsonResponse: true,
-          skipCacheRead: true,
-          skipCacheWrite: true,
+        final refreshed = await generateChapterPlanForArticle(
+          article: draft.article,
+          bookDescription: currentBookDescription,
+          relevantCharacters: currentRelevantCharacters,
         );
-        final refreshedPlan = _chapterPlanFromJson(
-          _decodeJson(reply.text, const <String, dynamic>{}),
-          sentenceCount: draft.article.sentences.length,
-          source: reply.source,
-        );
-        if (refreshedPlan == null) {
-          throw const TextGenerationException('AI 未返回有效章节规划，请重试。');
-        }
-        currentChapterDescription = refreshedPlan.chapterDescription;
+        currentChapterDescription = refreshed.plan.chapterDescription;
         currentNewCharacters =
-            _sanitizeBookCharacters(refreshedPlan.newCharacters);
+            _sanitizeBookCharacters(refreshed.plan.newCharacters);
         currentSegments = _segmentArticle(
           draft.article,
-          refreshedPlan,
+          refreshed.plan,
         );
         break;
       default:
@@ -1968,13 +2066,26 @@ class PictureBookService {
     return null;
   }
 
+  static String _chapterPlanJsonShape({required bool includeTitle}) {
+    final titleField = includeTitle ? '"title":"...",' : '';
+    return '{"planKind":"$_chapterPlanCachePurpose",$titleField"chapterDescription":"...","scenes":[{"pageIndex":0,"sentenceStartIndex":0,"sentenceEndIndex":2,"sceneDescription":"..."}],"newCharacters":[{"name":"...","description":"..."}]}';
+  }
+
   static List<TextGenerationTurn> _chapterPlanPromptTurns({
     required Article article,
     required String bookDescription,
     required List<BookCharacter> relevantCharacters,
+    bool includeTitle = false,
   }) {
     final sentenceSlots = _articleSentenceSlots(article);
     final numberedSentences = _numberedChapterSentencesForPrompt(article);
+    final titleRules = includeTitle
+        ? <String>[
+            '- Also include top-level "title": a short English practice title, 2 to 5 words, title case.',
+            '- Keep necessary apostrophes such as Mother\'s. Do not add trailing punctuation to title.',
+            '- title must summarize this chapter for a children English practice list, not the whole book.',
+          ]
+        : const <String>[];
     return [
       const TextGenerationTurn(
         role: 'system',
@@ -1991,10 +2102,11 @@ class PictureBookService {
           _charactersForPrompt(relevantCharacters),
           '',
           'Return JSON with this exact top-level shape:',
-          '{"planKind":"$_chapterPlanCachePurpose","chapterDescription":"...","scenes":[{"pageIndex":0,"sentenceStartIndex":0,"sentenceEndIndex":2,"sceneDescription":"..."}],"newCharacters":[{"name":"...","description":"..."}]}',
+          _chapterPlanJsonShape(includeTitle: includeTitle),
           '',
           'Rules:',
           '- Output valid JSON only.',
+          ...titleRules,
           '- chapterDescription: describe only this chapter arc, settings, atmosphere, key actions, and ending.',
           '- Use bookDescription as context for the visual world, style, color mood, and setting.',
           '- Chapter text is the source prose. Base chapterDescription and sceneDescription on its drawable details, including plot and scene facts carried by dialogue, song lyrics, shouted text, and inner thoughts.',
@@ -2144,6 +2256,15 @@ class PictureBookService {
             : '$i. ${sentenceSlots[i]}',
     ].join('\n');
   }
+
+  /// Public read of a persisted chapter scene plan from `summary_json`.
+  ///
+  /// Returns null when missing or invalid. Does not call remote AI.
+  static ChapterPicturePlan? readPersistedChapterPlan({
+    required String summaryJson,
+    required int sentenceCount,
+  }) =>
+      _chapterPlanFromSummary(summaryJson, sentenceCount: sentenceCount);
 
   /// 从 `story_chapters.summary_json` 读取已保存分镜。
   ///
@@ -3471,21 +3592,69 @@ class PictureBookService {
     return output;
   }
 
+  static List<BookCharacter> relevantCharactersForArticle(
+    Article article,
+    List<BookCharacter> characters,
+  ) =>
+      _relevantBookCharactersForArticle(article, characters);
+
+  /// Sole production matcher for prompt-review "Relevant characters".
+  /// Web UI must call this via bridge instead of re-filtering locally.
+  static Map<String, dynamic> resolveRelevantCharacters({
+    required String reviewId,
+    required List<BookCharacter> bookCharacters,
+  }) {
+    final draft = _promptReviewDrafts[reviewId];
+    if (draft == null) {
+      throw const FormatException('绘本提示词审核已过期，请重新打开审核弹窗。');
+    }
+    final sanitizedBookCharacters = _sanitizeBookCharacters(bookCharacters);
+    final relevantCharacters = _relevantBookCharactersForArticle(
+      draft.article,
+      sanitizedBookCharacters,
+    );
+    return {
+      'reviewId': reviewId,
+      'relevantCharacters': relevantCharacters
+          .map((character) => character.toJson())
+          .toList(growable: false),
+    };
+  }
+
   static List<BookCharacter> _relevantBookCharactersForArticle(
     Article article,
     List<BookCharacter> characters,
   ) {
+    // Keep original casing: person-name hits must appear with an initial
+    // capital (as stored on the roster), so common nouns like "bill" do not
+    // match character "Bill".
     final haystack = [
       article.title,
       article.content,
       ...article.sentences,
-    ].join('\n').toLowerCase();
+    ].join('\n');
     return [
       for (final character in _sanitizeBookCharacters(characters))
-        if (character.name.length >= 2 &&
-            haystack.contains(character.name.toLowerCase()))
+        if (_articleTextMentionsCharacterName(haystack, character.name))
           character,
     ];
+  }
+
+  /// True when [name] appears in [text] as a whole token with the same
+  /// capitalization. Only initial-capital roster names count as person names.
+  static bool _articleTextMentionsCharacterName(String text, String name) {
+    final trimmed = name.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (trimmed.length < 2) {
+      return false;
+    }
+    final first = trimmed[0];
+    if (!RegExp(r'[A-Z]').hasMatch(first)) {
+      return false;
+    }
+    final pattern = RegExp(
+      '(?<![A-Za-z0-9])${RegExp.escape(trimmed)}(?![A-Za-z0-9])',
+    );
+    return pattern.hasMatch(text);
   }
 
   static String _charactersForPrompt(List<BookCharacter> characters) {

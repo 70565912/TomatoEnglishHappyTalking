@@ -1,5 +1,16 @@
 # 修改日志
 
+## 2026-07-14
+
+- **章节保存可续传 + 进度条**：`article.create` 先写入正文/分句再做译文与绘本规划；译文或章节规划失败不再删文，bridge 通过 `error.data.resumeArticleId` / `failedPhase` 回传，Web UI 再次保存带 `resumeArticleId` 只补剩余步骤。保存过程推送 `article.save.progress`，创作页用 `ArticleSaveProgressOverlay` 展示阶段与百分比。译文用 `DatabaseService.upsertArticleSentenceTranslations` 合并已有行。
+- **首次章节规划并入保存**：绘本开启时在保存流程生成 `picture_book_chapter_scene_plan_v2` 并写入 `summary_json`；缺标题时同一次调用 `includeTitle` 返回短标题，避免再打 `suggest_article_title`。打开 `pictureBook.promptReview` 直接读已持久化计划。
+- **Relevant characters 仅由 Flutter 匹配**：按标题/正文/句子做首字母大写整词人名命中（`bill` 不匹配 `Bill`）；新增 bridge `pictureBook.resolveRelevantCharacters`，Web UI 去掉本地过滤。文档同步更新 `AGENTS.md`、`docs/ai-call-flow-and-prompt-logic.md`。
+
+验证：
+
+- `flutter test test/article_create_resume_test.dart test/picture_book_chapter_plan_title_test.dart test/picture_book_relevant_characters_test.dart`
+- `npm test` in `web_ui`
+
 ## 2026-07-12
 
 - 绘本章节规划改为“对话转叙事”：`picture_book_chapter_scene_plan_v2` 的 `chapterDescription` / `sceneDescription` 不再 mentally delete 直接引语、对话、歌词/喊话和内心独白，而是把其中的情节与场景信息转成第三人称叙事/可见画面描述；仍禁止引号台词、气泡文案和对话原文，避免生图画出对话文本。场景切分仍按同一连续故事场景归并，不因对话轮次拆分；禁止只用 `exchange` / `conversation` 等空洞 meta。旧 `story_chapters.summary_json` 不自动迁移，用户刷新章节规划后才使用新规则。

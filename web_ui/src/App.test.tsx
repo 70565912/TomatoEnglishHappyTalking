@@ -54,6 +54,12 @@ function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
       sceneDescription: 'Tom discovers the snack box.',
     },
   ];
+  const bookCharacters = [
+    {
+      name: 'Tom',
+      description: 'A curious child in a red hoodie.',
+    },
+  ];
   return {
     reviewId: `review-${articleId}`,
     articleId,
@@ -62,9 +68,12 @@ function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
     bookTitle: 'Space Story Series',
     regenerate,
     bookDescription: 'A warm space picture book; Tom is a curious child in a red hoodie.',
+    bookCharacters,
+    relevantCharacters: bookCharacters,
+    newCharacters: [],
     chapterDescription:
       'Tom explores small discoveries with a friendly team and finds a bright snack box.',
-    groupPrompt: `Book name: Space Story Series\nBook description: A warm space picture book; Tom is a curious child in a red hoodie.\nChapter description: Tom explores small discoveries with a friendly team and finds a bright snack box.\n\nImage 1:\nScene description: ${scenes[0].sceneDescription}`,
+    groupPrompt: `Book name: Space Story Series\nBook description: A warm space picture book; Tom is a curious child in a red hoodie.\n\nRelevant characters:\n- Tom: A curious child in a red hoodie.\n\nChapter description: Tom explores small discoveries with a friendly team and finds a bright snack box.\n\nImage 1:\nScene description: ${scenes[0].sceneDescription}`,
     scenes,
     createdAt: new Date().toISOString(),
   };
@@ -931,6 +940,178 @@ describe('App', () => {
     expect((await screen.findAllByText('Opens Lunch Shares')).length).toBeGreaterThan(0);
   });
 
+  it('keeps resumeArticleId after create failure and clears it when content changes', async () => {
+    window.location.hash = '/article/new';
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    let createAttempts = 0;
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+          return ok(message.id, type, { articles: [], series: [] });
+        }
+        if (type === 'article.create') {
+          createAttempts += 1;
+          if (!payload.resumeArticleId) {
+            return {
+              id: String(message.id),
+              ok: false,
+              type: 'article.create.error',
+              error: {
+                message: '中文对照失败。正文已写入书库，再次保存将继续补齐中文对照与后续步骤。',
+                data: {
+                  resumeArticleId: 88,
+                  failedPhase: 'translations',
+                },
+              },
+            };
+          }
+          return ok(message.id, type, {
+            article: {
+              id: 88,
+              title: 'Resume Chapter',
+              content: String(payload.content ?? ''),
+              sentences: ['Alice sees a door.'],
+              sentenceCount: 1,
+              createdAt: new Date().toISOString(),
+              averageScore: 0,
+              pictureBookEnabled: true,
+              seriesId: 1,
+              seriesTitle: 'Resume Book',
+            },
+            articles: [],
+            series: [],
+          });
+        }
+        if (type === 'pictureBook.promptReview') {
+          return ok(message.id, type, promptReviewPayloadForTest(88, false));
+        }
+        if (type === 'pictureBook.resolveRelevantCharacters') {
+          return ok(message.id, type, {
+            reviewId: String(payload.reviewId ?? 'review-88'),
+            relevantCharacters: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText('新书籍名称'), {
+      target: { value: 'Resume Book' },
+    });
+    const contentInput = screen.getByLabelText(/文章内容/);
+    fireEvent.change(contentInput, {
+      target: { value: 'Alice sees a door.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /保存章节/ }));
+
+    expect(
+      await screen.findByText(/正文已写入书库，再次保存将继续补齐/),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /保存章节/ }));
+    await waitFor(() => {
+      const resumeCall = calls.filter((call) => call.type === 'article.create').at(-1);
+      expect(resumeCall?.payload.resumeArticleId).toBe(88);
+    });
+    expect(await screen.findByRole('dialog', { name: '绘本提示词审核' })).toBeInTheDocument();
+  });
+
+  it('drops resumeArticleId when the user edits chapter content after a failed create', async () => {
+    window.location.hash = '/article/new';
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+          return ok(message.id, type, { articles: [], series: [] });
+        }
+        if (type === 'article.create') {
+          if (!payload.resumeArticleId) {
+            return {
+              id: String(message.id),
+              ok: false,
+              type: 'article.create.error',
+              error: {
+                message: '章节规划失败。正文与中文对照已保存，再次保存将继续补齐章节规划。',
+                data: {
+                  resumeArticleId: 91,
+                  failedPhase: 'chapterPlan',
+                },
+              },
+            };
+          }
+          return ok(message.id, type, {
+            article: {
+              id: 91,
+              title: 'Edited Resume',
+              content: String(payload.content ?? ''),
+              sentences: ['Alice walks away.'],
+              sentenceCount: 1,
+              createdAt: new Date().toISOString(),
+              averageScore: 0,
+            },
+            articles: [],
+            series: [],
+          });
+        }
+        if (type === 'pictureBook.promptReview') {
+          return ok(message.id, type, promptReviewPayloadForTest(91, false));
+        }
+        if (type === 'pictureBook.resolveRelevantCharacters') {
+          return ok(message.id, type, {
+            reviewId: String(payload.reviewId ?? 'review-91'),
+            relevantCharacters: [],
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText('新书籍名称'), {
+      target: { value: 'Resume Book' },
+    });
+    const contentInput = screen.getByLabelText(/文章内容/);
+    fireEvent.change(contentInput, {
+      target: { value: 'Alice sees a door.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /保存章节/ }));
+    expect(await screen.findByText(/再次保存将继续补齐章节规划/)).toBeInTheDocument();
+
+    fireEvent.change(contentInput, {
+      target: { value: 'Alice walks away.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /保存章节/ }));
+
+    await waitFor(() => {
+      expect(calls.filter((call) => call.type === 'article.create')).toHaveLength(2);
+    });
+    const secondCreate = calls.filter((call) => call.type === 'article.create')[1];
+    expect(secondCreate.payload.resumeArticleId).toBeUndefined();
+  });
+
   it('can save a new book before saving the chapter', async () => {
     window.location.hash = '/article/new';
     const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -990,6 +1171,14 @@ describe('App', () => {
             groupPrompt: '',
             scenes: [],
             createdAt: new Date().toISOString(),
+          });
+        }
+        if (type === 'pictureBook.resolveRelevantCharacters') {
+          return ok(message.id, type, {
+            reviewId: String(payload.reviewId ?? 'review-101'),
+            relevantCharacters: Array.isArray(payload.bookCharacters)
+              ? payload.bookCharacters
+              : savedSeries.characters,
           });
         }
         return ok(message.id, type, {});
@@ -2232,6 +2421,15 @@ describe('App', () => {
             type,
             promptReviewPayloadForTest(Number(payload.articleId ?? 42), false),
           );
+        }
+        if (type === 'pictureBook.resolveRelevantCharacters') {
+          const review = promptReviewPayloadForTest(42, false);
+          return ok(message.id, type, {
+            reviewId: String(payload.reviewId ?? review.reviewId),
+            relevantCharacters: Array.isArray(payload.bookCharacters)
+              ? payload.bookCharacters
+              : review.relevantCharacters,
+          });
         }
         if (type === 'pictureBook.refreshPromptReview') {
           return ok(message.id, type, {

@@ -41,7 +41,7 @@
 | 场景 | 本地优先逻辑 | 远程服务 | cachePurpose / kind | 输出 |
 | --- | --- | --- | --- | --- |
 | 新增文章正文处理 | `PracticeInputParser` 判定纯英文/标准中英对照直接使用 | OpenAI-compatible 文本 | `translate_to_english_practice` / `openai_text` | 英文练习正文 |
-| 自动标题 | 用户标题 > 本地英文标题候选 > 本地 fallback | OpenAI-compatible 文本 | `suggest_article_title` / `openai_text` | 2-5 词英文标题 |
+| 自动标题 | 用户标题 > 本地英文标题候选 > 与首次章节规划同一次 AI（`includeTitle`） | OpenAI-compatible 文本 | `picture_book_chapter_scene_plan_v2`（无绘本时仍可走 `suggest_article_title`） | 2-5 词英文标题 |
 | 中文对照 | 导入时保存的 `article_sentence_translations` > 内存 Future cache | OpenAI-compatible 文本 | `follow_translation` / `listening_translation` / `chat_translation` | 简体中文翻译 |
 | 单词释义 | 规范化单词与句子，缓存命中直接返回 | OpenAI-compatible 文本 | `word_lookup` / `openai_text` | JSON: 拼写、音标、含义、句中义 |
 | 对话提纲 | 同一章节教学提纲缓存命中直接返回 | OpenAI-compatible 文本 | `chapter_dialogue_guide_v2` / `openai_text` | 8 个以内章节覆盖点 |
@@ -49,17 +49,17 @@
 | 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | 当前 TTS provider：阿里云 CosyVoice、火山 Doubao TTS 2.0 或 ElevenLabs TTS | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
 | 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | 当前云平台 ASR：阿里云 Qwen-ASR 或火山 BigASR | `asr_recognize` / `asr` | 识别文本 |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
-| 绘本提示词审核 | 打开时只读取本地持久化章节计划/章节描述；缺失时显示空草稿 | OpenAI-compatible 文本仅在用户点击刷新时调用 | `picture_book_chapter_scene_plan_v2` / `openai_text` | `chapterDescription`、`scenes[].sceneDescription`、group prompt |
+| 绘本提示词审核 | 打开时只读取本地持久化章节计划/章节描述；`article.create` 已写入首次规划时直接展示；缺失时显示空草稿 | OpenAI-compatible 文本在保存时首次生成，之后仅在用户点击刷新时再调用 | `picture_book_chapter_scene_plan_v2` / `openai_text` | `chapterDescription`、`scenes[].sceneDescription`、可选 `title`、group prompt |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 当前云平台图片：阿里云万相异步连续组图或火山 Seedream 顺序组图 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
 | 绘本缩略图 | 原图存在时本地缩放并持久缓存；列表页不拉整章原图 | 无远程调用 | `picture_book_thumbnails` / file | 640x360 内的 PNG 缩略图 data URI |
-| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | Suno 网页自动化、阿里云百聆（Fun-Music）或 ElevenLabs Music | `suno_song` / `bailian_fun_music_song` / `elevenlabs_music_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
+| 歌曲生成 | 本地歌曲版本或 provider 缓存命中直接返回 | Suno 系统浏览器手动流程、阿里云百聆（Fun-Music）或 ElevenLabs Music | `suno_song` / `bailian_fun_music_song` / `elevenlabs_music_song` / file | 本地歌曲音频、`submittedLyrics` 与版本 metadata |
 
 ## 新增文章保存流程
 
 入口：`web_ui/src/App.tsx` 发送 `article.create`，Flutter 由 `WebShellScreen._handleArticleCreate` 处理。
 
-1. 前端提交原始 `title`、`content`、`seriesId` 或 `seriesTitle`，并默认带 `pictureBookEnabled: true`。
-2. Flutter 调用 `PracticeInputParser.parse(content)` 判断输入类型。
+1. 前端提交原始 `title`、`content`、`seriesId` 或 `seriesTitle`，并默认带 `pictureBookEnabled: true`；若上次已写入正文但后续步骤失败，可带 `resumeArticleId` 只补剩余步骤。
+2. Flutter 调用 `PracticeInputParser.parse(content)` 判断输入类型（续传时跳过解析/提取，以库内正文与分句为准）。
 3. `parsed.usesLocalEnglish == true` 时直接使用 `parsed.englishContent`：
    - 纯英文：本地规范化空白、撇号、词内连字符。
    - 标准中英对照：本地提取英文原文，保留英文段落边界；中文译文进入 `article_sentence_translations`。
@@ -68,21 +68,18 @@
    - 纯中文：翻译成适合练习的英文故事。
    - 长文本按约 8000 字符目标分块，全量处理，不截断前 1600/2200 字符。
 5. `NlpService.splitSentences` 生成适合跟读的短语块。
-6. 标题解析顺序：
-   - 用户填写标题：直接规范化后使用。
-   - 标准中英对照/本地解析得到标题候选：直接使用。
-   - 仍为空：调用当前文本 provider 生成短标题。
-   - 文本 provider 失败：用首句前几个英文词本地 fallback。
-7. 保存文章、句子和导入中文对照。
-8. 如果正文处理或标题生成在保存前已经调用过远程，保存后调用 `attachExistingCache` 把全局缓存引用绑定到新文章。
-9. 默认创建/复用“书籍”系列与章节关系；保存返回后 Web UI 调用 `pictureBook.promptReview` 打开提示词审核弹窗，用户确认后才提交顺序组图生成。
+6. 准备书籍信息；**先**把文章与分句写入 `articles`（缺标题时可用临时 `Untitled Chapter`，后续规划同次补标题）。
+7. 中文对照：合并已有行与导入译文并 upsert；仅对仍缺的句子调用一批 `translateSentencesToChineseStrict`。译文或章节规划失败**不再删除文章**，错误带回 `resumeArticleId`，再次保存只续传。
+8. 绘本开启时：若 `summary_json` 已有有效 `picture_book_chapter_scene_plan_v2` 则跳过 AI；否则再请求章节规划并写入 `story_chapters.summary_json`。
+9. 保存过程通过 `article.save.progress` 推送阶段与百分比（解析 → 英文 → 分句 → 书籍 → 写入 → 译文 → 关联 → 章节规划）；续传时从译文/规划开始。
+10. 保存返回后 Web UI 调用 `pictureBook.promptReview` 打开提示词审核弹窗（此时应已能读到保存时写入的规划）；用户确认后才提交顺序组图生成。
 
 ### 绘本提示词审核手动触发规则
 
 - `pictureBook.promptReview` 只读取本地持久化数据：有效 `picture_book_chapter_scene_plan_v2`、已保存的 `chapterDescription`，或带真实 `chapterDescription` 的旧页面 prompt。
-- 新建文章没有章节描述时，审核框的 `chapterDescription` 显示为空；已有文章没有本地持久化描述时同样显示为空。
+- `article.create` 在绘本开启时会完成首次章节规划并写入 `summary_json`；打开审核框时应直接展示，而不是空白草稿。
 - 打开审核框不会调用文本 AI、图片 API，也不会从正文、标题、scene 摘要或旧 `summary` 本地拼接章节描述。
-- 用户可在审核框中手动填写章节描述和分镜描述，或点击“自动生成章节规划”显式调用文本 AI 刷新 `chapterDescription` 与 `scenes[]`。
+- 用户可在审核框中手动修改章节描述和分镜描述，或点击“自动生成章节规划”显式再次调用文本 AI 刷新 `chapterDescription` 与 `scenes[]`。
 - `pictureBook.savePromptReview` 只保存当前可见草稿，不调用图片 API、不删除旧图；`pictureBook.confirmPromptReview` 才提交可见审核内容并触发顺序组图。
 
 ### 英文原文区本地提取规则
@@ -437,7 +434,7 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 `chapterDescription` 和 `scenes[]` 在同一次章节规划调用中生成。当前实现只提供 `bookDescription`、章节正文和规则约束。角色数组方案落地后，章节规划输入改为：
 
 - `bookDescription`：短书籍视觉世界描述，不承担角色外貌列表职责。
-- `relevantCharacters[]`：程序从书籍 `characters[]` 中筛选出本章相关角色后传入。筛选方式先用章节正文、章节描述草稿和分镜描述草稿中的角色名匹配；未命中的角色不传，避免 prompt 随全书变长。
+- `relevantCharacters[]`：程序从书籍 `characters[]` 中筛选出本章相关角色后传入。匹配只基于文章标题 + 正文 + `articles.sentences`：角色名须为首字母大写的人名，且在原文中以相同大小写的整词出现（例如小写 `bill` 不会匹配角色 `Bill`）。不在章节描述或分镜草稿里二次匹配；未命中的角色不传，避免 prompt 随全书变长。
 - 章节正文：当前章节完整故事内容。它作为可见细节来源完整提交给同一次章节规划 AI；AI 输出 `chapterDescription` 和 `sceneDescription` 时必须基于原文保留可见动作、物体、地点、姿态、位置关系、场景状态、人物关系和情绪表现，并把直接引语、对话内容、歌词/喊话文本、内心独白转成第三人称叙事或可见画面描述；禁止引号台词、气泡文案和对话原文。
 - 规则约束：字段结构、段落切分、角色描述边界、新角色识别和安全表达要求。
 
@@ -454,6 +451,8 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 - `sceneDescription` 不承担角色外貌补全职责，避免每张图重复角色描述。
 
 最终 `groupPrompt` 增加本章相关角色区块：短书籍简介、本章相关角色、章节描述和每个 `Image N` 的 `sceneDescription` 完整提交。
+
+`relevantCharacters` 的匹配只在 Flutter `PictureBookService` 中实现（正文里首字母大写的整词人名），Web UI 审核弹窗通过 `pictureBook.promptReview` / `refreshPromptReview` / `resolveRelevantCharacters` 消费结果，不再本地用章节描述或分镜原文二次过滤。
 
 ### 章节计划 JSON
 
@@ -483,11 +482,12 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 规则：
 
 - 只认 `planKind == picture_book_chapter_scene_plan_v2` 且字段为 `chapterDescription` / `scenes[].sceneDescription` / `newCharacters[]`。
+- `article.create` 在缺少标题时会额外要求顶层 `title`（2–5 词英文练习标题）；审核框里手动刷新章节规划时不要求 `title`。
 - `chapterDescription` 描述当前章节作为一组连续图片的整体剧情、地点、氛围和关键可见变化。
 - `scenes[]` 是唯一分镜来源，字段只包含 `pageIndex`、句子范围和 `sceneDescription`。
 - `sceneDescription` 只描述场景、动作、物件、位置、构图、情绪和画面变化；必须基于原文保留句子范围内的可见内容，并把对话/内心独白转成叙事描述（禁止引号台词与气泡文案）；同一连续故事场景内容合入同一 scene，场景实质变化才开启新 scene；可以使用角色名，但不得重复 `relevantCharacters[]` 已有的角色外貌、服装、发色、年龄或括号式角色描述。
 - `newCharacters[]` 只包含本章新增且会影响画面一致性的角色，不包含临时物品、地点、动作或普通背景元素。
-- 不输出 `title`、`story`、`visual`、`audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
+- 除上述可选 `title` 外，不输出 `story`、`visual`、`audience`、`safety`、`negativePrompt`、字幕留白、UI overlay、Bible patch、角色卡或参考图字段。
 - 角色数组方案落地后，最终 `groupPrompt` 按审核后的短书籍简介、本章相关角色、章节描述和每张图的分镜描述完整拼装；不按场景数量压缩，也不设置词数或字符数截断。
 
 ### 审核弹窗

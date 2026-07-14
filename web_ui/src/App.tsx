@@ -38,6 +38,7 @@ import type {
   ListeningRecordingProgressPayload,
   ListeningRecordingReadyPayload,
   ListeningRecordingResultPayload,
+  ArticleSaveProgressPayload,
   ListeningResumePayload,
   ListeningSentenceUpdatePayload,
   ListeningSongAudioExportPayload,
@@ -62,6 +63,7 @@ import type {
   TtsProvider,
   StorySeries,
 } from './types';
+import { NativeCommandError } from './types';
 import './styles.css';
 
 const sampleText = 'Tom is on a space trip. He sees a bright snack box. It looks like a snack box! Tom opens it slowly.';
@@ -2948,9 +2950,8 @@ function PictureBookPromptReviewDialog({
   const [scenes, setScenes] = useState<PictureBookPromptReviewScene[]>(review.scenes ?? []);
   const [bookDescriptionExpanded, setBookDescriptionExpanded] = useState(false);
   const [bookCharactersExpanded, setBookCharactersExpanded] = useState(false);
-  const relevantCharacters = useMemo(
-    () => resolveRelevantCharactersForReview(chapterDescription, scenes, bookCharacters),
-    [bookCharacters, chapterDescription, scenes],
+  const [relevantCharacters, setRelevantCharacters] = useState<BookCharacter[]>(
+    () => normalizeBookCharacters(review.relevantCharacters),
   );
   const initialGroupPrompt = resolvePictureBookGroupPrompt(review, review.scenes ?? []);
   const [groupPrompt, setGroupPrompt] = useState(initialGroupPrompt);
@@ -2986,6 +2987,7 @@ function PictureBookPromptReviewDialog({
     setBookDescription(review.bookDescription ?? '');
     setBookCharacters(editableBookCharacters(review.bookCharacters));
     setNewCharacters(editableBookCharacters(review.newCharacters));
+    setRelevantCharacters(normalizeBookCharacters(review.relevantCharacters));
     setChapterDescription(review.chapterDescription ?? '');
     setScenes(nextScenes);
     setBookDescriptionExpanded(false);
@@ -3000,6 +3002,29 @@ function PictureBookPromptReviewDialog({
     setSelectedReferencePageIndexes(resolveInitialReferencePageIndexes(review, review.referenceOptions ?? []));
     setReferencePictureBookState(null);
   }, [review]);
+
+  useEffect(() => {
+    if (!review.reviewId) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void sendNative<{ relevantCharacters?: BookCharacter[] }>(
+        'pictureBook.resolveRelevantCharacters',
+        {
+          reviewId: review.reviewId,
+          bookCharacters: normalizeBookCharacters(bookCharacters),
+        },
+      )
+        .then((payload) => {
+          if (cancelled || !Array.isArray(payload.relevantCharacters)) return;
+          setRelevantCharacters(normalizeBookCharacters(payload.relevantCharacters));
+        })
+        .catch(() => undefined);
+    }, 200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [bookCharacters, review.reviewId]);
 
   useEffect(() => {
     if (!isSinglePageReview || !review.articleId || referenceOptions.length === 0) {
@@ -3057,6 +3082,7 @@ function PictureBookPromptReviewDialog({
     setBookDescription(nextReview.bookDescription ?? '');
     setBookCharacters(editableBookCharacters(nextReview.bookCharacters));
     setNewCharacters(editableBookCharacters(nextReview.newCharacters));
+    setRelevantCharacters(normalizeBookCharacters(nextReview.relevantCharacters));
     setChapterDescription(nextReview.chapterDescription ?? '');
     setScenes(nextScenes);
     if (!groupPromptTouched && !groupPromptTouchedRef.current) {
@@ -3439,6 +3465,10 @@ function normalizeBookCharacters(characters?: BookCharacter[] | null): BookChara
     .filter((character) => character.name && character.description);
 }
 
+function normalizeInlineText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 function editableBookCharacters(characters?: BookCharacter[] | null): BookCharacter[] {
   return Array.isArray(characters)
     ? characters.map((character) => ({
@@ -3461,25 +3491,6 @@ function mergeBookCharacters(
     merged.push(character);
   });
   return merged;
-}
-
-function resolveRelevantCharactersForReview(
-  chapterDescription: string,
-  scenes: PictureBookPromptReviewScene[],
-  characters: BookCharacter[],
-): BookCharacter[] {
-  const searchText = [
-    chapterDescription,
-    ...scenes.flatMap((scene) => [scene.paragraphText, scene.sceneDescription]),
-  ].join('\n').toLowerCase();
-  return normalizeBookCharacters(characters).filter((character) => {
-    const key = character.name.trim().toLowerCase();
-    return key.length >= 2 && searchText.includes(key);
-  });
-}
-
-function normalizeInlineText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
 }
 
 function resolvePictureBookGroupPrompt(
@@ -4872,6 +4883,8 @@ function ArticlePage({
   const [generatingSeriesDescription, setGeneratingSeriesDescription] = useState(false);
   const [savingSeries, setSavingSeries] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveProgress, setSaveProgress] = useState<ArticleSaveProgressPayload | null>(null);
+  const [resumeArticleId, setResumeArticleId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const sentences = useMemo(() => splitSentences(content), [content]);
@@ -4949,6 +4962,7 @@ function ArticlePage({
       return;
     }
     setContent(cleaned);
+    setResumeArticleId(null);
     setError(null);
   };
 
@@ -5033,7 +5047,15 @@ function ArticlePage({
     }
 
     setSaving(true);
+    setSaveProgress({
+      phase: 'parsing',
+      progress: 0.02,
+      message: '正在准备保存',
+    });
     setError(null);
+    const stopProgress = onNativeEvent<ArticleSaveProgressPayload>('article.save.progress', (payload) => {
+      setSaveProgress(payload);
+    });
     try {
       const resolvedSeriesId =
         selectedSeriesId !== 'new'
@@ -5053,13 +5075,25 @@ function ArticlePage({
           seriesTitle: resolvedSeriesTitle,
           seriesDescription: seriesDescription.trim(),
           seriesCharacters: normalizeBookCharacters(seriesCharacters),
+          ...(resumeArticleId != null ? { resumeArticleId } : {}),
         },
       );
+      setResumeArticleId(null);
       onSaved(payload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      if (err instanceof NativeCommandError) {
+        const nextResumeId = Number(err.data?.resumeArticleId);
+        if (Number.isFinite(nextResumeId) && nextResumeId > 0) {
+          setResumeArticleId(nextResumeId);
+        }
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      stopProgress();
       setSaving(false);
+      setSaveProgress(null);
     }
   };
 
@@ -5092,6 +5126,7 @@ function ArticlePage({
                 onChange={(event) => {
                   const next = event.target.value;
                   setSelectedSeriesId(next);
+                  setResumeArticleId(null);
                   if (next === 'new') {
                     setSeriesDescription('');
                     setSeriesCharacters([]);
@@ -5188,6 +5223,7 @@ function ArticlePage({
               placeholder="不填则自动生成短标题"
               onChange={(event) => {
                 setTitle(event.target.value);
+                setResumeArticleId(null);
                 setError(null);
               }}
             />
@@ -5202,6 +5238,7 @@ function ArticlePage({
               onChange={(event) => {
                 const nextContent = event.target.value;
                 setContent(nextContent);
+                setResumeArticleId(null);
                 setError(
                   nextContent.length > ARTICLE_CONTENT_MAX_CHARS
                     ? `文章内容不能超过 ${ARTICLE_CONTENT_MAX_CHARS} 个字符`
@@ -5257,13 +5294,41 @@ function ArticlePage({
         />
       )}
       {saving && (
-        <AiBlockingOverlay
-          title="正在保存并处理章节"
-          detail="正在解析正文、生成必要的标题或英文内容，并写入书库。"
-          timeoutSeconds={180}
-        />
+        <ArticleSaveProgressOverlay progress={saveProgress} />
       )}
     </section>
+  );
+}
+
+function ArticleSaveProgressOverlay({
+  progress,
+}: {
+  progress: ArticleSaveProgressPayload | null;
+}) {
+  const value = Math.max(0, Math.min(100, Math.round((progress?.progress ?? 0) * 100)));
+  const message = progress?.message?.trim() || '正在保存章节';
+  return createPortal(
+    <div className="audio-material-progress-overlay" role="presentation">
+      <section
+        className="audio-material-progress-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label="正在保存章节"
+      >
+        <div className="audio-material-progress-heading">
+          <b>正在保存章节</b>
+          <small>保存期间已禁止页面操作，请等待完成</small>
+        </div>
+        <div className="recording-progress-card">
+          <div>
+            <b>{message}</b>
+            <small>{value > 0 ? `进度 ${value}%` : '正在准备'}</small>
+          </div>
+          <ProgressLine value={value} label={`保存进度 ${value}%`} compact />
+        </div>
+      </section>
+    </div>,
+    document.body,
   );
 }
 
