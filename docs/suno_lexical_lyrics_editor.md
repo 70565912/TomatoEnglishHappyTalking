@@ -56,6 +56,8 @@ Playwright 人工填入 3829 字时，只读 `.lyrics-editor-content` 内 `[data
 
 实现：`SunoExternalLauncher.launchManualCreate`（`app/lib/features/web_shell/suno/suno_external_launcher.dart`）。
 
+若日后评估「不走 Lexical、直接 HTTP 提交歌词」的非官方自动化，参见开源对照笔记 `docs/suno_cli_http_automation_notes.md`（[paperfoot/suno-cli](https://github.com/paperfoot/suno-cli)：JSON `prompt` + `v2-web` + 本机 Chrome 过 hCaptcha）。**不**应再尝试 App 内 WebView2 填词。
+
 历史环境变量（App 内 WebView 实验，已不作为正式路径）：
 
 | 变量 | 说明 |

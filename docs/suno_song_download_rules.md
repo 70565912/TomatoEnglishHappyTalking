@@ -12,6 +12,8 @@
 
 实现入口：`app/lib/features/web_shell/suno/suno_external_launcher.dart`（`launchManualCreate` / `manualActionMessage`）。
 
+可选技术备忘（非正式路径）：跳过网页填写、HTTP 提交歌词的开源方案调研见 `docs/suno_cli_http_automation_notes.md`。
+
 ## 归属边界
 
 - 一篇文章的歌曲版本归属以 `articleId` 为准；同一文章可有多个本地版本（不同来源、不同导入文件）。
