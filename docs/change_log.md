@@ -10,6 +10,10 @@
 - `flutter test test/api_cache_service_test.dart test/song_subtitle_timeline_service_test.dart test/external_song_import_service_test.dart`
 - `npm test` in `web_ui`
 
+## 2026-07-15
+
+- **Suno HTTP 自动化备忘**：新增 `docs/suno_cli_http_automation_notes.md`，记录 [paperfoot/suno-cli](https://github.com/paperfoot/suno-cli) 如何用 Cookie/JWT、`/api/generate/v2-web/` 的 `prompt` 提交歌词，以及本机 Chrome CDP 过 invisible hCaptcha——与 App 内 WebView2 + Lexical 填词路径对照，供日后评估自动化时参考。正式产品仍为系统浏览器手动 + 导入本地音乐；`suno_lexical_lyrics_editor.md` / `suno_song_download_rules.md` 已加交叉链接。
+
 ## 2026-07-14
 
 - **章节保存可续传 + 进度条**：`article.create` 先写入正文/分句再做译文与绘本规划；译文或章节规划失败不再删文，bridge 通过 `error.data.resumeArticleId` / `failedPhase` 回传，Web UI 再次保存带 `resumeArticleId` 只补剩余步骤。保存过程推送 `article.save.progress`，创作页用 `ArticleSaveProgressOverlay` 展示阶段与百分比。译文用 `DatabaseService.upsertArticleSentenceTranslations` 合并已有行。
