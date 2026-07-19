@@ -1,4 +1,4 @@
-# Tomato English Happy Talking - Android 编译脚本
+﻿# Tomato English Happy Talking - Android 编译脚本
 # 用法:
 #   .\tools\build_android.ps1               -> 构建 Release APK 并复制到 release\android
 #   .\tools\build_android.ps1 -Run          -> 在已连接的 Android 设备/模拟器上运行 Debug

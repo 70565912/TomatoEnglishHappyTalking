@@ -343,11 +343,32 @@ function Assert-TagAndReleaseAvailable {
 }
 
 function Invoke-ReleaseBuilds {
+    $buildWindows = Join-Path $PSScriptRoot "build_windows.ps1"
+    $buildAndroid = Join-Path $PSScriptRoot "build_android.ps1"
+    $pwshExe = Join-Path $env:ProgramFiles "PowerShell\7\pwsh.exe"
+    if (-not (Test-Path $pwshExe)) {
+        $pwshExe = "pwsh"
+    }
+
     Write-Host "=== Build Windows Release ===" -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot "build_windows.ps1") -Release
+    if (Get-Command $pwshExe -ErrorAction SilentlyContinue) {
+        & $pwshExe -NoProfile -ExecutionPolicy Bypass -File $buildWindows -Release
+    } else {
+        & $buildWindows -Release
+    }
+    if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        throw "build_windows.ps1 -Release failed, exit code: $LASTEXITCODE"
+    }
 
     Write-Host "=== Build Android Release APK ===" -ForegroundColor Cyan
-    & (Join-Path $PSScriptRoot "build_android.ps1")
+    if (Get-Command $pwshExe -ErrorAction SilentlyContinue) {
+        & $pwshExe -NoProfile -ExecutionPolicy Bypass -File $buildAndroid
+    } else {
+        & $buildAndroid
+    }
+    if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+        throw "build_android.ps1 failed, exit code: $LASTEXITCODE"
+    }
 }
 
 function New-CleanWindowsDistZip {
