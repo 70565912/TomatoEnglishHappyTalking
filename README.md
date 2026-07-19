@@ -142,6 +142,17 @@ Build the Android release APK:
 .\tools\build_android.ps1
 ```
 
+Publish a GitHub Release from this machine (builds Windows + Android, creates a
+clean Windows zip, tags `vX.Y.Z`, and uploads both assets):
+
+```powershell
+.\tools\publish_github_release.ps1 -Version 1.0.0
+```
+
+Use `-SkipBuild` to reuse existing build outputs, or `-Draft` for a draft
+Release. Do not zip `release/windows/tomato_english_happy_talking/` directly;
+the publish script stages a clean package under `release/dist/`.
+
 Run Web UI tests:
 
 ```powershell
@@ -170,6 +181,15 @@ flutter analyze
 - Copies the APK to `release/android/`.
 - Can run Android Debug/Release on a connected device or emulator when invoked
   with the relevant flags.
+
+### `tools/publish_github_release.ps1`
+
+- Builds Windows Release and Android Release APK (unless `-SkipBuild`).
+- Stages a clean Windows zip from `app/build/windows/x64/runner/Release` plus
+  FFmpeg into `release/dist/`, excluding local runtime data and secrets.
+- Copies a versioned APK into `release/dist/`.
+- Creates annotated tag `vX.Y.Z`, pushes it, and runs `gh release create` with
+  both assets.
 
 Cold Android release builds may take more than 15 minutes while Gradle,
 Flutter plugins, R8, resources, and mapping outputs initialize. Give automated
