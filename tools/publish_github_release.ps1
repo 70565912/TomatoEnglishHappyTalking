@@ -345,14 +345,32 @@ function Assert-TagAndReleaseAvailable {
 function Invoke-ReleaseBuilds {
     $buildWindows = Join-Path $PSScriptRoot "build_windows.ps1"
     $buildAndroid = Join-Path $PSScriptRoot "build_android.ps1"
-    $pwshExe = Join-Path $env:ProgramFiles "PowerShell\7\pwsh.exe"
-    if (-not (Test-Path $pwshExe)) {
-        $pwshExe = "pwsh"
+    $pwshCandidates = @(
+        (Join-Path $env:ProgramFiles "PowerShell\7\pwsh.exe"),
+        "D:\PowerShell\7\pwsh.exe",
+        "pwsh"
+    )
+    $pwshExe = $null
+    foreach ($candidate in $pwshCandidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        if ($candidate -eq "pwsh") {
+            if (Get-Command pwsh -ErrorAction SilentlyContinue) {
+                $pwshExe = "pwsh"
+                break
+            }
+            continue
+        }
+        if (Test-Path $candidate) {
+            $pwshExe = $candidate
+            break
+        }
     }
 
     Write-Host "=== Build Windows Release ===" -ForegroundColor Cyan
-    if (Get-Command $pwshExe -ErrorAction SilentlyContinue) {
-        & $pwshExe -NoProfile -ExecutionPolicy Bypass -File $buildWindows -Release
+    if ($null -ne $pwshExe) {
+        & $pwshExe -NoProfile -File $buildWindows -Release
     } else {
         & $buildWindows -Release
     }
@@ -361,8 +379,8 @@ function Invoke-ReleaseBuilds {
     }
 
     Write-Host "=== Build Android Release APK ===" -ForegroundColor Cyan
-    if (Get-Command $pwshExe -ErrorAction SilentlyContinue) {
-        & $pwshExe -NoProfile -ExecutionPolicy Bypass -File $buildAndroid
+    if ($null -ne $pwshExe) {
+        & $pwshExe -NoProfile -File $buildAndroid
     } else {
         & $buildAndroid
     }
