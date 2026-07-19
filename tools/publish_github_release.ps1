@@ -242,9 +242,36 @@ function Assert-VersionFormat {
     }
 }
 
+function Invoke-ExternalCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+        [Parameter(Mandatory = $false)]
+        [string[]]$ArgumentList = @(),
+        [switch]$IgnoreExitCode
+    )
+
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $FilePath @ArgumentList 1>$null 2>$null
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    if (-not $IgnoreExitCode -and $null -ne $exitCode -and $exitCode -ne 0) {
+        throw "$FilePath $($ArgumentList -join ' ') failed, exit code: $exitCode"
+    }
+
+    return $exitCode
+}
+
 function Assert-GhAuthenticated {
-    $null = & gh auth status 2>&1
-    Assert-LastExitCode -CommandName "gh auth status"
+    $exitCode = Invoke-ExternalCommand -FilePath "gh" -ArgumentList @("auth", "status") -IgnoreExitCode
+    if ($null -eq $exitCode -or $exitCode -ne 0) {
+        throw "gh is not authenticated. Run: gh auth login"
+    }
 }
 
 function Assert-GitWorktreeCleanForRelease {
@@ -273,19 +300,28 @@ function Assert-TagAndReleaseAvailable {
 
     Push-Location $workspaceRoot
     try {
-        $null = & git rev-parse -q --verify "refs/tags/$TagName" 2>$null
-        if ($LASTEXITCODE -eq 0) {
+        $localTagExit = Invoke-ExternalCommand -FilePath "git" -ArgumentList @("rev-parse", "-q", "--verify", "refs/tags/$TagName") -IgnoreExitCode
+        if ($localTagExit -eq 0) {
             throw "Local tag already exists: $TagName"
         }
 
-        $remoteTag = & git ls-remote --tags origin "refs/tags/$TagName" 2>$null
-        Assert-LastExitCode -CommandName "git ls-remote"
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $remoteTag = (& git ls-remote --tags origin "refs/tags/$TagName" 2>$null | Out-String).Trim()
+            $remoteExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
+        if ($null -ne $remoteExit -and $remoteExit -ne 0) {
+            throw "git ls-remote failed, exit code: $remoteExit"
+        }
         if (-not [string]::IsNullOrWhiteSpace($remoteTag)) {
             throw "Remote tag already exists: $TagName"
         }
 
-        & gh release view $TagName 2>$null | Out-Null
-        if ($LASTEXITCODE -eq 0) {
+        $releaseViewExit = Invoke-ExternalCommand -FilePath "gh" -ArgumentList @("release", "view", $TagName) -IgnoreExitCode
+        if ($releaseViewExit -eq 0) {
             throw "GitHub Release already exists: $TagName"
         }
     } finally {
@@ -471,8 +507,17 @@ function Publish-GitTagAndRelease {
         }
 
         Write-Host "=== Create GitHub Release $TagName ===" -ForegroundColor Cyan
-        & gh @ghArgs
-        Assert-LastExitCode -CommandName "gh release create"
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & gh @ghArgs
+            $releaseExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousErrorAction
+        }
+        if ($null -ne $releaseExit -and $releaseExit -ne 0) {
+            throw "gh release create failed, exit code: $releaseExit"
+        }
     } finally {
         Pop-Location
     }
@@ -512,7 +557,13 @@ Publish-GitTagAndRelease -TagName $tagName -VersionValue $Version -ZipPath $zipP
 Write-Host "`nRelease published: $tagName" -ForegroundColor Green
 Write-Host "  Windows: $zipPath"
 Write-Host "  Android: $apkPath"
-$releaseUrl = & gh release view $tagName --json url --jq .url 2>$null
+$previousErrorAction = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $releaseUrl = (& gh release view $tagName --json url --jq .url 2>$null | Out-String).Trim()
+} finally {
+    $ErrorActionPreference = $previousErrorAction
+}
 if (-not [string]::IsNullOrWhiteSpace($releaseUrl)) {
     Write-Host "  URL: $releaseUrl"
 }
