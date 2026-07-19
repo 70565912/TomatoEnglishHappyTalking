@@ -592,7 +592,13 @@ function App() {
         throw new Error('绘本提示词准备失败');
       }
       setPicturePromptReview(review);
-      setNotice(null);
+      setNotice(
+        review.mode === 'singlePageEdit'
+          ? '请填写修改说明并选择参考图后确认'
+          : review.mode === 'singlePage'
+            ? '请审核这一页提示词后确认重新生成'
+            : null,
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '绘本提示词准备失败');
     } finally {
@@ -827,10 +833,6 @@ function App() {
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={applyRecordingSettings}
             onNotice={setNotice}
-            onArticlesUpdated={(payload) => {
-              if (payload.articles) setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
-            }}
           />
         )}
 
@@ -847,10 +849,6 @@ function App() {
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={applyRecordingSettings}
             onNotice={setNotice}
-            onArticlesUpdated={(payload) => {
-              if (payload.articles) setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
-            }}
           />
         )}
 
@@ -970,9 +968,11 @@ function App() {
             setPictureBookState(payload);
             setPicturePromptReview(null);
             setNotice(
-              picturePromptReview.mode === 'singlePage'
-                ? '已提交单张绘本图生成'
-                : '已提交绘本组图生成',
+              picturePromptReview.mode === 'singlePageEdit'
+                ? '已提交单页局部修改'
+                : picturePromptReview.mode === 'singlePage'
+                  ? '已提交单张绘本图生成'
+                  : '已提交绘本组图生成',
             );
           }}
           onNotice={setNotice}
@@ -1418,7 +1418,6 @@ function BookPlayerPage({
   recordingSettings,
   onRecordingSettingsLoaded,
   onNotice,
-  onArticlesUpdated,
 }: {
   seriesId: number;
   startArticleId: number;
@@ -1435,7 +1434,6 @@ function BookPlayerPage({
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   onNotice: (message: string) => void;
-  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
   const book = useMemo(
     () => bookGroupsForArticles(articles, series).find((item) => item.seriesId === seriesId) ?? null,
@@ -1502,7 +1500,6 @@ function BookPlayerPage({
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={onRecordingSettingsLoaded}
             onNotice={onNotice}
-            onArticlesUpdated={onArticlesUpdated}
           />
         </div>
       </div>
@@ -2281,6 +2278,7 @@ function CreationCenterPage({
             pictureBookRetryGate={pictureBookRetryGate}
             promptReviewLoading={picturePromptReviewLoadingArticleId === selectedArticle.id}
             onNotice={onNotice}
+            onArticlesUpdated={onArticlesUpdated}
             onOpenPromptReview={onOpenPicturePromptReview}
             onOpenPagePromptReview={onOpenPicturePagePromptReview}
           />
@@ -2632,6 +2630,7 @@ function PictureBookCreationPanel({
   pictureBookRetryGate,
   promptReviewLoading,
   onNotice,
+  onArticlesUpdated,
   onOpenPromptReview,
   onOpenPagePromptReview,
 }: {
@@ -2639,12 +2638,19 @@ function PictureBookCreationPanel({
   pictureBookRetryGate: PictureBookRetryGate;
   promptReviewLoading: boolean;
   onNotice: (message: string) => void;
+  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onOpenPromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
   const [picturePreview, setPicturePreview] = useState<PictureBookPagePreviewState | null>(null);
+  const [sentenceItems, setSentenceItems] = useState<ListeningItem[]>(() => listeningItemsFromArticle(article));
+  const [sentenceItemsLoading, setSentenceItemsLoading] = useState(true);
+  const [sentenceItemsError, setSentenceItemsError] = useState<string | null>(null);
+  const [sentenceEdit, setSentenceEdit] = useState<SentenceEditState | null>(null);
+  const [sentenceSynthesisErrors, setSentenceSynthesisErrors] = useState<Record<number, string>>({});
+  const [retryingSynthesisIndex, setRetryingSynthesisIndex] = useState<number | null>(null);
   const {
     audioStatus,
     audioStatusLoading,
@@ -2666,6 +2672,35 @@ function PictureBookCreationPanel({
 
   useEffect(loadState, [article.id]);
   useEffect(() => {
+    let cancelled = false;
+    setSentenceItems(listeningItemsFromArticle(article));
+    setSentenceItemsLoading(true);
+    setSentenceItemsError(null);
+    setSentenceEdit(null);
+    setSentenceSynthesisErrors({});
+    setRetryingSynthesisIndex(null);
+    sendNative<ArticleFullTextPayload>('article.fullText', { articleId: article.id })
+      .then((payload) => {
+        if (cancelled) return;
+        if (Array.isArray(payload.items) && payload.items.length > 0) {
+          setSentenceItems(payload.items);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSentenceItemsError(error instanceof Error ? error.message : '章节分句加载失败');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setSentenceItemsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [article.id]);
+  useEffect(() => {
     setPicturePreview(null);
   }, [article.id]);
   useEffect(() => {
@@ -2681,16 +2716,103 @@ function PictureBookCreationPanel({
     articleId: article.id,
     state,
     enabled: Boolean(state),
-    imageVariant: 'thumbnail',
+    imageVariant: 'display',
     onPictureBookLoaded: setState,
   });
 
   const retryPage = (page: PictureBookPage) => {
     if (!pictureBookRetryGate.begin(article.id, page.pageIndex)) return;
     Promise.resolve(onOpenPagePromptReview(article.id, page.pageIndex))
-      .then(() => onNotice('请审核这一页提示词后确认重新生成'))
       .catch((error) => onNotice(error instanceof Error ? error.message : '绘本重试失败'))
       .finally(() => pictureBookRetryGate.finish(article.id, page.pageIndex));
+  };
+
+  const openSentenceEdit = (item: ListeningItem) => {
+    setSentenceEdit({
+      item,
+      english: item.english,
+      chinese: item.chinese,
+      saving: false,
+      error: null,
+    });
+  };
+
+  const applySentenceUpdatePayload = (payload: ListeningSentenceUpdatePayload) => {
+    setSentenceItems((current) =>
+      payload.items ?? current.map((item) => (item.index === payload.item.index ? payload.item : item)),
+    );
+    if (payload.articles || payload.series) {
+      onArticlesUpdated(payload);
+    }
+    if (payload.synthesis.status === 'error') {
+      setSentenceSynthesisErrors((current) => ({
+        ...current,
+        [payload.item.index]: payload.synthesis.error?.trim() || '语音材料刷新失败，请重试',
+      }));
+    } else {
+      setSentenceSynthesisErrors((current) => {
+        const next = { ...current };
+        delete next[payload.item.index];
+        return next;
+      });
+    }
+  };
+
+  const saveSentenceEdit = async (skipHideConfirm = false) => {
+    if (!sentenceEdit) return;
+    const english = sentenceEdit.english.trim();
+    const chinese = sentenceEdit.chinese.trim();
+    const isHiding = !english;
+    if (isHiding && !skipHideConfirm) {
+      setSentenceEdit((current) => (current ? { ...current, confirmingHide: true, error: null } : current));
+      return;
+    }
+
+    setSentenceEdit((current) => (current ? { ...current, saving: true, error: null, confirmingHide: false } : current));
+    try {
+      const payload = await sendNative<ListeningSentenceUpdatePayload>('listening.updateSentence', {
+        articleId: article.id,
+        index: sentenceEdit.item.index,
+        english,
+        chinese: isHiding ? '' : chinese,
+        previousEnglish: sentenceEdit.item.english,
+        previousChinese: sentenceEdit.item.chinese,
+      });
+      applySentenceUpdatePayload(payload);
+      setSentenceEdit(null);
+      onNotice(isHiding ? `第 ${sentenceEdit.item.index + 1} 句已隐藏` : `第 ${sentenceEdit.item.index + 1} 句已更新`);
+    } catch (updateError) {
+      setSentenceEdit((current) =>
+        current
+          ? {
+              ...current,
+              saving: false,
+              error: updateError instanceof Error ? updateError.message : '分句保存失败，请重试',
+            }
+          : current,
+      );
+    }
+  };
+
+  const retrySentenceSynthesis = async (item: ListeningItem) => {
+    if (retryingSynthesisIndex !== null) return;
+    setRetryingSynthesisIndex(item.index);
+    try {
+      const payload = await sendNative<ListeningSentenceUpdatePayload>('listening.resynthesizeSentence', {
+        articleId: article.id,
+        index: item.index,
+        part: 'both',
+        chinese: item.chinese,
+      });
+      applySentenceUpdatePayload(payload);
+    } catch (retryError) {
+      setSentenceSynthesisErrors((current) => ({
+        ...current,
+        [item.index]: retryError instanceof Error ? retryError.message : '语音重新合成失败，请重试',
+      }));
+    } finally {
+      setRetryingSynthesisIndex(null);
+    }
   };
 
   const copyFullText = async () => {
@@ -2804,7 +2926,7 @@ function PictureBookCreationPanel({
             state.pages.map((page, index) => {
               const safePageIndex = Number.isFinite(page.pageIndex) ? page.pageIndex : index;
               const imageSource = directImageSource(page.imageUri);
-              const scenePreview = pictureBookPageScenePreview(page);
+              const pageSentenceItems = sentenceItemsForPictureBookPage(sentenceItems, page);
               const retrying = pictureBookRetryGate.isRetrying(article.id, safePageIndex);
               return (
                 <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
@@ -2822,11 +2944,7 @@ function PictureBookCreationPanel({
                       <span>{page.status === 'error' ? '生成失败' : pictureBookStatusLabel(page.status)}</span>
                     </div>
                   )}
-                  <div className="picture-creation-copy">
-                    <b>第 {safePageIndex + 1} 页</b>
-                    <small>句子 {page.sentenceStartIndex + 1} - {page.sentenceEndIndex + 1}</small>
-                    {scenePreview.sceneDescription && <p className="picture-scene-description">{scenePreview.sceneDescription}</p>}
-                    <p>{page.paragraphText}</p>
+                  <div className="picture-creation-image-tools">
                     {page.errorMessage && <em>{page.errorMessage}</em>}
                     <button
                       className="ghost-action small"
@@ -2836,6 +2954,50 @@ function PictureBookCreationPanel({
                     >
                       <Icon name="refresh" /> {retrying ? '准备中' : '重新生成'}
                     </button>
+                  </div>
+                  <div className="picture-creation-copy">
+                    <b>第 {safePageIndex + 1} 页</b>
+                    <small>句子 {page.sentenceStartIndex + 1} - {page.sentenceEndIndex + 1}</small>
+                    <div className="creation-sentence-list" aria-label={`第 ${safePageIndex + 1} 页故事分句`}>
+                      {pageSentenceItems.length === 0 ? (
+                        <p className="creation-sentence-empty">
+                          {sentenceItemsLoading ? '正在读取故事分句' : '这一页没有可显示的故事分句'}
+                        </p>
+                      ) : (
+                        pageSentenceItems.map((item) => {
+                          const hidden = isHiddenListeningItem(item);
+                          return (
+                            <div className={`creation-sentence-row ${hidden ? 'hidden' : ''}`} key={item.index}>
+                              <b>{item.index + 1}</b>
+                              <span className="creation-sentence-copy">
+                                <strong>{hidden ? '（已隐藏）' : item.english}</strong>
+                                <small>{hidden ? '重新填入英文即可恢复' : item.chinese}</small>
+                                {!hidden && sentenceSynthesisErrors[item.index] && (
+                                  <em className="sentence-synthesis-error">
+                                    {sentenceSynthesisErrors[item.index]}
+                                    <button
+                                      type="button"
+                                      onClick={() => void retrySentenceSynthesis(item)}
+                                      disabled={retryingSynthesisIndex === item.index}
+                                    >
+                                      {retryingSynthesisIndex === item.index ? '重新合成中' : '重新合成语音'}
+                                    </button>
+                                  </em>
+                                )}
+                              </span>
+                              <button
+                                className="icon-button tiny sentence-row-edit"
+                                type="button"
+                                onClick={() => openSentenceEdit(item)}
+                                aria-label={`修改第 ${item.index + 1} 句分句`}
+                              >
+                                <Icon name="edit" />
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 </article>
               );
@@ -2859,6 +3021,29 @@ function PictureBookCreationPanel({
             onNotice('绘本原图显示失败');
             setPicturePreview(null);
           }}
+        />
+      )}
+      {sentenceItemsError && <p className="playback-cue error">{sentenceItemsError}</p>}
+      {sentenceEdit && (
+        <SentenceEditDialog
+          state={sentenceEdit}
+          onEnglishChange={(english) => setSentenceEdit((current) => (current ? { ...current, english, error: null } : current))}
+          onChineseChange={(chinese) => setSentenceEdit((current) => (current ? { ...current, chinese, error: null } : current))}
+          onCancel={() => setSentenceEdit(null)}
+          onSave={() => void saveSentenceEdit()}
+        />
+      )}
+      {sentenceEdit?.confirmingHide && (
+        <ConfirmDialog
+          ariaLabel="隐藏分句确认"
+          title={`隐藏第 ${sentenceEdit.item.index + 1} 句分句`}
+          message="槽位编号不变，歌曲字幕不变。稍后重新填入英文即可恢复。"
+          confirmLabel="确定隐藏"
+          busy={sentenceEdit.saving}
+          onCancel={() =>
+            setSentenceEdit((current) => (current ? { ...current, confirmingHide: false } : current))
+          }
+          onConfirm={() => void saveSentenceEdit(true)}
         />
       )}
     </section>
@@ -2967,7 +3152,9 @@ function PictureBookPromptReviewDialog({
   const [refreshingPrompt, setRefreshingPrompt] = useState<PictureBookPromptRefreshTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = savingPrompt || submitting || refreshingPrompt !== null;
-  const isSinglePageReview = review.mode === 'singlePage';
+  const isSinglePageEditReview = review.mode === 'singlePageEdit';
+  const isSinglePageComposeReview = review.mode === 'singlePage';
+  const isSinglePageReview = isSinglePageEditReview || isSinglePageComposeReview;
   const referenceOptions = isSinglePageReview ? (review.referenceOptions ?? []) : [];
   const maxReferenceSelections = Math.min(referenceOptions.length, 14);
   const [selectedReferencePageIndexes, setSelectedReferencePageIndexes] = useState<number[]>(
@@ -2993,8 +3180,12 @@ function PictureBookPromptReviewDialog({
     setBookDescriptionExpanded(false);
     setBookCharactersExpanded(false);
     groupPromptTouchedRef.current = false;
-    setGroupPromptValue(resolvePictureBookGroupPrompt(review, nextScenes));
-    setGroupPromptTouched(false);
+    setGroupPromptValue(
+      isSinglePageEditReview
+        ? (review.groupPrompt ?? '')
+        : resolvePictureBookGroupPrompt(review, nextScenes),
+    );
+    setGroupPromptTouched(isSinglePageEditReview);
     setError(null);
     setSavingPrompt(false);
     setSubmitting(false);
@@ -3004,7 +3195,7 @@ function PictureBookPromptReviewDialog({
   }, [review]);
 
   useEffect(() => {
-    if (!review.reviewId) return;
+    if (!review.reviewId || isSinglePageEditReview) return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void sendNative<{ relevantCharacters?: BookCharacter[] }>(
@@ -3024,7 +3215,7 @@ function PictureBookPromptReviewDialog({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [bookCharacters, review.reviewId]);
+  }, [bookCharacters, isSinglePageEditReview, review.reviewId]);
 
   useEffect(() => {
     if (!isSinglePageReview || !review.articleId || referenceOptions.length === 0) {
@@ -3055,7 +3246,7 @@ function PictureBookPromptReviewDialog({
   });
 
   useEffect(() => {
-    if (groupPromptTouched || groupPromptTouchedRef.current) return;
+    if (isSinglePageEditReview || groupPromptTouched || groupPromptTouchedRef.current) return;
     setGroupPromptValue(composePictureBookPromptForReview({
       ...review,
       bookDescription,
@@ -3063,7 +3254,16 @@ function PictureBookPromptReviewDialog({
       newCharacters,
       chapterDescription,
     }, scenes));
-  }, [bookDescription, chapterDescription, groupPromptTouched, newCharacters, relevantCharacters, review, scenes]);
+  }, [
+    bookDescription,
+    chapterDescription,
+    groupPromptTouched,
+    isSinglePageEditReview,
+    newCharacters,
+    relevantCharacters,
+    review,
+    scenes,
+  ]);
 
   const updateScene = (
     pageIndex: number,
@@ -3180,7 +3380,13 @@ function PictureBookPromptReviewDialog({
   const confirm = async () => {
     const currentGroupPrompt = groupPromptRef.current;
     if (!currentGroupPrompt.trim()) {
-      setError(isSinglePageReview ? '单张生成提示词不能为空' : '组图总提示词不能为空');
+      setError(
+        isSinglePageEditReview
+          ? '请填写需要修改的内容说明'
+          : isSinglePageReview
+            ? '单张生成提示词不能为空'
+            : '组图总提示词不能为空',
+      );
       return;
     }
     if (isSinglePageReview && referenceOptions.length > 0 && selectedReferencePageIndexes.length === 0) {
@@ -3213,7 +3419,25 @@ function PictureBookPromptReviewDialog({
   };
 
   const savePromptLabel = savingPrompt ? '保存中' : '保存提示词';
-  const confirmLabel = submitting ? '生成中' : isSinglePageReview ? '生成这一张' : '生成组图';
+  const confirmLabel = submitting
+    ? '生成中'
+    : isSinglePageEditReview
+      ? '修改这一张'
+      : isSinglePageReview
+        ? '生成这一张'
+        : '生成组图';
+  const dialogTitle = isSinglePageEditReview
+    ? '绘本局部修改'
+    : isSinglePageReview
+      ? '绘本单页提示词审核'
+      : '绘本提示词审核';
+  const dialogHint = isSinglePageEditReview
+    ? `只修改第 ${targetPageNumber} 页；其它页面与分镜规划不变`
+    : isSinglePageReview
+      ? `确认后只替换第 ${targetPageNumber} 页`
+      : review.regenerate
+        ? '确认后会删除旧组图并重新生成'
+        : '确认后才会提交图片生成';
   const renderRefreshButton = (
     target: PictureBookPromptRefreshTarget,
     label: string,
@@ -3238,18 +3462,12 @@ function PictureBookPromptReviewDialog({
         className="edit-dialog picture-prompt-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label={isSinglePageReview ? '绘本单页提示词审核' : '绘本提示词审核'}
+        aria-label={dialogTitle}
       >
         <div className="edit-dialog-heading">
           <div>
-            <b>{isSinglePageReview ? '绘本单页提示词审核' : '绘本提示词审核'}</b>
-            <small>
-              {isSinglePageReview
-                ? `确认后只替换第 ${targetPageNumber} 页`
-                : review.regenerate
-                  ? '确认后会删除旧组图并重新生成'
-                  : '确认后才会提交图片生成'}
-            </small>
+            <b>{dialogTitle}</b>
+            <small>{dialogHint}</small>
           </div>
           <button className="icon-button small" type="button" aria-label="关闭绘本提示词审核" onClick={onClose} disabled={busy}>
             <Icon name="close" />
@@ -3257,6 +3475,30 @@ function PictureBookPromptReviewDialog({
         </div>
 
         <div className="picture-prompt-layout">
+          {isSinglePageEditReview ? (
+            <>
+              <section className="picture-prompt-section full">
+                <div className="picture-prompt-section-heading">
+                  <h3>修改说明</h3>
+                </div>
+                <textarea
+                  aria-label="局部修改说明"
+                  value={groupPrompt}
+                  rows={6}
+                  placeholder='例如：将骑士的头盔变为金色，其余保持不变'
+                  onChange={(event) => {
+                    groupPromptTouchedRef.current = true;
+                    setGroupPromptValue(event.target.value);
+                    setGroupPromptTouched(true);
+                  }}
+                />
+                <p className="picture-prompt-note">
+                  用自然语言描述要改的内容即可，不会拼接书籍简介、角色或分镜描述。
+                </p>
+              </section>
+            </>
+          ) : (
+            <>
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading collapsible">
               <button
@@ -3327,7 +3569,7 @@ function PictureBookPromptReviewDialog({
 
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
-              <h3>{isSinglePageReview ? '当前分镜描述' : '章节分镜描述'}</h3>
+              <h3>{isSinglePageComposeReview ? '当前分镜描述' : '章节分镜描述'}</h3>
             </div>
             <div className="picture-page-prompt-list">
               {scenes.map((scene) => (
@@ -3348,11 +3590,11 @@ function PictureBookPromptReviewDialog({
 
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
-              <h3>{isSinglePageReview ? '单张生成 Prompt' : '组图总 Prompt'}</h3>
+              <h3>{isSinglePageComposeReview ? '单张生成 Prompt' : '组图总 Prompt'}</h3>
               {groupPromptTouched && <span>已手动锁定</span>}
             </div>
             <textarea
-              aria-label={isSinglePageReview ? '单张生成提示词' : '组图总提示词'}
+              aria-label={isSinglePageComposeReview ? '单张生成提示词' : '组图总提示词'}
               value={groupPrompt}
               rows={10}
               onChange={(event) => {
@@ -3365,13 +3607,19 @@ function PictureBookPromptReviewDialog({
               <p className="picture-prompt-note">后续每页 prompt 修改不会自动覆盖组图总 prompt，最终以当前组图总 prompt 为准。</p>
             )}
           </section>
+            </>
+          )}
 
           {isSinglePageReview && referenceOptions.length > 0 && (
             <section className="picture-prompt-section full">
               <div className="picture-prompt-section-heading reference-toggle-row">
                 <div>
                   <h3>参考图片</h3>
-                  <small>点选一张或多张已生成图片作为风格参考（含当前重生成页）</small>
+                  <small>
+                    {isSinglePageEditReview
+                      ? '点选被修改图与其它参考图（默认已选当前页）'
+                      : '点选一张或多张已生成图片作为风格参考（含当前重生成页）'}
+                  </small>
                 </div>
                 <small>已选 {selectedReferencePageIndexes.length} 张</small>
               </div>
@@ -3506,6 +3754,9 @@ function resolvePictureBookGroupPrompt(
   >,
   scenes: PictureBookPromptReviewScene[],
 ): string {
+  if (review.mode === 'singlePageEdit') {
+    return review.groupPrompt?.trim() ?? '';
+  }
   const nativePrompt = review.groupPrompt?.trim() ?? '';
   if (pictureBookGroupPromptHasSceneDetails(nativePrompt, scenes)) {
     return nativePrompt;
@@ -3539,12 +3790,16 @@ function composePictureBookPromptForReview(
     | 'bookTitle'
     | 'bookDescription'
     | 'chapterDescription'
+    | 'groupPrompt'
     | 'mode'
     | 'relevantCharacters'
     | 'newCharacters'
   >,
   scenes: PictureBookPromptReviewScene[],
 ): string {
+  if (review.mode === 'singlePageEdit') {
+    return review.groupPrompt?.trim() ?? '';
+  }
   if (review.mode !== 'singlePage') {
     return composePictureBookGroupPrompt(review, scenes);
   }
@@ -4647,22 +4902,26 @@ function AudioMaterialProgressDialog({ progress }: { progress: ListeningAudioMat
   );
 }
 
-function promptRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+function listeningItemsFromArticle(article: Article): ListeningItem[] {
+  return article.sentences.map((english, index) => ({
+    index,
+    english,
+    chinese: '',
+    hidden: isHiddenListeningSentence(english),
+  }));
 }
 
-function promptText(value: unknown): string {
-  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
-}
-
-function pictureBookPageScenePreview(page: PictureBookPage): { sceneDescription: string } {
-  const prompt = promptRecord(page.prompt);
-  const scene = promptRecord(prompt?.scene);
-  return {
-    sceneDescription: promptText(scene?.sceneDescription),
-  };
+function sentenceItemsForPictureBookPage(
+  items: ListeningItem[],
+  page: PictureBookPage,
+): ListeningItem[] {
+  const startIndex = Number.isFinite(page.sentenceStartIndex)
+    ? Math.max(0, Math.trunc(page.sentenceStartIndex))
+    : 0;
+  const endIndex = Number.isFinite(page.sentenceEndIndex)
+    ? Math.max(startIndex, Math.trunc(page.sentenceEndIndex))
+    : startIndex;
+  return items.filter((item) => item.index >= startIndex && item.index <= endIndex);
 }
 
 function pictureBookStatusLabel(status?: string | null): string {
@@ -5397,7 +5656,6 @@ function ListeningPage({
   recordingSettings,
   onRecordingSettingsLoaded,
   onNotice,
-  onArticlesUpdated,
 }: {
   articleId: number;
   mode?: PlayerMode;
@@ -5417,7 +5675,6 @@ function ListeningPage({
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   onNotice: (message: string) => void;
-  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
   const [article, setArticle] = useState<Article | null>(null);
   const [items, setItems] = useState<ListeningItem[]>([]);
@@ -5426,9 +5683,6 @@ function ListeningPage({
   const [activePart, setActivePart] = useState<ListeningPart>(null);
   const [error, setError] = useState<string | null>(null);
   const [wordCard, setWordCard] = useState<WordCardState | null>(null);
-  const [sentenceEdit, setSentenceEdit] = useState<SentenceEditState | null>(null);
-  const [sentenceSynthesisErrors, setSentenceSynthesisErrors] = useState<Record<number, string>>({});
-  const [retryingSynthesisIndex, setRetryingSynthesisIndex] = useState<number | null>(null);
   const [fullscreenReady, setFullscreenReady] = useState<ListeningFullscreenReadyPayload | null>(null);
   const [fullscreenReadyLoading, setFullscreenReadyLoading] = useState(false);
   const [fullscreenPlayerOpen, setFullscreenPlayerOpen] = useState(false);
@@ -5450,7 +5704,6 @@ function ListeningPage({
   const wordCardTokenRef = useRef(0);
   const fullscreenReadyTokenRef = useRef(0);
   const recordingReadyTokenRef = useRef(0);
-  const manualTranslationIndexesRef = useRef<Set<number>>(new Set());
   const pictureBookRecordingReadinessKey = useMemo(() => {
     if (pictureBookState?.articleId !== articleId) return 'none';
     return [
@@ -5472,9 +5725,6 @@ function ListeningPage({
     setActivePart(null);
     setError(null);
     setWordCard(null);
-    setSentenceEdit(null);
-    setSentenceSynthesisErrors({});
-    setRetryingSynthesisIndex(null);
     setFullscreenReady(null);
     setFullscreenReadyLoading(false);
     setFullscreenPlayerOpen(false);
@@ -5494,7 +5744,6 @@ function ListeningPage({
     wordCardTokenRef.current += 1;
     fullscreenReadyTokenRef.current += 1;
     recordingReadyTokenRef.current += 1;
-    manualTranslationIndexesRef.current = new Set();
     onPictureBookLoaded(loadingPictureBookState(articleId));
 
     const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId, includeImageUris: false })
@@ -5572,9 +5821,6 @@ function ListeningPage({
 
       setItems((currentItems) =>
         currentItems.map((item) => {
-          if (manualTranslationIndexesRef.current.has(item.index)) {
-            return item;
-          }
           const translated = translationMap.get(item.index);
           return translated ? { ...item, chinese: translated } : item;
         }),
@@ -6126,7 +6372,6 @@ function ListeningPage({
   };
 
   const openWordCard = async (word: string, sentence: string, anchor: DOMRect) => {
-    if (sentenceEdit) return;
     if (isHiddenListeningSentence(sentence)) return;
     const normalizedWord = normalizeLookupWord(word);
     if (!normalizedWord) return;
@@ -6201,102 +6446,6 @@ function ListeningPage({
       } catch {
         // If the original segment ended or was stopped, there is nothing to resume.
       }
-    }
-  };
-
-  const openSentenceEdit = (item: ListeningItem) => {
-    if (busy) return;
-    if (wordCard) {
-      void closeWordCard();
-    }
-    setSentenceEdit({
-      item,
-      english: item.english,
-      chinese: item.chinese,
-      saving: false,
-      error: null,
-    });
-  };
-
-  const applySentenceUpdatePayload = (payload: ListeningSentenceUpdatePayload) => {
-    setArticle((current) => payload.article ?? current);
-    setItems((current) => payload.items ?? current.map((item) => (item.index === payload.item.index ? payload.item : item)));
-    if (payload.item.chinese.trim() && !isHiddenListeningItem(payload.item)) {
-      manualTranslationIndexesRef.current.add(payload.item.index);
-    }
-    if (payload.articles || payload.series) {
-      onArticlesUpdated(payload);
-    }
-    if (payload.synthesis.status === 'error') {
-      setSentenceSynthesisErrors((current) => ({
-        ...current,
-        [payload.item.index]: payload.synthesis.error?.trim() || '语音重新合成失败，请重试',
-      }));
-    } else {
-      setSentenceSynthesisErrors((current) => {
-        const next = { ...current };
-        delete next[payload.item.index];
-        return next;
-      });
-    }
-  };
-
-  const saveSentenceEdit = async (skipHideConfirm = false) => {
-    if (!sentenceEdit) return;
-    const english = sentenceEdit.english.trim();
-    const chinese = sentenceEdit.chinese.trim();
-    const isHiding = !english;
-    if (isHiding && !skipHideConfirm) {
-      setSentenceEdit((current) => (current ? { ...current, confirmingHide: true, error: null } : current));
-      return;
-    }
-
-    setSentenceEdit((current) => (current ? { ...current, saving: true, error: null, confirmingHide: false } : current));
-    try {
-      await sendNative('listening.stop').catch(() => undefined);
-      const payload = await sendNative<ListeningSentenceUpdatePayload>('listening.updateSentence', {
-        articleId,
-        index: sentenceEdit.item.index,
-        english,
-        chinese: isHiding ? '' : chinese,
-        previousEnglish: sentenceEdit.item.english,
-        previousChinese: sentenceEdit.item.chinese,
-      });
-      applySentenceUpdatePayload(payload);
-      setCurrentIndex(sentenceEdit.item.index);
-      setStatus('ready');
-      setActivePart(null);
-      setSentenceEdit(null);
-    } catch (updateError) {
-      setSentenceEdit((current) =>
-        current
-          ? {
-              ...current,
-              saving: false,
-              error: updateError instanceof Error ? updateError.message : '字幕保存失败，请重试',
-            }
-          : current,
-      );
-    }
-  };
-
-  const retrySentenceSynthesis = async (item: ListeningItem) => {
-    if (retryingSynthesisIndex !== null) return;
-    setRetryingSynthesisIndex(item.index);
-    try {
-      const payload = await sendNative<ListeningSentenceUpdatePayload>('listening.resynthesizeSentence', {
-        articleId,
-        index: item.index,
-        part: 'both',
-      });
-      applySentenceUpdatePayload(payload);
-    } catch (synthesisError) {
-      setSentenceSynthesisErrors((current) => ({
-        ...current,
-        [item.index]: synthesisError instanceof Error ? synthesisError.message : '语音重新合成失败，请重试',
-      }));
-    } finally {
-      setRetryingSynthesisIndex(null);
     }
   };
 
@@ -6674,74 +6823,47 @@ function ListeningPage({
           </div>
 
           <div className="listening-list" aria-label="听力句子列表">
-            {items.map((item) => {
-              const active = item.index === currentIndex;
-              const hidden = isHiddenListeningItem(item);
-              return (
-                <div
-                  className={`listening-row ${active ? 'active' : ''} ${hidden ? 'hidden' : ''}`}
-                  key={`${item.index}-${hidden ? 'hidden' : item.english}`}
-                  onClick={() => {
-                    if (busy) return;
-                    setCurrentIndex(item.index);
-                    if (mode === 'song' && songPlaying && selectedSongVersion?.id && !hidden) {
-                      void playSongVersion(selectedSongVersion.id, item.index);
-                    }
-                  }}
-                  onKeyDown={(event) => {
-                    if (busy) return;
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setCurrentIndex(item.index);
-                      if (mode === 'song' && songPlaying && selectedSongVersion?.id && !hidden) {
-                        void playSongVersion(selectedSongVersion.id, item.index);
-                      }
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  aria-disabled={busy}
-                  aria-current={active ? 'true' : undefined}
-                >
-                  <b>{item.index + 1}</b>
-                  <span className="listening-row-copy">
-                    <strong className={active && activePart === 'english' ? 'playing-text' : undefined}>
-                      {hidden ? '（已隐藏）' : item.english}
-                    </strong>
-                    <small className={active && activePart === 'chinese' ? 'playing-text' : undefined}>
-                      {hidden ? '重新填入英文即可恢复' : item.chinese}
-                    </small>
-                    {!hidden && sentenceSynthesisErrors[item.index] && (
-                      <em className="sentence-synthesis-error">
-                        {sentenceSynthesisErrors[item.index]}
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void retrySentenceSynthesis(item);
-                          }}
-                          disabled={retryingSynthesisIndex === item.index}
-                        >
-                          {retryingSynthesisIndex === item.index ? '重新合成中' : '重新合成语音'}
-                        </button>
-                      </em>
-                    )}
-                  </span>
-                  <button
-                    className="icon-button tiny sentence-row-edit"
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      openSentenceEdit(item);
-                    }}
-                    disabled={busy}
-                    aria-label={`修改第 ${item.index + 1} 句字幕`}
-                  >
-                    <Icon name="edit" />
-                  </button>
-                </div>
-              );
-            })}
+                {items.map((item) => {
+                  const active = item.index === currentIndex;
+                  const hidden = isHiddenListeningItem(item);
+                  return (
+                    <div
+                      className={`listening-row ${active ? 'active' : ''} ${hidden ? 'hidden' : ''}`}
+                      key={`${item.index}-${hidden ? 'hidden' : item.english}`}
+                      onClick={() => {
+                        if (busy) return;
+                        setCurrentIndex(item.index);
+                        if (mode === 'song' && songPlaying && selectedSongVersion?.id && !hidden) {
+                          void playSongVersion(selectedSongVersion.id, item.index);
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (busy) return;
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setCurrentIndex(item.index);
+                          if (mode === 'song' && songPlaying && selectedSongVersion?.id && !hidden) {
+                            void playSongVersion(selectedSongVersion.id, item.index);
+                          }
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-disabled={busy}
+                      aria-current={active ? 'true' : undefined}
+                    >
+                      <b>{item.index + 1}</b>
+                      <span className="listening-row-copy">
+                        <strong className={active && activePart === 'english' ? 'playing-text' : undefined}>
+                          {hidden ? '（已隐藏）' : item.english}
+                        </strong>
+                        <small className={active && activePart === 'chinese' ? 'playing-text' : undefined}>
+                          {hidden ? '可在创作中心重新填入英文恢复' : item.chinese}
+                        </small>
+                      </span>
+                    </div>
+                  );
+                })}
           </div>
         </main>
       </div>
@@ -6750,28 +6872,6 @@ function ListeningPage({
           state={wordCard}
           onClose={closeWordCard}
           onReplay={() => void playWordAudio(wordCard.word)}
-        />
-      )}
-      {sentenceEdit && (
-        <SentenceEditDialog
-          state={sentenceEdit}
-          onEnglishChange={(english) => setSentenceEdit((current) => (current ? { ...current, english, error: null } : current))}
-          onChineseChange={(chinese) => setSentenceEdit((current) => (current ? { ...current, chinese, error: null } : current))}
-          onCancel={() => setSentenceEdit(null)}
-          onSave={() => void saveSentenceEdit()}
-        />
-      )}
-      {sentenceEdit?.confirmingHide && (
-        <ConfirmDialog
-          ariaLabel="隐藏字幕确认"
-          title={`隐藏第 ${sentenceEdit.item.index + 1} 句字幕`}
-          message="槽位编号不变，歌曲字幕不变。稍后重新填入英文即可恢复。"
-          confirmLabel="确定隐藏"
-          busy={sentenceEdit.saving}
-          onCancel={() =>
-            setSentenceEdit((current) => (current ? { ...current, confirmingHide: false } : current))
-          }
-          onConfirm={() => void saveSentenceEdit(true)}
         />
       )}
       {fullscreenPlayerOpen && article && (
@@ -6854,11 +6954,11 @@ function SentenceEditDialog({
         className="edit-dialog sentence-edit-dialog"
         role="dialog"
         aria-modal="true"
-        aria-label="修改字幕"
+        aria-label="修改分句"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="edit-dialog-heading">
-          <b>修改第 {state.item.index + 1} 句字幕</b>
+          <b>修改第 {state.item.index + 1} 句分句</b>
           <button className="icon-button small" type="button" onClick={onCancel} disabled={state.saving} aria-label="关闭">
             <Icon name="exit" />
           </button>
@@ -8450,7 +8550,7 @@ function useEnsureAllPictureBookPageImages({
   articleId: number;
   state: PictureBookState | null;
   enabled: boolean;
-  imageVariant?: 'full' | 'thumbnail';
+  imageVariant?: PictureBookImageVariant;
   onPictureBookLoaded: PictureBookStateSetter;
 }) {
   const requestedRef = useRef<Set<string>>(new Set());

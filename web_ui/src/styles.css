@@ -1379,15 +1379,17 @@ img {
 
 .picture-creation-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
 }
 
 .picture-creation-card {
   display: grid;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
   min-width: 0;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid rgba(201, 213, 228, 0.72);
   border-radius: 8px;
   background: #fff;
@@ -1427,6 +1429,7 @@ img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  image-rendering: auto;
 }
 
 .picture-creation-media.is-clickable {
@@ -1531,18 +1534,91 @@ img {
 
 .picture-creation-copy {
   display: grid;
-  gap: 5px;
+  gap: 8px;
+  min-width: 0;
+  align-content: start;
+}
+
+.picture-creation-image-tools {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
   min-width: 0;
 }
 
-.picture-creation-card .picture-scene-description {
-  color: var(--ink);
-  font-weight: 950;
+.picture-creation-image-tools em {
+  margin-right: auto;
 }
 
 .picture-creation-card small {
   color: var(--muted);
   font-weight: 900;
+}
+
+.creation-sentence-list {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.creation-sentence-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 32px;
+  gap: 9px;
+  align-items: start;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(201, 213, 228, 0.72);
+  border-radius: 8px;
+  background: #f8fbff;
+  color: var(--ink);
+}
+
+.creation-sentence-row > b {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--soft-ink);
+  background: #edf3fa;
+  font-size: 12px;
+  font-weight: 1000;
+}
+
+.creation-sentence-row.hidden {
+  border-style: dashed;
+  background: #f5f6f8;
+}
+
+.creation-sentence-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.creation-sentence-copy strong {
+  overflow-wrap: break-word;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.creation-sentence-copy small {
+  overflow-wrap: break-word;
+  color: var(--soft-ink);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.creation-sentence-empty {
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed rgba(96, 132, 172, 0.28);
+  border-radius: 8px;
+  color: var(--muted);
+  background: #f8fbff;
+  text-align: center;
 }
 
 .readiness-card {
@@ -3378,7 +3454,7 @@ select:disabled {
 
 .listening-row {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 32px;
+  grid-template-columns: 38px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
   min-height: 70px;

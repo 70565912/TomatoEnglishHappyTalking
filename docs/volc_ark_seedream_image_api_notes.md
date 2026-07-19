@@ -102,6 +102,10 @@ Sequential/group request:
   `data:image/png;base64,<base64_image>`.
 - Sequential generation uses `sequential_image_generation: "auto"` and
   `sequential_image_generation_options.max_images`.
+- Ready-page local fix (`singlePageEdit`) uses instruction-style editing: pass
+  the target image (and optional neighbors) as `image`,
+  `sequential_image_generation: "disabled"`, and a short change instruction
+  rather than the composed book/chapter/scene group prompt.
 
 ## Prompt Rules For This App
 

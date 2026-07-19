@@ -2964,31 +2964,40 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     final returnSource = _normalizeSongProvider(
       _payloadString(message.payload, 'source', fallback: ''),
     );
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ExternalSongImportService.allowedExtensions,
-      allowMultiple: false,
-      withData: false,
-    );
-    if (result == null || result.files.isEmpty) {
-      final payload = await _songStatePayload(
-        articleId,
-        sourceOverride: returnSource,
-      );
-      payload['importCancelled'] = true;
-      payload['manualActionMessage'] = '已取消导入本地音乐';
-      return payload;
+    var selectedPath = _payloadString(message.payload, 'sourcePath').trim();
+    if (selectedPath.isEmpty) {
+      selectedPath = _payloadString(message.payload, 'filePath').trim();
     }
-    final selectedPath = (result.files.single.path ?? '').trim();
+    if (selectedPath.isEmpty) {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ExternalSongImportService.allowedExtensions,
+        allowMultiple: false,
+        withData: false,
+      );
+      if (result == null || result.files.isEmpty) {
+        final payload = await _songStatePayload(
+          articleId,
+          sourceOverride: returnSource,
+        );
+        payload['importCancelled'] = true;
+        payload['manualActionMessage'] = '已取消导入本地音乐';
+        return payload;
+      }
+      selectedPath = (result.files.single.path ?? '').trim();
+    }
     if (selectedPath.isEmpty) {
       throw const FormatException('无法读取选择的音乐文件路径');
     }
     await _stopSongPlayback();
     final article = await _songArticle(articleId);
+    final lyricsPayload = _payloadString(message.payload, 'lyrics').trim();
     final imported = await ExternalSongImportService.importFile(
       article: article,
       sourcePath: selectedPath,
-      lyrics: _articleSongLyrics(article),
+      lyrics: lyricsPayload.isNotEmpty
+          ? lyricsPayload
+          : _articleSongLyrics(article),
     );
     final currentPayload = await _songStatePayload(
       articleId,

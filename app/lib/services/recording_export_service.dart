@@ -2561,6 +2561,7 @@ class RecordingExportService {
       );
     }
     dst = dst.shift(offset);
+    paint.filterQuality = FilterQuality.high;
     canvas.drawImageRect(
       image,
       Offset.zero & imageSize,
@@ -2830,7 +2831,7 @@ class RecordingExportService {
       image,
       source,
       Rect.fromLTWH(0, 0, source.width, source.height),
-      Paint()..filterQuality = FilterQuality.medium,
+      Paint()..filterQuality = FilterQuality.high,
     );
     canvas.restore();
   }
@@ -2999,6 +3000,7 @@ class RecordingExportService {
   }
 
   static Paint _opacityPaint(double opacity) => Paint()
+    ..filterQuality = FilterQuality.high
     ..colorFilter = ui.ColorFilter.mode(
       Color.fromRGBO(255, 255, 255, opacity.clamp(0, 1).toDouble()),
       BlendMode.modulate,

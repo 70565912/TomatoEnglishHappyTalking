@@ -478,10 +478,13 @@ class StreamingAsrService {
   static Future<AsrTimelineResult> recognizeWithTimeline({
     required List<int> audioBytes,
     String audioMimeType = 'audio/wav',
+    String language = 'en-US',
   }) async {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '音频为空，无法识别');
     }
+    final asrLanguage =
+        language.trim().isEmpty ? 'en-US' : language.trim();
     if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
       return _recognizeAliyunWithTimeline(
         audioBytes: audioBytes,
@@ -501,7 +504,7 @@ class StreamingAsrService {
     final requestId = _newRequestId();
     try {
       _trace(
-        'timeline connect requestId=$requestId bytes=${audioBytes.length}',
+        'timeline connect requestId=$requestId bytes=${audioBytes.length} language=$asrLanguage',
       );
       socket = await _connectSocket(
         endpoint: _endpoint,
@@ -514,6 +517,7 @@ class StreamingAsrService {
         audioFormat: audioFormat,
         enablePunc: false,
         showUtterances: true,
+        language: asrLanguage,
       ));
 
       var offset = 0;
@@ -1086,7 +1090,9 @@ class StreamingAsrService {
     required String audioFormat,
     bool enablePunc = true,
     bool showUtterances = false,
+    String language = 'en-US',
   }) {
+    final asrLanguage = language.trim().isEmpty ? 'en-US' : language.trim();
     final payloadMap = <String, dynamic>{
       'user': {
         'uid': 'tomato_app',
@@ -1097,7 +1103,7 @@ class StreamingAsrService {
         'rate': 16000,
         'bits': 16,
         'channel': 1,
-        'language': 'en-US',
+        'language': asrLanguage,
       },
       'request': {
         'model_name': 'bigmodel',

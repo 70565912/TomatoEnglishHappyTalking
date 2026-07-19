@@ -172,8 +172,18 @@ class SongSubtitleTimelineService {
   static const _matchedLineTailMs = 320;
   static const _cueGapMs = 80;
   static const _boundaryMethod = 'boundary';
+  static final _cjkCharPattern = RegExp(r'[\u3400-\u9FFF\uF900-\uFAFF]');
+  static final _lyricTokenPattern =
+      RegExp(r"[A-Za-z0-9\-']+|[\u3400-\u9FFF\uF900-\uFAFF]");
 
   const SongSubtitleTimelineService._();
+
+  /// Returns whether [text] contains CJK ideographs suitable for zh ASR.
+  static bool containsCjkText(String text) => _cjkCharPattern.hasMatch(text);
+
+  /// ASR language code for song lyrics (`zh-CN` when CJK is present).
+  static String lyricsAsrLanguage(String lyricsText) =>
+      containsCjkText(lyricsText) ? 'zh-CN' : 'en-US';
 
   static Future<SongSubtitleTimelineGenerationResult> generate({
     required int articleId,
@@ -189,7 +199,7 @@ class SongSubtitleTimelineService {
     }
     final lines = _cleanLines(lyricLines);
     if (lines.isEmpty) {
-      throw const SongSubtitleTimelineException('没有可用于生成字幕的英文歌词');
+      throw const SongSubtitleTimelineException('没有可用于生成字幕的歌词');
     }
 
     final audioBytes = await audioFile.readAsBytes();
@@ -199,7 +209,14 @@ class SongSubtitleTimelineService {
     final audioHash = await ApiCacheService.hashBytes(audioBytes);
     final lyricsText = lines.join('\n');
     final lyricsHash = await ApiCacheService.hashUtf8(lyricsText);
+    final asrLanguage = lyricsAsrLanguage(lyricsText);
     final asrProvider = await AppConfig.aiProvider;
+    if (asrLanguage == 'zh-CN' &&
+        asrProvider == AppConfig.aiProviderAliyunBailian) {
+      throw const SongSubtitleTimelineException(
+        '中文歌曲字幕需要火山 BigASR 词级时间轴，请在设置中将 AI 平台切换为火山引擎后再生成。',
+      );
+    }
     final originalMimeType = _audioMimeTypeForPath(audioPath);
     final originalFormat = _audioFormatFromMimeType(originalMimeType);
     final useOriginalAudio = _providerSupportsOriginalAudio(
@@ -219,7 +236,7 @@ class SongSubtitleTimelineService {
       'audioFormat': asrFormat,
       'audioMimeType': asrMimeType,
       if (!useOriginalAudio) 'sampleRate': 16000,
-      'language': 'en-US',
+      'language': asrLanguage,
       'showUtterances': asrProvider != AppConfig.aiProviderAliyunBailian,
     };
     final cacheKey = await ApiCacheService.keyForJson(
@@ -249,6 +266,7 @@ class SongSubtitleTimelineService {
     final asr = await StreamingAsrService.recognizeWithTimeline(
       audioBytes: asrBytes,
       audioMimeType: asrMimeType,
+      language: asrLanguage,
     );
     final estimatedDuration = _estimateDurationMs(
       audioBytes: audioBytes,
@@ -324,7 +342,7 @@ class SongSubtitleTimelineService {
     }
     final lines = _cleanLines(lyricLines);
     if (lines.isEmpty) {
-      throw const SongSubtitleTimelineException('没有可用于生成字幕的英文歌词');
+      throw const SongSubtitleTimelineException('没有可用于生成字幕的歌词');
     }
 
     final audioBytes = await audioFile.readAsBytes();
@@ -356,7 +374,7 @@ class SongSubtitleTimelineService {
       'audioHash': audioHash,
       'lyricsHash': lyricsHash,
       'asrSnapshotHash': snapshotHash,
-      'language': 'en-US',
+      'language': lyricsAsrLanguage(lyricsText),
     };
     final cacheKey = await ApiCacheService.keyForJson(
         'suno_song_subtitle_timeline', request);
@@ -987,6 +1005,10 @@ class SongSubtitleTimelineService {
       .where((token) => token.isNotEmpty)
       .toList(growable: false);
 
+  /// Exposed for unit tests covering CJK vs Latin lyric tokenization.
+  static List<String> tokensForLineForTest(String line) =>
+      _tokensForLine(line);
+
   static String _removeParentheticalSegments(String line) {
     var current = line;
     String next;
@@ -1004,10 +1026,16 @@ class SongSubtitleTimelineService {
   }
 
   static Iterable<String> _expandContractions(String line) sync* {
-    final words = line
-        .replaceAll(RegExp(r'[‘’]'), "'")
-        .split(RegExp(r"[^A-Za-z0-9\-']+"));
-    for (final word in words) {
+    final normalized = line.replaceAll(RegExp(r'[‘’]'), "'");
+    for (final match in _lyricTokenPattern.allMatches(normalized)) {
+      final word = match.group(0) ?? '';
+      if (word.isEmpty) {
+        continue;
+      }
+      if (_cjkCharPattern.hasMatch(word)) {
+        yield word;
+        continue;
+      }
       final lower = word.toLowerCase();
       switch (lower) {
         case "i'm":
@@ -1050,8 +1078,12 @@ class SongSubtitleTimelineService {
   }
 
   static String _normalizeToken(Object? value) {
-    final raw = value?.toString().toLowerCase() ?? '';
-    return raw
+    final raw = value?.toString() ?? '';
+    if (_cjkCharPattern.hasMatch(raw)) {
+      return raw.trim();
+    }
+    final lower = raw.toLowerCase();
+    return lower
         .replaceAll(RegExp(r'[‘’]'), "'")
         .replaceAll(RegExp(r"^[^a-z0-9']+|[^a-z0-9']+$"), '')
         .replaceAll("'", '')
@@ -1064,6 +1096,10 @@ class SongSubtitleTimelineService {
     }
     var weight = 0.0;
     for (final token in tokens) {
+      if (_cjkCharPattern.hasMatch(token)) {
+        weight += 1;
+        continue;
+      }
       final syllables = RegExp(r'[aeiouy]+').allMatches(token).length;
       weight += math.max(1, syllables);
       if (RegExp(r'([a-z])\1{1,}').hasMatch(token)) {

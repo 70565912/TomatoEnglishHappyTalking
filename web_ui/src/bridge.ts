@@ -727,21 +727,24 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const referenceOptions = review.scenes
       .map((item) => item.pageIndex)
       .sort((a, b) => a - b);
-    const defaultReferencePageIndex =
-      targetPageIndex > 0
+    // Mock treats even page indexes as ready-page local edit; odd as failure compose.
+    const useLocalEdit = targetPageIndex % 2 === 0;
+    const defaultReferencePageIndex = useLocalEdit
+      ? targetPageIndex
+      : targetPageIndex > 0
         ? targetPageIndex - 1
         : referenceOptions[0] ?? null;
     return {
       ...review,
       reviewId: `mock-page-review-${articleId}-${pageIndex}`,
-      mode: 'singlePage',
+      mode: useLocalEdit ? 'singlePageEdit' : 'singlePage',
       targetPageIndex,
       referencePageIndex: defaultReferencePageIndex,
       referencePageIndexes:
         defaultReferencePageIndex == null ? [] : [defaultReferencePageIndex],
       referenceOptions,
       scenes: scene ? [scene] : [],
-      groupPrompt: mockSinglePagePrompt(scene, review.bookCharacters ?? []),
+      groupPrompt: useLocalEdit ? '' : mockSinglePagePrompt(scene, review.bookCharacters ?? []),
     };
   }
   if (type === 'pictureBook.refreshPromptReview') {

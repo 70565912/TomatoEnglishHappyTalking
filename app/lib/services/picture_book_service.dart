@@ -703,6 +703,26 @@ class PictureBookService {
       );
     }
 
+    final useLocalEdit =
+        targetPage != null && await _hasUsableReferenceImage(targetPage);
+    final editDefaultReferencePageIndex = useLocalEdit &&
+            referenceOptions.contains(pageIndex)
+        ? pageIndex
+        : defaultReferencePageIndex;
+    final editDefaultReferenceImagePath = useLocalEdit
+        ? await _referenceImagePathForPageIndex(
+            articleId: articleId,
+            pageIndex: editDefaultReferencePageIndex,
+          )
+        : defaultReferenceImagePath;
+    if (editDefaultReferenceImagePath == null) {
+      return promptReviewPayload(
+        article: article,
+        chapter: currentChapter,
+        regenerate: true,
+      );
+    }
+
     final refreshedSeries =
         await DatabaseService.getStorySeriesById(currentChapter.seriesId) ??
             series;
@@ -728,12 +748,14 @@ class PictureBookService {
       plan: plan,
       targetPage: targetPage,
     );
-    final singlePrompt = _composeSinglePagePrompt(
-      series: reviewSeries,
-      chapterDescription: reviewChapterDescription,
-      segment: targetSegment,
-      relevantCharacters: finalRelevantCharacters,
-    );
+    final singlePrompt = useLocalEdit
+        ? ''
+        : _composeSinglePagePrompt(
+            series: reviewSeries,
+            chapterDescription: reviewChapterDescription,
+            segment: targetSegment,
+            relevantCharacters: finalRelevantCharacters,
+          );
     final reviewId = _nextPromptReviewId(articleId);
     final draft = _PictureBookPromptReviewDraft(
       reviewId: reviewId,
@@ -749,10 +771,10 @@ class PictureBookService {
       chapterDescription: reviewChapterDescription,
       groupPrompt: singlePrompt,
       createdAt: DateTime.now(),
-      mode: 'singlePage',
+      mode: useLocalEdit ? 'singlePageEdit' : 'singlePage',
       targetPageIndex: pageIndex,
-      referencePageIndex: defaultReferencePageIndex,
-      referenceImagePath: defaultReferenceImagePath,
+      referencePageIndex: editDefaultReferencePageIndex,
+      referenceImagePath: editDefaultReferenceImagePath,
       referenceOptions: referenceOptions,
     );
     _promptReviewDrafts[reviewId] = draft;
@@ -1200,7 +1222,8 @@ class PictureBookService {
     if (draft == null) {
       throw const FormatException('绘本提示词审核已过期，请重新打开审核弹窗。');
     }
-    if (draft.mode != 'singlePage') {
+    final isLocalEdit = draft.mode == 'singlePageEdit';
+    if (draft.mode != 'singlePage' && !isLocalEdit) {
       throw const FormatException('当前审核不是单页重生成审核，请重新打开审核弹窗。');
     }
     final articleId = draft.article.id;
@@ -1242,74 +1265,112 @@ class PictureBookService {
       throw const FormatException('参考图文件不存在，请重新打开单页重生成。');
     }
 
-    final confirmedChapterDescription = chapterDescription.trim().isEmpty
-        ? draft.chapterDescription
-        : _sanitizeForImagePrompt(chapterDescription);
-    final confirmedBookDescription = _sanitizeBookDescription(bookDescription);
-    final confirmedBookCharacters = _sanitizeBookCharacters(bookCharacters);
-    final confirmedNewCharacters = _sanitizeBookCharacters(newCharacters);
-    final confirmedRelevantCharacters = _relevantBookCharactersForArticle(
-      draft.article,
-      confirmedBookCharacters,
-    );
-    final finalRelevantCharacters = _mergeBookCharacters(
-      confirmedRelevantCharacters,
-      confirmedNewCharacters,
-    );
-    final mergedCharacters = _mergeBookCharacters(
-      confirmedBookCharacters,
-      confirmedNewCharacters,
-    );
-    final updatedSeries = draft.series.copyWith(
-      description: confirmedBookDescription,
-      characters: mergedCharacters,
-      updatedAt: DateTime.now(),
-    );
-    await DatabaseService.updateStorySeries(updatedSeries);
-
-    final confirmedSegments = _submittedSegmentsForDraft(draft, scenes);
-    if (confirmedSegments.length != 1) {
+    final targetSegment = draft.pages.length == 1
+        ? draft.pages.single.segment
+        : null;
+    if (targetSegment == null) {
       throw const FormatException('单页重生成只能提交一个分镜。');
     }
-    final targetSegment = confirmedSegments.single;
-    final fallbackSinglePrompt = _composeSinglePagePrompt(
-      series: updatedSeries,
-      chapterDescription: confirmedChapterDescription,
-      segment: targetSegment,
-      relevantCharacters: finalRelevantCharacters,
-    );
-    final confirmedSinglePrompt = groupPrompt.trim().isEmpty
-        ? fallbackSinglePrompt
-        : _sanitizeForImagePrompt(groupPrompt);
 
-    await _saveSinglePageConfirmedChapterPlan(
-      article: draft.article,
-      chapter: draft.chapter,
-      bookDescription: confirmedBookDescription,
-      relevantCharacters: finalRelevantCharacters,
-      chapterDescription: confirmedChapterDescription,
-      segment: targetSegment,
-      newCharacters: confirmedNewCharacters,
-    );
+    late final String confirmedSinglePrompt;
+    late final Map<String, dynamic> promptJson;
+    late final _PicturePageSegment pageSegment;
 
-    final promptJson = {
-      ..._promptJsonForSegment(
+    if (isLocalEdit) {
+      final editInstruction = groupPrompt.trim();
+      if (editInstruction.isEmpty) {
+        throw const FormatException('请填写需要修改的内容说明。');
+      }
+      confirmedSinglePrompt = _composeSinglePageEditPrompt(editInstruction);
+      pageSegment = targetSegment;
+      promptJson = {
+        ..._promptJsonForSegment(
+          series: draft.series,
+          chapter: draft.chapter,
+          segment: pageSegment,
+          chapterDescription: draft.chapterDescription,
+          relevantCharacters: draft.relevantCharacters,
+          newCharacters: draft.newCharacters,
+          groupPrompt: confirmedSinglePrompt,
+          reviewId: reviewId,
+        ),
+        'mode': 'singlePageEdit',
+        'editInstruction': _sanitizeForImagePrompt(editInstruction),
+        'targetPageIndex': pageSegment.pageIndex,
+        'referencePageIndex': requestedReferencePageIndexes.first,
+        'referencePageIndexes': requestedReferencePageIndexes,
+      };
+    } else {
+      final confirmedSegments = _submittedSegmentsForDraft(draft, scenes);
+      if (confirmedSegments.length != 1) {
+        throw const FormatException('单页重生成只能提交一个分镜。');
+      }
+      pageSegment = confirmedSegments.single;
+      final confirmedChapterDescription = chapterDescription.trim().isEmpty
+          ? draft.chapterDescription
+          : _sanitizeForImagePrompt(chapterDescription);
+      final confirmedBookDescription = _sanitizeBookDescription(bookDescription);
+      final confirmedBookCharacters = _sanitizeBookCharacters(bookCharacters);
+      final confirmedNewCharacters = _sanitizeBookCharacters(newCharacters);
+      final confirmedRelevantCharacters = _relevantBookCharactersForArticle(
+        draft.article,
+        confirmedBookCharacters,
+      );
+      final finalRelevantCharacters = _mergeBookCharacters(
+        confirmedRelevantCharacters,
+        confirmedNewCharacters,
+      );
+      final mergedCharacters = _mergeBookCharacters(
+        confirmedBookCharacters,
+        confirmedNewCharacters,
+      );
+      final updatedSeries = draft.series.copyWith(
+        description: confirmedBookDescription,
+        characters: mergedCharacters,
+        updatedAt: DateTime.now(),
+      );
+      await DatabaseService.updateStorySeries(updatedSeries);
+
+      final fallbackSinglePrompt = _composeSinglePagePrompt(
         series: updatedSeries,
-        chapter: draft.chapter,
-        segment: targetSegment,
         chapterDescription: confirmedChapterDescription,
+        segment: pageSegment,
         relevantCharacters: finalRelevantCharacters,
+      );
+      confirmedSinglePrompt = groupPrompt.trim().isEmpty
+          ? fallbackSinglePrompt
+          : _sanitizeForImagePrompt(groupPrompt);
+
+      await _saveSinglePageConfirmedChapterPlan(
+        article: draft.article,
+        chapter: draft.chapter,
+        bookDescription: confirmedBookDescription,
+        relevantCharacters: finalRelevantCharacters,
+        chapterDescription: confirmedChapterDescription,
+        segment: pageSegment,
         newCharacters: confirmedNewCharacters,
-        groupPrompt: confirmedSinglePrompt,
-        reviewId: reviewId,
-      ),
-      'mode': 'singlePage',
-      'targetPageIndex': targetSegment.pageIndex,
-      'referencePageIndex': requestedReferencePageIndexes.first,
-      'referencePageIndexes': requestedReferencePageIndexes,
-    };
+      );
+
+      promptJson = {
+        ..._promptJsonForSegment(
+          series: updatedSeries,
+          chapter: draft.chapter,
+          segment: pageSegment,
+          chapterDescription: confirmedChapterDescription,
+          relevantCharacters: finalRelevantCharacters,
+          newCharacters: confirmedNewCharacters,
+          groupPrompt: confirmedSinglePrompt,
+          reviewId: reviewId,
+        ),
+        'mode': 'singlePage',
+        'targetPageIndex': pageSegment.pageIndex,
+        'referencePageIndex': requestedReferencePageIndexes.first,
+        'referencePageIndexes': requestedReferencePageIndexes,
+      };
+    }
+
     final generatingPage = await _markPage(
-      targetSegment,
+      pageSegment,
       articleId: articleId,
       seriesId: seriesId,
       status: 'generating',
@@ -1324,7 +1385,7 @@ class PictureBookService {
     final results = await PictureBookImageService.generatePictureBookImageGroup(
       requests: [
         VolcImageBatchRequest(
-          pageIndex: targetSegment.pageIndex,
+          pageIndex: pageSegment.pageIndex,
           prompt: confirmedSinglePrompt,
           promptMetadata: promptJson,
         ),
@@ -1337,13 +1398,13 @@ class PictureBookService {
       reusePartialCache: false,
     );
     final result = results.firstWhere(
-      (item) => item.pageIndex == targetSegment.pageIndex,
+      (item) => item.pageIndex == pageSegment.pageIndex,
       orElse: () => results.isNotEmpty
           ? results.first
           : VolcImageResult(
               source: VolcImageResultSource.failed,
-              pageIndex: targetSegment.pageIndex,
-              errorMessage: '单页图片接口未返回第 ${targetSegment.pageIndex + 1} 张图片',
+              pageIndex: pageSegment.pageIndex,
+              errorMessage: '单页图片接口未返回第 ${pageSegment.pageIndex + 1} 张图片',
             ),
     );
     final status = switch (result.source) {
@@ -2720,6 +2781,15 @@ class PictureBookService {
       buffer.writeln('Scene description: $sceneDescription');
     }
     return buffer.toString().trim();
+  }
+
+  /// Instruction-edit prompt for ready-page local fixes (Seedream/Wanx image + edit).
+  static String _composeSinglePageEditPrompt(String editInstruction) {
+    final change = _sanitizeForImagePrompt(editInstruction.trim());
+    return [
+      'Edit the reference image(s). Keep everything else unchanged unless specified.',
+      'Change: $change',
+    ].join('\n');
   }
 
   static String _scenePromptForRequest(_PicturePageSegment segment) {

@@ -386,9 +386,10 @@ Flutter Provider 会解析并移除 `[[TOMATO_*]]` 元数据标记：
 ### 单页重生成与参考图
 
 - 创作中心单页「重新生成」走 `pictureBook.pagePromptReview` → `pictureBook.confirmPagePromptReview`，只替换目标页，不删除其它页。
-- 若已有 `ready` 且本地图片文件存在（含当前重生成页），审核弹窗在「单张生成 Prompt」下方展示可选参考图缩略图；默认预选最近邻 1 张，用户可 toggle 多选（至少 1 张、最多 14 张）。
+- **就绪页局部修改**（目标页 `ready` 且本地图可用）：`mode: singlePageEdit`。弹窗只让用户填写「修改说明」并多选参考图（默认强制选中当前页），**不**拼接书籍简介/角色/章节/分镜描述。提交时 Flutter 用固定指令编辑模板包装用户说明（`Edit the reference image(s)... Change: ...`），不写回章节 `summary_json`、不改书籍简介/角色。
+- **失败页重生成**（目标页 `error` / 无可用图）：`mode: singlePage`。审核弹窗仍展示书籍/角色/章节/分镜与组合「单张生成 Prompt」；可选参考图默认最近邻 1 张，可 toggle 多选（至少 1 张、最多 14 张）。组合 prompt 含 “Use the reference images only for visual consistency.”。
 - 确认时 bridge 提交 `referencePageIndexes`（按 `pageIndex` 升序）；Flutter 解析为 `referenceImagePaths` 传给图片 API。整章 `confirmPromptReview` 仍使用 `referenceImagePaths: []`。
-- 单页 prompt 固定写 “Use the reference images only for visual consistency.”；`prompt_json` 持久化 `referencePageIndexes` 与首项 `referencePageIndex`。
+- `prompt_json` 持久化对应 `mode`、`referencePageIndexes` 与首项 `referencePageIndex`；局部修改额外记录 `editInstruction`。
 - 没有可用参考图时，单页审核回退为整章 `promptReview(regenerate: true)`。
 
 调优记录：2026-07-12 起，章节规划从“删除对话内容”改为“把对话/喊话/歌词/内心独白转成第三人称可见画面叙事”，保留情节与场景信息，同时禁止引号台词、气泡文案和谜面/歌词原文，避免生图画出对话文本。现场探针后进一步要求：优先写动作/姿态/物件/空间关系，少用 ask/explain/tell/reply/say 串场；同一茶桌/厨房/路边聚会在劝酒、谜语、抬杠和沉默期间保持同一 scene。场景切分仍按“同一连续故事场景归入同一 scene、场景实质变化才切分”，不因对话轮次拆分。E22 茶桌段回归重点：酒、礼貌、个人评价、谜语、反驳和沉默应写入可见叙事，但不能拆成多张语义 scene，也不能只写 `exchange` / `conversation` / `riddle` / `remark` 等空洞 meta，也不要复述乌鸦书桌谜面原文。旧 `story_chapters.summary_json` 不自动迁移，用户刷新章节规划后才使用新规则。此前（2026-07-08）旧版 `compact`、`smallest complete scene set`、弱边界合并和叙述微阶段合并规则已不再作为正式章节规划策略。

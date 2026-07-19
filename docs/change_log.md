@@ -1,5 +1,15 @@
 # 修改日志
 
+## 2026-07-19
+
+- **绘本就绪页局部修改（`singlePageEdit`）**：创作中心对 `ready` 且本地图可用的页面，「重新生成」改为指令编辑模式——审核弹窗只填「修改说明」并多选参考图（默认强制选中当前页），不再拼接书籍/章节/分镜 group prompt；Flutter 用 `Edit the reference image(s)... Change: ...` 包装用户说明，`sequential_image_generation: "disabled"`；不写回 `summary_json`、不改书籍简介/角色。失败页仍走 `singlePage` 全量单页审核。`prompt_json` 记录 `mode` / `editInstruction` / `referencePageIndexes`。文档：`docs/ai-call-flow-and-prompt-logic.md`、`docs/volc_ark_seedream_image_api_notes.md`、`AGENTS.md`。
+- **歌曲字幕支持中文歌词**：`SongSubtitleTimelineService` 按歌词是否含 CJK 选择 ASR `language`（`zh-CN` / `en-US`），CJK 按字级 token 对齐；中文时间轴强制火山 BigASR，阿里云平台直接提示切换。外部导入 `listening.songImportExternal` 可接受 `sourcePath`/`filePath` 与可选 `lyrics`。视频导出绘本帧绘制改为 `FilterQuality.high`。文档：`docs/suno_song_subtitle_timeline_design.md`、`AGENTS.md`。
+
+验证：
+
+- `flutter test test/api_cache_service_test.dart test/song_subtitle_timeline_service_test.dart test/external_song_import_service_test.dart`
+- `npm test` in `web_ui`
+
 ## 2026-07-14
 
 - **章节保存可续传 + 进度条**：`article.create` 先写入正文/分句再做译文与绘本规划；译文或章节规划失败不再删文，bridge 通过 `error.data.resumeArticleId` / `failedPhase` 回传，Web UI 再次保存带 `resumeArticleId` 只补剩余步骤。保存过程推送 `article.save.progress`，创作页用 `ArticleSaveProgressOverlay` 展示阶段与百分比。译文用 `DatabaseService.upsertArticleSentenceTranslations` 合并已有行。

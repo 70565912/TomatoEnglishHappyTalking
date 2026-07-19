@@ -82,6 +82,22 @@ Input #0, mp3, from "Alice's Adventures in.mp3":
     expect(state?.metadataPath, isNotEmpty);
   });
 
+  test('stores custom Chinese submittedLyrics for imported audio', () async {
+    final source = await sourceFile('我是一根葱.mp3', [5, 6, 7, 8]);
+    const chineseLyrics = '我是一根葱\n我骄傲';
+
+    final version = await ExternalSongImportService.importFile(
+      article: article,
+      sourcePath: source.path,
+      lyrics: chineseLyrics,
+      durationProbe: probe,
+    );
+
+    expect(version.title, '我是一根葱');
+    expect(version.submittedLyrics, chineseLyrics);
+    expect(version.timelineStatus, 'missing');
+  });
+
   test('dedupes repeated imports by audio content hash', () async {
     final first = await sourceFile('first.mp3', [9, 8, 7, 6]);
     final second = await sourceFile('second.mp3', [9, 8, 7, 6]);

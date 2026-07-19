@@ -3900,17 +3900,16 @@ but the three were all crowded together at one corner of it.
     );
 
     expect(textAiCalls, 0);
-    expect(review['mode'], 'singlePage');
+    expect(review['mode'], 'singlePageEdit');
     expect(review['targetPageIndex'], 1);
-    expect(review['referencePageIndex'], 0);
-    expect(review['referencePageIndexes'], [0]);
+    expect(review['referencePageIndex'], 1);
+    expect(review['referencePageIndexes'], [1]);
     expect(review['referenceOptions'], [0, 1]);
     expect(review['chapterDescription'], 'A royal garden croquet chapter.');
     expect(review['scenes'], hasLength(1));
     expect((review['scenes'] as List).single['sceneDescription'],
         'The Queen points sternly across the croquet ground.');
-    expect(review['groupPrompt'],
-        contains('The Queen points sternly across the croquet ground.'));
+    expect(review['groupPrompt'], '');
   });
 
   test('picture-book single-page prompt review replaces only target page',
@@ -3942,9 +3941,6 @@ but the three were all crowded together at one corner of it.
     final referenceFile = File(
       '${tempDir.path}${Platform.pathSeparator}page-0-reference.png',
     )..writeAsBytesSync([137, 80, 78, 71, 51]);
-    final oldTargetFile = File(
-      '${tempDir.path}${Platform.pathSeparator}page-1-old.png',
-    )..writeAsBytesSync([137, 80, 78, 71, 52]);
     final now = DateTime(2026, 1, 1);
     await DatabaseService.upsertPictureBookPage(
       PictureBookPage(
@@ -3970,8 +3966,9 @@ but the three were all crowded together at one corner of it.
         sentenceEndIndex: 1,
         paragraphText: 'The Queen points at the croquet ground.',
         promptJson: '{}',
-        imagePath: oldTargetFile.path,
-        status: 'ready',
+        imagePath: null,
+        status: 'error',
+        errorMessage: 'previous single-page failure',
         createdAt: now,
         updatedAt: now,
       ),
@@ -3987,7 +3984,7 @@ but the three were all crowded together at one corner of it.
     expect(review['targetPageIndex'], 1);
     expect(review['referencePageIndex'], 0);
     expect(review['referencePageIndexes'], [0]);
-    expect(review['referenceOptions'], [0, 1]);
+    expect(review['referenceOptions'], [0]);
     expect(review['scenes'], hasLength(1));
     expect((review['scenes'] as List).single['pageIndex'], 1);
     expect(review['groupPrompt'], contains('Generate exactly one picture'));
@@ -4032,7 +4029,6 @@ but the three were all crowded together at one corner of it.
     expect(pages[0].imagePath, referenceFile.path);
     expect(pages[0].status, 'ready');
     expect(pages[1].status, 'ready');
-    expect(pages[1].imagePath, isNot(oldTargetFile.path));
     expect(pages[1].promptJson, contains('singlePage'));
     expect(
         pages[1].promptJson, contains('Edited only the Queen croquet scene'));
@@ -4045,6 +4041,130 @@ but the three were all crowded together at one corner of it.
     expect(scenes.first['sceneDescription'], 'Alice walks into the garden.');
     expect(scenes.last['sceneDescription'],
         'Edited only the Queen croquet scene.');
+  });
+
+  test('picture-book single-page local edit uses instruction prompt', () async {
+    _writeImageArkKey(tempDir, 'ark-page-edit-key-12345678901234567890');
+    final articleId = await DatabaseService.saveArticle(
+      Article(
+        title: 'Single Page Local Edit Test',
+        content:
+            'Alice walks into the garden. The Queen points at the croquet ground.',
+        sentences: const [
+          'Alice walks into the garden.',
+          'The Queen points at the croquet ground.',
+        ],
+        createdAt: DateTime(2026, 1, 1),
+      ),
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(
+      title: "Alice's Adventures in Wonderland",
+      description:
+          'Victorian fantasy picture book; Alice wears a blue dress and white apron.',
+    );
+    final chapter = await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await _installTwoPageChapterPlanOverride();
+    final referenceFile = File(
+      '${tempDir.path}${Platform.pathSeparator}page-0-edit-ref.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 51]);
+    final oldTargetFile = File(
+      '${tempDir.path}${Platform.pathSeparator}page-1-edit-old.png',
+    )..writeAsBytesSync([137, 80, 78, 71, 52]);
+    final now = DateTime(2026, 1, 1);
+    final originalChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    final originalSummary = originalChapter!.summaryJson;
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Alice walks into the garden.',
+        promptJson: '{}',
+        imagePath: referenceFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 1,
+        sentenceStartIndex: 1,
+        sentenceEndIndex: 1,
+        paragraphText: 'The Queen points at the croquet ground.',
+        promptJson: '{}',
+        imagePath: oldTargetFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final review = await PictureBookService.pagePromptReviewPayload(
+      article: article,
+      chapter: chapter,
+      pageIndex: 1,
+    );
+
+    expect(review['mode'], 'singlePageEdit');
+    expect(review['referencePageIndex'], 1);
+    expect(review['referencePageIndexes'], [1]);
+    expect(review['groupPrompt'], '');
+
+    Map<String, dynamic>? imageBody;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageBody = body;
+        return {
+          'data': [
+            {
+              'b64_json': base64Encode([137, 80, 78, 71, 53])
+            },
+          ],
+        };
+      },
+    );
+
+    await PictureBookService.confirmPagePromptReview(
+      reviewId: review['reviewId'].toString(),
+      groupPrompt: '将骑士的头盔变为金色，其余保持不变',
+      bookDescription: 'should not rewrite book description',
+      bookCharacters: const [],
+      newCharacters: const [],
+      chapterDescription: 'should not rewrite chapter description',
+      referencePageIndexes: [1, 0],
+      scenes: const [],
+    );
+
+    expect(imageBody?['sequential_image_generation'], 'disabled');
+    expect((imageBody?['image'] as List), hasLength(2));
+    expect(
+      imageBody?['prompt'],
+      'Edit the reference image(s). Keep everything else unchanged unless specified.\n'
+      'Change: 将骑士的头盔变为金色，其余保持不变',
+    );
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages[0].imagePath, referenceFile.path);
+    expect(pages[1].status, 'ready');
+    expect(pages[1].imagePath, isNot(oldTargetFile.path));
+    expect(pages[1].promptJson, contains('singlePageEdit'));
+    expect(pages[1].promptJson, contains('将骑士的头盔变为金色'));
+    final updatedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    expect(updatedChapter!.summaryJson, originalSummary);
+    final updatedSeries =
+        await DatabaseService.getStorySeriesById(series.id!);
+    expect(updatedSeries!.description,
+        contains('Victorian fantasy picture book'));
   });
 
   test(
@@ -4110,11 +4230,11 @@ but the three were all crowded together at one corner of it.
       pageIndex: 2,
     );
 
-    expect(review['mode'], 'singlePage');
+    expect(review['mode'], 'singlePageEdit');
     expect(review['targetPageIndex'], 2);
     expect(review['referenceOptions'], [0, 1, 2]);
-    expect(review['referencePageIndex'], 1);
-    expect(review['referencePageIndexes'], [1]);
+    expect(review['referencePageIndex'], 2);
+    expect(review['referencePageIndexes'], [2]);
 
     Map<String, dynamic>? imageBody;
     VolcImageService.setPostOverrideForTest(
@@ -4132,7 +4252,7 @@ but the three were all crowded together at one corner of it.
 
     await PictureBookService.confirmPagePromptReview(
       reviewId: review['reviewId'].toString(),
-      groupPrompt: 'Edited single-page prompt for Image 3 only.',
+      groupPrompt: '把背景换成黄昏天空，角色保持不变',
       bookDescription: review['bookDescription'].toString(),
       bookCharacters: const [],
       newCharacters: const [],
@@ -4147,6 +4267,10 @@ but the three were all crowded together at one corner of it.
     final referenceDataUris = (imageBody?['image'] as List).cast<String>();
     expect(referenceDataUris, hasLength(2));
     expect(
+      imageBody?['prompt'],
+      contains('Change: 把背景换成黄昏天空，角色保持不变'),
+    );
+    expect(
       referenceDataUris[0],
       contains(base64Encode([137, 80, 78, 71, 48])),
     );
@@ -4156,6 +4280,7 @@ but the three were all crowded together at one corner of it.
     );
     final pages = await DatabaseService.getPictureBookPages(articleId);
     final savedPrompt = jsonDecode(pages[2].promptJson) as Map<String, dynamic>;
+    expect(savedPrompt['mode'], 'singlePageEdit');
     expect(savedPrompt['referencePageIndexes'], [0, 1]);
     expect(savedPrompt['referencePageIndex'], 0);
   });
@@ -4218,6 +4343,8 @@ but the three were all crowded together at one corner of it.
     );
 
     expect(review['referenceOptions'], [2]);
+    expect(review['mode'], 'singlePageEdit');
+    expect(review['referencePageIndex'], 2);
 
     Map<String, dynamic>? imageBody;
     VolcImageService.setPostOverrideForTest(
@@ -4235,7 +4362,7 @@ but the three were all crowded together at one corner of it.
 
     await PictureBookService.confirmPagePromptReview(
       reviewId: review['reviewId'].toString(),
-      groupPrompt: 'Edited single-page prompt for Image 3 only.',
+      groupPrompt: '修正手指数量，其余保持不变',
       bookDescription: review['bookDescription'].toString(),
       bookCharacters: const [],
       newCharacters: const [],
@@ -4252,6 +4379,11 @@ but the three were all crowded together at one corner of it.
     expect(
       referenceDataUris.single,
       contains(base64Encode([137, 80, 78, 71, 50])),
+    );
+    expect(
+      imageBody?['prompt'],
+      'Edit the reference image(s). Keep everything else unchanged unless specified.\n'
+      'Change: 修正手指数量，其余保持不变',
     );
   });
 

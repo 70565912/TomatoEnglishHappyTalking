@@ -1271,4 +1271,48 @@ void main() {
         await SongSubtitleTimelineService.readTimeline(populatedFile.path);
     expect(populated.cues, hasLength(1));
   });
+
+  test('tokenizes Chinese lyric lines per character and keeps Latin tokens', () {
+    expect(
+      SongSubtitleTimelineService.tokensForLineForTest('我是一根葱'),
+      ['我', '是', '一', '根', '葱'],
+    );
+    expect(
+      SongSubtitleTimelineService.tokensForLineForTest("I'm a scallion"),
+      ['i', 'am', 'a', 'scallion'],
+    );
+    expect(SongSubtitleTimelineService.containsCjkText('我是一根葱'), isTrue);
+    expect(SongSubtitleTimelineService.lyricsAsrLanguage('我是一根葱'), 'zh-CN');
+    expect(SongSubtitleTimelineService.lyricsAsrLanguage('I am a scallion'),
+        'en-US');
+  });
+
+  test('aligns Chinese lyric lines against CJK ASR character timings', () {
+    final timeline = SongSubtitleTimelineService.buildTimeline(
+      articleId: 88,
+      audioHash: 'audio-zh',
+      lyricsHash: 'lyrics-zh',
+      durationMs: 4000,
+      source: 'external_audio',
+      lyricLines: const ['我是一根葱', '我骄傲'],
+      translations: const {},
+      words: const [
+        AsrWordTiming(text: '我', startMs: 100, endMs: 220),
+        AsrWordTiming(text: '是', startMs: 220, endMs: 340),
+        AsrWordTiming(text: '一', startMs: 340, endMs: 460),
+        AsrWordTiming(text: '根', startMs: 460, endMs: 580),
+        AsrWordTiming(text: '葱', startMs: 580, endMs: 760),
+        AsrWordTiming(text: '我', startMs: 1200, endMs: 1350),
+        AsrWordTiming(text: '骄', startMs: 1350, endMs: 1550),
+        AsrWordTiming(text: '傲', startMs: 1550, endMs: 1800),
+      ],
+    );
+
+    expect(timeline.cues, hasLength(2));
+    expect(timeline.cues[0].english, '我是一根葱');
+    expect(timeline.cues[1].english, '我骄傲');
+    expect(timeline.cues[0].chinese, isEmpty);
+    expect(timeline.cues[0].method, isNot('fallback'));
+    expect(timeline.cues[1].startMs, greaterThan(timeline.cues[0].endMs - 1));
+  });
 }

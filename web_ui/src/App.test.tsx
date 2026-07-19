@@ -1624,7 +1624,7 @@ describe('App', () => {
     expect(await screen.findByText(/书籍已导入/)).toBeInTheDocument();
   });
 
-  it('refreshes creation picture thumbnails when generated image paths change', async () => {
+  it('refreshes creation display images when generated image paths change', async () => {
     window.location.hash = '/creation?articleId=1&seriesId=1';
     const article = {
       id: 1,
@@ -1677,8 +1677,8 @@ describe('App', () => {
                 sentenceEndIndex: 0,
                 paragraphText: article.content,
                 imagePath: 'old.png',
-                imageUri: 'data:image/png;base64,OLD_THUMB',
-                imageVariant: 'thumbnail',
+                imageUri: 'data:image/png;base64,OLD_DISPLAY',
+                imageVariant: 'display',
                 status: 'ready',
               },
             ],
@@ -1689,7 +1689,7 @@ describe('App', () => {
             articleId: article.id,
             pageIndex: Number(payload.pageIndex ?? 0),
             variant: payload.variant,
-            imageUri: 'data:image/png;base64,NEW_THUMB',
+            imageUri: 'data:image/png;base64,NEW_DISPLAY',
           });
         }
         return ok(message.id, type, {});
@@ -1701,7 +1701,7 @@ describe('App', () => {
     expect(await screen.findByText('绘本组图')).toBeInTheDocument();
     await waitFor(() => {
       expect(document.querySelector('.picture-creation-media img')?.getAttribute('src')).toBe(
-        'data:image/png;base64,OLD_THUMB',
+        'data:image/png;base64,OLD_DISPLAY',
       );
     });
 
@@ -1734,13 +1734,13 @@ describe('App', () => {
             call.type === 'pictureBook.pageImage' &&
             call.payload.articleId === 1 &&
             call.payload.pageIndex === 0 &&
-            call.payload.variant === 'thumbnail',
+            call.payload.variant === 'display',
         ),
       ).toBe(true);
     });
     await waitFor(() => {
       expect(document.querySelector('.picture-creation-media img')?.getAttribute('src')).toBe(
-        'data:image/png;base64,NEW_THUMB',
+        'data:image/png;base64,NEW_DISPLAY',
       );
     });
   });
@@ -3308,8 +3308,8 @@ describe('App', () => {
     expect(screen.getByText('内置字幕视频：F:\\Tomato\\recording-export\\subtitled\\listening-subtitled.mp4')).toBeInTheDocument();
   });
 
-  it('keeps subtitle editing on listening rows but not on the picture subtitle overlay', async () => {
-    window.location.hash = '/listen/1';
+  it('moves sentence editing to picture-book cards and removes scene descriptions from the cards', async () => {
+    window.location.hash = '/creation?articleId=1';
     const article = {
       id: 1,
       title: 'Space Snacks',
@@ -3335,9 +3335,10 @@ describe('App', () => {
         if (type === 'app.ready' || type === 'article.list') {
           return ok(message.id, type, { articles: [article], series: [] });
         }
-        if (type === 'listening.open') {
+        if (type === 'article.fullText') {
           return ok(message.id, type, {
             article,
+            bookTitle: article.title,
             items: [
               { index: 0, english: article.sentences[0], chinese: '汤姆发现了一个明亮的零食盒。' },
               { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
@@ -3349,7 +3350,20 @@ describe('App', () => {
             articleId: article.id,
             enabled: true,
             status: 'ready',
-            pages: [],
+            pages: [
+              {
+                articleId: article.id,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 1,
+                paragraphText: article.content,
+                prompt: { scene: { sceneDescription: 'Tom discovers a box and shares it.' } },
+                imagePath: 'F:/Tomato/picture_book/original-0.png',
+                imageUri: 'data:image/png;base64,DISPLAY_0',
+                imageVariant: 'display',
+                status: 'ready',
+              },
+            ],
           });
         }
         if (type === 'listening.updateSentence') {
@@ -3390,17 +3404,21 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('heading', { name: 'Tom finds a bright snack box.' })).toBeInTheDocument();
-    const pictureSubtitle = document.querySelector('.picture-book-subtitle-line.english');
-    expect(pictureSubtitle).toBeTruthy();
-    expect(
-      within(pictureSubtitle as HTMLElement).queryByRole('button', { name: '修改第 1 句字幕' }),
-    ).not.toBeInTheDocument();
+    expect(await screen.findByText('绘本组图')).toBeInTheDocument();
+    expect(screen.queryByText('Tom discovers a box and shares it.')).not.toBeInTheDocument();
+    expect(screen.getByText('Tom finds a bright snack box.')).toBeInTheDocument();
+    expect(screen.getByText('He shares it with his team.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '修改第 2 句分句' })).toBeInTheDocument();
 
-    const firstRowEdit = screen.getByRole('button', { name: '修改第 1 句字幕' });
+    const firstRowEdit = screen.getByRole('button', { name: '修改第 1 句分句' });
+    const firstPageCard = firstRowEdit.closest('.picture-creation-card') as HTMLElement;
+    const imageTools = firstPageCard.querySelector('.picture-creation-image-tools') as HTMLElement;
+    const sentenceCopy = firstPageCard.querySelector('.picture-creation-copy') as HTMLElement;
+    expect(within(imageTools).getByRole('button', { name: '重新生成' })).toBeInTheDocument();
+    expect(within(sentenceCopy).queryByRole('button', { name: '重新生成' })).not.toBeInTheDocument();
     fireEvent.click(firstRowEdit);
 
-    expect(await screen.findByRole('dialog', { name: '修改字幕' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: '修改分句' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('英文'), {
       target: { value: 'Tom finds a silver snack box.' },
     });
@@ -3432,8 +3450,55 @@ describe('App', () => {
     });
   });
 
-  it('hides a listening sentence when english is cleared after confirmation', async () => {
+  it('keeps the existing listening layout read-only after sentence editing moves to creation', async () => {
     window.location.hash = '/listen/1';
+    const article = {
+      id: 1,
+      title: 'Read Only Practice',
+      content: 'First line. Second line.',
+      sentences: ['First line.', 'Second line.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 80,
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article], series: [] });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: [
+              { index: 0, english: 'First line.', chinese: '第一句。' },
+              { index: 1, english: 'Second line.', chinese: '第二句。' },
+            ],
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, { articleId: 1, enabled: false, status: 'empty', pages: [] });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByLabelText('听力句子列表')).toBeInTheDocument();
+    expect(screen.getByText('First line.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /修改第 \d+ 句/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps the original slot when a creation-center sentence is hidden', async () => {
+    window.location.hash = '/creation?articleId=1';
 
     const article = {
       id: 1,
@@ -3461,9 +3526,10 @@ describe('App', () => {
         if (type === 'app.ready' || type === 'article.list') {
           return ok(message.id, type, { articles: [article], series: [] });
         }
-        if (type === 'listening.open') {
+        if (type === 'article.fullText') {
           return ok(message.id, type, {
             article,
+            bookTitle: article.title,
             items: [
               { index: 0, english: article.sentences[0], chinese: '第一句。' },
               { index: 1, english: article.sentences[1], chinese: '第二句。' },
@@ -3474,9 +3540,21 @@ describe('App', () => {
         if (type === 'pictureBook.state') {
           return ok(message.id, type, {
             articleId: article.id,
-            enabled: false,
-            status: 'empty',
-            pages: [],
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                articleId: article.id,
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 2,
+                paragraphText: article.content,
+                imagePath: 'F:/Tomato/picture_book/original-0.png',
+                imageUri: 'data:image/png;base64,DISPLAY_0',
+                imageVariant: 'display',
+                status: 'ready',
+              },
+            ],
           });
         }
         if (type === 'listening.updateSentence') {
@@ -3511,21 +3589,21 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('heading', { name: 'First line.' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '修改第 2 句字幕' }));
-    expect(await screen.findByRole('dialog', { name: '修改字幕' })).toBeInTheDocument();
+    expect(await screen.findByText('First line.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '修改第 2 句分句' }));
+    expect(await screen.findByRole('dialog', { name: '修改分句' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('英文'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('中文'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: '隐藏本句' }));
     await cancelConfirmDialog(
-      '隐藏字幕确认',
+      '隐藏分句确认',
       '槽位编号不变，歌曲字幕不变。稍后重新填入英文即可恢复。',
     );
     expect(calls.some((call) => call.type === 'listening.updateSentence')).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: '隐藏本句' }));
     await confirmDialogAction(
-      '隐藏字幕确认',
+      '隐藏分句确认',
       '确定隐藏',
       '槽位编号不变，歌曲字幕不变。稍后重新填入英文即可恢复。',
     );
@@ -4253,7 +4331,7 @@ describe('App', () => {
     expect(screen.queryAllByText('Alpha Creation Chapter')).toHaveLength(0);
   });
 
-  it('loads creation center picture-book images as persisted thumbnails after metadata', async () => {
+  it('loads creation center picture-book images as persisted display variants after metadata', async () => {
     window.location.hash = '/creation?articleId=1';
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
     Object.defineProperty(navigator, 'clipboard', {
@@ -4337,7 +4415,7 @@ describe('App', () => {
             articleId: article.id,
             pageIndex: Number(payload.pageIndex ?? 0),
             variant: payload.variant,
-            imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
+            imageUri: `data:image/png;base64,DISPLAY_${payload.pageIndex}`,
           });
         }
         if (type === 'article.fullText') {
@@ -4368,16 +4446,16 @@ describe('App', () => {
       const pageImageCalls = calls.filter((call) => call.type === 'pictureBook.pageImage');
       expect(pageImageCalls).toHaveLength(2);
       expect(pageImageCalls.map((call) => call.payload)).toEqual([
-        { articleId: 1, pageIndex: 0, variant: 'thumbnail' },
-        { articleId: 1, pageIndex: 1, variant: 'thumbnail' },
+        { articleId: 1, pageIndex: 0, variant: 'display' },
+        { articleId: 1, pageIndex: 1, variant: 'display' },
       ]);
     });
     await waitFor(() => {
       const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
         .map((image) => image.getAttribute('src'));
       expect(thumbnails).toEqual([
-        'data:image/png;base64,THUMBNAIL_0',
-        'data:image/png;base64,THUMBNAIL_1',
+        'data:image/png;base64,DISPLAY_0',
+        'data:image/png;base64,DISPLAY_1',
       ]);
     });
 
@@ -4390,8 +4468,8 @@ describe('App', () => {
       const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
         .map((image) => image.getAttribute('src'));
       expect(thumbnails).toEqual([
-        'data:image/png;base64,THUMBNAIL_0',
-        'data:image/png;base64,THUMBNAIL_1',
+        'data:image/png;base64,DISPLAY_0',
+        'data:image/png;base64,DISPLAY_1',
       ]);
     });
     expect(screen.queryByText('加载缩略图')).not.toBeInTheDocument();
@@ -4526,8 +4604,8 @@ describe('App', () => {
             articleId: Number(payload.articleId ?? 1),
             pageIndex,
             imagePath: page?.imagePath ?? '',
-            imageUri: page?.imageUri ?? '',
-            imageVariant: 'thumbnail',
+            imageUri: `data:image/png;base64,${String(payload.variant ?? 'thumbnail').toUpperCase()}_${pageIndex}`,
+            imageVariant: String(payload.variant ?? 'thumbnail'),
           });
         }
         if (type === 'pictureBook.pagePromptReview') {
@@ -4604,6 +4682,161 @@ describe('App', () => {
       });
     });
     expect(calls.some((call) => call.type === 'pictureBook.confirmPromptReview')).toBe(false);
+  });
+
+  it('opens local-edit dialog for ready pages with only edit instruction and references', async () => {
+    window.location.hash = '/creation?articleId=1';
+    const now = new Date().toISOString();
+    const article = {
+      id: 1,
+      title: 'Local Edit Book',
+      content: 'Tom finds a snack box. He shares it with his team.',
+      sentences: ['Tom finds a snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: now,
+      averageScore: 88,
+      seriesId: 1,
+      seriesTitle: 'Local Edit Book',
+      chapterOrder: 1,
+    };
+    const series = [
+      {
+        id: 1,
+        title: 'Local Edit Book',
+        description: 'A warm space picture book with stable character design.',
+        coverImagePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    const pictureState = {
+      articleId: article.id,
+      enabled: true,
+      status: 'ready',
+      pages: [
+        {
+          articleId: article.id,
+          seriesId: 1,
+          pageIndex: 0,
+          sentenceStartIndex: 0,
+          sentenceEndIndex: 0,
+          paragraphText: article.sentences[0],
+          prompt: { scene: { sceneDescription: 'Tom discovers the snack box.' } },
+          imagePath: 'F:/Tomato/picture_book/original-0.png',
+          imageUri: 'data:image/png;base64,THUMBNAIL_0',
+          imageVariant: 'thumbnail',
+          status: 'ready',
+          errorMessage: null,
+        },
+        {
+          articleId: article.id,
+          seriesId: 1,
+          pageIndex: 1,
+          sentenceStartIndex: 1,
+          sentenceEndIndex: 1,
+          paragraphText: article.sentences[1],
+          prompt: { scene: { sceneDescription: 'Tom shares the snack box with his team.' } },
+          imagePath: 'F:/Tomato/picture_book/original-1.png',
+          imageUri: 'data:image/png;base64,THUMBNAIL_1',
+          imageVariant: 'thumbnail',
+          status: 'ready',
+          errorMessage: null,
+        },
+      ],
+    };
+    const localEditReview = {
+      ...promptReviewPayloadForTest(article.id, true),
+      reviewId: 'page-edit-1-1',
+      mode: 'singlePageEdit',
+      targetPageIndex: 1,
+      referencePageIndex: 1,
+      referencePageIndexes: [1],
+      referenceOptions: [0, 1],
+      groupPrompt: '',
+      scenes: [
+        {
+          pageIndex: 1,
+          sentenceStartIndex: 1,
+          sentenceEndIndex: 1,
+          paragraphText: article.sentences[1],
+          sceneDescription: 'Tom shares the snack box with his team.',
+        },
+      ],
+    };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+          return ok(message.id, type, { articles: [article], series });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, pictureState);
+        }
+        if (type === 'pictureBook.pageImage') {
+          const pageIndex = Number(payload.pageIndex ?? 0);
+          const page = pictureState.pages.find((item) => item.pageIndex === pageIndex);
+          return ok(message.id, type, {
+            articleId: Number(payload.articleId ?? 1),
+            pageIndex,
+            imagePath: page?.imagePath ?? '',
+            imageUri: `data:image/png;base64,${String(payload.variant ?? 'thumbnail').toUpperCase()}_${pageIndex}`,
+            imageVariant: String(payload.variant ?? 'thumbnail'),
+          });
+        }
+        if (type === 'pictureBook.pagePromptReview') {
+          return ok(message.id, type, localEditReview);
+        }
+        if (type === 'pictureBook.confirmPagePromptReview') {
+          return ok(message.id, type, {
+            ...pictureState,
+            status: 'generating',
+            pages: pictureState.pages.map((page) =>
+              page.pageIndex === 1 ? { ...page, status: 'generating' } : page,
+            ),
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByText('绘本组图')).toBeInTheDocument();
+    const pageTwoCard = (await screen.findByText('第 2 页')).closest('article');
+    expect(pageTwoCard).not.toBeNull();
+    fireEvent.click(within(pageTwoCard as HTMLElement).getByRole('button', { name: '重新生成' }));
+
+    const dialog = await screen.findByRole('dialog', { name: '绘本局部修改' });
+    expect(within(dialog).getByText('只修改第 2 页；其它页面与分镜规划不变')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('heading', { name: '当前分镜描述' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('单张生成提示词')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('章节描述')).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('局部修改说明')).toHaveValue('');
+    expect(within(dialog).getByRole('option', { name: '第 2 张（当前页）' })).toHaveClass('is-selected');
+    fireEvent.change(within(dialog).getByLabelText('局部修改说明'), {
+      target: { value: '把手上的点心改成红色苹果，其余保持不变' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: '修改这一张' }));
+
+    await waitFor(() => {
+      const confirmCall = calls.find((call) => call.type === 'pictureBook.confirmPagePromptReview');
+      expect(confirmCall?.payload).toMatchObject({
+        reviewId: 'page-edit-1-1',
+        groupPrompt: '把手上的点心改成红色苹果，其余保持不变',
+        referencePageIndexes: [1],
+        referencePageIndex: 1,
+      });
+    });
   });
 
   it('submits multiple selected reference images in single-page prompt review', async () => {
@@ -4694,8 +4927,8 @@ describe('App', () => {
             articleId: Number(payload.articleId ?? 1),
             pageIndex,
             imagePath: page?.imagePath ?? '',
-            imageUri: page?.imageUri ?? '',
-            imageVariant: 'thumbnail',
+            imageUri: `data:image/png;base64,${String(payload.variant ?? 'thumbnail').toUpperCase()}_${pageIndex}`,
+            imageVariant: String(payload.variant ?? 'thumbnail'),
           });
         }
         if (type === 'pictureBook.pagePromptReview') {
@@ -4726,7 +4959,9 @@ describe('App', () => {
     expect(within(dialog).getByRole('option', { name: '第 2 张' })).toHaveClass('is-selected');
     expect(within(dialog).getByRole('option', { name: '第 3 张（当前页）' })).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('option', { name: '第 1 张' }));
-    expect(within(dialog).getByText('已选 2 张')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(within(dialog).getByText('已选 2 张')).toBeInTheDocument();
+    });
     fireEvent.click(within(dialog).getByRole('button', { name: '生成这一张' }));
 
     await waitFor(() => {
@@ -4739,7 +4974,7 @@ describe('App', () => {
     });
   });
 
-  it('shows queued storyboard descriptions before picture images are ready', async () => {
+  it('shows original sentence rows instead of queued storyboard descriptions', async () => {
     window.location.hash = '/creation?articleId=1';
     const now = new Date().toISOString();
     const article = {
@@ -4802,7 +5037,9 @@ describe('App', () => {
 
     render(<App />);
 
-    expect(await screen.findByText('Tom discovers the snack box before the image is ready.')).toBeInTheDocument();
+    expect(await screen.findByText('Tom finds a bright snack box.')).toBeInTheDocument();
+    expect(screen.queryByText('Tom discovers the snack box before the image is ready.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '修改第 1 句分句' })).toBeInTheDocument();
     expect(calls.some((call) => call.type === 'pictureBook.pageImage')).toBe(false);
   });
 

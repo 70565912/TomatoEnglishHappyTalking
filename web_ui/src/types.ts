@@ -128,7 +128,7 @@ export interface PictureBookPromptReview {
   chapterId?: number | null;
   seriesId?: number | null;
   bookTitle?: string;
-  mode?: 'group' | 'singlePage' | string;
+  mode?: 'group' | 'singlePage' | 'singlePageEdit' | string;
   targetPageIndex?: number | null;
   referencePageIndex?: number | null;
   referencePageIndexes?: number[];
