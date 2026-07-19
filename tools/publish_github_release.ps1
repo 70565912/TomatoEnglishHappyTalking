@@ -268,10 +268,23 @@ function Invoke-ExternalCommand {
 }
 
 function Assert-GhAuthenticated {
-    $exitCode = Invoke-ExternalCommand -FilePath "gh" -ArgumentList @("auth", "status") -IgnoreExitCode
-    if ($null -eq $exitCode -or $exitCode -ne 0) {
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $login = (& gh api user --jq .login 2>$null | Out-String).Trim()
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    if ($null -ne $exitCode -and $exitCode -ne 0) {
         throw "gh is not authenticated. Run: gh auth login"
     }
+    if ([string]::IsNullOrWhiteSpace($login)) {
+        throw "gh is not authenticated. Run: gh auth login"
+    }
+
+    Write-Host "GitHub CLI authenticated as: $login" -ForegroundColor DarkGray
 }
 
 function Assert-GitWorktreeCleanForRelease {
