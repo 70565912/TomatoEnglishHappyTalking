@@ -1,5 +1,7 @@
 # Tomato English Happy Talking
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 Tomato English Happy Talking is a standalone Flutter app for AI-assisted
 English listening, speaking, picture-book, song, and video practice.
 
@@ -14,14 +16,14 @@ media, and generated user content remain subject to their own terms.
 ## Author And Origin
 
 - Author: 兔子先生 / Ryan Chen
-- Email: 70565912@qq.com
+- Email: [70565912@qq.com](mailto:70565912@qq.com)
 
-This app started as a personal tool for my child, Tomato. The original goal was
-to use AI services to make better English picture-book videos and listening /
-speaking practice material than the tools I had tried before. As the app grew,
-it also became a local workflow for producing English learning content, testing
-AI service quality across providers, and preparing structured material that can
-be reused in model evaluation or training workflows.
+This app began as an AI English practice tool that 兔子先生 built for his child
+「番茄」(Tomato). The design goal is to turn arbitrary articles into English
+picture-book learning videos, and to support everyday listening / speaking
+practice. Because the features call paid cloud APIs, you must apply for the
+corresponding API keys and configure them in the app before normal use.
+Application URLs and setup steps are included further below.
 
 ## What It Does
 
@@ -38,6 +40,77 @@ be reused in model evaluation or training workflows.
 - Exports listening and song videos with SRT or burned-in subtitles.
 - Stores settings locally and avoids returning plaintext API keys through the
   Flutter/Web bridge.
+
+## Screenshots
+
+Creation Center: manage picture books, songs, and video export per chapter.
+
+![Creation Center](docs/readme/creation-center.png)
+
+Practice Center: open listening, follow-read, and conversation practice by book.
+
+![Practice Center](docs/readme/practice-center.png)
+
+## Download
+
+Ship builds are on GitHub Releases:
+
+- [Latest release](https://github.com/70565912/TomatoEnglishHappyTalking/releases/latest)
+- Windows zip and Android APK are attached per tag (for example `v1.0.0`)
+
+## Apply And Configure API Keys
+
+This repository does **not** ship any cloud credentials. After install, open
+**Settings → Cloud services** in the app and paste your keys there (the UI
+stores them securely and only returns masked status over the bridge). Cloud
+calls are billed by each provider—read their pricing before enabling features.
+
+### Which keys you need
+
+| Label in Settings | Used for | Required? |
+| --- | --- | --- |
+| **Bailian Key** | Default Aliyun path: text, picture-book groups, TTS, ASR, Bailian Fun-Music | Required when using Aliyun (the default platform) |
+| **Ark Key** | Volcengine path: Ark text, Seedream picture-book groups | Required when using Volcengine text / images |
+| **Speech Key** | Volcengine TTS / BigASR; conversation practice uses Realtime speech | Required for Volcengine speech, follow-read ASR on Volc, or conversation |
+
+Recommended start: create and configure the **Bailian Key** first so you can
+import chapters, generate picture books, and use listening / most creation
+flows. Add **Ark Key** and **Speech Key** when you switch to Volcengine or need
+conversation practice.
+
+Suno does not use an in-app API key: choose Suno in settings, complete generate
+/ download in the system browser with your own Suno account, then import the
+local MP3 from Creation Center.
+
+### Where to apply
+
+1. **Aliyun Bailian (DashScope) API Key**
+   - Console: [Bailian API Key management](https://bailian.console.aliyun.com/?tab=model#/api-key)
+   - Guide: [Get an API Key](https://help.aliyun.com/zh/model-studio/get-api-key)
+   - Copy the key immediately when created; plaintext is usually not shown again.
+2. **Volcengine Ark API Key**
+   - Console: [Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey)
+   - Enable Ark and the text / image models you plan to use (for example Seedream
+     sequential images).
+3. **Volcengine Speech API Key (new console)**
+   - Console: [Doubao Speech · API Key management](https://console.volcengine.com/speech/new/setting/apikeys)
+   - Guide: [Console API Key management](https://www.volcengine.com/docs/6561/2119699)
+   - This app uses the new `X-Api-Key` auth style; enable TTS / ASR / Realtime as
+     needed before calling those features.
+
+### Configure inside the app
+
+1. Install and launch the Windows or Android app.
+2. Open **Settings → Cloud services**.
+3. In **Credentials**, paste **Bailian Key**, **Ark Key**, and **Speech Key** for
+   the providers you actually use (leave unused fields empty).
+4. Set the active **platform** to Aliyun Bailian or Volcengine to match those
+   keys.
+5. Save. New remote generations use the current provider; existing local cache
+   is reused first.
+
+Never commit keys, paste them into issues / screenshots / logs, or ship local
+`security/` / `settings.json` inside a public Windows zip.
 
 ## Current Platforms
 
@@ -60,7 +133,8 @@ TomatoEnglishHappyTalking/
 ├── web_ui/               # React + Vite + TypeScript UI
 ├── tools/                # Build and local automation scripts
 ├── docs/                 # Design notes, migration notes, and change log
-└── README.md
+├── README.md             # English
+└── README.zh-CN.md       # 中文
 ```
 
 Runtime flow:
@@ -91,7 +165,7 @@ ASR, and music generation.
 | TTS | Aliyun CosyVoice, Volcengine Doubao TTS 2.0 |
 | ASR | Aliyun Qwen-ASR, Volcengine BigASR |
 | Realtime conversation | Volcengine Realtime dialogue |
-| Song generation | Aliyun Bailian Fun-Music, Suno web automation |
+| Song generation | Aliyun Bailian Fun-Music; Suno via system-browser manual import |
 
 API keys are not included in this repository. Configure them from the app
 settings page during local use. Do not commit keys, exported diagnostics, local
