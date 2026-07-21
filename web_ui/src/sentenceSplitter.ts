@@ -164,6 +164,14 @@ function splitSentenceCandidates(cleaned: string): string[] {
 
     let lookahead = index + 1;
     while (lookahead < cleaned.length && isClosingPunctuation(cleaned[lookahead])) {
+      // Do not swallow an opening quote glued to the next sentence
+      // (`Alice."I've` → keep `"` with `I've`).
+      if (isQuoteOpener(cleaned[lookahead])) {
+        const afterQuote = lookahead + 1;
+        if (afterQuote < cleaned.length && /[A-Za-z0-9]/.test(cleaned[afterQuote])) {
+          break;
+        }
+      }
       buffer += cleaned[lookahead];
       index = lookahead;
       lookahead += 1;
@@ -174,7 +182,13 @@ function splitSentenceCandidates(cleaned: string): string[] {
       continue;
     }
 
-    if (lookahead >= cleaned.length || /\s/.test(cleaned[lookahead])) {
+    // Also split when the next sentence is glued without whitespace, e.g.
+    // `thought Alice."I've so often…` (common in OCR / paste artifacts).
+    if (
+      lookahead >= cleaned.length ||
+      /\s/.test(cleaned[lookahead]) ||
+      isGluedNewSentenceStart(cleaned, lookahead)
+    ) {
       const sentence = currentWithClosers;
       if (sentence) candidates.push(sentence);
       buffer = '';
@@ -261,7 +275,9 @@ function choosePhraseBreak(text: string, start: number): number {
     const remainingText = text.slice(phraseBreak.index).trim();
     const remaining = words(remainingText).length;
     if (remaining < 4) continue;
-    if (wouldCreateOrphanTail(remainingText)) continue;
+    // Connector breaks are meant to leave tails like "before she…" / "which was…";
+    // do not reject them as orphan preposition fragments.
+    if (phraseBreak.kind !== 'connector' && wouldCreateOrphanTail(remainingText)) continue;
     if (count >= TARGET_PHRASE_MIN_WORDS && count <= TARGET_PHRASE_MAX_WORDS) {
       if (phraseBreak.kind === 'strong') {
         if (!bestStrong || words(text.slice(start, bestStrong.index).trim()).length < count) {
@@ -278,7 +294,31 @@ function choosePhraseBreak(text: string, start: number): number {
   if (bestAny) return bestAny.index;
   if (fallbackStrongBeforeHard) return fallbackStrongBeforeHard.index;
   if (fallbackBeforeHard) return fallbackBeforeHard.index;
-  return wordBoundaryAfterWords(text, start, TARGET_PHRASE_MAX_WORDS);
+  // Prefer the nearest punctuation before a bare word-boundary hard cut.
+  return preferPunctuationBeforeWordCut(text, start);
+}
+
+/** Last resort: cut near target max, but walk back to the last punct in-window. */
+function preferPunctuationBeforeWordCut(text: string, start: number): number {
+  const hardCut = wordBoundaryAfterWords(text, start, TARGET_PHRASE_MAX_WORDS);
+  const hardMaxCut = wordBoundaryAfterWords(text, start, HARD_PHRASE_MAX_WORDS);
+  const searchEnd = hardMaxCut > hardCut ? hardMaxCut : hardCut;
+  let bestPunct = -1;
+  for (let index = start; index < searchEnd && index < text.length; index += 1) {
+    const ch = text[index];
+    if (ch !== ',' && ch !== ';' && ch !== ':' && ch !== '—' && ch !== '–') continue;
+    const breakIndex = consumeClosingPunctuation(text, index + 1);
+    if (breakIndex <= start || breakIndex > searchEnd) continue;
+    const current = text.slice(start, breakIndex).trim();
+    const remaining = text.slice(breakIndex).trim();
+    const count = words(current).length;
+    if (count < SHORT_CONNECTOR_MIN_WORDS || count > HARD_PHRASE_MAX_WORDS) continue;
+    if (words(remaining).length < 4) continue;
+    if (wouldCreateOrphanTail(remaining)) continue;
+    bestPunct = breakIndex;
+  }
+  if (bestPunct > start) return bestPunct;
+  return hardCut;
 }
 
 function requiredPhraseBreak(text: string, start: number): number | null {
@@ -308,8 +348,15 @@ function phraseBreaks(text: string, start: number): PhraseBreak[] {
       breaks.push({ index: consumeClosingPunctuation(text, index + 1), kind: 'strong' });
       continue;
     }
-    if (ch === ',' && !hasUnclosedDoubleQuote(text.slice(start, index + 1))) {
-      breaks.push({ index: consumeClosingPunctuation(text, index + 1), kind: 'comma' });
+    if (ch === ',') {
+      const openQuote = hasUnclosedDoubleQuote(text.slice(start, index + 1));
+      // Inside short quotes, skip early commas to avoid fragmenting dialogue.
+      // Once the open-quote span reaches a readable phrase length, allow commas
+      // so nested quoted narration can break for read-aloud.
+      const wordsBeforeComma = words(text.slice(start, index).trim()).length;
+      if (!openQuote || wordsBeforeComma >= TARGET_PHRASE_MIN_WORDS) {
+        breaks.push({ index: consumeClosingPunctuation(text, index + 1), kind: 'comma' });
+      }
       continue;
     }
     if ((ch === '"' || ch === '“') && shouldBreakBeforeDirectQuote(text, start, index)) {
@@ -322,7 +369,7 @@ function phraseBreaks(text: string, start: number): PhraseBreak[] {
 
 function connectorBreaks(text: string, start: number): PhraseBreak[] {
   const rest = text.slice(start);
-  return [...rest.matchAll(/\s+(?:so that|because|while|when|before|after|although|though)\b/gi)]
+  return [...rest.matchAll(/\s+(?:so that|because|while|when|before|after|although|though|which)\b/gi)]
     .map((match) => ({ index: start + (match.index ?? 0), kind: 'connector' as const }));
 }
 
@@ -391,6 +438,25 @@ function isSentenceEnd(ch: string): boolean {
 
 function isClosingPunctuation(ch: string): boolean {
   return '\'"”’)]}》'.includes(ch);
+}
+
+function isQuoteOpener(ch: string): boolean {
+  return '"“\'‘'.includes(ch);
+}
+
+/** True when `.!?` is immediately followed by a new sentence with no space. */
+function isGluedNewSentenceStart(text: string, lookahead: number): boolean {
+  if (lookahead >= text.length) return false;
+  let index = lookahead;
+  let sawQuote = false;
+  while (index < text.length && isQuoteOpener(text[index])) {
+    sawQuote = true;
+    index += 1;
+  }
+  if (index >= text.length) return false;
+  if (sawQuote) return /[A-Za-z0-9]/.test(text[index]);
+  // No quote: only treat uppercase as a new sentence (avoid `end.next`).
+  return /[A-Z]/.test(text[index]);
 }
 
 function isDecimalPoint(text: string, index: number): boolean {

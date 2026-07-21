@@ -1,5 +1,18 @@
 # 修改日志
 
+## 2026-07-22
+
+- **朗读分句：粘连句界 + 标点优先**：`NlpService` / `sentenceSplitter` 同步更新。
+  - 句末 `.!?` 后无空白也可收束新句（如 OCR/粘贴常见的 `Name."Next`）；不会把下一句开头引号吞进上一句；`."she` 这类小写续读仍保持同句。
+  - 未闭合双引号内从约 10 词起允许逗号断点，便于长引语朗读；短对话仍跳过过早逗号。
+  - 无可用标点时仍保留词界硬切；硬切前先回退到窗口内最近 `,/;/:/—`。connector 含 `which` / `before` / `after` 等，connector 断点不做 orphan-tail 误拒。
+  - 规则通用，不为单篇文章写特例；回归样本仅作钉住行为。改规则**不会**自动重写已持久化的 `articles.sentences`，需删文重建。
+
+验证：
+
+- `flutter test test/nlp_service_test.dart`（15）
+- `cd web_ui; npm test -- --run src/App.test.tsx -t "read-aloud chunks|hyphenated English|episode headings|Mad Tea-Party|pre-quote|glued sentence|mid-clause hard cuts|connector rather than"`（8）
+
 ## 2026-07-21
 
 - **绘本页导入外部图片**：创作中心每页「重新生成」旁增加「导入图片」；`pictureBook.importPageImage` 经 FilePicker 选择 png/jpg/jpeg/webp。已是 **2560×1440** 则原样入库；否则 Flutter 原生 cover-crop + **双线性（`FilterQuality.medium`）** 重编码为 2560×1440 PNG，写入 `picture_book` 缓存（`source: import`），替换该页并标 `ready`，不调用图片 API、不改分镜。

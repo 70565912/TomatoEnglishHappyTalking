@@ -259,6 +259,15 @@ class NlpService {
       var lookahead = i + 1;
       while (lookahead < cleaned.length &&
           _isClosingPunctuation(cleaned[lookahead])) {
+        // Do not swallow an opening quote glued to the next sentence
+        // (`Alice."I've` → keep `"` with `I've`).
+        if (_isQuoteOpener(cleaned[lookahead])) {
+          final afterQuote = lookahead + 1;
+          if (afterQuote < cleaned.length &&
+              RegExp(r'[A-Za-z0-9]').hasMatch(cleaned[afterQuote])) {
+            break;
+          }
+        }
         buffer.write(cleaned[lookahead]);
         i = lookahead;
         lookahead++;
@@ -273,7 +282,11 @@ class NlpService {
         continue;
       }
 
-      if (lookahead >= cleaned.length || _isWhitespace(cleaned[lookahead])) {
+      // Also split when the next sentence is glued without whitespace, e.g.
+      // `thought Alice."I've so often…` (common in OCR / paste artifacts).
+      if (lookahead >= cleaned.length ||
+          _isWhitespace(cleaned[lookahead]) ||
+          _isGluedNewSentenceStart(cleaned, lookahead)) {
         final sentence = currentWithClosers;
         if (sentence.isNotEmpty) {
           candidates.add(sentence);
@@ -360,7 +373,10 @@ class NlpService {
       if (remaining < 4) {
         continue;
       }
-      if (_wouldCreateOrphanTail(remainingText)) {
+      // Connector breaks are meant to leave tails like "before she…" / "which was…";
+      // do not reject them as orphan preposition fragments.
+      if (phraseBreak.kind != _PhraseBreakKind.connector &&
+          _wouldCreateOrphanTail(remainingText)) {
         continue;
       }
       if (count >= _targetPhraseMinWords && count <= _targetPhraseMaxWords) {
@@ -390,7 +406,51 @@ class NlpService {
     if (fallbackBeforeHard != null) {
       return fallbackBeforeHard.index;
     }
-    return _wordBoundaryAfterWords(text, start, _targetPhraseMaxWords);
+    // Prefer the nearest punctuation before a bare word-boundary hard cut.
+    return _preferPunctuationBeforeWordCut(text, start);
+  }
+
+  /// Last resort: cut near [_targetPhraseMaxWords], but walk back to the last
+  /// `,` / `;` / `:` / dash in the search window so we do not split mid-clause.
+  static int _preferPunctuationBeforeWordCut(String text, int start) {
+    final hardCut =
+        _wordBoundaryAfterWords(text, start, _targetPhraseMaxWords);
+    final hardMaxCut =
+        _wordBoundaryAfterWords(text, start, _hardPhraseMaxWords);
+    final searchEnd =
+        hardMaxCut > hardCut ? hardMaxCut : hardCut;
+    var bestPunct = -1;
+    for (var index = start; index < searchEnd && index < text.length; index++) {
+      final ch = text[index];
+      if (ch != ',' &&
+          ch != ';' &&
+          ch != ':' &&
+          ch != '—' &&
+          ch != '–') {
+        continue;
+      }
+      final breakIndex = _consumeClosingPunctuation(text, index + 1);
+      if (breakIndex <= start || breakIndex > searchEnd) {
+        continue;
+      }
+      final current = text.substring(start, breakIndex).trim();
+      final remaining = text.substring(breakIndex).trim();
+      final count = _wordCount(current);
+      if (count < _shortConnectorMinWords || count > _hardPhraseMaxWords) {
+        continue;
+      }
+      if (_wordCount(remaining) < 4) {
+        continue;
+      }
+      if (_wouldCreateOrphanTail(remaining)) {
+        continue;
+      }
+      bestPunct = breakIndex;
+    }
+    if (bestPunct > start) {
+      return bestPunct;
+    }
+    return hardCut;
   }
 
   static int? _requiredPhraseBreak(String text, int start) {
@@ -424,12 +484,20 @@ class NlpService {
         ));
         continue;
       }
-      if (ch == ',' &&
-          !_hasUnclosedDoubleQuote(text.substring(start, index + 1))) {
-        breaks.add(_PhraseBreak(
-          index: _consumeClosingPunctuation(text, index + 1),
-          kind: _PhraseBreakKind.comma,
-        ));
+      if (ch == ',') {
+        final openQuote =
+            _hasUnclosedDoubleQuote(text.substring(start, index + 1));
+        // Inside short quotes, skip early commas to avoid fragmenting dialogue.
+        // Once the open-quote span reaches a readable phrase length, allow
+        // commas so nested newspaper-style quotes can break for read-aloud.
+        final wordsBeforeComma =
+            _wordCount(text.substring(start, index).trim());
+        if (!openQuote || wordsBeforeComma >= _targetPhraseMinWords) {
+          breaks.add(_PhraseBreak(
+            index: _consumeClosingPunctuation(text, index + 1),
+            kind: _PhraseBreakKind.comma,
+          ));
+        }
         continue;
       }
       if ((ch == '"' || ch == '“') &&
@@ -448,7 +516,7 @@ class NlpService {
   static List<_PhraseBreak> _connectorBreaks(String text, int start) {
     final rest = text.substring(start);
     final matches = RegExp(
-      r'\s+(?:so that|because|while|when|before|after|although|though)\b',
+      r'\s+(?:so that|because|while|when|before|after|although|though|which)\b',
       caseSensitive: false,
     ).allMatches(rest);
     return [
@@ -553,6 +621,30 @@ class NlpService {
   static bool _isWhitespace(String ch) => RegExp(r'\s').hasMatch(ch);
 
   static bool _isClosingPunctuation(String ch) => '\'"”’)]}》'.contains(ch);
+
+  static bool _isQuoteOpener(String ch) => '"“\'‘'.contains(ch);
+
+  /// True when `.!?` is immediately followed by a new sentence with no space,
+  /// e.g. `done."I've` or rare glued `end.Next`.
+  static bool _isGluedNewSentenceStart(String text, int lookahead) {
+    if (lookahead >= text.length) {
+      return false;
+    }
+    var index = lookahead;
+    var sawQuote = false;
+    while (index < text.length && _isQuoteOpener(text[index])) {
+      sawQuote = true;
+      index++;
+    }
+    if (index >= text.length) {
+      return false;
+    }
+    if (sawQuote) {
+      return RegExp(r'[A-Za-z0-9]').hasMatch(text[index]);
+    }
+    // No quote: only treat uppercase as a new sentence (avoid `end.next`).
+    return RegExp(r'[A-Z]').hasMatch(text[index]);
+  }
 
   static bool _isDecimalPoint(String text, int index) {
     if (index == 0 || index + 1 >= text.length) {

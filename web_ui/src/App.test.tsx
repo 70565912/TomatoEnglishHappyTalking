@@ -83,6 +83,15 @@ function expectElementBefore(first: HTMLElement, second: HTMLElement) {
   expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
 
+function adjacentChunks(chunks: string[], endsWith: RegExp, startsWith: RegExp): boolean {
+  for (let index = 0; index < chunks.length - 1; index += 1) {
+    if (endsWith.test(chunks[index].trim()) && startsWith.test(chunks[index + 1].trim())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function installChapterOrderBridge(articles: Article[], series: StorySeries[]) {
   const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
     id: String(id),
@@ -2716,6 +2725,60 @@ describe('App', () => {
     expect(joined).toContain('left-hand bit of mushroom,');
     expect(joined).toContain('and raised herself to about two feet high;');
     expect(joined).toContain('"Suppose it should be raving mad after all');
+  });
+
+  it('splits glued sentence starts without requiring whitespace', () => {
+    expect(splitSentences('He left."She stayed behind."')).toEqual([
+      'He left.',
+      '"She stayed behind."',
+    ]);
+    expect(splitSentences('"Wait." she said quietly.')).toEqual([
+      '"Wait." she said quietly.',
+    ]);
+  });
+
+  it('prefers punctuation over mid-clause hard cuts in long nested quotes', () => {
+    const chunks = splitSentences(
+      "\"I'm glad I've seen that done,\" thought Alice.\"I've so often read in the newspapers, at the end of trials,'There was some attempt at applause, which was immediately suppressed by the officers of the'court,'and I never understood what it meant till now.\"",
+    );
+    const joined = chunks.join('\n');
+
+    expect(
+      chunks.some(
+        (chunk) => chunk.includes('thought Alice.') && !chunk.includes("I've so often"),
+      ),
+    ).toBe(true);
+    expect(chunks.some((chunk) => chunk.trimStart().startsWith("\"I've so often"))).toBe(true);
+    expect(joined).not.toMatch(/some attempt\nat applause/);
+    expect(chunks.some((chunk) => /some attempt\s*$/.test(chunk.trim()) && !chunk.includes('at applause'))).toBe(false);
+    expect(
+      chunks.some(
+        (chunk) =>
+          chunk.includes('at the end of trials,') ||
+          chunk.includes('at applause, which was immediately suppressed') ||
+          chunk.includes('at applause,'),
+      ),
+    ).toBe(true);
+    expect(chunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 32)).toBe(true);
+  });
+
+  it('breaks before connector rather than after a little / go', () => {
+    const littleChunks = splitSentences(
+      'This was quite a new idea to Alice, and she thought it over a little before she made her next remark. Then she asked another question.',
+    );
+    expect(
+      littleChunks.some((chunk) => chunk.includes('a little before she made her next remark')) ||
+        adjacentChunks(littleChunks, /a little\s*$/, /^before\b/),
+    ).toBe(true);
+
+    const goChunks = splitSentences(
+      'but on the whole she thought it would be quite as safe to stay with it as to go after that savage Queen: so she waited.',
+    );
+    expect(
+      goChunks.some((chunk) => chunk.includes('as to go after that savage Queen')) ||
+        adjacentChunks(goChunks, /as to go\s*$/, /^after\b/),
+    ).toBe(true);
+    expect(goChunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 32)).toBe(true);
   });
 
   it('auto-plays the first follow sentence and enables recording afterward', async () => {

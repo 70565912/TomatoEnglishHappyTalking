@@ -213,7 +213,116 @@ void main() {
         isTrue,
       );
     });
+
+    test('splits glued sentence starts without requiring whitespace', () {
+      expect(
+        NlpService.splitSentences('He left."She stayed behind."'),
+        [
+          'He left.',
+          '"She stayed behind."',
+        ],
+      );
+      // Lowercase continuation after a closed quote stays one unit.
+      expect(
+        NlpService.splitSentences('"Wait." she said quietly.'),
+        ['"Wait." she said quietly.'],
+      );
+    });
+
+    test('prefers punctuation over mid-clause hard cuts in long nested quotes',
+        () {
+      final chunks = NlpService.splitSentences(
+        '"I\'m glad I\'ve seen that done," thought Alice."I\'ve so often read '
+        'in the newspapers, at the end of trials,\'There was some attempt '
+        'at applause, which was immediately suppressed by the officers of '
+        'the\'court,\'and I never understood what it meant till now."',
+      );
+      final joined = chunks.join('\n');
+
+      // Glued `Name."Next` must split at the period, not swallow the next `"`.
+      expect(
+        chunks.any(
+          (chunk) =>
+              chunk.contains('thought Alice.') && !chunk.contains("I've so often"),
+        ),
+        isTrue,
+      );
+      expect(
+        chunks.any((chunk) => chunk.trimLeft().startsWith('"I\'ve so often')),
+        isTrue,
+      );
+      expect(joined, isNot(contains('some attempt\nat applause')));
+      expect(
+        chunks.any(
+          (chunk) =>
+              RegExp(r'some attempt\s*$').hasMatch(chunk.trim()) &&
+              !chunk.contains('at applause'),
+        ),
+        isFalse,
+      );
+      expect(
+        chunks.any(
+          (chunk) =>
+              chunk.contains('at the end of trials,') ||
+              chunk.contains('at applause, which was immediately suppressed') ||
+              chunk.contains('at applause,'),
+        ),
+        isTrue,
+      );
+      expect(_maxWords(chunks), lessThanOrEqualTo(32));
+    });
+
+    test('breaks before connector rather than after a little / go', () {
+      final littleChunks = NlpService.splitSentences(
+        'This was quite a new idea to Alice, and she thought it over a little '
+        'before she made her next remark. Then she asked another question.',
+      );
+      // Prefer keeping the clause together, or a connector break at "before"
+      // (next chunk starts with before). Never a bare mid-word cut.
+      expect(
+        littleChunks.any(
+              (chunk) => chunk.contains('a little before she made her next remark'),
+            ) ||
+            _adjacentChunks(
+              littleChunks,
+              endsWith: RegExp(r'a little\s*$'),
+              startsWith: RegExp(r'^before\b'),
+            ),
+        isTrue,
+      );
+
+      final goChunks = NlpService.splitSentences(
+        'but on the whole she thought it would be quite as safe to stay with '
+        'it as to go after that savage Queen: so she waited.',
+      );
+      expect(
+        goChunks.any(
+              (chunk) => chunk.contains('as to go after that savage Queen'),
+            ) ||
+            _adjacentChunks(
+              goChunks,
+              endsWith: RegExp(r'as to go\s*$'),
+              startsWith: RegExp(r'^after\b'),
+            ),
+        isTrue,
+      );
+      expect(_maxWords(goChunks), lessThanOrEqualTo(32));
+    });
   });
+}
+
+bool _adjacentChunks(
+  List<String> chunks, {
+  required RegExp endsWith,
+  required RegExp startsWith,
+}) {
+  for (var index = 0; index < chunks.length - 1; index++) {
+    if (endsWith.hasMatch(chunks[index].trim()) &&
+        startsWith.hasMatch(chunks[index + 1].trim())) {
+      return true;
+    }
+  }
+  return false;
 }
 
 int _maxWords(List<String> chunks) => chunks
