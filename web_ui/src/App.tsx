@@ -606,6 +606,21 @@ function App() {
     }
   };
 
+  const importPictureBookPageImage = async (articleId: number, pageIndex: number) => {
+    const payload = await sendNative<PictureBookState & { cancelled?: boolean; imported?: boolean }>(
+      'pictureBook.importPageImage',
+      { articleId, pageIndex },
+    );
+    if (payload.cancelled) {
+      setNotice('已取消导入图片');
+      return;
+    }
+    setPictureBookState((current) =>
+      current?.articleId === articleId ? mergePictureBookState(current, payload) : current,
+    );
+    setNotice(`第 ${pageIndex + 1} 页图片已导入`);
+  };
+
   useEffect(() => {
     let isMounted = true;
     const offArticles = onNativeEvent<{ articles: Article[]; series?: StorySeries[] }>(
@@ -868,6 +883,7 @@ function App() {
             onBlockingOverlayChange={setAppBlockingOverlay}
             onOpenPicturePromptReview={openPictureBookPromptReview}
             onOpenPicturePagePromptReview={openPictureBookPagePromptReview}
+            onImportPicturePageImage={importPictureBookPageImage}
             onChapterOrderChange={rememberChapterOrder}
             onArticlesUpdated={(payload) => {
               if (payload.articles) setArticles(payload.articles);
@@ -1963,6 +1979,7 @@ function CreationCenterPage({
   onBlockingOverlayChange,
   onOpenPicturePromptReview,
   onOpenPicturePagePromptReview,
+  onImportPicturePageImage,
   onChapterOrderChange,
   onArticlesUpdated,
   onRename,
@@ -1984,6 +2001,7 @@ function CreationCenterPage({
   onBlockingOverlayChange: (overlay: BlockingOverlayConfig | null) => void;
   onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPicturePagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
+  onImportPicturePageImage: (articleId: number, pageIndex: number) => void | Promise<void>;
   onChapterOrderChange: (order: ChapterOrder) => void;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
@@ -2281,6 +2299,7 @@ function CreationCenterPage({
             onArticlesUpdated={onArticlesUpdated}
             onOpenPromptReview={onOpenPicturePromptReview}
             onOpenPagePromptReview={onOpenPicturePagePromptReview}
+            onImportPageImage={onImportPicturePageImage}
           />
         ) : activeTab === 'song' ? (
           <SongCreationPanel
@@ -2633,6 +2652,7 @@ function PictureBookCreationPanel({
   onArticlesUpdated,
   onOpenPromptReview,
   onOpenPagePromptReview,
+  onImportPageImage,
 }: {
   article: Article;
   pictureBookRetryGate: PictureBookRetryGate;
@@ -2641,9 +2661,13 @@ function PictureBookCreationPanel({
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onOpenPromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
+  onImportPageImage: (articleId: number, pageIndex: number) => void | Promise<void>;
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
+  const [importingPageIndex, setImportingPageIndex] = useState<number | null>(null);
+  const [exportingChapterImages, setExportingChapterImages] = useState(false);
+  const [exportConflict, setExportConflict] = useState<PictureBookExportConflictState | null>(null);
   const [picturePreview, setPicturePreview] = useState<PictureBookPagePreviewState | null>(null);
   const [sentenceItems, setSentenceItems] = useState<ListeningItem[]>(() => listeningItemsFromArticle(article));
   const [sentenceItemsLoading, setSentenceItemsLoading] = useState(true);
@@ -2725,6 +2749,113 @@ function PictureBookCreationPanel({
     Promise.resolve(onOpenPagePromptReview(article.id, page.pageIndex))
       .catch((error) => onNotice(error instanceof Error ? error.message : '绘本重试失败'))
       .finally(() => pictureBookRetryGate.finish(article.id, page.pageIndex));
+  };
+
+  const importPageImage = (page: PictureBookPage) => {
+    if (importingPageIndex != null || promptReviewLoading || page.status === 'generating') {
+      return;
+    }
+    setImportingPageIndex(page.pageIndex);
+    Promise.resolve(onImportPageImage(article.id, page.pageIndex))
+      .then(() => {
+        // Bridge may push pictureBook.state; also refresh in case cancel/success skipped event.
+        return sendNative<PictureBookState>('pictureBook.state', {
+          articleId: article.id,
+          includeImageUris: false,
+        }).then((payload) => setState((current) => mergePictureBookState(current, payload)));
+      })
+      .catch((error) => onNotice(error instanceof Error ? error.message : '导入图片失败'))
+      .finally(() => setImportingPageIndex(null));
+  };
+
+  const readyExportPageCount =
+    state?.pages.filter((page) => page.status === 'ready' && Boolean(page.imagePath?.trim())).length ?? 0;
+
+  const runExportChapterImages = async (options?: {
+    outputDirectory?: string;
+    overwrite?: boolean;
+    namePrefix?: string;
+  }) => {
+    const payload = await sendNative<PictureBookExportChapterImagesPayload>(
+      'pictureBook.exportChapterImages',
+      {
+        articleId: article.id,
+        ...(options?.outputDirectory ? { outputDirectory: options.outputDirectory } : {}),
+        ...(options?.overwrite ? { overwrite: true } : {}),
+        ...(options?.namePrefix ? { namePrefix: options.namePrefix } : {}),
+      },
+    );
+    if (payload.cancelled) {
+      onNotice('已取消导出组图');
+      setExportConflict(null);
+      return;
+    }
+    if (payload.needsConflictResolution) {
+      setExportConflict({
+        outputDirectory: payload.outputDirectory ?? '',
+        conflicts: Array.isArray(payload.conflicts) ? payload.conflicts : [],
+        readyCount: payload.readyCount ?? readyExportPageCount,
+        namePrefix: '',
+        busy: false,
+        error: null,
+      });
+      return;
+    }
+    setExportConflict(null);
+    const count = payload.exportedCount ?? 0;
+    onNotice(
+      count > 0
+        ? `已导出 ${count} 张组图到 ${payload.outputDirectory ?? '选定目录'}`
+        : '没有可导出的组图',
+    );
+  };
+
+  const exportChapterImages = () => {
+    if (exportingChapterImages || promptReviewLoading || readyExportPageCount <= 0) {
+      if (readyExportPageCount <= 0) {
+        onNotice('本章还没有可导出的绘本图片');
+      }
+      return;
+    }
+    setExportingChapterImages(true);
+    void runExportChapterImages()
+      .catch((error) => onNotice(error instanceof Error ? error.message : '导出组图失败'))
+      .finally(() => setExportingChapterImages(false));
+  };
+
+  const confirmExportOverwrite = () => {
+    if (!exportConflict || exportConflict.busy) return;
+    const outputDirectory = exportConflict.outputDirectory;
+    setExportConflict((current) => (current ? { ...current, busy: true, error: null } : current));
+    setExportingChapterImages(true);
+    void runExportChapterImages({ outputDirectory, overwrite: true })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : '覆盖导出失败';
+        setExportConflict((current) => (current ? { ...current, busy: false, error: message } : current));
+        onNotice(message);
+      })
+      .finally(() => setExportingChapterImages(false));
+  };
+
+  const confirmExportRename = () => {
+    if (!exportConflict || exportConflict.busy) return;
+    const namePrefix = exportConflict.namePrefix.trim();
+    if (!namePrefix) {
+      setExportConflict((current) =>
+        current ? { ...current, error: '请填写自定义文件名前缀' } : current,
+      );
+      return;
+    }
+    const outputDirectory = exportConflict.outputDirectory;
+    setExportConflict((current) => (current ? { ...current, busy: true, error: null } : current));
+    setExportingChapterImages(true);
+    void runExportChapterImages({ outputDirectory, namePrefix })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : '改名导出失败';
+        setExportConflict((current) => (current ? { ...current, busy: false, error: message } : current));
+        onNotice(message);
+      })
+      .finally(() => setExportingChapterImages(false));
   };
 
   const openSentenceEdit = (item: ListeningItem) => {
@@ -2883,6 +3014,20 @@ function PictureBookCreationPanel({
           <button
             className="ghost-action small"
             type="button"
+            onClick={() => void exportChapterImages()}
+            disabled={
+              exportingChapterImages ||
+              promptReviewLoading ||
+              readyExportPageCount <= 0 ||
+              exportConflict != null
+            }
+          >
+            <Icon name={exportingChapterImages ? 'refresh' : 'download'} />
+            {exportingChapterImages ? '导出中' : '导出组图'}
+          </button>
+          <button
+            className="ghost-action small"
+            type="button"
             onClick={() => void generateListeningAudio()}
             disabled={audioGenerating || audioStatusLoading}
           >
@@ -2928,6 +3073,7 @@ function PictureBookCreationPanel({
               const imageSource = directImageSource(page.imageUri);
               const pageSentenceItems = sentenceItemsForPictureBookPage(sentenceItems, page);
               const retrying = pictureBookRetryGate.isRetrying(article.id, safePageIndex);
+              const importing = importingPageIndex === safePageIndex;
               return (
                 <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
                   {imageSource ? (
@@ -2949,10 +3095,23 @@ function PictureBookCreationPanel({
                     <button
                       className="ghost-action small"
                       type="button"
-                      disabled={retrying || promptReviewLoading}
+                      disabled={retrying || promptReviewLoading || importing}
                       onClick={() => retryPage({ ...page, pageIndex: safePageIndex })}
                     >
                       <Icon name="refresh" /> {retrying ? '准备中' : '重新生成'}
+                    </button>
+                    <button
+                      className="ghost-action small"
+                      type="button"
+                      disabled={
+                        retrying ||
+                        promptReviewLoading ||
+                        importing ||
+                        page.status === 'generating'
+                      }
+                      onClick={() => importPageImage({ ...page, pageIndex: safePageIndex })}
+                    >
+                      <Icon name="upload" /> {importing ? '导入中' : '导入图片'}
                     </button>
                   </div>
                   <div className="picture-creation-copy">
@@ -3046,7 +3205,112 @@ function PictureBookCreationPanel({
           onConfirm={() => void saveSentenceEdit(true)}
         />
       )}
+      {exportConflict && (
+        <PictureBookExportConflictDialog
+          state={exportConflict}
+          onNamePrefixChange={(namePrefix) =>
+            setExportConflict((current) =>
+              current ? { ...current, namePrefix, error: null } : current,
+            )
+          }
+          onCancel={() => {
+            if (exportConflict.busy) return;
+            setExportConflict(null);
+            onNotice('已取消导出组图');
+          }}
+          onOverwrite={() => void confirmExportOverwrite()}
+          onRename={() => void confirmExportRename()}
+        />
+      )}
     </section>
+  );
+}
+
+type PictureBookExportConflictState = {
+  outputDirectory: string;
+  conflicts: Array<{ pageIndex: number; fileName: string }>;
+  readyCount: number;
+  namePrefix: string;
+  busy: boolean;
+  error: string | null;
+};
+
+type PictureBookExportChapterImagesPayload = {
+  articleId?: number;
+  cancelled?: boolean;
+  needsConflictResolution?: boolean;
+  outputDirectory?: string;
+  readyCount?: number;
+  conflicts?: Array<{ pageIndex: number; fileName: string }>;
+  exportedCount?: number;
+  files?: string[];
+};
+
+function PictureBookExportConflictDialog({
+  state,
+  onNamePrefixChange,
+  onCancel,
+  onOverwrite,
+  onRename,
+}: {
+  state: PictureBookExportConflictState;
+  onNamePrefixChange: (namePrefix: string) => void;
+  onCancel: () => void;
+  onOverwrite: () => void;
+  onRename: () => void;
+}) {
+  const conflictNames = state.conflicts.map((item) => item.fileName).join('、');
+  return createPortal(
+    <div
+      className="edit-dialog-backdrop confirm-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target !== event.currentTarget || state.busy) return;
+        onCancel();
+      }}
+    >
+      <section className="edit-dialog confirm-dialog" role="dialog" aria-label="导出组图同名确认" aria-modal="true">
+        <header className="edit-dialog-header">
+          <div>
+            <h3>导出目录已有同名文件</h3>
+            <p className="picture-prompt-note">{state.outputDirectory}</p>
+          </div>
+          <button className="ghost-action small" type="button" onClick={onCancel} disabled={state.busy}>
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="edit-dialog-body">
+          <p>
+            共 {state.readyCount} 张可导出，其中 {state.conflicts.length} 个文件名已存在：
+            {conflictNames || '（未列出）'}。
+          </p>
+          <p>请选择覆盖保存，或填写自定义前缀后改名导出（例如 <code>v2_</code> → <code>v2_01.png</code>）。</p>
+          <label className="settings-label">
+            <span>自定义前缀</span>
+            <input
+              type="text"
+              value={state.namePrefix}
+              disabled={state.busy}
+              placeholder="例如 v2_"
+              onChange={(event) => onNamePrefixChange(event.target.value)}
+            />
+          </label>
+          {state.error && <p className="edit-dialog-error">{state.error}</p>}
+        </div>
+        <footer className="edit-dialog-actions">
+          <button className="ghost-action" type="button" onClick={onCancel} disabled={state.busy}>
+            取消
+          </button>
+          <button className="ghost-action" type="button" onClick={onRename} disabled={state.busy}>
+            {state.busy ? '导出中' : '自定义改名导出'}
+          </button>
+          <button className="primary-action" type="button" onClick={onOverwrite} disabled={state.busy}>
+            {state.busy ? '导出中' : '覆盖保存'}
+          </button>
+        </footer>
+      </section>
+    </div>,
+    document.body,
   );
 }
 

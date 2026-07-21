@@ -333,8 +333,10 @@ class ApiCacheService {
     int? articleId,
     String source = 'remote',
   }) async {
-    if (bytes.isEmpty || source != 'remote') {
-      throw StateError('Only non-empty remote file cache entries can be saved');
+    if (bytes.isEmpty || (source != 'remote' && source != 'import')) {
+      throw StateError(
+        'Only non-empty remote or import file cache entries can be saved',
+      );
     }
 
     final dir = await cacheDirectory(subdirectory);

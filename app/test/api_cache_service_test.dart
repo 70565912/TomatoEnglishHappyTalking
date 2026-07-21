@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -784,17 +785,24 @@ void main() {
     );
     expect(
       planningPrompt,
-      contains(
-          'before splitting scenes, convert quoted speech'),
+      contains('before splitting scenes, convert quoted speech'),
+    );
+    expect(
+      planningPrompt,
+      contains('decide boundaries by illustration situation'),
     );
     expect(
       planningPrompt,
       contains(
-          'use the resulting continuous story situation to decide scene boundaries'),
+          'place/time, main visual focus group, and central ongoing activity'),
     );
     expect(
       planningPrompt,
-      contains('if the converted narrative leaves no new place'),
+      contains("focused characters' main task and its target"),
+    );
+    expect(
+      planningPrompt,
+      contains('not each new visible beat'),
     );
     expect(
       planningPrompt,
@@ -806,25 +814,52 @@ void main() {
     );
     expect(
       planningPrompt,
-      contains('consecutive content from the same continuous story scene'),
+      contains('numbered indexes are coverage anchors only'),
     );
     expect(
       planningPrompt,
-      contains('same continuous story scene means the same place/time'),
+      contains('one illustration may cover many consecutive sentences'),
     );
     expect(
       planningPrompt,
-      contains('main participant group, and ongoing situation or activity'),
+      contains('consecutive run of facts, examples, list items'),
+    );
+    expect(
+      planningPrompt,
+      contains('same subject in the same time/place frame'),
+    );
+    expect(
+      planningPrompt,
+      contains('one central topic block, not one scene per fact'),
+    );
+    expect(
+      planningPrompt,
+      contains('render its related details together'),
+    );
+    expect(
+      planningPrompt,
+      contains('split that fact/list block only when'),
+    );
+    expect(
+      planningPrompt,
+      contains('local fact/list rule must not override'),
+    );
+    expect(
+      planningPrompt,
+      contains('sequential movement, object manipulation, discovery, accident'),
+    );
+    expect(
+      planningPrompt,
+      contains('do not target a fixed number of scenes'),
+    );
+    expect(
+      planningPrompt,
+      contains('consecutive content from the same illustration situation'),
     );
     expect(
       planningPrompt,
       contains(
-          'start a new scene only when the continuous story scene changes'),
-    );
-    expect(
-      planningPrompt,
-      contains(
-          'new place/time, participant group change, or a concrete story action'),
+          'start a new scene only when one axis changes materially enough'),
     );
     expect(
       planningPrompt,
@@ -834,15 +869,35 @@ void main() {
     expect(
       planningPrompt,
       contains(
-          'riddles, arguments, remarks, jokes, reactions, or emotion changes'),
+          'riddles, arguments, remarks, jokes, reactions, emotion changes'),
     );
     expect(
       planningPrompt,
-      contains('while the same story scene continues'),
+      contains('repeated same-type micro-actions'),
     );
     expect(
       planningPrompt,
-      contains('keep one continuous tea-table, kitchen, roadside, or room gathering'),
+      contains('cause, immediate result, and direct recovery'),
+    );
+    expect(
+      planningPrompt,
+      contains('if a candidate boundary differs only by speech turns'),
+    );
+    expect(
+      planningPrompt,
+      contains('must use only events and scene facts from its own'),
+    );
+    expect(
+      planningPrompt,
+      contains('preserve who performs each action'),
+    );
+    expect(
+      planningPrompt,
+      contains('audit every adjacent scene boundary'),
+    );
+    expect(
+      planningPrompt,
+      contains('one shared illustration can represent both ranges'),
     );
     expect(
       planningPrompt,
@@ -864,10 +919,25 @@ void main() {
     expect(
       planningPrompt,
       contains(
-          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+          'dialogue-heavy ranges in one illustration situation must remain one scene'),
     );
     expect(
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(
+      planningPrompt,
+      contains('do not invent splits to approach the cap'),
+    );
+    expect(
+      planningPrompt,
+      contains('do not open many one-sentence scenes'),
+    );
+    expect(
+      planningPrompt,
+      isNot(contains('keep one continuous tea-table, kitchen, roadside')),
+    );
+    expect(planningPrompt, isNot(contains('main task of the gathering')));
+    expect(planningPrompt, isNot(contains('and visual change')));
+    expect(planningPrompt, isNot(contains('continuous story scene')));
     expect(planningPrompt, isNot(contains('mentally delete')));
     expect(planningPrompt, isNot(contains('remove direct dialogue')));
     expect(planningPrompt, isNot(contains('non-dialogue visual prose')));
@@ -2369,12 +2439,11 @@ but the three were all crowded together at one corner of it.
     );
     expect(
       planningPrompt,
-      contains(
-          'use the resulting continuous story situation to decide scene boundaries'),
+      contains('decide boundaries by illustration situation'),
     );
     expect(
       planningPrompt,
-      contains('if the converted narrative leaves no new place'),
+      contains('if the converted narrative leaves no material change'),
     );
     expect(
       planningPrompt,
@@ -2382,12 +2451,12 @@ but the three were all crowded together at one corner of it.
     );
     expect(
       planningPrompt,
-      contains('consecutive content from the same continuous story scene'),
+      contains('one illustration may cover many consecutive sentences'),
     );
     expect(
       planningPrompt,
       contains(
-          'start a new scene only when the continuous story scene changes'),
+          'start a new scene only when one axis changes materially enough'),
     );
     expect(
       planningPrompt,
@@ -2414,10 +2483,11 @@ but the three were all crowded together at one corner of it.
     expect(
       planningPrompt,
       contains(
-          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+          'dialogue-heavy ranges in one illustration situation must remain one scene'),
     );
     expect(
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('continuous story scene')));
     expect(planningPrompt, isNot(contains('mentally delete')));
     expect(planningPrompt, isNot(contains('remove direct dialogue')));
     expect(planningPrompt, isNot(contains('non-dialogue visual prose')));
@@ -2569,12 +2639,11 @@ but the three were all crowded together at one corner of it.
     );
     expect(
       planningPrompt,
-      contains(
-          'use the resulting continuous story situation to decide scene boundaries'),
+      contains('decide boundaries by illustration situation'),
     );
     expect(
       planningPrompt,
-      contains('if the converted narrative leaves no new place'),
+      contains('if the converted narrative leaves no material change'),
     );
     expect(
       planningPrompt,
@@ -2582,16 +2651,16 @@ but the three were all crowded together at one corner of it.
     );
     expect(
       planningPrompt,
-      contains('consecutive content from the same continuous story scene'),
+      contains('one illustration may cover many consecutive sentences'),
     );
     expect(
       planningPrompt,
-      contains('main participant group, and ongoing situation or activity'),
+      contains('numbered indexes are coverage anchors only'),
     );
     expect(
       planningPrompt,
       contains(
-          'start a new scene only when the continuous story scene changes'),
+          'start a new scene only when one axis changes materially enough'),
     );
     expect(
       planningPrompt,
@@ -2613,10 +2682,12 @@ but the three were all crowded together at one corner of it.
     expect(
       planningPrompt,
       contains(
-          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+          'dialogue-heavy ranges in one illustration situation must remain one scene'),
     );
     expect(
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
+    expect(planningPrompt, isNot(contains('continuous story scene')));
+    expect(planningPrompt, isNot(contains('keep one continuous tea-table')));
     expect(planningPrompt, isNot(contains('mentally delete')));
     expect(planningPrompt, isNot(contains('remove speech/thought content')));
     expect(
@@ -2816,8 +2887,8 @@ but the three were all crowded together at one corner of it.
         .toLowerCase();
 
     expect(planningPrompt, contains('17.i meant what i said'));
-    expect(
-        planningPrompt, contains('if the converted narrative leaves no new'));
+    expect(planningPrompt,
+        contains('if the converted narrative leaves no material change'));
     expect(
       planningPrompt,
       contains('those sentence slots must stay in the same scene'),
@@ -2825,14 +2896,19 @@ but the three were all crowded together at one corner of it.
     expect(
       planningPrompt,
       contains(
-          'dialogue-heavy ranges in one continuous story scene must remain one scene'),
+          'dialogue-heavy ranges in one illustration situation must remain one scene'),
     );
     expect(
         planningPrompt, contains('hard validation cap: scenes.length <= 12'));
     expect(
       planningPrompt,
+      contains('do not invent splits to approach the cap'),
+    );
+    expect(
+      planningPrompt,
       contains('do not replace converted speech with empty meta words only'),
     );
+    expect(planningPrompt, isNot(contains('continuous story scene')));
     expect(planningPrompt, isNot(contains('mentally delete')));
     expect(planningPrompt, isNot(contains('use at most 12 scenes')));
     expect(planningPrompt, isNot(contains('compact')));
@@ -4161,10 +4237,9 @@ but the three were all crowded together at one corner of it.
     final updatedChapter =
         await DatabaseService.getStoryChapterForArticle(articleId);
     expect(updatedChapter!.summaryJson, originalSummary);
-    final updatedSeries =
-        await DatabaseService.getStorySeriesById(series.id!);
-    expect(updatedSeries!.description,
-        contains('Victorian fantasy picture book'));
+    final updatedSeries = await DatabaseService.getStorySeriesById(series.id!);
+    expect(
+        updatedSeries!.description, contains('Victorian fantasy picture book'));
   });
 
   test(
@@ -4473,6 +4548,246 @@ but the three were all crowded together at one corner of it.
         .where((entity) => entity is File && entity.path.endsWith('.png'))
         .toList();
     expect(thumbnails, hasLength(1));
+  });
+
+  test(
+      'picture-book importPageImage replaces page with native 2560x1440 png',
+      () async {
+    final articleId = await _saveArticle('Mia opens a map and smiles.');
+    final series = await PictureBookService.createSeries(title: 'Import Book');
+    final now = DateTime(2026, 7, 21);
+    final oldFile = await _writeTestPng(
+      tempDir,
+      'old-page.png',
+      width: 640,
+      height: 360,
+    );
+    final oldCacheKey = await ApiCacheService.keyForJson(
+      'picture_book_old',
+      {'articleId': articleId, 'pageIndex': 0},
+    );
+    final oldCachedPath = await ApiCacheService.putFileBytes(
+      cacheKey: oldCacheKey,
+      kind: 'file',
+      purpose: 'picture_book_image',
+      request: {'kind': 'old'},
+      bytes: await oldFile.readAsBytes(),
+      subdirectory: 'picture_book',
+      extension: 'png',
+      contentType: 'image/png',
+      articleId: articleId,
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{"scene":{"sceneDescription":"Mia opens a map."}}',
+        imageCacheKey: oldCacheKey,
+        imagePath: oldCachedPath,
+        status: 'error',
+        errorMessage: 'previous generate failed',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final sourceFile = await _writeTestPng(
+      tempDir,
+      'import-source.png',
+      width: 800,
+      height: 600,
+    );
+
+    final state = await PictureBookService.importPageImage(
+      articleId: articleId,
+      pageIndex: 0,
+      sourcePath: sourceFile.path,
+    );
+
+    expect(state['status'], 'ready');
+    final pages = state['pages'] as List;
+    expect(pages, hasLength(1));
+    final page = pages.single as Map;
+    expect(page['status'], 'ready');
+    expect(page['errorMessage'], anyOf(isNull, isEmpty));
+    final importedPath = (page['imagePath'] as String?)?.trim() ?? '';
+    expect(importedPath, isNotEmpty);
+    expect(await File(importedPath).exists(), isTrue);
+    expect(importedPath, isNot(oldCachedPath));
+    expect(await File(oldCachedPath).exists(), isFalse);
+
+    final importedBytes = await File(importedPath).readAsBytes();
+    final buffer = await ui.ImmutableBuffer.fromUint8List(
+      Uint8List.fromList(importedBytes),
+    );
+    final descriptor = await ui.ImageDescriptor.encoded(buffer);
+    try {
+      expect(descriptor.width, 2560);
+      expect(descriptor.height, 1440);
+    } finally {
+      descriptor.dispose();
+      buffer.dispose();
+    }
+
+    final dbPages = await DatabaseService.getPictureBookPages(articleId);
+    expect(dbPages.single.status, 'ready');
+    expect(dbPages.single.imageCacheKey, isNot(oldCacheKey));
+    expect(
+      dbPages.single.promptJson,
+      contains('Mia opens a map.'),
+    );
+  });
+
+  test(
+      'picture-book importPageImage keeps exact 2560x1440 bytes without re-encode',
+      () async {
+    final articleId = await _saveArticle('Mia opens a map and smiles.');
+    final series = await PictureBookService.createSeries(title: 'Import Exact');
+    final now = DateTime(2026, 7, 21);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{}',
+        status: 'error',
+        errorMessage: 'missing',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final sourceFile = await _writeTestPng(
+      tempDir,
+      'exact-full.png',
+      width: 2560,
+      height: 1440,
+    );
+    final sourceBytes = await sourceFile.readAsBytes();
+
+    final state = await PictureBookService.importPageImage(
+      articleId: articleId,
+      pageIndex: 0,
+      sourcePath: sourceFile.path,
+    );
+
+    final page = (state['pages'] as List).single as Map;
+    final importedPath = (page['imagePath'] as String?)?.trim() ?? '';
+    expect(importedPath, endsWith('.png'));
+    expect(await File(importedPath).readAsBytes(), sourceBytes);
+  });
+
+  test('picture-book exportChapterImages writes scene files and resolves conflicts',
+      () async {
+    final articleId = await _saveArticle('Mia opens a map and smiles.');
+    final series = await PictureBookService.createSeries(title: 'Export Book');
+    final now = DateTime(2026, 7, 21);
+    final page0 = await _writeTestPng(
+      tempDir,
+      'export-page-0.png',
+      width: 320,
+      height: 180,
+    );
+    final page1 = await _writeTestPng(
+      tempDir,
+      'export-page-1.png',
+      width: 320,
+      height: 180,
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{}',
+        imagePath: page0.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 1,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{}',
+        imagePath: page1.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 2,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{}',
+        status: 'error',
+        errorMessage: 'failed',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final exportDir =
+        Directory(path_lib.join(tempDir.path, 'chapter-export'))
+          ..createSync(recursive: true);
+    await File(path_lib.join(exportDir.path, '01.png'))
+        .writeAsBytes([1, 2, 3], flush: true);
+
+    final conflict = await PictureBookService.exportChapterImages(
+      articleId: articleId,
+      outputDirectory: exportDir.path,
+    );
+    expect(conflict['needsConflictResolution'], isTrue);
+    expect(conflict['exportedCount'], 0);
+    expect(
+      (conflict['conflicts'] as List)
+          .map((item) => (item as Map)['fileName'])
+          .toList(),
+      contains('01.png'),
+    );
+    expect(await File(path_lib.join(exportDir.path, '02.png')).exists(), isFalse);
+
+    final renamed = await PictureBookService.exportChapterImages(
+      articleId: articleId,
+      outputDirectory: exportDir.path,
+      namePrefix: 'v2_',
+    );
+    expect(renamed['needsConflictResolution'], isFalse);
+    expect(renamed['exportedCount'], 2);
+    expect(renamed['files'], ['v2_01.png', 'v2_02.png']);
+    expect(await File(path_lib.join(exportDir.path, 'v2_01.png')).exists(), isTrue);
+    expect(await File(path_lib.join(exportDir.path, 'v2_02.png')).exists(), isTrue);
+
+    final overwritten = await PictureBookService.exportChapterImages(
+      articleId: articleId,
+      outputDirectory: exportDir.path,
+      overwrite: true,
+    );
+    expect(overwritten['exportedCount'], 2);
+    expect(overwritten['files'], ['01.png', '02.png']);
+    final overwrittenBytes =
+        await File(path_lib.join(exportDir.path, '01.png')).readAsBytes();
+    expect(overwrittenBytes, isNot([1, 2, 3]));
   });
 }
 

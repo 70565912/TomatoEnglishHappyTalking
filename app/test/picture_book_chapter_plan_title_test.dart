@@ -90,6 +90,57 @@ void main() {
     expect(parsed.plan.scenes, hasLength(2));
   });
 
+  test('parseGeneratedChapterPlan rejects more than twelve scenes', () {
+    final parsed = PictureBookService.parseGeneratedChapterPlan(
+      {
+        'planKind': 'picture_book_chapter_scene_plan_v2',
+        'chapterDescription': 'A long chapter with too many scene rows.',
+        'scenes': [
+          for (var index = 0; index < 13; index += 1)
+            {
+              'pageIndex': index,
+              'sentenceStartIndex': index,
+              'sentenceEndIndex': index,
+              'sceneDescription': 'Visible scene ${index + 1}.',
+            },
+        ],
+        'newCharacters': const [],
+      },
+      sentenceCount: 13,
+      source: TextGenerationReplySource.remote,
+    );
+
+    expect(parsed, isNull);
+  });
+
+  test('parseGeneratedChapterPlan rejects coverage gaps', () {
+    final parsed = PictureBookService.parseGeneratedChapterPlan(
+      {
+        'planKind': 'picture_book_chapter_scene_plan_v2',
+        'chapterDescription': 'A chapter with an invalid missing slot.',
+        'scenes': const [
+          {
+            'pageIndex': 0,
+            'sentenceStartIndex': 0,
+            'sentenceEndIndex': 0,
+            'sceneDescription': 'Alice enters the room.',
+          },
+          {
+            'pageIndex': 1,
+            'sentenceStartIndex': 2,
+            'sentenceEndIndex': 2,
+            'sceneDescription': 'Alice leaves the room.',
+          },
+        ],
+        'newCharacters': const [],
+      },
+      sentenceCount: 3,
+      source: TextGenerationReplySource.remote,
+    );
+
+    expect(parsed, isNull);
+  });
+
   test('cleanArticleTitle matches practice title rules', () {
     expect(
       PracticeTextService.cleanArticleTitle('the queens croquet ground.'),

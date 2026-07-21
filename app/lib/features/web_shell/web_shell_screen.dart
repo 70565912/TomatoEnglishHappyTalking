@@ -294,6 +294,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'pictureBook.cancelPromptReview': _handlePictureBookCancelPromptReview,
         'pictureBook.generate': _handlePictureBookGenerate,
         'pictureBook.retryPage': _handlePictureBookRetryPage,
+        'pictureBook.importPageImage': _handlePictureBookImportPageImage,
+        'pictureBook.exportChapterImages':
+            _handlePictureBookExportChapterImages,
         'pictureBook.clearArticleCache': _handlePictureBookClearArticleCache,
         'follow.open': _handleFollowOpen,
         'follow.play': _handleFollowPlay,
@@ -1675,6 +1678,86 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     } finally {
       _retryingPictureBookPages.remove(retryKey);
     }
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookImportPageImage(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final pageIndex = _payloadInt(message.payload, 'pageIndex');
+    var selectedPath = _payloadString(message.payload, 'sourcePath').trim();
+    if (selectedPath.isEmpty) {
+      selectedPath = _payloadString(message.payload, 'filePath').trim();
+    }
+    if (selectedPath.isEmpty) {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: PictureBookService.importedImageExtensions,
+        allowMultiple: false,
+        withData: false,
+        dialogTitle: '选择绘本页图片',
+      );
+      if (result == null || result.files.isEmpty) {
+        final state = await PictureBookService.statePayload(articleId);
+        return {
+          ...state,
+          'cancelled': true,
+        };
+      }
+      selectedPath = (result.files.single.path ?? '').trim();
+    }
+    if (selectedPath.isEmpty) {
+      throw const FormatException('无法读取选择的图片文件路径');
+    }
+
+    final state = await PictureBookService.importPageImage(
+      articleId: articleId,
+      pageIndex: pageIndex,
+      sourcePath: selectedPath,
+    );
+    unawaited(_pushEvent('pictureBook.state', state));
+    return {
+      ...state,
+      'cancelled': false,
+      'imported': true,
+      'pageIndex': pageIndex,
+    };
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookExportChapterImages(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final overwrite = _payloadBool(
+      message.payload,
+      'overwrite',
+      fallback: false,
+    );
+    final namePrefix = _payloadString(message.payload, 'namePrefix').trim();
+    var outputDirectory =
+        _payloadString(message.payload, 'outputDirectory').trim();
+    if (outputDirectory.isEmpty) {
+      outputDirectory = (await FilePicker.platform.getDirectoryPath(
+            dialogTitle: '选择绘本组图导出目录',
+          )) ??
+          '';
+    }
+    if (outputDirectory.isEmpty) {
+      return {
+        'articleId': articleId,
+        'cancelled': true,
+        'needsConflictResolution': false,
+        'exportedCount': 0,
+        'files': <String>[],
+      };
+    }
+
+    return PictureBookService.exportChapterImages(
+      articleId: articleId,
+      outputDirectory: outputDirectory,
+      overwrite: overwrite,
+      namePrefix: namePrefix,
+    );
   }
 
   Future<Map<String, dynamic>> _pictureBookPromptReviewForArticle({

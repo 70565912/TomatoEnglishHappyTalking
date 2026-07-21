@@ -827,6 +827,73 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       type === 'pictureBook.retryPage' || payload.regenerate === true,
     );
   }
+  if (type === 'pictureBook.importPageImage') {
+    const articleId = Number(payload.articleId ?? 1);
+    const pageIndex = Number(payload.pageIndex ?? 0);
+    if (payload.sourcePath === '' || payload.cancelled === true) {
+      return {
+        ...mockPictureBook(articleId, 'ready'),
+        cancelled: true,
+      };
+    }
+    const state = mockPictureBook(articleId, 'ready');
+    return {
+      ...state,
+      cancelled: false,
+      imported: true,
+      pageIndex,
+      pages: state.pages.map((page) =>
+        page.pageIndex === pageIndex
+          ? { ...page, status: 'ready', errorMessage: undefined, imageUri: assetUrl('card-space-snacks.png') }
+          : page,
+      ),
+    };
+  }
+  if (type === 'pictureBook.exportChapterImages') {
+    const articleId = Number(payload.articleId ?? 1);
+    const outputDirectory = String(payload.outputDirectory ?? '').trim();
+    const overwrite = payload.overwrite === true;
+    const namePrefix = String(payload.namePrefix ?? '').trim();
+    if (!outputDirectory && payload.cancelled === true) {
+      return {
+        articleId,
+        cancelled: true,
+        needsConflictResolution: false,
+        exportedCount: 0,
+        files: [],
+      };
+    }
+    const directory = outputDirectory || 'C:/mock-export';
+    if (!overwrite && !namePrefix) {
+      return {
+        articleId,
+        cancelled: false,
+        needsConflictResolution: true,
+        outputDirectory: directory,
+        readyCount: 2,
+        conflicts: [
+          { pageIndex: 0, fileName: '01.png' },
+          { pageIndex: 1, fileName: '02.png' },
+        ],
+        exportedCount: 0,
+        files: [],
+      };
+    }
+    const files = [
+      `${namePrefix}01.png`,
+      `${namePrefix}02.png`,
+    ];
+    return {
+      articleId,
+      cancelled: false,
+      needsConflictResolution: false,
+      outputDirectory: directory,
+      readyCount: 2,
+      conflicts: [],
+      exportedCount: files.length,
+      files,
+    };
+  }
   if (type === 'listening.open') {
     return mockListening;
   }

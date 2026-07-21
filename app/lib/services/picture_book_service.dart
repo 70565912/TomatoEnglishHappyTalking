@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -61,6 +62,17 @@ class BookDescriptionSuggestion {
 /// - 「Relevant characters」只由本服务按文章正文 + 书籍角色表匹配（首字母大写整词）；Web UI 不得再本地重算，编辑书籍角色时走 `pictureBook.resolveRelevantCharacters`。
 /// - **不要**在计划失效时只保留 `chapterDescription` 却清空分镜；这会让 UI 看起来像“有章节描述、没分镜”，并误导用户直接确认出图。
 /// - 对话练习提纲（`ChatChapterGuideService`）仍可使用自己的 `contentHash`；那是独立链路，不要复用到绘本分镜。
+///
+/// ## 章节分镜切分调优（通用「插画情况」三轴）
+///
+/// 一张绘本页是听力区间共用的插画，不是文学微节拍列表。切分只看三轴是否变化：
+/// 地点/时间、主视觉焦点人物组、中心进行中活动。中心活动 = 焦点人物的主任务及
+/// 目标，**不是**每个新可见节拍/道具/姿态/台词。对话轮次、反应、情绪、旁白、
+/// 同类型重复微动作、同一事故的直接结果与收拾余波不单独开景。每个分镜只描述
+/// 自身句子区间内的事件并保持人物动作归属；返回前逐对审核相邻边界。编号句子只是
+/// 覆盖锚点。不要在 prompt 里写死某本书或某类场景名当合并条件；细节见
+/// `_chapterPlanPromptRuleLines`。完整调优过程与实测结论见
+/// `docs/picture_book_chapter_plan_scene_split_tuning.md`。
 class PictureBookService {
   static final Map<String, String> _imageUriCache = <String, String>{};
   static final Map<String, String> _thumbnailPathCache = <String, String>{};
@@ -83,6 +95,16 @@ class PictureBookService {
   // creation-center lightbox preview should request the raw "full" original.
   static const int _creationDisplayMaxWidth = 1280;
   static const int _creationDisplayMaxHeight = 720;
+  /// Matches Seedream remote full originals (16:9). Imported pages are
+  /// cover-cropped and natively re-encoded to this size before cache write.
+  static const int _importedFullWidth = 2560;
+  static const int _importedFullHeight = 1440;
+  static const List<String> importedImageExtensions = <String>[
+    'png',
+    'jpg',
+    'jpeg',
+    'webp',
+  ];
   static const String _promptPolicyVersion =
       'picture_book_group_prompt_scene_description_v2';
   static const String _chapterPlanCachePurpose =
@@ -355,6 +377,7 @@ class PictureBookService {
       raw,
       sentenceCount: article.sentences.length,
       source: reply.source,
+      strictSceneValidation: true,
     );
     if (plan == null) {
       throw const TextGenerationException(
@@ -414,6 +437,7 @@ class PictureBookService {
       json,
       sentenceCount: sentenceCount,
       source: source,
+      strictSceneValidation: true,
     );
     if (plan == null) {
       return null;
@@ -705,10 +729,10 @@ class PictureBookService {
 
     final useLocalEdit =
         targetPage != null && await _hasUsableReferenceImage(targetPage);
-    final editDefaultReferencePageIndex = useLocalEdit &&
-            referenceOptions.contains(pageIndex)
-        ? pageIndex
-        : defaultReferencePageIndex;
+    final editDefaultReferencePageIndex =
+        useLocalEdit && referenceOptions.contains(pageIndex)
+            ? pageIndex
+            : defaultReferencePageIndex;
     final editDefaultReferenceImagePath = useLocalEdit
         ? await _referenceImagePathForPageIndex(
             articleId: articleId,
@@ -1265,9 +1289,8 @@ class PictureBookService {
       throw const FormatException('参考图文件不存在，请重新打开单页重生成。');
     }
 
-    final targetSegment = draft.pages.length == 1
-        ? draft.pages.single.segment
-        : null;
+    final targetSegment =
+        draft.pages.length == 1 ? draft.pages.single.segment : null;
     if (targetSegment == null) {
       throw const FormatException('单页重生成只能提交一个分镜。');
     }
@@ -1309,7 +1332,8 @@ class PictureBookService {
       final confirmedChapterDescription = chapterDescription.trim().isEmpty
           ? draft.chapterDescription
           : _sanitizeForImagePrompt(chapterDescription);
-      final confirmedBookDescription = _sanitizeBookDescription(bookDescription);
+      final confirmedBookDescription =
+          _sanitizeBookDescription(bookDescription);
       final confirmedBookCharacters = _sanitizeBookCharacters(bookCharacters);
       final confirmedNewCharacters = _sanitizeBookCharacters(newCharacters);
       final confirmedRelevantCharacters = _relevantBookCharactersForArticle(
@@ -1428,6 +1452,246 @@ class PictureBookService {
 
     _promptReviewDrafts.remove(reviewId);
     return statePayload(articleId);
+  }
+
+  /// Replace one existing page image with a local file.
+  ///
+  /// Does not call image APIs, open prompt review, or rewrite chapter plans.
+  /// Sources already at [_importedFullWidth]×[_importedFullHeight] are stored
+  /// as-is; others are cover-cropped with bilinear filtering to that size as PNG.
+  static Future<Map<String, dynamic>> importPageImage({
+    required int articleId,
+    required int pageIndex,
+    required String sourcePath,
+  }) async {
+    final trimmedPath = sourcePath.trim();
+    if (trimmedPath.isEmpty) {
+      throw const FormatException('请选择要导入的图片文件');
+    }
+    final extension = _normalizedImageExtension(trimmedPath);
+    if (!importedImageExtensions.contains(extension)) {
+      throw const FormatException('请选择 png、jpg、jpeg 或 webp 图片文件');
+    }
+    final sourceFile = File(trimmedPath);
+    if (!await sourceFile.exists()) {
+      throw const FormatException('选择的图片文件不存在');
+    }
+
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    PictureBookPage? targetPage;
+    for (final page in pages) {
+      if (page.pageIndex == pageIndex) {
+        targetPage = page;
+        break;
+      }
+    }
+    if (targetPage == null) {
+      throw FormatException('绘本第 ${pageIndex + 1} 页不存在，无法导入图片');
+    }
+    if (targetPage.status == 'generating') {
+      throw const FormatException('该页正在生成中，请稍后再导入图片');
+    }
+
+    final sourceBytes = await sourceFile.readAsBytes();
+    if (sourceBytes.isEmpty) {
+      throw const FormatException('选择的图片文件为空');
+    }
+    final normalized = await _prepareImportedImageBytes(
+      Uint8List.fromList(sourceBytes),
+      sourceExtension: extension,
+    );
+    if (normalized.bytes.isEmpty) {
+      throw const FormatException('无法读取或转换所选图片');
+    }
+
+    final contentHash = await ApiCacheService.hashBytes(normalized.bytes);
+    final request = <String, dynamic>{
+      'kind': 'picture_book_page_import',
+      'articleId': articleId,
+      'pageIndex': pageIndex,
+      'contentHash': contentHash,
+      'width': _importedFullWidth,
+      'height': _importedFullHeight,
+      'resized': normalized.resized,
+    };
+    final cacheKey = await ApiCacheService.keyForJson(
+      'picture_book_page_import',
+      request,
+    );
+    final filePath = await ApiCacheService.putFileBytes(
+      cacheKey: cacheKey,
+      kind: 'file',
+      purpose: 'picture_book_image',
+      request: request,
+      bytes: normalized.bytes,
+      subdirectory: 'picture_book',
+      extension: normalized.extension,
+      contentType: normalized.contentType,
+      articleId: articleId,
+      source: 'import',
+    );
+
+    final previousCacheKey = (targetPage.imageCacheKey ?? '').trim();
+    await DatabaseService.upsertPictureBookPage(
+      targetPage.copyWith(
+        imageCacheKey: cacheKey,
+        imagePath: filePath,
+        status: 'ready',
+        errorMessage: '',
+        updatedAt: DateTime.now(),
+      ),
+    );
+
+    if (previousCacheKey.isNotEmpty && previousCacheKey != cacheKey) {
+      await ApiCacheService.deleteEntriesByKeys({previousCacheKey});
+    }
+    _imageUriCache.clear();
+    _thumbnailPathCache.clear();
+    _displayPathCache.clear();
+
+    TomatoLogger.info(
+      category: 'pictureBook',
+      event: 'page_image.imported',
+      articleId: articleId,
+      data: {
+        'pageIndex': pageIndex,
+        'cacheKeyHash':
+            cacheKey.length > 16 ? cacheKey.substring(0, 16) : cacheKey,
+        'byteLength': normalized.bytes.length,
+        'width': _importedFullWidth,
+        'height': _importedFullHeight,
+        'resized': normalized.resized,
+      },
+    );
+
+    return statePayload(articleId);
+  }
+
+  /// Export ready page images for one chapter into [outputDirectory].
+  ///
+  /// File names use 1-based zero-padded scene index plus the source extension
+  /// (e.g. `01.png`). When [overwrite] is false and [namePrefix] is empty,
+  /// existing target names return [needsConflictResolution] without writing.
+  static Future<Map<String, dynamic>> exportChapterImages({
+    required int articleId,
+    required String outputDirectory,
+    bool overwrite = false,
+    String namePrefix = '',
+  }) async {
+    final directoryPath = outputDirectory.trim();
+    if (directoryPath.isEmpty) {
+      throw const FormatException('请选择导出目录');
+    }
+    final directory = Directory(directoryPath);
+    if (!await directory.exists()) {
+      throw const FormatException('导出目录不存在');
+    }
+
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    final readyPages = pages
+        .where((page) {
+          if (page.status != 'ready') {
+            return false;
+          }
+          final path = (page.imagePath ?? '').trim();
+          return path.isNotEmpty;
+        })
+        .toList(growable: false)
+      ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
+
+    if (readyPages.isEmpty) {
+      throw const FormatException('本章还没有可导出的绘本图片');
+    }
+
+    final prefix = namePrefix.trim();
+    final planned = <_ExportChapterImagePlan>[];
+    for (final page in readyPages) {
+      final sourcePath = page.imagePath!.trim();
+      final sourceFile = File(sourcePath);
+      if (!await sourceFile.exists()) {
+        throw FormatException(
+          '第 ${page.pageIndex + 1} 页图片文件不存在，无法导出',
+        );
+      }
+      final extension = _normalizedImageExtension(sourcePath);
+      final safeExtension =
+          extension.isEmpty ? 'png' : extension.replaceAll(RegExp(r'[^a-z0-9]'), '');
+      final sceneLabel =
+          (page.pageIndex + 1).toString().padLeft(2, '0');
+      final fileName = '$prefix$sceneLabel.$safeExtension';
+      planned.add(
+        _ExportChapterImagePlan(
+          pageIndex: page.pageIndex,
+          sourcePath: sourcePath,
+          fileName: fileName,
+          targetPath: path_lib.join(directory.path, fileName),
+        ),
+      );
+    }
+
+    final conflicts = <Map<String, dynamic>>[];
+    for (final item in planned) {
+      if (await File(item.targetPath).exists()) {
+        conflicts.add({
+          'pageIndex': item.pageIndex,
+          'fileName': item.fileName,
+        });
+      }
+    }
+
+    final hasResolution = overwrite || prefix.isNotEmpty;
+    if (conflicts.isNotEmpty && !hasResolution) {
+      return {
+        'articleId': articleId,
+        'cancelled': false,
+        'needsConflictResolution': true,
+        'outputDirectory': directory.path,
+        'readyCount': planned.length,
+        'conflicts': conflicts,
+        'exportedCount': 0,
+        'files': <String>[],
+      };
+    }
+
+    if (conflicts.isNotEmpty && prefix.isNotEmpty && !overwrite) {
+      throw FormatException(
+        '自定义前缀后仍有同名文件：${conflicts.map((item) => item['fileName']).join('、')}。请换前缀或选择覆盖保存。',
+      );
+    }
+
+    final exportedFiles = <String>[];
+    for (final item in planned) {
+      final target = File(item.targetPath);
+      await target.parent.create(recursive: true);
+      if (await target.exists()) {
+        await target.delete();
+      }
+      await File(item.sourcePath).copy(item.targetPath);
+      exportedFiles.add(item.fileName);
+    }
+
+    TomatoLogger.info(
+      category: 'pictureBook',
+      event: 'chapter_images.exported',
+      articleId: articleId,
+      data: {
+        'exportedCount': exportedFiles.length,
+        'overwrite': overwrite,
+        'namePrefixLength': prefix.length,
+        'conflictCount': conflicts.length,
+      },
+    );
+
+    return {
+      'articleId': articleId,
+      'cancelled': false,
+      'needsConflictResolution': false,
+      'outputDirectory': directory.path,
+      'readyCount': planned.length,
+      'conflicts': <Map<String, dynamic>>[],
+      'exportedCount': exportedFiles.length,
+      'files': exportedFiles,
+    };
   }
 
   static Future<Map<String, dynamic>> cancelPromptReview(
@@ -2132,6 +2396,75 @@ class PictureBookService {
     return '{"planKind":"$_chapterPlanCachePurpose",$titleField"chapterDescription":"...","scenes":[{"pageIndex":0,"sentenceStartIndex":0,"sentenceEndIndex":2,"sceneDescription":"..."}],"newCharacters":[{"name":"...","description":"..."}]}';
   }
 
+  /// Fixed chapter-plan prompt rules.
+  ///
+  /// ## Scene-split tuning (keep general; do not add book-specific patches)
+  ///
+  /// A picture-book page is one reusable illustration for a listening range.
+  /// Split by **illustration situation**, not by literary micro-beats:
+  /// 1. place/time
+  /// 2. main on-stage cast (focus enter/leave that shifts attention)
+  /// 3. central ongoing activity = the focused characters' main task and its
+  ///    target, **not** each new visible beat / prop / pose / line
+  ///
+  /// A consecutive fact/list block about one subject remains one central topic
+  /// and can share one montage. This local rule does not require the model to
+  /// classify the whole chapter and never overrides real sequential action.
+  ///
+  /// Open a new scene only when at least one axis changes. Still the same
+  /// situation: speech turns, reactions, emotion, asides, repeated same-type
+  /// micro-actions, and immediate aftermath cleanup of one discrete accident.
+  /// Numbered sentence indexes are coverage anchors only. Do not name specific
+  /// settings in these rules.
+  ///
+  /// 2026-07-20 note: compressing all Scenes rules into 2–3 very long bullets
+  /// caused a live regression (11 one-sentence pages + dump remainder into the
+  /// last page). Keep Scenes as separate short bullets; only clarify activity≠beat.
+  ///
+  /// Narrative-conversion rules above the scene block remain tuned separately;
+  /// when editing, prefer merging wording for length over dropping constraints.
+  static List<String> _chapterPlanPromptRuleLines({
+    required bool includeTitle,
+    required int maxSentenceIndex,
+  }) {
+    return [
+      '- Output valid JSON only.',
+      if (includeTitle) ...[
+        '- Also include top-level "title": a short English practice title, 2 to 5 words, title case.',
+        '- Keep necessary apostrophes such as Mother\'s. Do not add trailing punctuation to title.',
+        '- title must summarize this chapter for a children English practice list, not the whole book.',
+      ],
+      '- chapterDescription: describe only this chapter arc, settings, atmosphere, key actions, and ending; use bookDescription as context for the visual world, style, color mood, and setting.',
+      '- Chapter text is the source prose. Base chapterDescription and sceneDescription on its drawable details, including plot and scene facts carried by dialogue, song lyrics, shouted text, and inner thoughts. Convert all direct dialogue, song lyrics, shouted text, and inner thoughts into third-person visible-scene narrative that preserves the story events, offers, refusals, discoveries, conflicts, and scene facts they convey.',
+      '- Prefer visible action, pose, object, spatial relation, and facial or body expression over speech-process wording; avoid chaining ask, asks, explain, explains, tell, tells, reply, replies, say, says, said, argue, or argues as the main verbs that carry the scene; rewrite those beats as what can be seen happening.',
+      '- For riddles, songs, shouts, and wordplay: keep only the visible event or result; do not restate the riddle wording, lyric lines, shouted lines, or puzzle phrasing.',
+      '- Good example: The Hatter offers wine, but none is on the table.',
+      '- Good example: The Cat fades from tail to grin until only the grin floats in the air.',
+      '- Bad examples: "Would you like some wine?"; They exchange remarks; Alice asks and the Duchess explains; Why is a raven like a writing-desk?; any speech-bubble wording.',
+      '- Keep source-prose drawable details: actions, objects, locations, positions, poses, visible states, character relationships, emotional behavior, and scene atmosphere. Never write quoted speech, verbatim dialogue, song lyrics, shouted lines, inner-thought wording, speech bubbles, or displayed text copied from speech.',
+      '- Do not replace converted speech with empty meta words only: exchange, conversation, discuss, debate, or similar vague labels without saying what happens.',
+      '- Use Relevant characters as the only source for approved recurring character appearance anchors; do not include character rosters, visual-anchor lists, or phrases like "Visual anchors" in chapterDescription. Do not repeat character appearance, clothing, hair, age, facial features, accessories, or other visual anchors already present in Relevant characters.',
+      '- If this chapter introduces an image-relevant character or group not present in Relevant characters, add it to newCharacters with name and stable visible description.',
+      '- newCharacters must include only characters or recurring visual groups that affect image consistency; do not include temporary props, places, actions, emotions, or ordinary background elements.',
+      // Illustration-situation axes. Keep these as separate short bullets (do not
+      // compress into one wall of text — that caused one-sentence-then-dump splits).
+      '- Before splitting scenes, convert quoted speech, song text, shouted text, and inner thoughts into narrative story events. Decide boundaries by illustration situation—place/time, main visual focus group, and central ongoing activity—not by sentence boundaries or dialogue turns. Central ongoing activity means the focused characters\' main task and its target, not each new visible beat, prop, pose, or line. If the converted narrative leaves no material change on those three axes between two candidate boundaries, those sentence slots must stay in the same scene.',
+      '- Build scenes by walking numbered sentences in order. Numbered indexes are coverage anchors only, not scene boundaries. One illustration may cover many consecutive sentences; put consecutive content from the same illustration situation into the same scene.',
+      '- A consecutive run of facts, examples, list items, or general statements about the same subject in the same time/place frame is one central topic block, not one scene per fact. Render its related details together as one drawable montage. Split that fact/list block only when its main subject, purpose, time, or place changes materially. This local fact/list rule must not override sequential movement, object manipulation, discovery, accident, or other causal story action; keep those action ranges under the three illustration-situation axes above. Do not target a fixed number of scenes.',
+      '- Start a new scene only when one axis changes materially enough that one shared illustration can no longer represent both sides: place/time changes, the main visual focus shifts whether or not anyone enters or leaves, or the main task is replaced by a different task. Do not start a new scene for conversation turns, questions, answers, riddles, arguments, remarks, jokes, reactions, emotion changes, asides, inner thoughts, or repeated same-type micro-actions while the illustration situation continues.',
+      '- Keep the cause, immediate result, and direct recovery of one incident in the same scene unless another axis materially changes. If a candidate boundary differs only by speech turns, reactions, emotion, or immediate aftermath, merge it into the surrounding scene and describe later beats as changing poses, objects, and tension inside that scene.',
+      '- Dialogue, song, shout, and inner-thought sentences are coverage anchors inside the surrounding story scene; convert their plot and scene meaning into visible narrative, not quoted text or speech-process summary. Dialogue-heavy ranges in one illustration situation must remain one scene even if they cover many sentence slots.',
+      '- Each sceneDescription must use only events and scene facts from its own sentenceStartIndex through sentenceEndIndex range. Preserve who performs each action; do not assign an action to a different character or move an event into a neighboring range.',
+      '- Before returning JSON, audit every adjacent scene boundary. If one shared illustration can represent both ranges and none of the three axes changes materially, merge them, then renumber pageIndex from 0.',
+      '- Hard validation cap: scenes.length <= $_maxSceneCount. Scene count follows illustration-situation changes; do not invent splits to approach the cap, and do not open many one-sentence scenes then dump the rest into the last scene.',
+      '- sceneDescription: describe the visible scene, action, objects, location, composition, emotion, and visible progression within that sentence range, including narrative converted from speech or thought; must not contain dialogue text, quoted speech, lyrics, riddle wording, displayed text copied from speech, speech bubbles, or inner-thought wording from the source prose.',
+      '- In sceneDescription, use character names only; do not describe character clothing, hair, age, facial features, accessories, or parenthesized character details. Mention props only as active objects in the scene, not as repeated character appearance details.',
+      '- Before returning JSON, remove all recurring character appearance details from chapterDescription and sceneDescription; those details belong only in Relevant characters or newCharacters.',
+      '- Empty numbered slots are hidden sentence placeholders. Keep their original indexes, merge them into neighboring visual scenes, and never renumber later sentences.',
+      '- scenes must cover every sentence slot from 0 to $maxSentenceIndex, in order, without overlap; scenes[i].pageIndex must equal i.',
+    ];
+  }
+
   static List<TextGenerationTurn> _chapterPlanPromptTurns({
     required Article article,
     required String bookDescription,
@@ -2140,13 +2473,8 @@ class PictureBookService {
   }) {
     final sentenceSlots = _articleSentenceSlots(article);
     final numberedSentences = _numberedChapterSentencesForPrompt(article);
-    final titleRules = includeTitle
-        ? <String>[
-            '- Also include top-level "title": a short English practice title, 2 to 5 words, title case.',
-            '- Keep necessary apostrophes such as Mother\'s. Do not add trailing punctuation to title.',
-            '- title must summarize this chapter for a children English practice list, not the whole book.',
-          ]
-        : const <String>[];
+    final maxSentenceIndex =
+        sentenceSlots.isEmpty ? 0 : sentenceSlots.length - 1;
     return [
       const TextGenerationTurn(
         role: 'system',
@@ -2166,46 +2494,10 @@ class PictureBookService {
           _chapterPlanJsonShape(includeTitle: includeTitle),
           '',
           'Rules:',
-          '- Output valid JSON only.',
-          ...titleRules,
-          '- chapterDescription: describe only this chapter arc, settings, atmosphere, key actions, and ending.',
-          '- Use bookDescription as context for the visual world, style, color mood, and setting.',
-          '- Chapter text is the source prose. Base chapterDescription and sceneDescription on its drawable details, including plot and scene facts carried by dialogue, song lyrics, shouted text, and inner thoughts.',
-          '- Convert all direct dialogue, song lyrics, shouted text, and inner thoughts into third-person visible-scene narrative that preserves the story events, offers, refusals, discoveries, conflicts, and scene facts they convey.',
-          '- Prefer visible action, pose, object, spatial relation, and facial or body expression over speech-process wording.',
-          '- Avoid chaining ask, asks, explain, explains, tell, tells, reply, replies, say, says, said, argue, or argues as the main verbs that carry the scene; rewrite those beats as what can be seen happening.',
-          '- For riddles, songs, shouts, and wordplay: keep only the visible event or result; do not restate the riddle wording, lyric lines, shouted lines, or puzzle phrasing.',
-          '- Good example: The Hatter offers wine, but none is on the table.',
-          '- Good example: The Cat fades from tail to grin until only the grin floats in the air.',
-          '- Bad examples: "Would you like some wine?"; They exchange remarks; Alice asks and the Duchess explains; Why is a raven like a writing-desk?; any speech-bubble wording.',
-          '- Keep source-prose drawable details: actions, objects, locations, positions, poses, visible states, character relationships, emotional behavior, and scene atmosphere.',
-          '- Never write quoted speech, verbatim dialogue, song lyrics, shouted lines, inner-thought wording, speech bubbles, or displayed text copied from speech.',
-          '- Do not replace converted speech with empty meta words only: exchange, conversation, discuss, debate, or similar vague labels without saying what happens.',
-          '- Use Relevant characters as the only source for approved recurring character appearance anchors.',
-          '- Do not include character rosters, visual-anchor lists, or phrases like "Visual anchors" in chapterDescription.',
-          '- Do not repeat character appearance, clothing, hair, age, facial features, accessories, or other visual anchors already present in Relevant characters.',
-          '- If this chapter introduces an image-relevant character or group not present in Relevant characters, add it to newCharacters with name and stable visible description.',
-          '- newCharacters must include only characters or recurring visual groups that affect image consistency; do not include temporary props, places, actions, emotions, or ordinary background elements.',
-          // Scene splits use continuous story situation after speech-to-narrative
-          // conversion; never split on dialogue turns alone.
-          '- Before splitting scenes, convert quoted speech, song text, shouted text, and inner thoughts into narrative story events; use the resulting continuous story situation to decide scene boundaries.',
-          '- If the converted narrative leaves no new place, time, participant group, activity, or action-result change between two candidate boundaries, those sentence slots must stay in the same scene.',
-          '- Build scenes by walking numbered sentences in order and putting consecutive content from the same continuous story scene into the same scene.',
-          '- Same continuous story scene means the same place/time, main participant group, and ongoing situation or activity.',
-          '- Start a new scene only when the continuous story scene changes: new place/time, participant group change, or a concrete story action moves the story into a new situation or activity.',
-          '- Do not start a new scene for conversation turns, questions, answers, riddles, arguments, remarks, jokes, reactions, or emotion changes while the same story scene continues.',
-          '- Keep one continuous tea-table, kitchen, roadside, or room gathering as one scene through later offers, refusals, riddles, wordplay, and silence; describe later beats as changing poses, objects, and tension inside that same scene.',
-          '- Dialogue, song, shout, and inner-thought sentences are coverage anchors inside the surrounding story scene; convert their plot and scene meaning into visible narrative, not quoted text or speech-process summary.',
-          '- Dialogue-heavy ranges in one continuous story scene must remain one scene even if they cover many sentence slots.',
-          '- Hard validation cap: scenes.length <= $_maxSceneCount.',
-          '- sceneDescription: describe the visible scene, action, objects, location, composition, emotion, and visual change, including narrative converted from speech or thought in that sentence range.',
-          '- sceneDescription must not contain dialogue text, quoted speech, lyrics, riddle wording, displayed text copied from speech, speech bubbles, or inner-thought wording from the source prose.',
-          '- In sceneDescription, use character names only; do not describe character clothing, hair, age, facial features, accessories, or parenthesized character details.',
-          '- Mention props only as active objects in the scene, not as repeated character appearance details.',
-          '- Before returning JSON, remove all recurring character appearance details from chapterDescription and sceneDescription; those details belong only in Relevant characters or newCharacters.',
-          '- Empty numbered slots are hidden sentence placeholders. Keep their original indexes, merge them into neighboring visual scenes, and never renumber later sentences.',
-          '- scenes must cover every sentence slot from 0 to ${sentenceSlots.isEmpty ? 0 : sentenceSlots.length - 1}, in order, without overlap.',
-          '- scenes[i].pageIndex must equal i.',
+          ..._chapterPlanPromptRuleLines(
+            includeTitle: includeTitle,
+            maxSentenceIndex: maxSentenceIndex,
+          ),
           '',
           'Chapter text:',
           numberedSentences.isEmpty
@@ -2466,6 +2758,7 @@ class PictureBookService {
     Map<String, dynamic> json, {
     required int sentenceCount,
     required TextGenerationReplySource source,
+    bool strictSceneValidation = false,
   }) {
     final planKind = json['planKind']?.toString();
     if (planKind != _chapterPlanCachePurpose) {
@@ -2474,6 +2767,7 @@ class PictureBookService {
     final scenes = _pictureBookScenesFromJson(
       json['scenes'],
       sentenceCount: sentenceCount,
+      strict: strictSceneValidation,
     );
     if (scenes.isEmpty) {
       return null;
@@ -2497,26 +2791,48 @@ class PictureBookService {
   static List<PictureBookScene> _pictureBookScenesFromJson(
     Object? raw, {
     required int sentenceCount,
+    bool strict = false,
   }) {
     if (raw is! List) {
       return const [];
     }
+    if (strict &&
+        (raw.isEmpty || raw.length > _maxSceneCount || sentenceCount <= 0)) {
+      return const [];
+    }
     final scenes = <PictureBookScene>[];
     final maxSentenceIndex = math.max(0, sentenceCount - 1);
+    var expectedStart = 0;
     for (var i = 0; i < raw.length; i += 1) {
       final map = _mapValue(raw[i]);
       if (map.isEmpty) {
+        if (strict) {
+          return const [];
+        }
         continue;
       }
       final rawIndex = map['pageIndex'];
       final index = rawIndex is num ? rawIndex.toInt() : i;
+      if (strict && (rawIndex is! num || index != i)) {
+        return const [];
+      }
       if (index < 0 || index >= _maxSceneCount) {
+        if (strict) {
+          return const [];
+        }
         continue;
       }
       final rawStart = map['sentenceStartIndex'];
       final rawEnd = map['sentenceEndIndex'];
+      if (strict && (rawStart is! num || rawEnd is! num)) {
+        return const [];
+      }
       final start = rawStart is num ? rawStart.toInt() : 0;
       final end = rawEnd is num ? rawEnd.toInt() : start;
+      if (strict &&
+          (start != expectedStart || end < start || end > maxSentenceIndex)) {
+        return const [];
+      }
       final normalizedStart = start.clamp(0, maxSentenceIndex).toInt();
       final normalizedEnd =
           end.clamp(normalizedStart, maxSentenceIndex).toInt();
@@ -2524,6 +2840,9 @@ class PictureBookService {
         map['sceneDescription']?.toString().trim() ?? '',
       );
       if (sceneDescription.isEmpty) {
+        if (strict) {
+          return const [];
+        }
         continue;
       }
       scenes.add(
@@ -2534,6 +2853,14 @@ class PictureBookService {
           sceneDescription: sceneDescription,
         ),
       );
+      expectedStart = end + 1;
+    }
+    if (strict) {
+      if (scenes.length != raw.length ||
+          scenes.last.sentenceEndIndex != maxSentenceIndex) {
+        return const [];
+      }
+      return scenes;
     }
     scenes.sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
     return _normalizeSceneCoverage(scenes, sentenceCount);
@@ -3419,15 +3746,133 @@ class PictureBookService {
     }
   }
 
+  /// Prepare import bytes: keep as-is when already full size; otherwise
+  /// cover-crop with bilinear ([ui.FilterQuality.medium]) to full PNG.
+  static Future<_PreparedImportedImage> _prepareImportedImageBytes(
+    Uint8List bytes, {
+    required String sourceExtension,
+  }) async {
+    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    ui.ImageDescriptor? descriptor;
+    try {
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= 0 || height <= 0) {
+        return _PreparedImportedImage(
+          bytes: Uint8List(0),
+          resized: false,
+          extension: 'png',
+          contentType: 'image/png',
+        );
+      }
+      if (width == _importedFullWidth && height == _importedFullHeight) {
+        final extension = sourceExtension.isEmpty ? 'png' : sourceExtension;
+        return _PreparedImportedImage(
+          bytes: bytes,
+          resized: false,
+          extension: extension,
+          contentType: _contentTypeForImageExtension(extension),
+        );
+      }
+    } finally {
+      descriptor?.dispose();
+      buffer.dispose();
+    }
+
+    final resizedBytes = await _normalizeImportedImageToFullPng(bytes);
+    return _PreparedImportedImage(
+      bytes: resizedBytes,
+      resized: true,
+      extension: 'png',
+      contentType: 'image/png',
+    );
+  }
+
+  /// Cover-crop [bytes] into a native [_importedFullWidth]×[_importedFullHeight]
+  /// PNG with bilinear filtering so imported pages match Seedream full size.
+  static Future<Uint8List> _normalizeImportedImageToFullPng(
+    Uint8List bytes,
+  ) async {
+    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.FrameInfo? frame;
+    ui.Image? sourceImage;
+    ui.Image? outputImage;
+    ui.Picture? picture;
+    try {
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= 0 || height <= 0) {
+        return Uint8List(0);
+      }
+      codec = await descriptor.instantiateCodec();
+      frame = await codec.getNextFrame();
+      sourceImage = frame.image;
+
+      final scale = math.max(
+        _importedFullWidth / width,
+        _importedFullHeight / height,
+      );
+      final scaledWidth = width * scale;
+      final scaledHeight = height * scale;
+      final dx = (_importedFullWidth - scaledWidth) / 2.0;
+      final dy = (_importedFullHeight - scaledHeight) / 2.0;
+
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(
+        recorder,
+        ui.Rect.fromLTWH(
+          0,
+          0,
+          _importedFullWidth.toDouble(),
+          _importedFullHeight.toDouble(),
+        ),
+      );
+      canvas.drawImageRect(
+        sourceImage,
+        ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+        ui.Rect.fromLTWH(dx, dy, scaledWidth, scaledHeight),
+        ui.Paint()..filterQuality = ui.FilterQuality.medium,
+      );
+      picture = recorder.endRecording();
+      outputImage = await picture.toImage(
+        _importedFullWidth,
+        _importedFullHeight,
+      );
+      final data =
+          await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      return data?.buffer.asUint8List() ?? Uint8List(0);
+    } finally {
+      outputImage?.dispose();
+      picture?.dispose();
+      sourceImage?.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer.dispose();
+    }
+  }
+
+  static String _normalizedImageExtension(String filePath) {
+    final extension = path_lib.extension(filePath).toLowerCase();
+    if (extension.startsWith('.')) {
+      return extension.substring(1);
+    }
+    return extension;
+  }
+
+  static String _contentTypeForImageExtension(String extension) {
+    return switch (extension.toLowerCase()) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'webp' => 'image/webp',
+      _ => 'image/png',
+    };
+  }
+
   static String _imageContentType(String imagePath) {
-    final lower = imagePath.toLowerCase();
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-      return 'image/jpeg';
-    }
-    if (lower.endsWith('.webp')) {
-      return 'image/webp';
-    }
-    return 'image/png';
+    return _contentTypeForImageExtension(_normalizedImageExtension(imagePath));
   }
 
   static String _overallStatus(List<PictureBookPage> pages) {
@@ -3840,6 +4285,34 @@ class _PictureBookGenerationJob {
   final PictureBookProgressCallback? onProgress;
   final bool regenerate;
   final Completer<void> completer;
+}
+
+class _PreparedImportedImage {
+  const _PreparedImportedImage({
+    required this.bytes,
+    required this.resized,
+    required this.extension,
+    required this.contentType,
+  });
+
+  final Uint8List bytes;
+  final bool resized;
+  final String extension;
+  final String contentType;
+}
+
+class _ExportChapterImagePlan {
+  const _ExportChapterImagePlan({
+    required this.pageIndex,
+    required this.sourcePath,
+    required this.fileName,
+    required this.targetPath,
+  });
+
+  final int pageIndex;
+  final String sourcePath;
+  final String fileName;
+  final String targetPath;
 }
 
 class _PicturePageSegment {

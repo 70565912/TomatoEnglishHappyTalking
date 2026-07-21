@@ -1,5 +1,46 @@
 # 修改日志
 
+## 2026-07-21
+
+- **绘本页导入外部图片**：创作中心每页「重新生成」旁增加「导入图片」；`pictureBook.importPageImage` 经 FilePicker 选择 png/jpg/jpeg/webp。已是 **2560×1440** 则原样入库；否则 Flutter 原生 cover-crop + **双线性（`FilterQuality.medium`）** 重编码为 2560×1440 PNG，写入 `picture_book` 缓存（`source: import`），替换该页并标 `ready`，不调用图片 API、不改分镜。
+- **本章导出组图**：创作中心「生成组图」旁增加「导出组图」；`pictureBook.exportChapterImages` 选择目录后导出本章 `ready` 页，文件名为两位场景序号（`01.png`…）。遇同名文件返回冲突列表，Web 弹窗可选覆盖或自定义前缀改名后再导出。
+
+验证：
+
+- `flutter test test/api_cache_service_test.dart --name "importPageImage"`
+- `flutter test test/api_cache_service_test.dart --name "exportChapterImages"`
+
+## 2026-07-20
+
+- **绘本章节分镜：插画情况三轴 + 活动≠节拍**：`picture_book_chapter_scene_plan_v2` 按地点/时间、主在场焦点、中心主任务切分；主任务≠每个可见节拍；同类型重复微动作与事故余波收拾不单独拆；编号句只是覆盖锚点；禁止「多张一句再把剩余塞进最后一张」。删除茶桌/厨房等场景专名。对话转叙事保留。
+- **踩坑**：把 Scenes 压成 2–3 条超长合并句会导致 live 回归（一句一景 + 尾部倾倒）；已回退为分条短规则，并在 `_chapterPlanPromptRuleLines` 注释写明勿再超压。
+- **复审优化 v4**：主在场人物改为通用「主视觉焦点」，中心活动改为焦点人物的主任务及目标；每个 `sceneDescription` 只使用自身句子区间事件并保持人物动作归属；同一事故的原因/结果/立即收拾保持同景；返回前逐对审核相邻边界。新生成的 AI 计划严格拒绝超过 12 景、索引/覆盖不连续或描述为空的响应，不再静默截断并扩张最后一景；旧持久化计划继续兼容读取。QA 脚本新增连续覆盖、引号与尾部倾倒检测，并缩小运行产物。
+- **旧文章 3×3 波动复测**：新增 `tools/qa_chapter_plan_variance_retest.mjs`，复用 id 46/68/91，通过审核草稿刷新各生成 3 次，不新增文章、不保存分镜、不生成图片；输出 scene 数标准差、边界 Jaccard、原句区间/描述对照与结构检查。结果显示连续叙事为中等波动，说明文为高波动，9 次中 1 次 AI 结构响应被严格校验拒绝。QA 引号检查同时修正为只识别台词候选，允许 `ORANGE MARMALADE` 等自然物件标签。
+- **说明文事实块优化 v5**：没有采用整篇体裁分类，而是把同一主题和时间/地点框架内的连续事实、例子、列表项或一般陈述合为一个局部 montage；明确不能覆盖顺序移动、物件操作、发现、事故或其它因果动作。真实 Release 先后淘汰宽泛体裁分支和收窄体裁分支，最终 id 46/68/69/91 各重复 3 次为 4/4/4、8/8/9、3/3/3、9/9/9，12 次结构检查全过；id 68 scene 数标准差由 2.49 降至 0.47，仍保留中等边界波动。
+- 文档：`docs/picture_book_chapter_plan_scene_split_tuning.md`（过程与结论全文）、`docs/ai-call-flow-and-prompt-logic.md`、`AGENTS.md`。
+
+验证：
+
+- `flutter test test/api_cache_service_test.dart --name "chapter plan"`
+- `flutter test test/picture_book_chapter_plan_title_test.dart`
+- `tools/build_windows.ps1 -Release -Run`；`GET /health` 返回 `ok=true`、`webReady=true`
+- Release + QA：`node tools/qa_chapter_plan_prompt_opt_retest.mjs`
+  - 超压版 id=106/107：12/12 dump（废弃）
+  - v3b id=108/109：10/6 景
+  - v4 id=110/111：**7 / 6** 景；连续完整覆盖、无空描述/引号/均分/尾部倾倒，integrity failures=0；E38 人物错配与事故拆景已修复
+  - 过程审核草稿：`output/prompt-opt-retest/REVIEW.md`
+- `node tools/qa_chapter_plan_variance_retest.mjs --repeats 3 --articleIds 46,68,91`
+  - id 46：4/4/6 景，边界 Jaccard 0.556，中等波动
+  - id 68：11/7/5 景，边界 Jaccard 0.507，**高波动**
+  - id 91：7/9/结构无效，中等波动；严格校验拒绝 1 次
+  - 报告：`output/chapter-plan-variance-v4/REPORT.md`
+- `node tools/qa_chapter_plan_variance_retest.mjs --repeats 3 --articleIds 68,69,46,91 --outputDir output/chapter-plan-variance-v5-fact-block`
+  - id 68：8/8/9 景，标准差 0.47，边界 Jaccard 0.583，中等波动
+  - id 69：3/3/3 景，边界 Jaccard 1.000，流程阶段未被过度合并
+  - id 46：4/4/4 景，边界 Jaccard 1.000，追兔/入洞/下坠边界完全重复
+  - id 91：9/9/9 景，边界 Jaccard 0.733，核心边界稳定
+  - 12 次远程规划全部通过结构检查；报告：`output/chapter-plan-variance-v5-fact-block/REPORT.md`
+
 ## 2026-07-19
 
 - **绘本就绪页局部修改（`singlePageEdit`）**：创作中心对 `ready` 且本地图可用的页面，「重新生成」改为指令编辑模式——审核弹窗只填「修改说明」并多选参考图（默认强制选中当前页），不再拼接书籍/章节/分镜 group prompt；Flutter 用 `Edit the reference image(s)... Change: ...` 包装用户说明，`sequential_image_generation: "disabled"`；不写回 `summary_json`、不改书籍简介/角色。失败页仍走 `singlePage` 全量单页审核。`prompt_json` 记录 `mode` / `editInstruction` / `referencePageIndexes`。文档：`docs/ai-call-flow-and-prompt-logic.md`、`docs/volc_ark_seedream_image_api_notes.md`、`AGENTS.md`。
