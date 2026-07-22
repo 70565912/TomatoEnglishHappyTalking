@@ -4709,7 +4709,10 @@ but the three were all crowded together at one corner of it.
         sentenceStartIndex: 0,
         sentenceEndIndex: 0,
         paragraphText: 'Mia opens a map and smiles.',
-        promptJson: '{}',
+        promptJson: ApiCacheService.canonicalJson({
+          'groupPrompt':
+              'Book name: Export Book\nBook description: \n\nChapter description: Mia explores.\n\nImage 1:\nScene description: Mia opens a map.',
+        }),
         imagePath: page0.path,
         status: 'ready',
         createdAt: now,
@@ -4724,7 +4727,10 @@ but the three were all crowded together at one corner of it.
         sentenceStartIndex: 0,
         sentenceEndIndex: 0,
         paragraphText: 'Mia opens a map and smiles.',
-        promptJson: '{}',
+        promptJson: ApiCacheService.canonicalJson({
+          'groupPrompt':
+              'Book name: Export Book\nBook description: \n\nChapter description: Mia explores.\n\nImage 1:\nScene description: Mia opens a map.',
+        }),
         imagePath: page1.path,
         status: 'ready',
         createdAt: now,
@@ -4775,8 +4781,22 @@ but the three were all crowded together at one corner of it.
     expect(renamed['needsConflictResolution'], isFalse);
     expect(renamed['exportedCount'], 2);
     expect(renamed['files'], ['v2_01.png', 'v2_02.png']);
+    expect(renamed['sidecarFiles'], [
+      'v2_chapter-english.txt',
+      'v2_group-prompt.txt',
+    ]);
     expect(await File(path_lib.join(exportDir.path, 'v2_01.png')).exists(), isTrue);
     expect(await File(path_lib.join(exportDir.path, 'v2_02.png')).exists(), isTrue);
+    expect(
+      await File(path_lib.join(exportDir.path, 'v2_chapter-english.txt'))
+          .readAsString(),
+      'Mia opens a map and smiles.',
+    );
+    expect(
+      await File(path_lib.join(exportDir.path, 'v2_group-prompt.txt'))
+          .readAsString(),
+      contains('Book name: Export Book'),
+    );
 
     final overwritten = await PictureBookService.exportChapterImages(
       articleId: articleId,
@@ -4785,9 +4805,23 @@ but the three were all crowded together at one corner of it.
     );
     expect(overwritten['exportedCount'], 2);
     expect(overwritten['files'], ['01.png', '02.png']);
+    expect(overwritten['sidecarFiles'], [
+      'chapter-english.txt',
+      'group-prompt.txt',
+    ]);
     final overwrittenBytes =
         await File(path_lib.join(exportDir.path, '01.png')).readAsBytes();
     expect(overwrittenBytes, isNot([1, 2, 3]));
+    expect(
+      await File(path_lib.join(exportDir.path, 'chapter-english.txt'))
+          .readAsString(),
+      'Mia opens a map and smiles.',
+    );
+    expect(
+      await File(path_lib.join(exportDir.path, 'group-prompt.txt'))
+          .readAsString(),
+      contains('Chapter description: Mia explores.'),
+    );
   });
 }
 

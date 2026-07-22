@@ -874,14 +874,21 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         conflicts: [
           { pageIndex: 0, fileName: '01.png' },
           { pageIndex: 1, fileName: '02.png' },
+          { pageIndex: -1, fileName: 'chapter-english.txt' },
+          { pageIndex: -1, fileName: 'group-prompt.txt' },
         ],
         exportedCount: 0,
         files: [],
+        sidecarFiles: [],
       };
     }
     const files = [
       `${namePrefix}01.png`,
       `${namePrefix}02.png`,
+    ];
+    const sidecarFiles = [
+      `${namePrefix}chapter-english.txt`,
+      `${namePrefix}group-prompt.txt`,
     ];
     return {
       articleId,
@@ -892,6 +899,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       conflicts: [],
       exportedCount: files.length,
       files,
+      sidecarFiles,
     };
   }
   if (type === 'listening.open') {

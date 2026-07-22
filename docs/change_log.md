@@ -2,6 +2,7 @@
 
 ## 2026-07-22
 
+- **导出组图附带原文与 Prompt**：`pictureBook.exportChapterImages` 在导出 `01.png`… 的同时，于同目录写入 `chapter-english.txt`（章节英文原文）与 `group-prompt.txt`（组图总 Prompt）；自定义前缀同步作用于这两个文本文件，冲突检测一并覆盖。
 - **发布 v1.1.1**：`app/pubspec.yaml` → `1.1.1+3`；GitHub Release 含 Windows 干净 zip 与 Android APK。相对 v1.1.0 主要是朗读分句修复（粘连句界、引号内逗号、硬切前标点优先）。已保存文章的 `articles.sentences` 不会自动重算，需删文重建才用新规则。
 - **朗读分句：粘连句界 + 标点优先**：`NlpService` / `sentenceSplitter` 同步更新。
   - 句末 `.!?` 后无空白也可收束新句（如 OCR/粘贴常见的 `Name."Next`）；不会把下一句开头引号吞进上一句；`."she` 这类小写续读仍保持同句。
@@ -17,7 +18,7 @@
 ## 2026-07-21
 
 - **绘本页导入外部图片**：创作中心每页「重新生成」旁增加「导入图片」；`pictureBook.importPageImage` 经 FilePicker 选择 png/jpg/jpeg/webp。已是 **2560×1440** 则原样入库；否则 Flutter 原生 cover-crop + **双线性（`FilterQuality.medium`）** 重编码为 2560×1440 PNG，写入 `picture_book` 缓存（`source: import`），替换该页并标 `ready`，不调用图片 API、不改分镜。
-- **本章导出组图**：创作中心「生成组图」旁增加「导出组图」；`pictureBook.exportChapterImages` 选择目录后导出本章 `ready` 页，文件名为两位场景序号（`01.png`…）。遇同名文件返回冲突列表，Web 弹窗可选覆盖或自定义前缀改名后再导出。
+- **本章导出组图**：创作中心「生成组图」旁增加「导出组图」；`pictureBook.exportChapterImages` 选择目录后导出本章 `ready` 页，文件名为两位场景序号（`01.png`…）。同目录另写 `chapter-english.txt` 与 `group-prompt.txt`（见 2026-07-22）。遇同名文件返回冲突列表，Web 弹窗可选覆盖或自定义前缀改名后再导出。
 
 验证：
 

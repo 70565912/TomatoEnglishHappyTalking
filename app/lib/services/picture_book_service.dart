@@ -1569,9 +1569,11 @@ class PictureBookService {
 
   /// Export ready page images for one chapter into [outputDirectory].
   ///
-  /// File names use 1-based zero-padded scene index plus the source extension
-  /// (e.g. `01.png`). When [overwrite] is false and [namePrefix] is empty,
-  /// existing target names return [needsConflictResolution] without writing.
+  /// Also writes chapter English text (`chapter-english.txt`) and the group
+  /// image prompt (`group-prompt.txt`) into the same directory. File names use
+  /// 1-based zero-padded scene index plus the source extension (e.g. `01.png`).
+  /// When [overwrite] is false and [namePrefix] is empty, existing target names
+  /// (images or sidecar text) return [needsConflictResolution] without writing.
   static Future<Map<String, dynamic>> exportChapterImages({
     required int articleId,
     required String outputDirectory,
@@ -1585,6 +1587,11 @@ class PictureBookService {
     final directory = Directory(directoryPath);
     if (!await directory.exists()) {
       throw const FormatException('导出目录不存在');
+    }
+
+    final article = await DatabaseService.getArticleById(articleId);
+    if (article == null) {
+      throw FormatException('文章不存在（id=$articleId）');
     }
 
     final pages = await DatabaseService.getPictureBookPages(articleId);
@@ -1629,11 +1636,52 @@ class PictureBookService {
       );
     }
 
+    final englishText = _exportChapterEnglishText(article);
+    if (englishText.trim().isEmpty) {
+      throw const FormatException('本章没有可导出的英文原文');
+    }
+    final groupPrompt = await _resolveExportGroupPrompt(
+      article: article,
+      articleId: articleId,
+      readyPages: readyPages,
+      allPages: pages,
+    );
+    if (groupPrompt.trim().isEmpty) {
+      throw const FormatException('无法还原本章组图 Prompt，请先完成绘本审核出图');
+    }
+
+    final sidecarPlans = <_ExportChapterSidecarPlan>[
+      _ExportChapterSidecarPlan(
+        fileName: '$prefix$_exportChapterEnglishFileName',
+        targetPath: path_lib.join(
+          directory.path,
+          '$prefix$_exportChapterEnglishFileName',
+        ),
+        content: englishText,
+      ),
+      _ExportChapterSidecarPlan(
+        fileName: '$prefix$_exportGroupPromptFileName',
+        targetPath: path_lib.join(
+          directory.path,
+          '$prefix$_exportGroupPromptFileName',
+        ),
+        content: groupPrompt,
+      ),
+    ];
+
     final conflicts = <Map<String, dynamic>>[];
     for (final item in planned) {
       if (await File(item.targetPath).exists()) {
         conflicts.add({
           'pageIndex': item.pageIndex,
+          'fileName': item.fileName,
+        });
+      }
+    }
+    for (final item in sidecarPlans) {
+      if (await File(item.targetPath).exists()) {
+        conflicts.add({
+          'pageIndex': -1,
           'fileName': item.fileName,
         });
       }
@@ -1650,6 +1698,7 @@ class PictureBookService {
         'conflicts': conflicts,
         'exportedCount': 0,
         'files': <String>[],
+        'sidecarFiles': <String>[],
       };
     }
 
@@ -1670,12 +1719,21 @@ class PictureBookService {
       exportedFiles.add(item.fileName);
     }
 
+    final exportedSidecars = <String>[];
+    for (final item in sidecarPlans) {
+      final target = File(item.targetPath);
+      await target.parent.create(recursive: true);
+      await target.writeAsString(item.content, encoding: utf8, flush: true);
+      exportedSidecars.add(item.fileName);
+    }
+
     TomatoLogger.info(
       category: 'pictureBook',
       event: 'chapter_images.exported',
       articleId: articleId,
       data: {
         'exportedCount': exportedFiles.length,
+        'sidecarCount': exportedSidecars.length,
         'overwrite': overwrite,
         'namePrefixLength': prefix.length,
         'conflictCount': conflicts.length,
@@ -1691,7 +1749,90 @@ class PictureBookService {
       'conflicts': <Map<String, dynamic>>[],
       'exportedCount': exportedFiles.length,
       'files': exportedFiles,
+      'sidecarFiles': exportedSidecars,
     };
+  }
+
+  static const _exportChapterEnglishFileName = 'chapter-english.txt';
+  static const _exportGroupPromptFileName = 'group-prompt.txt';
+
+  static String _exportChapterEnglishText(Article article) {
+    final content = article.content.trim();
+    if (content.isNotEmpty) {
+      return content;
+    }
+    return article.sentences
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.isNotEmpty)
+        .join('\n');
+  }
+
+  static Future<String> _resolveExportGroupPrompt({
+    required Article article,
+    required int articleId,
+    required List<PictureBookPage> readyPages,
+    required List<PictureBookPage> allPages,
+  }) async {
+    for (final page in [...readyPages, ...allPages]) {
+      final stored =
+          _pagePromptMap(page)['groupPrompt']?.toString().trim() ?? '';
+      if (stored.isNotEmpty) {
+        return stored;
+      }
+    }
+
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    if (chapter == null) {
+      return '';
+    }
+    final series = await DatabaseService.getStorySeriesById(chapter.seriesId);
+    if (series == null) {
+      return '';
+    }
+
+    var plan = readPersistedChapterPlan(
+      summaryJson: chapter.summaryJson,
+      sentenceCount: article.sentences.length,
+    );
+    plan ??= await _recoverChapterPlanFromPages(
+      article: article,
+      chapter: chapter,
+    );
+    if (plan == null || plan.scenes.isEmpty) {
+      return '';
+    }
+
+    var segments = _segmentArticle(article, plan);
+    if (segments.isEmpty) {
+      segments = [
+        for (final page in readyPages)
+          _PicturePageSegment(
+            pageIndex: page.pageIndex,
+            pageCount: readyPages.length,
+            sentenceStartIndex: page.sentenceStartIndex,
+            sentenceEndIndex: page.sentenceEndIndex,
+            text: page.paragraphText,
+            summary: _pageSceneDescription(page),
+          ),
+      ];
+    }
+
+    var relevantCharacters = <BookCharacter>[];
+    for (final page in [...readyPages, ...allPages]) {
+      relevantCharacters = _sanitizeBookCharacters(
+        _bookCharactersFromJson(_pagePromptMap(page)['relevantCharacters']),
+      );
+      if (relevantCharacters.isNotEmpty) {
+        break;
+      }
+    }
+
+    return _composeGroupPrompt(
+      series: series,
+      plan: plan,
+      segments: segments,
+      relevantCharacters: relevantCharacters,
+    );
   }
 
   static Future<Map<String, dynamic>> cancelPromptReview(
@@ -4313,6 +4454,18 @@ class _ExportChapterImagePlan {
   final String sourcePath;
   final String fileName;
   final String targetPath;
+}
+
+class _ExportChapterSidecarPlan {
+  const _ExportChapterSidecarPlan({
+    required this.fileName,
+    required this.targetPath,
+    required this.content,
+  });
+
+  final String fileName;
+  final String targetPath;
+  final String content;
 }
 
 class _PicturePageSegment {

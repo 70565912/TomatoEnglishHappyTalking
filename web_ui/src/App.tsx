@@ -2803,9 +2803,10 @@ function PictureBookCreationPanel({
     }
     setExportConflict(null);
     const count = payload.exportedCount ?? 0;
+    const sidecarCount = Array.isArray(payload.sidecarFiles) ? payload.sidecarFiles.length : 0;
     onNotice(
       count > 0
-        ? `已导出 ${count} 张组图到 ${payload.outputDirectory ?? '选定目录'}`
+        ? `已导出 ${count} 张组图${sidecarCount > 0 ? '及章节原文、组图 Prompt' : ''}到 ${payload.outputDirectory ?? '选定目录'}`
         : '没有可导出的组图',
     );
   };
@@ -3244,6 +3245,7 @@ type PictureBookExportChapterImagesPayload = {
   conflicts?: Array<{ pageIndex: number; fileName: string }>;
   exportedCount?: number;
   files?: string[];
+  sidecarFiles?: string[];
 };
 
 function PictureBookExportConflictDialog({
