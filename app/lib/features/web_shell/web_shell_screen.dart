@@ -1546,6 +1546,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     final newCharacters =
         _payloadBookCharacters(message.payload, 'newCharacters');
     final scenes = _payloadMapList(message.payload, 'scenes');
+    final useSuperResolution = _payloadBool(
+      message.payload,
+      'useSuperResolution',
+      fallback: true,
+    );
     final state = await PictureBookService.confirmPromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
@@ -1554,6 +1559,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       newCharacters: newCharacters,
       chapterDescription: chapterDescription,
       scenes: scenes,
+      useSuperResolution: useSuperResolution,
       onProgress: (payload) => _pushEvent('pictureBook.state', payload),
     );
     unawaited(_pushEvent('pictureBook.state', state));
@@ -1583,6 +1589,11 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         _payloadIntList(message.payload, 'referencePageIndexes');
     final referencePageIndex =
         _payloadOptionalInt(message.payload, 'referencePageIndex');
+    final useSuperResolution = _payloadBool(
+      message.payload,
+      'useSuperResolution',
+      fallback: true,
+    );
     final state = await PictureBookService.confirmPagePromptReview(
       reviewId: reviewId,
       groupPrompt: groupPrompt,
@@ -1593,6 +1604,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       scenes: scenes,
       referencePageIndexes: referencePageIndexes,
       referencePageIndex: referencePageIndex,
+      useSuperResolution: useSuperResolution,
       onProgress: (payload) => _pushEvent('pictureBook.state', payload),
     );
     unawaited(_pushEvent('pictureBook.state', state));
@@ -1709,11 +1721,17 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     if (selectedPath.isEmpty) {
       throw const FormatException('无法读取选择的图片文件路径');
     }
+    final useSuperResolution = _payloadBool(
+      message.payload,
+      'useSuperResolution',
+      fallback: true,
+    );
 
     final state = await PictureBookService.importPageImage(
       articleId: articleId,
       pageIndex: pageIndex,
       sourcePath: selectedPath,
+      useSuperResolution: useSuperResolution,
     );
     unawaited(_pushEvent('pictureBook.state', state));
     return {

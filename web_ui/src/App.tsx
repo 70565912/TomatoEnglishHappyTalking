@@ -606,10 +606,14 @@ function App() {
     }
   };
 
-  const importPictureBookPageImage = async (articleId: number, pageIndex: number) => {
+  const importPictureBookPageImage = async (
+    articleId: number,
+    pageIndex: number,
+    useSuperResolution = true,
+  ) => {
     const payload = await sendNative<PictureBookState & { cancelled?: boolean; imported?: boolean }>(
       'pictureBook.importPageImage',
-      { articleId, pageIndex },
+      { articleId, pageIndex, useSuperResolution },
     );
     if (payload.cancelled) {
       setNotice('已取消导入图片');
@@ -2001,7 +2005,11 @@ function CreationCenterPage({
   onBlockingOverlayChange: (overlay: BlockingOverlayConfig | null) => void;
   onOpenPicturePromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPicturePagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
-  onImportPicturePageImage: (articleId: number, pageIndex: number) => void | Promise<void>;
+  onImportPicturePageImage: (
+    articleId: number,
+    pageIndex: number,
+    useSuperResolution?: boolean,
+  ) => void | Promise<void>;
   onChapterOrderChange: (order: ChapterOrder) => void;
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
@@ -2661,11 +2669,16 @@ function PictureBookCreationPanel({
   onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onOpenPromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
-  onImportPageImage: (articleId: number, pageIndex: number) => void | Promise<void>;
+  onImportPageImage: (
+    articleId: number,
+    pageIndex: number,
+    useSuperResolution?: boolean,
+  ) => void | Promise<void>;
 }) {
   const [state, setState] = useState<PictureBookState | null>(null);
   const [loading, setLoading] = useState(true);
   const [importingPageIndex, setImportingPageIndex] = useState<number | null>(null);
+  const [importSuperResolution, setImportSuperResolution] = useState(true);
   const [exportingChapterImages, setExportingChapterImages] = useState(false);
   const [exportConflict, setExportConflict] = useState<PictureBookExportConflictState | null>(null);
   const [picturePreview, setPicturePreview] = useState<PictureBookPagePreviewState | null>(null);
@@ -2756,7 +2769,13 @@ function PictureBookCreationPanel({
       return;
     }
     setImportingPageIndex(page.pageIndex);
-    Promise.resolve(onImportPageImage(article.id, page.pageIndex))
+    Promise.resolve(
+      onImportPageImage(
+        article.id,
+        page.pageIndex,
+        importSuperResolution,
+      ),
+    )
       .then(() => {
         // Bridge may push pictureBook.state; also refresh in case cancel/success skipped event.
         return sendNative<PictureBookState>('pictureBook.state', {
@@ -3044,6 +3063,15 @@ function PictureBookCreationPanel({
         </div>
       </div>
       <p className="creation-panel-note">绘本生成使用整章连续分镜组图；提交前会先打开提示词审核。</p>
+      <label className="toggle-line picture-quality-toggle">
+        <input
+          type="checkbox"
+          checked={importSuperResolution}
+          disabled={importingPageIndex != null}
+          onChange={(event) => setImportSuperResolution(event.target.checked)}
+        />
+        <span>导入图片时使用超分提高画质</span>
+      </label>
       <div className="creation-resource-grid" aria-label="绘本资源状态">
         <ResourceRow label="章节正文" value={`${article.sentenceCount} 句英文`} />
         <ResourceRow label="绘本图片" value={state ? `${state.pages.length} 页 · ${pictureBookStatusLabel(state.status)}` : '读取中'} />
@@ -3415,6 +3443,7 @@ function PictureBookPromptReviewDialog({
   const [groupPromptTouched, setGroupPromptTouched] = useState(false);
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [useSuperResolution, setUseSuperResolution] = useState(true);
   const [refreshingPrompt, setRefreshingPrompt] = useState<PictureBookPromptRefreshTarget | null>(null);
   const [error, setError] = useState<string | null>(null);
   const busy = savingPrompt || submitting || refreshingPrompt !== null;
@@ -3611,6 +3640,7 @@ function PictureBookPromptReviewDialog({
     newCharacters: normalizeBookCharacters(newCharacters),
     chapterDescription,
     scenes,
+    useSuperResolution,
     ...(isSinglePageReview && selectedReferencePageIndexes.length > 0
       ? {
           referencePageIndexes: [...selectedReferencePageIndexes].sort((a, b) => a - b),
@@ -3930,6 +3960,15 @@ function PictureBookPromptReviewDialog({
           )}
         </div>
 
+        <label className="toggle-line picture-quality-toggle">
+          <input
+            type="checkbox"
+            checked={useSuperResolution}
+            disabled={busy}
+            onChange={(event) => setUseSuperResolution(event.target.checked)}
+          />
+          <span>图片生成后使用超分提高画质</span>
+        </label>
         {error && <p className="edit-dialog-error">{error}</p>}
         <div className="edit-dialog-actions">
           <button className="ghost-action" type="button" onClick={onClose} disabled={busy}>

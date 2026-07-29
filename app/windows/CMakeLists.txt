@@ -113,6 +113,28 @@ if(TOMATO_FFMPEG_DLLS)
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 endif()
 
+set(TOMATO_REALESRGAN_SOURCE_DIR
+  "${CMAKE_CURRENT_SOURCE_DIR}/third_party/realesrgan")
+set(TOMATO_REALESRGAN_REQUIRED_FILES
+  "realesrgan-ncnn-vulkan.exe"
+  "vcomp140.dll"
+  "LICENSE"
+  "models/realesr-animevideov3-x2.bin"
+  "models/realesr-animevideov3-x2.param"
+  "models/realesr-animevideov3-x4.bin"
+  "models/realesr-animevideov3-x4.param")
+foreach(TOMATO_REALESRGAN_REQUIRED_FILE ${TOMATO_REALESRGAN_REQUIRED_FILES})
+  if(NOT EXISTS
+      "${TOMATO_REALESRGAN_SOURCE_DIR}/${TOMATO_REALESRGAN_REQUIRED_FILE}")
+    message(FATAL_ERROR
+      "Real-ESRGAN bundle is incomplete: "
+      "${TOMATO_REALESRGAN_REQUIRED_FILE}")
+  endif()
+endforeach()
+install(DIRECTORY "${TOMATO_REALESRGAN_SOURCE_DIR}/"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/realesrgan"
+  COMPONENT Runtime)
+
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   COMPONENT Runtime)
 

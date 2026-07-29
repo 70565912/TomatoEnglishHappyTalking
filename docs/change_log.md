@@ -1,5 +1,20 @@
 # 修改日志
 
+## 2026-07-29
+
+- **Windows 绘本图片超分**：新增 `PictureBookImageUpscaleService`，随 Windows 程序打包 Real-ESRGAN NCNN Vulkan 与 `realesr-animevideov3` 2 倍 / 4 倍模型。AI 组图、单页生成与本地导入均可在确认时选择超分；默认开启，完全本地运行，不增加云图片 API 调用。
+- **超分规格**：导入图先居中裁切为 16:9；低于 1280×720 的输入使用 4 倍模型，其余使用 2 倍模型，最后以高质量缩放统一输出 2560×1440。超分结果写入绘本缓存并记录 provider、倍率和内容哈希；失败会显示真实错误，不静默回退。
+- **交互与平台范围**：创作中心的章节组图审核、单页审核和图片导入增加「超分增强」选项。当前仅支持 Windows，依赖 Vulkan；Android 会明确提示不支持。
+- **发布 v1.2.0**：`app/pubspec.yaml` → `1.2.0+4`；Windows Release 包含超分运行库与模型，并继续通过干净暂存流程排除本机数据库、缓存、日志、生成媒体和账号配置。
+- **其它改动**：Alice 发布素材脚本默认目标调整为 Memospace 家庭共享路径；Web UI 静态资源随本次功能重新构建。
+
+验证：
+
+- `npm --prefix web_ui test`
+- `flutter test test/api_cache_service_test.dart`
+- `flutter analyze`
+- `tools/publish_github_release.ps1 -Version 1.2.0`
+
 ## 2026-07-22
 
 - **导出组图附带原文与 Prompt**：`pictureBook.exportChapterImages` 在导出 `01.png`… 的同时，于同目录写入 `chapter-english.txt`（章节英文原文）与 `group-prompt.txt`（组图总 Prompt）；自定义前缀同步作用于这两个文本文件，冲突检测一并覆盖。

@@ -11,7 +11,7 @@
 #   recording-export\subtitled\* - song - subtitled - *.mp4     -> target\songs\
 #   recording-export\mp3\* - song-audio - *.mp3                   -> target\mp3\
 #
-# Default target: X:\动画\爱丽丝梦游仙境\{listening,songs,mp3}
+# Default target: \\Memospace\家庭共享\动画\爱丽丝梦游仙境\{listening,songs,mp3}
 
 param(
     [string]$SourceRoot = '',
@@ -26,11 +26,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Get-DefaultAlicePublishRoot {
+    # \\Memospace\家庭共享\动画\爱丽丝梦游仙境 (Unicode codepoints avoid encoding issues in some hosts)
+    $shareRoot = '\\Memospace\' + (-join (@(0x5BB6, 0x5EAD, 0x5171, 0x4EAB) | ForEach-Object { [char]$_ }))
     $animationFolder = -join (@(0x52A8, 0x753B) | ForEach-Object { [char]$_ })
     $bookFolder = -join (@(
             0x7231, 0x4E3D, 0x4E1D, 0x68A6, 0x6E38, 0x4ED9, 0x5883
         ) | ForEach-Object { [char]$_ })
-    return Join-Path ('X:\' + $animationFolder) $bookFolder
+    return Join-Path (Join-Path $shareRoot $animationFolder) $bookFolder
 }
 
 function Assert-PathUnderRoot {

@@ -31,6 +31,9 @@ Application URLs and setup steps are included further below.
 - Organizes learning material around books, chapters, listening, shadowing, and
   conversation practice.
 - Generates picture-book scenes for a full chapter after a prompt review step.
+- Optionally enhances generated or imported picture-book images on Windows with
+  bundled Real-ESRGAN 2x/4x super-resolution before normalizing them to
+  2560x1440.
 - Creates or imports song versions for chapter lyrics, then builds subtitle
   timelines from ASR timing.
 - Plays chapter audio with cached TTS and optional full-screen picture-book
@@ -121,6 +124,13 @@ The main UI is a bundled React/Vite WebView. Flutter owns native capabilities
 such as local storage, secure settings, recording, playback, TTS, ASR, AI calls,
 and file export.
 
+Picture-book prompt review and local image import expose a super-resolution
+option. It is enabled by default on Windows and runs entirely on the local
+machine, so it does not consume a cloud image API request. Images below half of
+the target dimensions use 4x enhancement; larger inputs use 2x enhancement,
+then the result is normalized to 2560x1440. This feature requires a
+Vulkan-capable Windows GPU and is currently unavailable on Android.
+
 ## Architecture
 
 ```text
@@ -162,6 +172,7 @@ ASR, and music generation.
 | --- | --- |
 | Text generation | Aliyun Bailian OpenAI-compatible Chat Completions, Volcengine Ark |
 | Picture-book images | Aliyun Wanxiang sequential images, Volcengine Seedream sequential images |
+| Picture-book super-resolution | Local Real-ESRGAN NCNN Vulkan on Windows |
 | TTS | Aliyun CosyVoice, Volcengine Doubao TTS 2.0 |
 | ASR | Aliyun Qwen-ASR, Volcengine BigASR |
 | Realtime conversation | Volcengine Realtime dialogue |
@@ -182,6 +193,7 @@ provided release scripts are PowerShell-based.
 - Android SDK for APK builds
 - Microsoft Edge WebView2 Runtime for the Windows app
 - FFmpeg for video/audio export in the packaged Windows runtime
+- A Vulkan-capable GPU for optional Windows picture-book super-resolution
 
 The original development machine uses Flutter under `D:\DevTools\flutter` and
 Android SDK under `D:\Android\SDK`, but those paths are local conventions rather
@@ -261,6 +273,8 @@ flutter analyze
 - Builds Windows Release and Android Release APK (unless `-SkipBuild`).
 - Stages a clean Windows zip from `app/build/windows/x64/runner/Release` plus
   FFmpeg into `release/dist/`, excluding local runtime data and secrets.
+- Includes the bundled Real-ESRGAN executable and the 2x/4x
+  `realesr-animevideov3` models required by Windows super-resolution.
 - Copies a versioned APK into `release/dist/`.
 - Creates annotated tag `vX.Y.Z`, pushes it, and runs `gh release create` with
   both assets.
@@ -288,6 +302,14 @@ FFmpeg, and required runtime files. Exclude at least:
 - `security/`
 - settings files
 - any API key or token material
+
+## Third-Party Components
+
+Windows packages include the portable Real-ESRGAN NCNN Vulkan executable and
+`realesr-animevideov3` models for local picture-book super-resolution.
+Real-ESRGAN is distributed under the BSD 3-Clause License; its bundled license
+and upstream notes are in
+[`app/windows/third_party/realesrgan/`](app/windows/third_party/realesrgan/).
 
 ## Development Notes
 

@@ -16,6 +16,7 @@ import 'package:tomato_english_happy_talking/services/content_safety_service.dar
 import 'package:tomato_english_happy_talking/services/database_service.dart';
 import 'package:tomato_english_happy_talking/services/listening_audio_material_service.dart';
 import 'package:tomato_english_happy_talking/services/nlp_service.dart';
+import 'package:tomato_english_happy_talking/services/picture_book_image_upscale_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_image_service.dart';
 import 'package:tomato_english_happy_talking/services/picture_book_service.dart';
 import 'package:tomato_english_happy_talking/services/practice_input_parser.dart';
@@ -45,6 +46,7 @@ void main() {
     AliyunWanxImageService.setOverridesForTest();
     VolcImageService.setPostOverrideForTest(null);
     ListeningAudioMaterialService.setPreloadOverrideForTest(null);
+    PictureBookImageUpscaleService.resetTestOverrides();
     AppConfig.resetRuntimeConfigForTest();
   });
 
@@ -53,6 +55,7 @@ void main() {
     AliyunWanxImageService.setOverridesForTest();
     VolcImageService.setPostOverrideForTest(null);
     ListeningAudioMaterialService.setPreloadOverrideForTest(null);
+    PictureBookImageUpscaleService.resetTestOverrides();
     AppConfig.resetRuntimeConfigForTest();
     await DatabaseService.resetForTest();
     DatabaseService.setDatabaseDirectoryOverrideForTest(null);
@@ -996,7 +999,13 @@ void main() {
     );
     final pages = await DatabaseService.getPictureBookPages(articleId);
     expect(pages, hasLength(2));
-    expect(pages.every((page) => page.status == 'ready'), isTrue);
+    expect(
+      pages.every((page) => page.status == 'ready'),
+      isTrue,
+      reason: pages
+          .map((page) => '${page.pageIndex}:${page.status}:${page.errorMessage}')
+          .join(' | '),
+    );
     expect(pages.first.promptJson, contains('blue dress and white apron'));
     final updatedChapter =
         await DatabaseService.getStoryChapterForArticle(articleId);
@@ -3843,16 +3852,29 @@ but the three were all crowded together at one corner of it.
     );
     final review = await _refreshChapterPlanFromReview(initialReview);
     Map<String, dynamic>? imageBody;
+    final generatedPageOne = await _writeTestPng(
+      tempDir,
+      'generated-page-one.png',
+      width: 640,
+      height: 360,
+    );
+    final generatedPageTwo = await _writeTestPng(
+      tempDir,
+      'generated-page-two.png',
+      width: 640,
+      height: 360,
+    );
+    final upscaleArguments = await _configureFakePictureBookUpscaler(tempDir);
     VolcImageService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
         imageBody = body;
         return {
           'data': [
             {
-              'b64_json': base64Encode([137, 80, 78, 71, 8])
+              'b64_json': base64Encode(await generatedPageOne.readAsBytes())
             },
             {
-              'b64_json': base64Encode([137, 80, 78, 71, 9])
+              'b64_json': base64Encode(await generatedPageTwo.readAsBytes())
             },
           ],
         };
@@ -3875,6 +3897,7 @@ but the three were all crowded together at one corner of it.
                 'Edited scene ${(scene['pageIndex'] as num).toInt() + 1} description.',
           },
       ],
+      useSuperResolution: true,
     );
 
     expect(imageBody?['prompt'],
@@ -3882,7 +3905,25 @@ but the three were all crowded together at one corner of it.
     expect(imageBody?.containsKey('image'), isFalse);
     final pages = await DatabaseService.getPictureBookPages(articleId);
     expect(pages, hasLength(2));
-    expect(pages.every((page) => page.status == 'ready'), isTrue);
+    expect(
+      pages.every((page) => page.status == 'ready'),
+      isTrue,
+      reason: pages
+          .map((page) => '${page.pageIndex}:${page.status}:${page.errorMessage}')
+          .join(' | '),
+    );
+    expect(upscaleArguments, hasLength(2));
+    expect(
+      upscaleArguments.every(
+        (arguments) {
+          final scaleIndex = arguments.indexOf('-s');
+          return scaleIndex >= 0 &&
+              scaleIndex + 1 < arguments.length &&
+              arguments[scaleIndex + 1] == '4';
+        },
+      ),
+      isTrue,
+    );
     expect(pages.first.promptJson, contains('Edited scene 1 description.'));
     final updatedSeries = await DatabaseService.getStorySeriesById(series.id!);
     expect(updatedSeries?.description, contains('blue dress and white apron'));
@@ -4601,6 +4642,7 @@ but the three were all crowded together at one corner of it.
       width: 800,
       height: 600,
     );
+    final upscaleArguments = await _configureFakePictureBookUpscaler(tempDir);
 
     final state = await PictureBookService.importPageImage(
       articleId: articleId,
@@ -4640,10 +4682,11 @@ but the three were all crowded together at one corner of it.
       dbPages.single.promptJson,
       contains('Mia opens a map.'),
     );
+    expect(upscaleArguments.single, containsAllInOrder(['-s', '4']));
   });
 
   test(
-      'picture-book importPageImage keeps exact 2560x1440 bytes without re-encode',
+      'picture-book importPageImage enhances exact 2560x1440 input at 2x',
       () async {
     final articleId = await _saveArticle('Mia opens a map and smiles.');
     final series = await PictureBookService.createSeries(title: 'Import Exact');
@@ -4671,6 +4714,7 @@ but the three were all crowded together at one corner of it.
       height: 1440,
     );
     final sourceBytes = await sourceFile.readAsBytes();
+    final upscaleArguments = await _configureFakePictureBookUpscaler(tempDir);
 
     final state = await PictureBookService.importPageImage(
       articleId: articleId,
@@ -4681,7 +4725,122 @@ but the three were all crowded together at one corner of it.
     final page = (state['pages'] as List).single as Map;
     final importedPath = (page['imagePath'] as String?)?.trim() ?? '';
     expect(importedPath, endsWith('.png'));
+    expect(await File(importedPath).readAsBytes(), isNot(sourceBytes));
+    expect(upscaleArguments.single, containsAllInOrder(['-s', '2']));
+  });
+
+  test(
+      'picture-book importPageImage can skip enhancement for exact target input',
+      () async {
+    final articleId = await _saveArticle('Mia opens a map and smiles.');
+    final series =
+        await PictureBookService.createSeries(title: 'Import Without Upscale');
+    final now = DateTime(2026, 7, 21);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{}',
+        status: 'error',
+        errorMessage: 'missing',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final sourceFile = await _writeTestPng(
+      tempDir,
+      'exact-full-no-upscale.png',
+      width: 2560,
+      height: 1440,
+    );
+    final sourceBytes = await sourceFile.readAsBytes();
+
+    final state = await PictureBookService.importPageImage(
+      articleId: articleId,
+      pageIndex: 0,
+      sourcePath: sourceFile.path,
+      useSuperResolution: false,
+    );
+
+    final page = (state['pages'] as List).single as Map;
+    final importedPath = (page['imagePath'] as String?)?.trim() ?? '';
     expect(await File(importedPath).readAsBytes(), sourceBytes);
+  });
+
+  test(
+      'picture-book importPageImage preserves previous page when upscale fails',
+      () async {
+    final articleId = await _saveArticle('Mia opens a map and smiles.');
+    final series = await PictureBookService.createSeries(title: 'Import Fail');
+    final now = DateTime(2026, 7, 21);
+    final oldFile = await _writeTestPng(
+      tempDir,
+      'old-page-failure.png',
+      width: 2560,
+      height: 1440,
+    );
+    final oldCacheKey = await ApiCacheService.keyForJson(
+      'picture_book_old_failure',
+      {'articleId': articleId, 'pageIndex': 0},
+    );
+    final oldCachedPath = await ApiCacheService.putFileBytes(
+      cacheKey: oldCacheKey,
+      kind: 'file',
+      purpose: 'picture_book_image',
+      request: {'kind': 'old_failure'},
+      bytes: await oldFile.readAsBytes(),
+      subdirectory: 'picture_book',
+      extension: 'png',
+      contentType: 'image/png',
+      articleId: articleId,
+    );
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{}',
+        imageCacheKey: oldCacheKey,
+        imagePath: oldCachedPath,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+    final sourceFile = await _writeTestPng(
+      tempDir,
+      'failed-import-source.png',
+      width: 1280,
+      height: 720,
+    );
+    await _configureFakePictureBookUpscaler(tempDir, exitCode: 7);
+
+    await expectLater(
+      PictureBookService.importPageImage(
+        articleId: articleId,
+        pageIndex: 0,
+        sourcePath: sourceFile.path,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('绘本图片超分失败'),
+        ),
+      ),
+    );
+
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages.single.imageCacheKey, oldCacheKey);
+    expect(pages.single.imagePath, oldCachedPath);
+    expect(await File(oldCachedPath).exists(), isTrue);
   });
 
   test('picture-book exportChapterImages writes scene files and resolves conflicts',
@@ -4920,6 +5079,54 @@ Future<File> _writeTestPng(
     image.dispose();
     picture.dispose();
   }
+}
+
+Future<List<List<String>>> _configureFakePictureBookUpscaler(
+  Directory directory, {
+  int exitCode = 0,
+}) async {
+  final toolDirectory = Directory(
+    path_lib.join(directory.path, 'fake_realesrgan'),
+  );
+  final modelDirectory = Directory(path_lib.join(toolDirectory.path, 'models'));
+  await modelDirectory.create(recursive: true);
+  final executable = File(
+    path_lib.join(toolDirectory.path, 'realesrgan-ncnn-vulkan.exe'),
+  );
+  await executable.writeAsString('test executable');
+  for (final modelName in const [
+    PictureBookImageUpscaleService.modelName2x,
+    PictureBookImageUpscaleService.modelName4x,
+  ]) {
+    await File(
+      path_lib.join(modelDirectory.path, '$modelName.param'),
+    ).writeAsString('test param');
+    await File(
+      path_lib.join(modelDirectory.path, '$modelName.bin'),
+    ).writeAsBytes([1]);
+  }
+  final outputFixture = await _writeTestPng(
+    directory,
+    'fake-upscale-output.png',
+    width: 1280,
+    height: 720,
+  );
+  final invocations = <List<String>>[];
+  PictureBookImageUpscaleService.windowsPlatformOverride = true;
+  PictureBookImageUpscaleService.executablePathOverride = executable.path;
+  PictureBookImageUpscaleService.processRunnerOverride = (
+    executablePath,
+    arguments, {
+    workingDirectory,
+  }) async {
+    invocations.add(List<String>.from(arguments));
+    if (exitCode == 0) {
+      final outputIndex = arguments.indexOf('-o') + 1;
+      await outputFixture.copy(arguments[outputIndex]);
+    }
+    return ProcessResult(1, exitCode, '', exitCode == 0 ? '' : 'test failure');
+  };
+  return invocations;
 }
 
 void _writeImageArkKey(Directory _, String key) {

@@ -20,6 +20,7 @@ Tomato English Happy Talking 是一款独立 Flutter 应用，用 AI 辅助英�
 - 导入英文或中英对照文本，保存为书籍章节。
 - 以「书库 / 章节 / 听力 / 跟读 / 对话」组织练习材料。
 - 全章绘本分镜：先提示词审核，再顺序生成组图。
+- Windows 可对 AI 生成图或本地导入图启用 Real-ESRGAN 2 倍 / 4 倍本地超分，再统一输出为 2560×1440。
 - 可为章节歌词生成或导入歌曲版本，并用 ASR 时间戳做字幕时间轴。
 - 章节听力播放（本地 TTS 缓存），支持绘本全屏播放。
 - 跟读录音，并基于识别结果做发音启发式评分。
@@ -93,6 +94,8 @@ Suno 歌曲不在 App 内填 Key：设置里选 Suno 后，会打开系统浏览
 
 主界面是打包进 App 的 React / Vite WebView。Flutter 负责本地存储、安全配置、录音、播放、TTS、ASR、云调用和文件导出等原生能力。
 
+绘本提示词审核和本地图片导入均可选择超分，Windows 默认开启。超分完全在本机运行，不额外消耗云图片 API：低于目标尺寸一半的图片使用 4 倍增强，其余使用 2 倍增强，最后统一为 2560×1440。该能力需要支持 Vulkan 的 Windows 显卡，目前 Android 不支持。
+
 ## 架构
 
 ```text
@@ -134,6 +137,7 @@ Flutter WebShellScreen
 | ---- | ------------------------------------- |
 | 文本生成 | 阿里云百炼 OpenAI 兼容 Chat Completions、火山方舟 |
 | 绘本组图 | 阿里云万相顺序组图、火山 Seedream 顺序组图            |
+| 绘本超分 | Windows 本地 Real-ESRGAN NCNN Vulkan |
 | TTS  | 阿里云 CosyVoice、火山 Doubao TTS 2.0       |
 | ASR  | 阿里云 Qwen-ASR、火山 BigASR                |
 | 实时对话 | 火山 Realtime 对话                        |
@@ -152,6 +156,7 @@ Flutter WebShellScreen
 - Android SDK（打 APK）
 - Microsoft Edge WebView2 Runtime（Windows 客户端）
 - FFmpeg（Windows 包内用于音视频导出）
+- 支持 Vulkan 的显卡（用于可选的 Windows 绘本超分）
 
 原开发机使用 `D:\DevTools\flutter` 与 `D:\Android\SDK`，这只是本机约定，不是仓库硬性要求。
 
@@ -224,6 +229,7 @@ flutter analyze
 
 - 默认构建 Windows Release 与 Android Release APK（`-SkipBuild` 可跳过）。
 - 从 `app/build/windows/x64/runner/Release` 加 FFmpeg 做干净 Windows zip，写入 `release/dist/`，排除本机运行数据与密钥。
+- Windows 包同时包含超分所需的 Real-ESRGAN 可执行程序与 `realesr-animevideov3` 2 倍 / 4 倍模型。
 - 将版本化 APK 复制到 `release/dist/`。
 - 创建 annotated tag `vX.Y.Z`，推送并用 `gh release create` 上传两个产物。
 
@@ -244,6 +250,10 @@ flutter analyze
 - `security/`
 - settings 文件
 - 任意 API Key / Token 材料
+
+## 第三方组件
+
+Windows 发布包包含 Real-ESRGAN NCNN Vulkan 便携版与 `realesr-animevideov3` 模型，用于本地绘本图片超分。Real-ESRGAN 使用 BSD 3-Clause License；随包许可与上游说明位于 [`app/windows/third_party/realesrgan/`](app/windows/third_party/realesrgan/)。
 
 ## 开发约定
 

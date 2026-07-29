@@ -3,7 +3,6 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -14,6 +13,7 @@ import '../data/models/article_model.dart';
 import '../data/models/picture_book_model.dart';
 import 'api_cache_service.dart';
 import 'database_service.dart';
+import 'picture_book_image_upscale_service.dart';
 import 'picture_book_image_service.dart';
 import 'practice_text_service.dart';
 import 'text_generation_service.dart';
@@ -1034,6 +1034,7 @@ class PictureBookService {
     required List<BookCharacter> newCharacters,
     required String chapterDescription,
     required List<Map<String, dynamic>> scenes,
+    bool useSuperResolution = false,
     PictureBookProgressCallback? onProgress,
   }) async {
     final draft = _promptReviewDrafts[reviewId];
@@ -1203,12 +1204,18 @@ class PictureBookService {
     };
 
     for (final item in promptedSegments) {
-      final result = groupResultByPage[item.segment.pageIndex] ??
+      final rawResult = groupResultByPage[item.segment.pageIndex] ??
           VolcImageResult(
             source: VolcImageResultSource.failed,
             pageIndex: item.segment.pageIndex,
             errorMessage: '组图接口未返回第 ${item.segment.pageIndex + 1} 张图片',
           );
+      final result = await _enhanceGeneratedImageResult(
+        rawResult,
+        articleId: articleId,
+        pageIndex: item.segment.pageIndex,
+        useSuperResolution: useSuperResolution,
+      );
       final status = switch (result.source) {
         VolcImageResultSource.remote || VolcImageResultSource.cached => 'ready',
         VolcImageResultSource.skippedNoKey => 'skipped',
@@ -1240,6 +1247,7 @@ class PictureBookService {
     required List<Map<String, dynamic>> scenes,
     List<int>? referencePageIndexes,
     int? referencePageIndex,
+    bool useSuperResolution = false,
     PictureBookProgressCallback? onProgress,
   }) async {
     final draft = _promptReviewDrafts[reviewId];
@@ -1421,7 +1429,7 @@ class PictureBookService {
       useSequential: false,
       reusePartialCache: false,
     );
-    final result = results.firstWhere(
+    final rawResult = results.firstWhere(
       (item) => item.pageIndex == pageSegment.pageIndex,
       orElse: () => results.isNotEmpty
           ? results.first
@@ -1430,6 +1438,12 @@ class PictureBookService {
               pageIndex: pageSegment.pageIndex,
               errorMessage: '单页图片接口未返回第 ${pageSegment.pageIndex + 1} 张图片',
             ),
+    );
+    final result = await _enhanceGeneratedImageResult(
+      rawResult,
+      articleId: articleId,
+      pageIndex: pageSegment.pageIndex,
+      useSuperResolution: useSuperResolution,
     );
     final status = switch (result.source) {
       VolcImageResultSource.remote || VolcImageResultSource.cached => 'ready',
@@ -1457,12 +1471,13 @@ class PictureBookService {
   /// Replace one existing page image with a local file.
   ///
   /// Does not call image APIs, open prompt review, or rewrite chapter plans.
-  /// Sources already at [_importedFullWidth]×[_importedFullHeight] are stored
-  /// as-is; others are cover-cropped with bilinear filtering to that size as PNG.
+  /// When [useSuperResolution] is enabled, the complete 16:9 frame is enhanced
+  /// with bundled Real-ESRGAN before normalization.
   static Future<Map<String, dynamic>> importPageImage({
     required int articleId,
     required int pageIndex,
     required String sourcePath,
+    bool useSuperResolution = true,
   }) async {
     final trimmedPath = sourcePath.trim();
     if (trimmedPath.isEmpty) {
@@ -1499,6 +1514,7 @@ class PictureBookService {
     final normalized = await _prepareImportedImageBytes(
       Uint8List.fromList(sourceBytes),
       sourceExtension: extension,
+      useSuperResolution: useSuperResolution,
     );
     if (normalized.bytes.isEmpty) {
       throw const FormatException('无法读取或转换所选图片');
@@ -1513,6 +1529,10 @@ class PictureBookService {
       'width': _importedFullWidth,
       'height': _importedFullHeight,
       'resized': normalized.resized,
+      'upscaled': normalized.upscaled,
+      'upscaleScale': normalized.upscaleScale,
+      'upscaleProvider':
+          normalized.upscaled ? 'real_esrgan_ncnn_vulkan' : 'none',
     };
     final cacheKey = await ApiCacheService.keyForJson(
       'picture_book_page_import',
@@ -1561,6 +1581,10 @@ class PictureBookService {
         'width': _importedFullWidth,
         'height': _importedFullHeight,
         'resized': normalized.resized,
+        'upscaled': normalized.upscaled,
+        'upscaleScale': normalized.upscaleScale,
+        'upscaleProvider':
+            normalized.upscaled ? 'real_esrgan_ncnn_vulkan' : 'none',
       },
     );
 
@@ -3887,51 +3911,170 @@ class PictureBookService {
     }
   }
 
-  /// Prepare import bytes: keep as-is when already full size; otherwise
-  /// cover-crop with bilinear ([ui.FilterQuality.medium]) to full PNG.
+  /// Prepare import bytes by optionally enhancing the complete 16:9 frame and
+  /// then resizing it to the full picture-book size.
   static Future<_PreparedImportedImage> _prepareImportedImageBytes(
     Uint8List bytes, {
     required String sourceExtension,
+    required bool useSuperResolution,
   }) async {
-    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
-    ui.ImageDescriptor? descriptor;
-    try {
-      descriptor = await ui.ImageDescriptor.encoded(buffer);
-      final width = descriptor.width;
-      final height = descriptor.height;
-      if (width <= 0 || height <= 0) {
-        return _PreparedImportedImage(
-          bytes: Uint8List(0),
-          resized: false,
-          extension: 'png',
-          contentType: 'image/png',
-        );
+    if (!useSuperResolution) {
+      final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+      ui.ImageDescriptor? descriptor;
+      try {
+        descriptor = await ui.ImageDescriptor.encoded(buffer);
+        if (descriptor.width == _importedFullWidth &&
+            descriptor.height == _importedFullHeight) {
+          final extension =
+              sourceExtension.isEmpty ? 'png' : sourceExtension;
+          return _PreparedImportedImage(
+            bytes: bytes,
+            resized: false,
+            upscaled: false,
+            upscaleScale: 0,
+            extension: extension,
+            contentType: _contentTypeForImageExtension(extension),
+          );
+        }
+      } finally {
+        descriptor?.dispose();
+        buffer.dispose();
       }
-      if (width == _importedFullWidth && height == _importedFullHeight) {
-        final extension = sourceExtension.isEmpty ? 'png' : sourceExtension;
-        return _PreparedImportedImage(
-          bytes: bytes,
-          resized: false,
-          extension: extension,
-          contentType: _contentTypeForImageExtension(extension),
-        );
-      }
-    } finally {
-      descriptor?.dispose();
-      buffer.dispose();
+      return _PreparedImportedImage(
+        bytes: await _normalizeImportedImageToFullPng(bytes),
+        resized: true,
+        upscaled: false,
+        upscaleScale: 0,
+        extension: 'png',
+        contentType: 'image/png',
+      );
     }
 
-    final resizedBytes = await _normalizeImportedImageToFullPng(bytes);
+    final cropped = await _cropImportedImageTo16x9Png(bytes);
+    if (cropped.bytes.isEmpty) {
+      return _PreparedImportedImage(
+        bytes: Uint8List(0),
+        resized: false,
+        upscaled: false,
+        upscaleScale: 0,
+        extension: 'png',
+        contentType: 'image/png',
+      );
+    }
+
+    Uint8List upscaleInput = cropped.bytes;
+    var inputWidth = cropped.width;
+    var inputHeight = cropped.height;
+    if (inputWidth > _importedFullWidth ||
+        inputHeight > _importedFullHeight) {
+      upscaleInput = await _normalizeImportedImageToFullPng(upscaleInput);
+      inputWidth = _importedFullWidth;
+      inputHeight = _importedFullHeight;
+    }
+    final upscaleScale =
+        inputWidth < _importedFullWidth ~/ 2 ||
+                inputHeight < _importedFullHeight ~/ 2
+            ? 4
+            : 2;
+    Uint8List upscaledBytes;
+    try {
+      upscaledBytes = await PictureBookImageUpscaleService.upscalePng(
+        inputBytes: upscaleInput,
+        scale: upscaleScale,
+      );
+    } on PictureBookImageUpscaleException catch (error) {
+      throw FormatException(error.message);
+    }
+
+    final normalizedBytes = await _normalizeImportedImageToFullPng(
+      upscaledBytes,
+    );
     return _PreparedImportedImage(
-      bytes: resizedBytes,
+      bytes: normalizedBytes,
       resized: true,
+      upscaled: true,
+      upscaleScale: upscaleScale,
       extension: 'png',
       contentType: 'image/png',
     );
   }
 
+  static Future<_CroppedImportedImage> _cropImportedImageTo16x9Png(
+    Uint8List bytes,
+  ) async {
+    final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    ui.ImageDescriptor? descriptor;
+    ui.Codec? codec;
+    ui.FrameInfo? frame;
+    ui.Image? outputImage;
+    ui.Picture? picture;
+    try {
+      descriptor = await ui.ImageDescriptor.encoded(buffer);
+      final width = descriptor.width;
+      final height = descriptor.height;
+      if (width <= 0 || height <= 0) {
+        return _CroppedImportedImage(
+          bytes: Uint8List(0),
+          width: 0,
+          height: 0,
+        );
+      }
+      codec = await descriptor.instantiateCodec();
+      frame = await codec.getNextFrame();
+
+      var cropWidth = width;
+      var cropHeight = height;
+      if (width * 9 > height * 16) {
+        cropWidth = (height * 16 / 9).floor();
+      } else if (width * 9 < height * 16) {
+        cropHeight = (width * 9 / 16).floor();
+      }
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(
+        recorder,
+        ui.Rect.fromLTWH(
+          0,
+          0,
+          cropWidth.toDouble(),
+          cropHeight.toDouble(),
+        ),
+      );
+      canvas.drawImageRect(
+        frame.image,
+        ui.Rect.fromLTWH(
+          (width - cropWidth) / 2.0,
+          (height - cropHeight) / 2.0,
+          cropWidth.toDouble(),
+          cropHeight.toDouble(),
+        ),
+        ui.Rect.fromLTWH(
+          0,
+          0,
+          cropWidth.toDouble(),
+          cropHeight.toDouble(),
+        ),
+        ui.Paint()..filterQuality = ui.FilterQuality.high,
+      );
+      picture = recorder.endRecording();
+      outputImage = await picture.toImage(cropWidth, cropHeight);
+      final data = await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      return _CroppedImportedImage(
+        bytes: data?.buffer.asUint8List() ?? Uint8List(0),
+        width: cropWidth,
+        height: cropHeight,
+      );
+    } finally {
+      outputImage?.dispose();
+      picture?.dispose();
+      frame?.image.dispose();
+      codec?.dispose();
+      descriptor?.dispose();
+      buffer.dispose();
+    }
+  }
+
   /// Cover-crop [bytes] into a native [_importedFullWidth]×[_importedFullHeight]
-  /// PNG with bilinear filtering so imported pages match Seedream full size.
+  /// PNG with high-quality filtering so imported pages match full size.
   static Future<Uint8List> _normalizeImportedImageToFullPng(
     Uint8List bytes,
   ) async {
@@ -3976,7 +4119,7 @@ class PictureBookService {
         sourceImage,
         ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
         ui.Rect.fromLTWH(dx, dy, scaledWidth, scaledHeight),
-        ui.Paint()..filterQuality = ui.FilterQuality.medium,
+        ui.Paint()..filterQuality = ui.FilterQuality.high,
       );
       picture = recorder.endRecording();
       outputImage = await picture.toImage(
@@ -3993,6 +4136,81 @@ class PictureBookService {
       codec?.dispose();
       descriptor?.dispose();
       buffer.dispose();
+    }
+  }
+
+  static Future<VolcImageResult> _enhanceGeneratedImageResult(
+    VolcImageResult result, {
+    required int articleId,
+    required int pageIndex,
+    required bool useSuperResolution,
+  }) async {
+    if (!useSuperResolution || !result.hasImage) {
+      return result;
+    }
+    final sourcePath = result.filePath!.trim();
+    try {
+      final sourceBytes = await File(sourcePath).readAsBytes();
+      final prepared = await _prepareImportedImageBytes(
+        Uint8List.fromList(sourceBytes),
+        sourceExtension: _normalizedImageExtension(sourcePath),
+        useSuperResolution: true,
+      );
+      if (prepared.bytes.isEmpty) {
+        throw const FormatException('超分输出为空');
+      }
+      final contentHash = await ApiCacheService.hashBytes(prepared.bytes);
+      final request = <String, dynamic>{
+        'kind': 'picture_book_generated_upscale',
+        'articleId': articleId,
+        'pageIndex': pageIndex,
+        'sourceCacheKey': result.cacheKey ?? '',
+        'contentHash': contentHash,
+        'width': _importedFullWidth,
+        'height': _importedFullHeight,
+        'upscaleScale': prepared.upscaleScale,
+        'upscaleProvider': 'real_esrgan_ncnn_vulkan',
+      };
+      final cacheKey = await ApiCacheService.keyForJson(
+        'picture_book_generated_upscale',
+        request,
+      );
+      final filePath = await ApiCacheService.putFileBytes(
+        cacheKey: cacheKey,
+        kind: 'file',
+        purpose: 'picture_book_image',
+        request: request,
+        bytes: prepared.bytes,
+        subdirectory: 'picture_book',
+        extension: 'png',
+        contentType: 'image/png',
+        articleId: articleId,
+        source: 'remote',
+      );
+      TomatoLogger.info(
+        category: 'pictureBook',
+        event: 'generated_image.upscaled',
+        articleId: articleId,
+        data: {
+          'pageIndex': pageIndex,
+          'upscaleScale': prepared.upscaleScale,
+          'byteLength': prepared.bytes.length,
+        },
+      );
+      return VolcImageResult(
+        source: result.source,
+        pageIndex: result.pageIndex ?? pageIndex,
+        filePath: filePath,
+        cacheKey: cacheKey,
+      );
+    } catch (error) {
+      return VolcImageResult(
+        source: VolcImageResultSource.failed,
+        pageIndex: result.pageIndex ?? pageIndex,
+        filePath: result.filePath,
+        cacheKey: result.cacheKey,
+        errorMessage: 'AI 图片已生成，但超分失败：${_displayErrorMessage(error)}',
+      );
     }
   }
 
@@ -4432,14 +4650,30 @@ class _PreparedImportedImage {
   const _PreparedImportedImage({
     required this.bytes,
     required this.resized,
+    required this.upscaled,
+    required this.upscaleScale,
     required this.extension,
     required this.contentType,
   });
 
   final Uint8List bytes;
   final bool resized;
+  final bool upscaled;
+  final int upscaleScale;
   final String extension;
   final String contentType;
+}
+
+class _CroppedImportedImage {
+  const _CroppedImportedImage({
+    required this.bytes,
+    required this.width,
+    required this.height,
+  });
+
+  final Uint8List bytes;
+  final int width;
+  final int height;
 }
 
 class _ExportChapterImagePlan {

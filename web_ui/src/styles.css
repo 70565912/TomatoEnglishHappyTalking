@@ -2515,6 +2515,11 @@ img {
   height: 18px;
 }
 
+.picture-quality-toggle {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
 .picture-page-prompt-list {
   display: grid;
   gap: 10px;
