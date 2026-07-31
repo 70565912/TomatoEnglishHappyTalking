@@ -141,6 +141,91 @@ void main() {
     expect(parsed, isNull);
   });
 
+  test('parseGeneratedChapterPlan rejects wrong target scene count', () {
+    final parsed = PictureBookService.parseGeneratedChapterPlan(
+      {
+        'planKind': 'picture_book_chapter_scene_plan_v2',
+        'chapterDescription': 'A chapter that returned two scenes instead of one.',
+        'scenes': const [
+          {
+            'pageIndex': 0,
+            'sentenceStartIndex': 0,
+            'sentenceEndIndex': 0,
+            'sceneDescription': 'Alice looks across the empty tea table.',
+          },
+          {
+            'pageIndex': 1,
+            'sentenceStartIndex': 1,
+            'sentenceEndIndex': 1,
+            'sceneDescription':
+                'The Hatter gestures toward wine though none sits on the table.',
+          },
+        ],
+        'newCharacters': const [],
+      },
+      sentenceCount: article.sentences.length,
+      source: TextGenerationReplySource.remote,
+      expectedSceneCount: 1,
+    );
+
+    expect(parsed, isNull);
+  });
+
+  test('chapter plan prompt requires exact scene count when requested', () {
+    final turns = PictureBookService.chapterPlanPromptTurnsForTest(
+      article: article,
+      bookDescription: 'A wonderland picture book.',
+      relevantCharacters: const [],
+      targetSceneCount: 2,
+    );
+
+    expect(turns.last.content, contains('Required scene count: 2'));
+    expect(turns.last.content, contains('exactly 2 scenes'));
+    expect(turns.last.content, isNot(contains('Do not target a fixed number of scenes')));
+  });
+
+  test('validateManualChapterScenes accepts continuous coverage', () {
+    final scenes = PictureBookService.validateManualChapterScenesForTest(
+      scenes: const [
+        {
+          'pageIndex': 0,
+          'sentenceStartIndex': 0,
+          'sentenceEndIndex': 0,
+          'sceneDescription': 'Alice looks across the empty tea table.',
+        },
+        {
+          'pageIndex': 1,
+          'sentenceStartIndex': 1,
+          'sentenceEndIndex': 1,
+          'sceneDescription':
+              'The Hatter gestures toward wine though none sits on the table.',
+        },
+      ],
+      sentenceCount: article.sentences.length,
+    );
+
+    expect(scenes, hasLength(2));
+    expect(scenes.first.sentenceEndIndex, 0);
+    expect(scenes.last.sentenceStartIndex, 1);
+  });
+
+  test('validateManualChapterScenes rejects empty descriptions', () {
+    expect(
+      () => PictureBookService.validateManualChapterScenesForTest(
+        scenes: const [
+          {
+            'pageIndex': 0,
+            'sentenceStartIndex': 0,
+            'sentenceEndIndex': 1,
+            'sceneDescription': '   ',
+          },
+        ],
+        sentenceCount: article.sentences.length,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
   test('cleanArticleTitle matches practice title rules', () {
     expect(
       PracticeTextService.cleanArticleTitle('the queens croquet ground.'),

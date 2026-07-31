@@ -3427,6 +3427,8 @@ function PictureBookPromptReviewDialog({
   );
   const [chapterDescription, setChapterDescription] = useState(review.chapterDescription ?? '');
   const [scenes, setScenes] = useState<PictureBookPromptReviewScene[]>(review.scenes ?? []);
+  const [sceneCountDraft, setSceneCountDraft] = useState(() => Math.max(1, review.scenes?.length ?? 1));
+  const [pendingSceneRematchCount, setPendingSceneRematchCount] = useState<number | null>(null);
   const [bookDescriptionExpanded, setBookDescriptionExpanded] = useState(false);
   const [bookCharactersExpanded, setBookCharactersExpanded] = useState(false);
   const [relevantCharacters, setRelevantCharacters] = useState<BookCharacter[]>(
@@ -3472,6 +3474,8 @@ function PictureBookPromptReviewDialog({
     setRelevantCharacters(normalizeBookCharacters(review.relevantCharacters));
     setChapterDescription(review.chapterDescription ?? '');
     setScenes(nextScenes);
+    setSceneCountDraft(Math.max(1, nextScenes.length || 1));
+    setPendingSceneRematchCount(null);
     setBookDescriptionExpanded(false);
     setBookCharactersExpanded(false);
     groupPromptTouchedRef.current = false;
@@ -3580,12 +3584,24 @@ function PictureBookPromptReviewDialog({
     setRelevantCharacters(normalizeBookCharacters(nextReview.relevantCharacters));
     setChapterDescription(nextReview.chapterDescription ?? '');
     setScenes(nextScenes);
+    setSceneCountDraft(Math.max(1, nextScenes.length || 1));
     if (!groupPromptTouched && !groupPromptTouchedRef.current) {
       setGroupPromptValue(resolvePictureBookGroupPrompt(nextReview, nextScenes));
     }
   };
 
-  const refreshPrompt = async (target: PictureBookPromptRefreshTarget) => {
+  const maxSceneCountForReview = (() => {
+    const covered = scenes.reduce(
+      (max, scene) => Math.max(max, scene.sentenceEndIndex + 1),
+      0,
+    );
+    return Math.min(12, Math.max(1, covered, scenes.length || 1));
+  })();
+
+  const refreshPrompt = async (
+    target: PictureBookPromptRefreshTarget,
+    options?: { targetSceneCount?: number },
+  ) => {
     setRefreshingPrompt(target);
     setError(null);
     onBlockingOverlayChange(pictureBookPromptRefreshOverlay(target));
@@ -3598,10 +3614,13 @@ function PictureBookPromptReviewDialog({
         newCharacters: normalizeBookCharacters(newCharacters),
         chapterDescription,
         scenes,
+        ...(options?.targetSceneCount != null ? { targetSceneCount: options.targetSceneCount } : {}),
       });
       applyReviewUpdate(payload);
       if (groupPromptTouched) {
         onNotice('提示词已刷新；组图总 Prompt 已手动锁定，未自动覆盖。');
+      } else if (options?.targetSceneCount != null) {
+        onNotice(`已按 ${options.targetSceneCount} 个场景重新匹配分镜，可继续修改描述后确认出图。`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -3611,6 +3630,16 @@ function PictureBookPromptReviewDialog({
       setRefreshingPrompt(null);
       onBlockingOverlayChange(null);
     }
+  };
+
+  const requestSceneCountRematch = () => {
+    const count = Math.trunc(Number(sceneCountDraft));
+    if (!Number.isFinite(count) || count < 1 || count > maxSceneCountForReview) {
+      setError(`场景数量须在 1 到 ${maxSceneCountForReview} 之间`);
+      return;
+    }
+    setError(null);
+    setPendingSceneRematchCount(count);
   };
 
   const toggleReferencePageIndex = (pageIndex: number) => {
@@ -3866,7 +3895,37 @@ function PictureBookPromptReviewDialog({
           <section className="picture-prompt-section full">
             <div className="picture-prompt-section-heading">
               <h3>{isSinglePageComposeReview ? '当前分镜描述' : '章节分镜描述'}</h3>
+              {!isSinglePageReview && (
+                <div className="picture-scene-count-controls">
+                  <label className="picture-scene-count-field">
+                    <span>场景数量</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={maxSceneCountForReview}
+                      aria-label="场景数量"
+                      value={sceneCountDraft}
+                      disabled={busy}
+                      onChange={(event) => setSceneCountDraft(Number(event.target.value))}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="ghost-action"
+                    disabled={busy}
+                    onClick={requestSceneCountRematch}
+                    title="按手工设置的场景数量提交 AI 重新匹配分句"
+                  >
+                    <Icon name="refresh" /> 按此数量匹配分镜
+                  </button>
+                </div>
+              )}
             </div>
+            {!isSinglePageReview && (
+              <p className="picture-prompt-note">
+                设置数量后需提交 AI，按该数量匹配已有朗读分句区间并生成描述；不会立刻出图。确认组图时仍会按当前分镜整章重生。
+              </p>
+            )}
             <div className="picture-page-prompt-list">
               {scenes.map((scene) => (
                 <label key={scene.pageIndex}>
@@ -3984,6 +4043,21 @@ function PictureBookPromptReviewDialog({
           </button>
         </div>
       </section>
+      {pendingSceneRematchCount != null && (
+        <ConfirmDialog
+          ariaLabel="按场景数量匹配分镜确认"
+          title="按此数量匹配分镜"
+          message={`将提交 AI，按 ${pendingSceneRematchCount} 个场景重新匹配已有分句区间并生成描述；不会立刻出图。确认组图时才会按新分镜整章重生。`}
+          confirmLabel="提交 AI 匹配"
+          busy={busy}
+          onCancel={() => setPendingSceneRematchCount(null)}
+          onConfirm={() => {
+            const count = pendingSceneRematchCount;
+            setPendingSceneRematchCount(null);
+            void refreshPrompt('chapterPlan', { targetSceneCount: count });
+          }}
+        />
+      )}
     </div>,
     document.body,
   );
@@ -8297,6 +8371,36 @@ function FollowPage({
     })();
   };
 
+  const moveSentenceWithoutPlayback = (
+    type: 'follow.previous' | 'follow.next',
+    errorMessage: string,
+  ) => {
+    void (async () => {
+      setCommandBusy(true);
+      try {
+        const moved = await sendNative<FollowState>(type);
+        if (moved) onLoaded(moved);
+      } catch (error) {
+        onLoaded({
+          status: 'error',
+          step: 'idle',
+          playbackState: 'failed',
+          error: error instanceof Error ? error.message : errorMessage,
+        });
+      } finally {
+        setCommandBusy(false);
+      }
+    })();
+  };
+
+  const moveToPreviousSentence = () => {
+    moveSentenceWithoutPlayback('follow.previous', '无法返回上一句，请重试');
+  };
+
+  const moveToNextSentenceWithoutPlayback = () => {
+    moveSentenceWithoutPlayback('follow.next', '无法进入下一句，请重试');
+  };
+
   const currentIndex = state?.currentIndex ?? 0;
   const picturePage = currentPictureBookPage(pictureBookState, currentIndex);
   usePredecodePictureBookImages(articleId, pictureBookState, picturePage);
@@ -8360,6 +8464,15 @@ function FollowPage({
     (!bottomActionsDisabled || canInterruptRecordingPlayback) &&
     step !== 'completed' &&
     visibleSentenceTotal > 0;
+  const canMovePreviousSentence =
+    !bottomActionsDisabled &&
+    step !== 'completed' &&
+    visibleCurrentPosition > 1;
+  const canMoveNextSentence =
+    !bottomActionsDisabled &&
+    step !== 'completed' &&
+    visibleCurrentPosition > 0 &&
+    !state?.isLastSentence;
   const advanceLabel = state?.isLastSentence ? '完成' : '下一句';
   const canRecordCurrent =
     !commandBusy &&
@@ -8390,7 +8503,16 @@ function FollowPage({
   return (
     <section className="page follow-page">
       <TopBar title={<StoryTitle parts={titleParts} />} onBack={() => onNavigate('/')}>
-        <Pager current={visibleCurrentPosition || 1} total={visibleSentenceTotal || 2} />
+        <Pager
+          current={visibleCurrentPosition || 1}
+          total={visibleSentenceTotal || 2}
+          onPrevious={moveToPreviousSentence}
+          onNext={moveToNextSentenceWithoutPlayback}
+          previousDisabled={!canMovePreviousSentence}
+          nextDisabled={!canMoveNextSentence}
+          previousLabel="前一条句子（不自动播放）"
+          nextLabel="后一条句子（不自动播放）"
+        />
         <button className="ghost-action" onClick={() => onNavigate('/')}>
           <Icon name="exit" /> 退出
         </button>
@@ -8414,6 +8536,14 @@ function FollowPage({
           <div className="follow-control-panel">
             {transcriptHint && <p className="follow-live-transcript">{transcriptHint}</p>}
             <div className="follow-control-row">
+              <button
+                className="ghost-action follow-previous-action"
+                type="button"
+                onClick={moveToPreviousSentence}
+                disabled={!canMovePreviousSentence}
+              >
+                <Icon name="arrow" /> 上一句
+              </button>
               <div className="follow-control-deck" aria-label="跟读控制">
                 <button
                   className={`follow-control-button source ${sourceActive ? 'active' : ''}`}
@@ -11366,12 +11496,54 @@ function ProgressLine({
   );
 }
 
-function Pager({ current, total }: { current: number; total: number }) {
+function Pager({
+  current,
+  total,
+  onPrevious,
+  onNext,
+  previousDisabled = false,
+  nextDisabled = false,
+  previousLabel = '上一项',
+  nextLabel = '下一项',
+}: {
+  current: number;
+  total: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
+  previousDisabled?: boolean;
+  nextDisabled?: boolean;
+  previousLabel?: string;
+  nextLabel?: string;
+}) {
   return (
     <div className="pager">
-      <Icon name="chevron" />
+      {onPrevious ? (
+        <button
+          className="pager-button"
+          type="button"
+          aria-label={previousLabel}
+          onClick={onPrevious}
+          disabled={previousDisabled}
+        >
+          <Icon name="chevron" />
+        </button>
+      ) : (
+        <Icon name="chevron" />
+      )}
       <span>{current} / {total}</span>
-      <Icon name="chevron" />
+      {onNext ? (
+        <button
+          className="pager-button next"
+          type="button"
+          aria-label={nextLabel}
+          onClick={onNext}
+          disabled={nextDisabled}
+        >
+          <Icon name="chevron" />
+        </button>
+      ) : (
+        <Icon name="chevron" />
+      )}
     </div>
   );
 }

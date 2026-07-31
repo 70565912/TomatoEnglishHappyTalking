@@ -1128,41 +1128,59 @@ class FollowRead extends _$FollowRead {
     return double.tryParse(value?.toString() ?? '') ?? 0;
   }
 
-  // ---- Advance to next sentence ----
+  // ---- Move between visible sentences ----
   Future<void> nextSentence() async {
-    _playbackToken++;
-    unawaited(_disposePlayer());
-    final nextIndex = nextVisibleSentenceIndex(_s.article.sentences, _s.currentIndex);
+    final nextIndex =
+        nextVisibleSentenceIndex(_s.article.sentences, _s.currentIndex);
     if (nextIndex == null) {
+      _playbackToken++;
+      _pausedForWord = false;
+      await _disposePlayer();
       _set(step: FollowReadStep.completed, clearResult: true);
-    } else {
-      final nextSentence = _s.article.sentences[nextIndex];
-      final nextTranslation = await _savedTranslationFor(
-        articleId: _s.article.id,
-        sentenceIndex: nextIndex,
-        sentence: nextSentence,
-      );
-      final latestRecording = await _latestRecordingFor(
-        index: nextIndex,
-        sentence: nextSentence,
-      );
-      state = AsyncValue.data(
-        _s.copyWith(
-          currentIndex: nextIndex,
-          step: FollowReadStep.idle,
-          playbackState: PlaybackVisualState.idle,
-          clearPlaybackError: true,
-          lastResult: latestRecording?.result,
-          clearResult: latestRecording == null,
-          clearError: true,
-          lastRecordingPath: latestRecording?.path,
-          clearLastRecordingPath: latestRecording == null,
-          liveRecognizedText: latestRecording?.recognizedText,
-          clearLiveRecognizedText: latestRecording == null,
-          currentTranslation: nextTranslation,
-        ),
-      );
+      return;
     }
+    await _moveToSentence(nextIndex);
+  }
+
+  Future<void> previousSentence() async {
+    final previousIndex =
+        previousVisibleSentenceIndex(_s.article.sentences, _s.currentIndex);
+    if (previousIndex == null) {
+      return;
+    }
+    await _moveToSentence(previousIndex);
+  }
+
+  Future<void> _moveToSentence(int targetIndex) async {
+    _playbackToken++;
+    _pausedForWord = false;
+    await _disposePlayer();
+    final targetSentence = _s.article.sentences[targetIndex];
+    final targetTranslation = await _savedTranslationFor(
+      articleId: _s.article.id,
+      sentenceIndex: targetIndex,
+      sentence: targetSentence,
+    );
+    final latestRecording = await _latestRecordingFor(
+      index: targetIndex,
+      sentence: targetSentence,
+    );
+    state = AsyncValue.data(
+      _s.copyWith(
+        currentIndex: targetIndex,
+        step: FollowReadStep.idle,
+        playbackState: PlaybackVisualState.idle,
+        clearPlaybackError: true,
+        lastResult: latestRecording?.result,
+        clearResult: latestRecording == null,
+        clearError: true,
+        lastRecordingPath: latestRecording?.path,
+        clearLastRecordingPath: latestRecording == null,
+        liveRecognizedText: latestRecording?.recognizedText,
+        clearLiveRecognizedText: latestRecording == null,
+        currentTranslation: targetTranslation,
+      ),
+    );
   }
 
   Future<String> _savedTranslationFor({

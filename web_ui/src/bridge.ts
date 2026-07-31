@@ -766,6 +766,29 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       };
     }
     if (target === 'chapterPlan') {
+      const targetSceneCountRaw = Number(payload.targetSceneCount);
+      const targetSceneCount =
+        Number.isFinite(targetSceneCountRaw) && targetSceneCountRaw > 0
+          ? Math.min(12, Math.trunc(targetSceneCountRaw))
+          : review.scenes.length;
+      const totalSentences = Math.max(
+        1,
+        ...review.scenes.map((scene) => scene.sentenceEndIndex + 1),
+      );
+      const scenes = Array.from({ length: targetSceneCount }, (_, index) => {
+        const start = Math.floor((index * totalSentences) / targetSceneCount);
+        const end =
+          index === targetSceneCount - 1
+            ? totalSentences - 1
+            : Math.max(start, Math.floor(((index + 1) * totalSentences) / targetSceneCount) - 1);
+        return {
+          pageIndex: index,
+          sentenceStartIndex: start,
+          sentenceEndIndex: end,
+          paragraphText: `Mock paragraph covering sentences ${start + 1}-${end + 1}`,
+          sceneDescription: `Refreshed scene action ${index + 1}`,
+        };
+      });
       return {
         ...review,
         chapterDescription:
@@ -773,12 +796,14 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         bookCharacters,
         relevantCharacters,
         newCharacters: normalizeMockBookCharacters(payload.newCharacters),
-        scenes: review.scenes.map((scene, index) => ({
-          ...scene,
-          sceneDescription: `Refreshed scene action ${index + 1}`,
-        })),
+        scenes,
         groupPrompt:
-          'Book name: Space Story Series\nBook description: A gentle space-adventure picture book about curious children exploring small wonders together.\n\nChapter description: Refreshed chapter description with one coherent visual sequence.',
+          `Book name: Space Story Series\nBook description: A gentle space-adventure picture book about curious children exploring small wonders together.\n\nChapter description: Refreshed chapter description with one coherent visual sequence.\n\n${scenes
+            .map(
+              (scene) =>
+                `Image ${scene.pageIndex + 1}:\nScene description: ${scene.sceneDescription}`,
+            )
+            .join('\n\n')}`,
         refreshedTarget: target,
       };
     }
@@ -786,6 +811,36 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       ...review,
       bookCharacters,
       relevantCharacters,
+    };
+  }
+  if (type === 'pictureBook.replaceChapterPlan') {
+    const articleId = Number(payload.articleId ?? 1);
+    const review = mockPictureBookPromptReview(articleId, false);
+    const bookCharacters = normalizeMockBookCharacters(payload.bookCharacters).length > 0
+      ? normalizeMockBookCharacters(payload.bookCharacters)
+      : review.bookCharacters ?? [];
+    const scenes = Array.isArray(payload.scenes) && payload.scenes.length > 0
+      ? payload.scenes
+      : review.scenes;
+    return {
+      ...review,
+      reviewId: String(payload.reviewId ?? review.reviewId ?? ''),
+      replaced: true,
+      bookDescription: String(payload.bookDescription ?? review.bookDescription),
+      bookCharacters,
+      relevantCharacters: mockRelevantCharactersForArticle(bookCharacters),
+      newCharacters: normalizeMockBookCharacters(payload.newCharacters),
+      chapterDescription: String(payload.chapterDescription ?? review.chapterDescription),
+      scenes,
+      groupPrompt: String(
+        payload.groupPrompt ??
+          `Book name: Space Story Series\nChapter description: ${String(payload.chapterDescription ?? review.chapterDescription)}\n\n${scenes
+            .map(
+              (scene: { pageIndex?: number; sceneDescription?: string }, index: number) =>
+                `Image ${(scene.pageIndex ?? index) + 1}:\nScene description: ${scene.sceneDescription ?? ''}`,
+            )
+            .join('\n\n')}`,
+      ),
     };
   }
   if (type === 'pictureBook.resolveRelevantCharacters') {
@@ -1432,6 +1487,18 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       currentSentence: mockArticles[0].sentences[1],
       currentTranslation: '他把它分享给自己的队友。',
       isLastSentence: true,
+      step: 'idle',
+      playbackState: 'idle',
+      result: null,
+    };
+  }
+  if (type === 'follow.previous') {
+    return {
+      ...mockFollow,
+      currentIndex: 0,
+      currentSentence: mockArticles[0].sentences[0],
+      currentTranslation: '汤姆发现了一个明亮的零食盒。',
+      isLastSentence: false,
       step: 'idle',
       playbackState: 'idle',
       result: null,

@@ -2509,6 +2509,8 @@ describe('App', () => {
     expect(within(reviewDialog).queryByLabelText('章节分镜简述')).not.toBeInTheDocument();
     const sceneHeading = within(reviewDialog).getByRole('heading', { name: '章节分镜描述' });
     expect(sceneHeading).toBeInTheDocument();
+    expect(within(reviewDialog).getByLabelText('场景数量')).toBeInTheDocument();
+    expect(within(reviewDialog).getByRole('button', { name: '按此数量匹配分镜' })).toBeInTheDocument();
     const groupPromptInput = within(reviewDialog).getByLabelText('组图总提示词') as HTMLTextAreaElement;
     expect(
       Boolean(sceneHeading.compareDocumentPosition(groupPromptInput) & Node.DOCUMENT_POSITION_FOLLOWING),
@@ -2516,6 +2518,17 @@ describe('App', () => {
     expect(
       groupPromptInput.value,
     ).toContain('Scene description: Tom discovers the snack box.');
+    fireEvent.change(within(reviewDialog).getByLabelText('场景数量'), {
+      target: { value: '1' },
+    });
+    fireEvent.click(within(reviewDialog).getByRole('button', { name: '按此数量匹配分镜' }));
+    const rematchDialog = await screen.findByRole('dialog', { name: '按场景数量匹配分镜确认' });
+    fireEvent.click(within(rematchDialog).getByRole('button', { name: '提交 AI 匹配' }));
+    await waitFor(() => {
+      const refreshCalls = calls.filter((call) => call.type === 'pictureBook.refreshPromptReview');
+      expect(refreshCalls.some((call) => call.payload?.targetSceneCount === 1)).toBe(true);
+    });
+
     fireEvent.click(within(reviewDialog).getByRole('button', { name: 'Space Story Series' }));
     const bookDescriptionInput = within(reviewDialog).getByLabelText('书籍简介');
     fireEvent.click(within(reviewDialog).getByRole('button', { name: 'AI 自动生成书籍简介' }));
@@ -2801,6 +2814,118 @@ describe('App', () => {
     expect(document.querySelector('.step-track')).not.toBeInTheDocument();
     expect(document.querySelector('.partner-status')).not.toBeInTheDocument();
     expect(document.querySelector('.picture-book-scene')).toBeInTheDocument();
+  });
+
+  it('moves with silent pager controls and keeps bottom next auto-play', async () => {
+    window.location.hash = '/follow/1';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'First sentence. Second sentence. Third sentence.',
+      sentences: ['First sentence.', 'Second sentence.', 'Third sentence.'],
+      sentenceCount: 3,
+      createdAt: new Date().toISOString(),
+      averageScore: 0,
+    };
+    const translations = ['第一句。', '第二句。', '第三句。'];
+    const calls: string[] = [];
+    let currentIndex = 1;
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    const followState = () => ({
+      status: 'ready',
+      article,
+      currentIndex,
+      totalSentences: article.sentences.length,
+      visibleSentenceCount: article.sentences.length,
+      currentSentence: article.sentences[currentIndex],
+      currentTranslation: translations[currentIndex],
+      isLastSentence: currentIndex === article.sentences.length - 1,
+      step: 'idle',
+      playbackState: 'idle',
+      hasRecording: false,
+      liveRecognizedText: '',
+      result: null,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, { articles: [article] });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: false,
+            status: 'empty',
+            pages: [],
+          });
+        }
+        if (type === 'follow.open') {
+          return ok(message.id, type, followState());
+        }
+        if (type === 'follow.previous') {
+          calls.push(type);
+          currentIndex = Math.max(0, currentIndex - 1);
+          return ok(message.id, type, followState());
+        }
+        if (type === 'follow.next') {
+          calls.push(type);
+          currentIndex = Math.min(article.sentences.length - 1, currentIndex + 1);
+          return ok(message.id, type, followState());
+        }
+        if (type === 'follow.play') {
+          calls.push(type);
+          return ok(message.id, type, {
+            ...followState(),
+            playbackState: 'success',
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'Second sentence.' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '前一条句子（不自动播放）' })).not.toBeDisabled();
+    });
+    calls.length = 0;
+
+    fireEvent.click(screen.getByRole('button', { name: '前一条句子（不自动播放）' }));
+    expect(await screen.findByRole('heading', { name: 'First sentence.' })).toBeInTheDocument();
+    expect(calls).toEqual(['follow.previous']);
+    expect(screen.getByRole('button', { name: '前一条句子（不自动播放）' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '上一句' })).toBeDisabled();
+
+    calls.length = 0;
+    fireEvent.click(screen.getByRole('button', { name: '后一条句子（不自动播放）' }));
+    expect(await screen.findByRole('heading', { name: 'Second sentence.' })).toBeInTheDocument();
+    expect(calls).toEqual(['follow.next']);
+
+    calls.length = 0;
+    fireEvent.click(screen.getByRole('button', { name: '上一句' }));
+    expect(await screen.findByRole('heading', { name: 'First sentence.' })).toBeInTheDocument();
+    expect(calls).toEqual(['follow.previous']);
+
+    calls.length = 0;
+    fireEvent.click(screen.getByRole('button', { name: '下一句' }));
+    expect(await screen.findByRole('heading', { name: 'Second sentence.' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(calls).toEqual(['follow.next', 'follow.play']);
+    });
+
+    calls.length = 0;
+    fireEvent.click(screen.getByRole('button', { name: '后一条句子（不自动播放）' }));
+    expect(await screen.findByRole('heading', { name: 'Third sentence.' })).toBeInTheDocument();
+    expect(calls).toEqual(['follow.next']);
+    expect(screen.getByRole('button', { name: '后一条句子（不自动播放）' })).toBeDisabled();
   });
 
   it('auto-plays the user recording once after recording stops', async () => {
@@ -5018,6 +5143,8 @@ describe('App', () => {
     fireEvent.click(within(pageThreeCard as HTMLElement).getByRole('button', { name: '重新生成' }));
 
     const dialog = await screen.findByRole('dialog', { name: '绘本单页提示词审核' });
+    expect(within(dialog).queryByLabelText('场景数量')).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: '按此数量匹配分镜' })).not.toBeInTheDocument();
     expect(within(dialog).getByText('已选 1 张')).toBeInTheDocument();
     expect(within(dialog).getByRole('option', { name: '第 2 张' })).toHaveClass('is-selected');
     expect(within(dialog).getByRole('option', { name: '第 3 张（当前页）' })).toBeInTheDocument();

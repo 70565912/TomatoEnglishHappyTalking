@@ -4843,6 +4843,102 @@ but the three were all crowded together at one corner of it.
     expect(await File(oldCachedPath).exists(), isTrue);
   });
 
+  test('picture-book replaceChapterPlan writes summary without image API', () async {
+    final articleId = await _saveArticle(
+      'Alice walks into the garden. The Queen points at the croquet ground.',
+      sentences: const [
+        'Alice walks into the garden.',
+        'The Queen points at the croquet ground.',
+      ],
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(title: 'Replace Plan Book');
+    await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    var textAiCalls = 0;
+    TextGenerationService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        textAiCalls += 1;
+        throw StateError('replaceChapterPlan should not call text AI');
+      },
+    );
+
+    final replaced = await PictureBookService.replaceChapterPlan(
+      articleId: articleId,
+      chapterDescription: 'Alice meets the Queen in a garden croquet scene.',
+      scenes: const [
+        {
+          'pageIndex': 0,
+          'sentenceStartIndex': 0,
+          'sentenceEndIndex': 0,
+          'sceneDescription': 'Alice walks into the garden path.',
+        },
+        {
+          'pageIndex': 1,
+          'sentenceStartIndex': 1,
+          'sentenceEndIndex': 1,
+          'sceneDescription': 'The Queen points across the croquet ground.',
+        },
+      ],
+    );
+
+    expect(textAiCalls, 0);
+    expect(replaced['replaced'], isTrue);
+    expect((replaced['scenes'] as List), hasLength(2));
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    final summary =
+        jsonDecode(chapter?.summaryJson ?? '{}') as Map<String, dynamic>;
+    expect(summary['chapterDescription'], contains('Alice meets the Queen'));
+    expect((summary['scenes'] as List), hasLength(2));
+    expect(await DatabaseService.getPictureBookPages(articleId), isEmpty);
+  });
+
+  test('picture-book replaceChapterPlan rejects overlapping sentence ranges',
+      () async {
+    final articleId = await _saveArticle(
+      'Alice walks into the garden. The Queen points at the croquet ground.',
+      sentences: const [
+        'Alice walks into the garden.',
+        'The Queen points at the croquet ground.',
+      ],
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(title: 'Reject Plan Book');
+    await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+
+    final before = await DatabaseService.getStoryChapterForArticle(articleId);
+    final beforeSummary = before?.summaryJson ?? '';
+
+    await expectLater(
+      () => PictureBookService.replaceChapterPlan(
+        articleId: articleId,
+        chapterDescription: 'Broken ranges should not persist.',
+        scenes: const [
+          {
+            'pageIndex': 0,
+            'sentenceStartIndex': 0,
+            'sentenceEndIndex': 0,
+            'sceneDescription': 'Alice walks into the garden path.',
+          },
+          {
+            'pageIndex': 1,
+            'sentenceStartIndex': 0,
+            'sentenceEndIndex': 1,
+            'sceneDescription': 'Overlapping start index is invalid.',
+          },
+        ],
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    expect(chapter?.summaryJson ?? '', beforeSummary);
+  });
+
   test('picture-book exportChapterImages writes scene files and resolves conflicts',
       () async {
     final articleId = await _saveArticle('Mia opens a map and smiles.');
@@ -5201,8 +5297,9 @@ Future<void> _installTwoPageChapterPlanOverride() async {
 }
 
 Future<Map<String, dynamic>> _refreshChapterPlanFromReview(
-  Map<String, dynamic> review,
-) {
+  Map<String, dynamic> review, {
+  int? targetSceneCount,
+}) {
   return PictureBookService.refreshPromptReview(
     reviewId: review['reviewId'].toString(),
     target: 'chapterPlan',
@@ -5214,6 +5311,7 @@ Future<Map<String, dynamic>> _refreshChapterPlanFromReview(
       for (final scene in (review['scenes'] as List? ?? const []))
         Map<String, dynamic>.from(scene as Map),
     ],
+    targetSceneCount: targetSceneCount,
   );
 }
 

@@ -351,18 +351,27 @@ class PictureBookService {
   ///
   /// When [includeTitle] is true, the same JSON response also includes a short
   /// English `title` so article create can avoid a separate title-only call.
+  /// When [targetSceneCount] is set, the model must return exactly that many
+  /// scenes (still covering every sentence slot continuously).
   static Future<GeneratedChapterPlanResult> generateChapterPlanForArticle({
     required Article article,
     required String bookDescription,
     required List<BookCharacter> relevantCharacters,
     bool includeTitle = false,
+    int? targetSceneCount,
   }) async {
+    final sentenceCount = article.sentences.length;
+    final resolvedTargetCount = _normalizeTargetSceneCount(
+      targetSceneCount,
+      sentenceCount: sentenceCount,
+    );
     final reply = await TextGenerationService.generateStrict(
       turns: _chapterPlanPromptTurns(
         article: article,
         bookDescription: bookDescription,
         relevantCharacters: relevantCharacters,
         includeTitle: includeTitle,
+        targetSceneCount: resolvedTargetCount,
       ),
       cachePurpose: _chapterPlanCachePurpose,
       articleId: article.id,
@@ -375,13 +384,16 @@ class PictureBookService {
     final raw = _decodeJson(reply.text, const <String, dynamic>{});
     final plan = _chapterPlanFromJson(
       raw,
-      sentenceCount: article.sentences.length,
+      sentenceCount: sentenceCount,
       source: reply.source,
       strictSceneValidation: true,
+      expectedSceneCount: resolvedTargetCount,
     );
     if (plan == null) {
-      throw const TextGenerationException(
-        '文本提交处理失败：AI 未返回有效绘本分镜，请重试。',
+      throw FormatException(
+        resolvedTargetCount == null
+            ? '文本提交处理失败：AI 未返回有效绘本分镜，请重试。'
+            : '文本提交处理失败：AI 未返回恰好 $resolvedTargetCount 个有效分镜，请重试。',
       );
     }
     String? title;
@@ -432,12 +444,14 @@ class PictureBookService {
     required int sentenceCount,
     required TextGenerationReplySource source,
     bool requireTitle = false,
+    int? expectedSceneCount,
   }) {
     final plan = _chapterPlanFromJson(
       json,
       sentenceCount: sentenceCount,
       source: source,
       strictSceneValidation: true,
+      expectedSceneCount: expectedSceneCount,
     );
     if (plan == null) {
       return null;
@@ -469,12 +483,25 @@ class PictureBookService {
     required String bookDescription,
     required List<BookCharacter> relevantCharacters,
     bool includeTitle = false,
+    int? targetSceneCount,
   }) =>
       _chapterPlanPromptTurns(
         article: article,
         bookDescription: bookDescription,
         relevantCharacters: relevantCharacters,
         includeTitle: includeTitle,
+        targetSceneCount: targetSceneCount,
+      );
+
+  /// Validate a full manual/QA scene table. Throws [FormatException] on failure.
+  @visibleForTesting
+  static List<PictureBookScene> validateManualChapterScenesForTest({
+    required List<Map<String, dynamic>> scenes,
+    required int sentenceCount,
+  }) =>
+      _requireValidManualScenes(
+        scenes: scenes,
+        sentenceCount: sentenceCount,
       );
 
   static Future<ChapterPicturePlan?> _cachedChapterPlanForArticle({
@@ -814,6 +841,7 @@ class PictureBookService {
     required List<BookCharacter> newCharacters,
     required String chapterDescription,
     required List<Map<String, dynamic>> scenes,
+    int? targetSceneCount,
   }) async {
     final draft = _promptReviewDrafts[reviewId];
     if (draft == null) {
@@ -881,6 +909,7 @@ class PictureBookService {
           article: draft.article,
           bookDescription: currentBookDescription,
           relevantCharacters: currentRelevantCharacters,
+          targetSceneCount: targetSceneCount,
         );
         currentChapterDescription = refreshed.plan.chapterDescription;
         currentNewCharacters =
@@ -1859,6 +1888,149 @@ class PictureBookService {
     );
   }
 
+  /// QA/manual full reset of the chapter scene plan.
+  ///
+  /// Writes `summary_json` only. Does not call text AI, delete images, or start
+  /// group generation. Pass [reviewId] to sync an open review draft.
+  static Future<Map<String, dynamic>> replaceChapterPlan({
+    required int articleId,
+    String? reviewId,
+    required String chapterDescription,
+    required List<Map<String, dynamic>> scenes,
+    String bookDescription = '',
+    List<BookCharacter> bookCharacters = const [],
+    List<BookCharacter> newCharacters = const [],
+    String groupPrompt = '',
+  }) async {
+    final article = await DatabaseService.getArticleById(articleId);
+    if (article == null) {
+      throw FormatException('文章不存在（id=$articleId）');
+    }
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    if (chapter == null) {
+      throw const FormatException('章节尚未关联书籍，无法重设分镜。');
+    }
+    final series = await DatabaseService.getStorySeriesById(chapter.seriesId);
+    if (series == null) {
+      throw const FormatException('书籍信息不存在，无法重设分镜。');
+    }
+
+    final confirmedScenes = _requireValidManualScenes(
+      scenes: scenes,
+      sentenceCount: article.sentences.length,
+    );
+    final confirmedChapterDescription = _sanitizeForImagePrompt(
+      chapterDescription.trim().isEmpty
+          ? _persistedChapterDescription(chapter.summaryJson)
+          : chapterDescription,
+    );
+    if (confirmedChapterDescription.isEmpty) {
+      throw const FormatException('章节描述不能为空');
+    }
+
+    final confirmedNewCharacters = _sanitizeBookCharacters(newCharacters);
+    final nextBookCharacters = bookCharacters.isEmpty
+        ? _sanitizeBookCharacters(series.characters)
+        : _sanitizeBookCharacters(bookCharacters);
+    final confirmedBookDescription = bookDescription.trim().isEmpty
+        ? _sanitizeBookDescription(series.description)
+        : _sanitizeBookDescription(bookDescription);
+    final updatedSeries = series.copyWith(
+      description: confirmedBookDescription,
+      characters: nextBookCharacters,
+      updatedAt: DateTime.now(),
+    );
+    await DatabaseService.updateStorySeries(updatedSeries);
+
+    final relevantCharacters = _relevantBookCharactersForArticle(
+      article,
+      nextBookCharacters,
+    );
+    final finalRelevantCharacters = _mergeBookCharacters(
+      relevantCharacters,
+      confirmedNewCharacters,
+    );
+    final plan = ChapterPicturePlan(
+      chapterDescription: confirmedChapterDescription,
+      scenes: confirmedScenes,
+      newCharacters: confirmedNewCharacters,
+      source: TextGenerationReplySource.cached,
+    );
+    final segments = _segmentArticle(article, plan);
+    if (segments.isEmpty) {
+      throw const FormatException('分镜无法覆盖章节句子，请检查句子区间。');
+    }
+
+    await _saveConfirmedChapterPlan(
+      article: article,
+      chapter: chapter,
+      bookDescription: confirmedBookDescription,
+      relevantCharacters: finalRelevantCharacters,
+      chapterDescription: confirmedChapterDescription,
+      segments: segments,
+      newCharacters: confirmedNewCharacters,
+    );
+    final refreshedChapter =
+        await DatabaseService.getStoryChapterForArticle(articleId) ?? chapter;
+
+    final composedGroupPrompt = _composeGroupPrompt(
+      series: updatedSeries,
+      plan: plan,
+      segments: segments,
+      relevantCharacters: finalRelevantCharacters,
+    );
+    final confirmedGroupPrompt = groupPrompt.trim().isEmpty
+        ? composedGroupPrompt
+        : _sanitizeForImagePrompt(groupPrompt);
+
+    final normalizedReviewId = reviewId?.trim() ?? '';
+    if (normalizedReviewId.isNotEmpty) {
+      final draft = _promptReviewDrafts[normalizedReviewId];
+      if (draft == null || draft.article.id != articleId) {
+        throw const FormatException('绘本提示词审核已过期，请重新打开审核弹窗。');
+      }
+      final updatedDraft = draft.copyWith(
+        chapter: refreshedChapter,
+        series: updatedSeries,
+        pages: [
+          for (final segment in segments)
+            _PromptReviewPageDraft(segment: segment),
+        ],
+        bookDescription: confirmedBookDescription,
+        bookCharacters: nextBookCharacters,
+        relevantCharacters: finalRelevantCharacters,
+        newCharacters: confirmedNewCharacters,
+        chapterDescription: confirmedChapterDescription,
+        groupPrompt: confirmedGroupPrompt,
+      );
+      _promptReviewDrafts[normalizedReviewId] = updatedDraft;
+      return {
+        ...updatedDraft.toPayload(),
+        'replaced': true,
+      };
+    }
+
+    return {
+      'articleId': articleId,
+      'replaced': true,
+      'bookDescription': confirmedBookDescription,
+      'bookCharacters':
+          nextBookCharacters.map((item) => item.toJson()).toList(growable: false),
+      'relevantCharacters': finalRelevantCharacters
+          .map((item) => item.toJson())
+          .toList(growable: false),
+      'newCharacters': confirmedNewCharacters
+          .map((item) => item.toJson())
+          .toList(growable: false),
+      'chapterDescription': confirmedChapterDescription,
+      'groupPrompt': confirmedGroupPrompt,
+      'scenes': [
+        for (final segment in segments)
+          _PromptReviewPageDraft(segment: segment).toPayload(),
+      ],
+    };
+  }
+
   static Future<Map<String, dynamic>> cancelPromptReview(
       String reviewId) async {
     final removed = _promptReviewDrafts.remove(reviewId);
@@ -2591,6 +2763,7 @@ class PictureBookService {
   static List<String> _chapterPlanPromptRuleLines({
     required bool includeTitle,
     required int maxSentenceIndex,
+    int? targetSceneCount,
   }) {
     return [
       '- Output valid JSON only.',
@@ -2611,17 +2784,24 @@ class PictureBookService {
       '- Use Relevant characters as the only source for approved recurring character appearance anchors; do not include character rosters, visual-anchor lists, or phrases like "Visual anchors" in chapterDescription. Do not repeat character appearance, clothing, hair, age, facial features, accessories, or other visual anchors already present in Relevant characters.',
       '- If this chapter introduces an image-relevant character or group not present in Relevant characters, add it to newCharacters with name and stable visible description.',
       '- newCharacters must include only characters or recurring visual groups that affect image consistency; do not include temporary props, places, actions, emotions, or ordinary background elements.',
-      // Illustration-situation axes. Keep these as separate short bullets (do not
-      // compress into one wall of text — that caused one-sentence-then-dump splits).
       '- Before splitting scenes, convert quoted speech, song text, shouted text, and inner thoughts into narrative story events. Decide boundaries by illustration situation—place/time, main visual focus group, and central ongoing activity—not by sentence boundaries or dialogue turns. Central ongoing activity means the focused characters\' main task and its target, not each new visible beat, prop, pose, or line. If the converted narrative leaves no material change on those three axes between two candidate boundaries, those sentence slots must stay in the same scene.',
       '- Build scenes by walking numbered sentences in order. Numbered indexes are coverage anchors only, not scene boundaries. One illustration may cover many consecutive sentences; put consecutive content from the same illustration situation into the same scene.',
-      '- A consecutive run of facts, examples, list items, or general statements about the same subject in the same time/place frame is one central topic block, not one scene per fact. Render its related details together as one drawable montage. Split that fact/list block only when its main subject, purpose, time, or place changes materially. This local fact/list rule must not override sequential movement, object manipulation, discovery, accident, or other causal story action; keep those action ranges under the three illustration-situation axes above. Do not target a fixed number of scenes.',
-      '- Start a new scene only when one axis changes materially enough that one shared illustration can no longer represent both sides: place/time changes, the main visual focus shifts whether or not anyone enters or leaves, or the main task is replaced by a different task. Do not start a new scene for conversation turns, questions, answers, riddles, arguments, remarks, jokes, reactions, emotion changes, asides, inner thoughts, or repeated same-type micro-actions while the illustration situation continues.',
+      '- A consecutive run of facts, examples, list items, or general statements about the same subject in the same time/place frame is one central topic block, not one scene per fact. Render its related details together as one drawable montage. Split that fact/list block only when its main subject, purpose, time, or place changes materially. This local fact/list rule must not override sequential movement, object manipulation, discovery, accident, or other causal story action; keep those action ranges under the three illustration-situation axes above.',
+      if (targetSceneCount == null)
+        '- Do not target a fixed number of scenes. Start a new scene only when one axis changes materially enough that one shared illustration can no longer represent both sides: place/time changes, the main visual focus shifts whether or not anyone enters or leaves, or the main task is replaced by a different task. Do not start a new scene for conversation turns, questions, answers, riddles, arguments, remarks, jokes, reactions, emotion changes, asides, inner thoughts, or repeated same-type micro-actions while the illustration situation continues.'
+      else ...[
+        '- You MUST return exactly $targetSceneCount scenes (scenes.length == $targetSceneCount). Partition the chapter across exactly that many illustration situations while still covering every sentence slot continuously without overlap.',
+        '- Prefer the strongest illustration-situation boundaries when choosing the $targetSceneCount cuts. Do not invent empty filler scenes, and do not open many one-sentence scenes then dump the remainder into the last scene.',
+        '- Still avoid splitting only for conversation turns, questions, answers, riddles, arguments, remarks, jokes, reactions, emotion changes, asides, or inner thoughts when another stronger axis cut is available.',
+      ],
       '- Keep the cause, immediate result, and direct recovery of one incident in the same scene unless another axis materially changes. If a candidate boundary differs only by speech turns, reactions, emotion, or immediate aftermath, merge it into the surrounding scene and describe later beats as changing poses, objects, and tension inside that scene.',
       '- Dialogue, song, shout, and inner-thought sentences are coverage anchors inside the surrounding story scene; convert their plot and scene meaning into visible narrative, not quoted text or speech-process summary. Dialogue-heavy ranges in one illustration situation must remain one scene even if they cover many sentence slots.',
       '- Each sceneDescription must use only events and scene facts from its own sentenceStartIndex through sentenceEndIndex range. Preserve who performs each action; do not assign an action to a different character or move an event into a neighboring range.',
       '- Before returning JSON, audit every adjacent scene boundary. If one shared illustration can represent both ranges and none of the three axes changes materially, merge them, then renumber pageIndex from 0.',
-      '- Hard validation cap: scenes.length <= $_maxSceneCount. Scene count follows illustration-situation changes; do not invent splits to approach the cap, and do not open many one-sentence scenes then dump the rest into the last scene.',
+      if (targetSceneCount == null)
+        '- Hard validation cap: scenes.length <= $_maxSceneCount. Scene count follows illustration-situation changes; do not invent splits to approach the cap, and do not open many one-sentence scenes then dump the rest into the last scene.'
+      else
+        '- Hard validation: scenes.length must equal $targetSceneCount and must be <= $_maxSceneCount.',
       '- sceneDescription: describe the visible scene, action, objects, location, composition, emotion, and visible progression within that sentence range, including narrative converted from speech or thought; must not contain dialogue text, quoted speech, lyrics, riddle wording, displayed text copied from speech, speech bubbles, or inner-thought wording from the source prose.',
       '- In sceneDescription, use character names only; do not describe character clothing, hair, age, facial features, accessories, or parenthesized character details. Mention props only as active objects in the scene, not as repeated character appearance details.',
       '- Before returning JSON, remove all recurring character appearance details from chapterDescription and sceneDescription; those details belong only in Relevant characters or newCharacters.',
@@ -2635,6 +2815,7 @@ class PictureBookService {
     required String bookDescription,
     required List<BookCharacter> relevantCharacters,
     bool includeTitle = false,
+    int? targetSceneCount,
   }) {
     final sentenceSlots = _articleSentenceSlots(article);
     final numberedSentences = _numberedChapterSentencesForPrompt(article);
@@ -2655,6 +2836,10 @@ class PictureBookService {
           'Relevant characters already approved for this book and appearing in this chapter:',
           _charactersForPrompt(relevantCharacters),
           '',
+          if (targetSceneCount != null) ...[
+            'Required scene count: $targetSceneCount',
+            '',
+          ],
           'Return JSON with this exact top-level shape:',
           _chapterPlanJsonShape(includeTitle: includeTitle),
           '',
@@ -2662,6 +2847,7 @@ class PictureBookService {
           ..._chapterPlanPromptRuleLines(
             includeTitle: includeTitle,
             maxSentenceIndex: maxSentenceIndex,
+            targetSceneCount: targetSceneCount,
           ),
           '',
           'Chapter text:',
@@ -2924,6 +3110,7 @@ class PictureBookService {
     required int sentenceCount,
     required TextGenerationReplySource source,
     bool strictSceneValidation = false,
+    int? expectedSceneCount,
   }) {
     final planKind = json['planKind']?.toString();
     if (planKind != _chapterPlanCachePurpose) {
@@ -2933,6 +3120,7 @@ class PictureBookService {
       json['scenes'],
       sentenceCount: sentenceCount,
       strict: strictSceneValidation,
+      expectedSceneCount: expectedSceneCount,
     );
     if (scenes.isEmpty) {
       return null;
@@ -2957,12 +3145,17 @@ class PictureBookService {
     Object? raw, {
     required int sentenceCount,
     bool strict = false,
+    int? expectedSceneCount,
   }) {
     if (raw is! List) {
       return const [];
     }
+    final maxAllowed = _maxAllowedSceneCount(sentenceCount);
     if (strict &&
-        (raw.isEmpty || raw.length > _maxSceneCount || sentenceCount <= 0)) {
+        (raw.isEmpty ||
+            raw.length > maxAllowed ||
+            sentenceCount <= 0 ||
+            (expectedSceneCount != null && raw.length != expectedSceneCount))) {
       return const [];
     }
     final scenes = <PictureBookScene>[];
@@ -3025,10 +3218,62 @@ class PictureBookService {
           scenes.last.sentenceEndIndex != maxSentenceIndex) {
         return const [];
       }
+      if (expectedSceneCount != null && scenes.length != expectedSceneCount) {
+        return const [];
+      }
       return scenes;
     }
     scenes.sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
     return _normalizeSceneCoverage(scenes, sentenceCount);
+  }
+
+  static int _maxAllowedSceneCount(int sentenceCount) =>
+      math.min(_maxSceneCount, math.max(0, sentenceCount));
+
+  static int? _normalizeTargetSceneCount(
+    int? targetSceneCount, {
+    required int sentenceCount,
+  }) {
+    if (targetSceneCount == null) {
+      return null;
+    }
+    final maxAllowed = _maxAllowedSceneCount(sentenceCount);
+    if (maxAllowed <= 0) {
+      throw const FormatException('章节句子不足，无法按指定数量匹配分镜。');
+    }
+    if (targetSceneCount < 1 || targetSceneCount > maxAllowed) {
+      throw FormatException(
+        '场景数量须在 1 到 $maxAllowed 之间（受句子数与上限 $_maxSceneCount 限制）。',
+      );
+    }
+    return targetSceneCount;
+  }
+
+  static List<PictureBookScene> _requireValidManualScenes({
+    required List<Map<String, dynamic>> scenes,
+    required int sentenceCount,
+  }) {
+    final maxAllowed = _maxAllowedSceneCount(sentenceCount);
+    if (sentenceCount <= 0 || maxAllowed <= 0) {
+      throw const FormatException('章节句子不足，无法重设分镜。');
+    }
+    if (scenes.isEmpty || scenes.length > maxAllowed) {
+      throw FormatException(
+        '分镜数量须在 1 到 $maxAllowed 之间，且需连续覆盖全部句子槽。',
+      );
+    }
+    final parsed = _pictureBookScenesFromJson(
+      scenes,
+      sentenceCount: sentenceCount,
+      strict: true,
+      expectedSceneCount: scenes.length,
+    );
+    if (parsed.isEmpty) {
+      throw FormatException(
+        '分镜无效：需 1..$maxAllowed 景、pageIndex 连续、句子区间无重叠且覆盖 0..${sentenceCount - 1}，且每景描述非空。',
+      );
+    }
+    return parsed;
   }
 
   static Map<String, dynamic> _mapValue(Object? raw) {
@@ -3311,6 +3556,24 @@ class PictureBookService {
     _PictureBookPromptReviewDraft draft,
     List<Map<String, dynamic>> scenes,
   ) {
+    final sentenceCount = draft.article.sentences.length;
+    final fullPlanScenes = _pictureBookScenesFromJson(
+      scenes,
+      sentenceCount: sentenceCount,
+      strict: true,
+      expectedSceneCount: scenes.isEmpty ? null : scenes.length,
+    );
+    if (fullPlanScenes.isNotEmpty) {
+      return _segmentArticle(
+        draft.article,
+        ChapterPicturePlan(
+          chapterDescription: draft.chapterDescription,
+          scenes: fullPlanScenes,
+          source: TextGenerationReplySource.cached,
+        ),
+      );
+    }
+
     final submittedScenes = {
       for (final item in scenes)
         if ((item['pageIndex'] as num?) != null)
@@ -4816,6 +5079,7 @@ class _PictureBookPromptReviewDraft {
   final List<int> referenceOptions;
 
   _PictureBookPromptReviewDraft copyWith({
+    StoryChapter? chapter,
     StorySeries? series,
     List<_PromptReviewPageDraft>? pages,
     String? bookDescription,
@@ -4828,7 +5092,7 @@ class _PictureBookPromptReviewDraft {
       _PictureBookPromptReviewDraft(
         reviewId: reviewId,
         article: article,
-        chapter: chapter,
+        chapter: chapter ?? this.chapter,
         series: series ?? this.series,
         regenerate: regenerate,
         pages: pages ?? this.pages,

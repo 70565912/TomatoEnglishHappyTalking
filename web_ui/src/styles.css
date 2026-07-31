@@ -2368,6 +2368,26 @@ img {
   justify-content: flex-start;
 }
 
+.picture-scene-count-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.picture-scene-count-field {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.picture-scene-count-field input {
+  width: 4.5rem;
+  padding: 4px 8px;
+}
+
 .picture-prompt-section-heading.collapsible {
   justify-content: space-between;
 }
@@ -4475,7 +4495,7 @@ select:disabled {
 
 .follow-control-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -4573,9 +4593,14 @@ select:disabled {
   animation: record-pulse 760ms ease-in-out infinite;
 }
 
+.follow-previous-action,
 .follow-next-action {
   min-height: 38px;
   white-space: nowrap;
+}
+
+.follow-previous-action .icon {
+  transform: rotate(180deg);
 }
 
 .follow-live-transcript {
@@ -4788,6 +4813,26 @@ select:disabled {
   border-radius: 8px;
   background: var(--panel);
   font-weight: 1000;
+}
+
+.pager-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  color: var(--ink);
+  background: transparent;
+}
+
+.pager-button:not(:disabled):hover {
+  color: var(--tomato-dark);
+  background: #fff1ef;
+}
+
+.pager-button.next {
+  transform: rotate(180deg);
 }
 
 .score-panel {
@@ -6186,7 +6231,7 @@ select:disabled {
   transform: rotate(45deg);
 }
 
-.pager .icon-chevron:last-child {
+.pager > .icon-chevron:last-child {
   transform: rotate(180deg);
 }
 
@@ -6551,6 +6596,7 @@ select:disabled {
     justify-items: center;
   }
 
+  .follow-previous-action,
   .follow-next-action {
     width: 100%;
   }

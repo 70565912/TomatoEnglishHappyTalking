@@ -15,6 +15,10 @@
 - `flutter analyze`
 - `tools/publish_github_release.ps1 -Version 1.2.0`
 
+## 2026-07-31
+
+- **绘本分镜：手工场景数量 + QA 整表重设**：整章审核可设置场景数量，确认后 `refreshPromptReview(target: chapterPlan, targetSceneCount)` 调文本 AI 按固定景数匹配分句；不做单行增删。新增 `pictureBook.replaceChapterPlan` 供 QA 一次送入完整 `scenes[]`（描述+句子区间）写回 `summary_json`，不调文本 AI、不删图；确认组图仍整章删旧重生。
+
 ## 2026-07-22
 
 - **导出组图附带原文与 Prompt**：`pictureBook.exportChapterImages` 在导出 `01.png`… 的同时，于同目录写入 `chapter-english.txt`（章节英文原文）与 `group-prompt.txt`（组图总 Prompt）；自定义前缀同步作用于这两个文本文件，冲突检测一并覆盖。

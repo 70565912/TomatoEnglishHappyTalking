@@ -287,6 +287,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'pictureBook.resolveRelevantCharacters':
             _handlePictureBookResolveRelevantCharacters,
         'pictureBook.savePromptReview': _handlePictureBookSavePromptReview,
+        'pictureBook.replaceChapterPlan': _handlePictureBookReplaceChapterPlan,
         'pictureBook.confirmPromptReview':
             _handlePictureBookConfirmPromptReview,
         'pictureBook.confirmPagePromptReview':
@@ -304,6 +305,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'follow.recordStop': _handleFollowRecordStop,
         'follow.recordReplay': _handleFollowRecordReplay,
         'follow.retry': _handleFollowRetry,
+        'follow.previous': _handleFollowPrevious,
         'follow.next': _handleFollowNext,
         'follow.replay': _handleFollowReplay,
         'follow.pause': _handleFollowPause,
@@ -1513,7 +1515,40 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       chapterDescription:
           _payloadString(message.payload, 'chapterDescription').trim(),
       scenes: _payloadMapList(message.payload, 'scenes'),
+      targetSceneCount: _payloadOptionalInt(
+        message.payload,
+        'targetSceneCount',
+      ),
     );
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookReplaceChapterPlan(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final reviewId = _payloadString(message.payload, 'reviewId').trim();
+    final chapterDescription =
+        _payloadString(message.payload, 'chapterDescription').trim();
+    final scenes = _payloadMapList(message.payload, 'scenes');
+    if (scenes.isEmpty) {
+      throw const FormatException('重设分镜需要完整的 scenes 列表');
+    }
+    final result = await PictureBookService.replaceChapterPlan(
+      articleId: articleId,
+      reviewId: reviewId.isEmpty ? null : reviewId,
+      chapterDescription: chapterDescription,
+      scenes: scenes,
+      bookDescription:
+          _payloadString(message.payload, 'bookDescription').trim(),
+      bookCharacters: _payloadBookCharacters(message.payload, 'bookCharacters'),
+      newCharacters: _payloadBookCharacters(message.payload, 'newCharacters'),
+      groupPrompt: _payloadString(message.payload, 'groupPrompt').trim(),
+    );
+    unawaited(_pushEvent(
+      'pictureBook.state',
+      await PictureBookService.statePayload(articleId),
+    ));
+    return result;
   }
 
   Future<Map<String, dynamic>> _handlePictureBookResolveRelevantCharacters(
@@ -1915,6 +1950,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<Map<String, dynamic>> _handleFollowNext(BridgeMessage message) async {
     final articleId = _requireActiveFollow();
     await ref.read(followReadProvider(articleId).notifier).nextSentence();
+    return _currentFollowPayload(articleId);
+  }
+
+  Future<Map<String, dynamic>> _handleFollowPrevious(
+    BridgeMessage message,
+  ) async {
+    final articleId = _requireActiveFollow();
+    await ref.read(followReadProvider(articleId).notifier).previousSentence();
     return _currentFollowPayload(articleId);
   }
 

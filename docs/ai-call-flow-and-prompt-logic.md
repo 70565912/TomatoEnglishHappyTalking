@@ -79,8 +79,8 @@
 - `pictureBook.promptReview` 只读取本地持久化数据：有效 `picture_book_chapter_scene_plan_v2`、已保存的 `chapterDescription`，或带真实 `chapterDescription` 的旧页面 prompt。
 - `article.create` 在绘本开启时会完成首次章节规划并写入 `summary_json`；打开审核框时应直接展示，而不是空白草稿。
 - 打开审核框不会调用文本 AI、图片 API，也不会从正文、标题、scene 摘要或旧 `summary` 本地拼接章节描述。
-- 用户可在审核框中手动修改章节描述和分镜描述，或点击“自动生成章节规划”显式再次调用文本 AI 刷新 `chapterDescription` 与 `scenes[]`。
-- `pictureBook.savePromptReview` 只保存当前可见草稿，不调用图片 API、不删除旧图；`pictureBook.confirmPromptReview` 才提交可见审核内容并触发顺序组图。
+- 用户可在审核框中手动修改章节描述和分镜描述，或设置场景数量后确认「按此数量匹配分镜」（`refreshPromptReview` + `targetSceneCount`）显式再次调用文本 AI；也可点击“自动生成章节规划”不限景数刷新。QA 可用 `pictureBook.replaceChapterPlan` 整表重设分镜（含句子区间），不调文本 AI。
+- `pictureBook.savePromptReview` 只保存当前可见草稿，不调用图片 API、不删除旧图；`pictureBook.confirmPromptReview` 才提交可见审核内容并触发顺序组图（改景数后确认仍整章删旧重生）。
 
 ### 英文原文区本地提取规则
 
