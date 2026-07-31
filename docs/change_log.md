@@ -18,6 +18,16 @@
 ## 2026-07-31
 
 - **绘本分镜：手工场景数量 + QA 整表重设**：整章审核可设置场景数量，确认后 `refreshPromptReview(target: chapterPlan, targetSceneCount)` 调文本 AI 按固定景数匹配分句；不做单行增删。新增 `pictureBook.replaceChapterPlan` 供 QA 一次送入完整 `scenes[]`（描述+句子区间）写回 `summary_json`，不调文本 AI、不删图；确认组图仍整章删旧重生。
+- **场景数量控件紧凑布局**：章节提示词审核框中的场景数量标签、48×34 输入框和匹配按钮改为单行 `inline-flex`，收紧间距、字号和图标尺寸，避免 Windows 窄窗口换行或挤出标题行；Web 静态资源同步刷新。
+- **朗读分句硬上限收紧为 30 词**：正式 Dart `NlpService` 与 Web `sentenceSplitter` 的硬上限从 32 同步改为 30，并把 Dart / Vitest 长句、引号和 connector 回归断言全部改为 `<= 30`。已保存文章继续使用持久化 `articles.sentences`，需重建文章才会采用新上限。
+
+验证：
+
+- `flutter test test/nlp_service_test.dart --reporter expanded -j 1`（15）
+- `npm --prefix web_ui test -- src/App.test.tsx -t "splits"`（4）
+- `npm --prefix web_ui run build`
+- `flutter analyze`（无 error；保留 3 个与本轮无关的既有 `unused_element` warning）
+- `tools/build_windows.ps1 -Release`（Windows Release 构建成功，发布目录运行数据保持原位）
 
 ## 2026-07-22
 

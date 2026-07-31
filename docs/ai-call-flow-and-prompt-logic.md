@@ -67,7 +67,7 @@
    - 非标准中英混杂：提取英文故事原文。
    - 纯中文：翻译成适合练习的英文故事。
    - 长文本按约 8000 字符目标分块，全量处理，不截断前 1600/2200 字符。
-5. `NlpService.splitSentences` 生成适合跟读的短语块。
+5. `NlpService.splitSentences` 生成适合跟读的短语块；Flutter 与 Web 预览共用约 10–20 词的目标窗口和 **30 词硬上限**，避免后续逐句字幕提交超过外部配音平台的前端限制。
 6. 准备书籍信息；**先**把文章与分句写入 `articles`（缺标题时可用临时 `Untitled Chapter`，后续规划同次补标题）。
 7. 中文对照：合并已有行与导入译文并 upsert；仅对仍缺的句子调用一批 `translateSentencesToChineseStrict`。译文或章节规划失败**不再删除文章**，错误带回 `resumeArticleId`，再次保存只续传。
 8. 绘本开启时：若 `summary_json` 已有有效 `picture_book_chapter_scene_plan_v2` 则跳过 AI；否则再请求章节规划并写入 `story_chapters.summary_json`。

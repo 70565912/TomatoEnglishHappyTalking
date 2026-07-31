@@ -4,7 +4,7 @@
  * Design goals:
  * - Output practice/listening/song lyric chunks, not linguistic sentence boundaries.
  * - Keep chunks readable: not too short (no 1–3 word fragments or orphan preposition tails),
- *   not too long (comfort ~20 words, hard max 32).
+ *   not too long (comfort ~20 words, hard max 30).
  * - Use generic punctuation/quote/dash/word-window rules only; never hard-code story titles or chapter ids.
  */
 const ABBREVIATIONS = new Set([
@@ -214,7 +214,7 @@ type PhraseBreak = {
 
 const TARGET_PHRASE_MIN_WORDS = 10;
 const TARGET_PHRASE_MAX_WORDS = 24;
-const HARD_PHRASE_MAX_WORDS = 32;
+const HARD_PHRASE_MAX_WORDS = 30;
 const COMFORT_PHRASE_MAX_WORDS = 20;
 const SHORT_CONNECTOR_MIN_WORDS = 6;
 const QUOTE_CONTINUATION_MIN_WORDS = 14;

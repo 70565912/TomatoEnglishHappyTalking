@@ -2679,7 +2679,7 @@ describe('App', () => {
     );
 
     expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 32)).toBe(true);
+    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 30)).toBe(true);
   });
 
   it('keeps hyphenated English words joined in article preview chunks', () => {
@@ -2723,7 +2723,7 @@ describe('App', () => {
     expect(chunks.length).toBeGreaterThanOrEqual(4);
     expect(chunks.join(' ')).toContain('a Dormouse was sitting between them');
     expect(chunks.join(' ')).toContain('"No room! No room!"');
-    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 32)).toBe(true);
+    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 30)).toBe(true);
     expect(chunks.join(' ')).not.toContain('A Mad Tea-Party');
   });
 
@@ -2734,7 +2734,7 @@ describe('App', () => {
     const joined = chunks.join(' ');
 
     expect(chunks.length).toBeGreaterThan(2);
-    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 32)).toBe(true);
+    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 30)).toBe(true);
     expect(joined).toContain('left-hand bit of mushroom,');
     expect(joined).toContain('and raised herself to about two feet high;');
     expect(joined).toContain('"Suppose it should be raving mad after all');
@@ -2772,7 +2772,7 @@ describe('App', () => {
           chunk.includes('at applause,'),
       ),
     ).toBe(true);
-    expect(chunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 32)).toBe(true);
+    expect(chunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 30)).toBe(true);
   });
 
   it('breaks before connector rather than after a little / go', () => {
@@ -2791,7 +2791,7 @@ describe('App', () => {
       goChunks.some((chunk) => chunk.includes('as to go after that savage Queen')) ||
         adjacentChunks(goChunks, /as to go\s*$/, /^after\b/),
     ).toBe(true);
-    expect(goChunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 32)).toBe(true);
+    expect(goChunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 30)).toBe(true);
   });
 
   it('auto-plays the first follow sentence and enables recording afterward', async () => {

@@ -3,7 +3,7 @@
 // ## 设计目标（朗读块，不是语言学“真分句”）
 //
 // - 输出供听力、跟读、歌曲字幕、绘本句段使用的 **read-aloud chunks**，不是语法分析意义上的句子。
-// - 块长度应适合朗读：不过短（避免 1–3 词碎片、悬挂介词尾句），不过长（默认舒适上限约 20 词，硬上限 32 词）。
+// - 块长度应适合朗读：不过短（避免 1–3 词碎片、悬挂介词尾句），不过长（默认舒适上限约 20 词，硬上限 30 词）。
 // - 规则必须 **通用**（引号、破折号、逗号、词数窗口、合并/切分启发式），不得写死单篇文章、章节号或故事专有名词。
 // - Web UI `sentenceSplitter.ts` 须与本文件保持同一套常量与行为；回归样本（E10/E11/E12 等）只用于验证，不反向驱动特例逻辑。
 //
@@ -54,7 +54,7 @@ class NlpService {
   static const _targetPhraseMaxWords = 24;
 
   /// Hard ceiling for any merged chunk; never exceed in merge pass.
-  static const _hardPhraseMaxWords = 32;
+  static const _hardPhraseMaxWords = 30;
 
   /// Comfortable ceiling; chunks longer than this keep looking for a break.
   static const _comfortPhraseMaxWords = 20;

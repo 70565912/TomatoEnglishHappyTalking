@@ -3911,7 +3911,7 @@ function PictureBookPromptReviewDialog({
                   </label>
                   <button
                     type="button"
-                    className="ghost-action"
+                    className="ghost-action picture-scene-count-action"
                     disabled={busy}
                     onClick={requestSceneCountRematch}
                     title="按手工设置的场景数量提交 AI 重新匹配分句"

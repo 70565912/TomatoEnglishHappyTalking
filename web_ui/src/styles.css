@@ -2369,23 +2369,44 @@ img {
 }
 
 .picture-scene-count-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin-left: auto;
-}
-
-.picture-scene-count-field {
   display: inline-flex;
+  flex-wrap: nowrap;
   gap: 6px;
   align-items: center;
-  font-size: 0.9rem;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.edit-dialog .picture-scene-count-field {
+  display: inline-flex;
+  flex-direction: row;
+  gap: 6px;
+  align-items: center;
+  color: var(--soft-ink);
+  font-size: 12px;
+  font-weight: 1000;
+  white-space: nowrap;
 }
 
 .picture-scene-count-field input {
-  width: 4.5rem;
+  flex: 0 0 48px;
+  width: 48px;
+  min-height: 34px;
+  height: 34px;
   padding: 4px 8px;
+  font-size: 13px;
+}
+
+.picture-scene-count-action {
+  min-height: 34px;
+  padding: 5px 10px;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.picture-scene-count-action .icon {
+  width: 15px;
+  height: 15px;
 }
 
 .picture-prompt-section-heading.collapsible {

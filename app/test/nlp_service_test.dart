@@ -25,7 +25,7 @@ void main() {
       );
 
       expect(chunks.length, greaterThan(1));
-      expect(chunks.every((chunk) => chunk.split(RegExp(r'\s+')).length <= 32),
+      expect(chunks.every((chunk) => chunk.split(RegExp(r'\s+')).length <= 30),
           isTrue);
     });
 
@@ -37,7 +37,7 @@ void main() {
       expect(chunks.join(' '),
           'The rocket jumps over the moon, then turns around slowly, because Tom wants everyone to see the shiny snack box before the team goes home.');
       expect(_hasDanglingBreak(chunks), isFalse);
-      expect(_maxWords(chunks), lessThanOrEqualTo(32));
+      expect(_maxWords(chunks), lessThanOrEqualTo(30));
     });
 
     test('keeps hyphenated words joined for read-aloud text', () {
@@ -111,7 +111,7 @@ void main() {
       expect(chunks.join(' '), contains('a Dormouse was sitting between them'));
       expect(chunks.join(' '), contains('"No room! No room!"'));
       expect(_hasDanglingBreak(chunks), isFalse);
-      expect(_maxWords(chunks), lessThanOrEqualTo(32));
+      expect(_maxWords(chunks), lessThanOrEqualTo(30));
       expect(chunks.join(' '), isNot(contains('A Mad Tea-Party')));
     });
 
@@ -126,7 +126,7 @@ void main() {
         final chunks = NlpService.splitSentences(sample.value);
 
         expect(chunks, isNotEmpty, reason: sample.key);
-        expect(_maxWords(chunks), lessThanOrEqualTo(32), reason: sample.key);
+        expect(_maxWords(chunks), lessThanOrEqualTo(30), reason: sample.key);
         expect(_hasOneWordFragment(chunks), isFalse, reason: sample.key);
         expect(_hasDanglingBreak(chunks), isFalse, reason: sample.key);
       }
@@ -194,7 +194,7 @@ void main() {
       expect(chunks.join(' '), contains('"No room! No room!"'));
       expect(chunks.join(' '), contains('they cried out when they saw Alice'));
       expect(_hasDanglingBreak(chunks), isFalse);
-      expect(_maxWords(chunks), lessThanOrEqualTo(32));
+      expect(_maxWords(chunks), lessThanOrEqualTo(30));
     });
 
     test('keeps direct command together after an em dash', () {
@@ -269,7 +269,7 @@ void main() {
         ),
         isTrue,
       );
-      expect(_maxWords(chunks), lessThanOrEqualTo(32));
+      expect(_maxWords(chunks), lessThanOrEqualTo(30));
     });
 
     test('breaks before connector rather than after a little / go', () {
@@ -306,7 +306,7 @@ void main() {
             ),
         isTrue,
       );
-      expect(_maxWords(goChunks), lessThanOrEqualTo(32));
+      expect(_maxWords(goChunks), lessThanOrEqualTo(30));
     });
   });
 }
