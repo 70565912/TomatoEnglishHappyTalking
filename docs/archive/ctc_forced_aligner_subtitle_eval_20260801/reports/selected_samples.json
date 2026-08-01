@@ -1,0 +1,74 @@
+{
+  "samples": [
+    {
+      "id": "external_audio_235f47f106579d38837c220e",
+      "articleId": "66",
+      "title": "The Caterpillar and Alice",
+      "audioPath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\song-assets\\external_audio\\article_66\\external_audio_235f47f106579d38837c220e.mp3",
+      "timelinePath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\tomato_api_cache\\song-subtitle-timelines\\suno_song_subtitle_timeline_e1b3ae604aba72442661556926e3519edaf48ee3589fd4b379c08b08142b4001.json",
+      "cueCount": 54,
+      "durationMs": 310776,
+      "cjk": false,
+      "source": "external_audio",
+      "audioHash": "235f47f106579d38837c220e4f5a6d96e36d8caa3d32ce60b08d2e284d2fec86",
+      "lyricsHash": "88c31380ac127c000ea19ea7f04a6b754ce0c9cc70ec280d8330c47bfda33dc6",
+      "lyricsPreview": "The caterpillar and Alice looked at each other in silence:\nat last the Caterpillar took the hookah out of its mouth, and addressed her in a languid, sleepy voic"
+    },
+    {
+      "id": "external_audio_6a5d2508c835f160cd9177c0",
+      "articleId": "69",
+      "title": "Sandwich Anthem",
+      "audioPath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\song-assets\\external_audio\\article_69\\external_audio_6a5d2508c835f160cd9177c0.mp3",
+      "timelinePath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\tomato_api_cache\\song-subtitle-timelines\\suno_song_subtitle_timeline_656ae2aaa02e72d3922dac96bf4cecfe7bb3fc13ea1c375056b54ec9df1a132b.json",
+      "cueCount": 13,
+      "durationMs": 41256,
+      "cjk": false,
+      "source": "external_audio",
+      "audioHash": "6a5d2508c835f160cd9177c0baae029c7903e62d5dbd2ee61fa30c63be8ef42c",
+      "lyricsHash": "6ccc117893e7868920611ac0d0279156acd59246062c6c1347ecb8f814059fa3",
+      "lyricsPreview": "I like my sandwich.\nIt's good!\nIt's got bread, chicken, tomato and egg.\nHow can I make a sandwich?\nGet bread, chicken, tomato and egg.\nCut the bread into pieces"
+    },
+    {
+      "id": "external_audio_d53aba491a005fa08d03d4a4",
+      "articleId": "54",
+      "title": "The Pool Party",
+      "audioPath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\song-assets\\external_audio\\article_54\\external_audio_d53aba491a005fa08d03d4a4.mp3",
+      "timelinePath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\tomato_api_cache\\song-subtitle-timelines\\suno_song_subtitle_timeline_6e0c949ab71246a51fbea85c85bd255c7368da8d1a34c2999a477e687a3bab1e.json",
+      "cueCount": 42,
+      "durationMs": 192264,
+      "cjk": false,
+      "source": "external_audio",
+      "audioHash": "d53aba491a005fa08d03d4a4c3132586c48b8deb2e49a81d8ee4c99b82013d82",
+      "lyricsHash": "0f4269e6995f05ea0e95e0ee36d40604140e3379ca5f8125e38e7e08d31a23f5",
+      "lyricsPreview": "It was high time to go for the pool was getting quite crowded with the birds\nand animals that had fallen into it:\nthere was a Duck and a Dodo, a Lory and an Eag"
+    },
+    {
+      "id": "suno_52_1782399736565_1",
+      "articleId": 52,
+      "title": "E07 - Am I Still Alice",
+      "audioPath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\suno-music\\suno_article_52_64e5f1af-b419-4659-a70f-c99fc79590f3_v1.mp3",
+      "timelinePath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\tomato_api_cache\\song-subtitle-timelines\\suno_song_subtitle_timeline_dfa94e067f7c94e98c182c0fd8a2eeb8062d2a2c3de78a696e3dbb59e23cd0f0.json",
+      "cueCount": 53,
+      "durationMs": 377664,
+      "cjk": false,
+      "source": "suno",
+      "audioHash": "2acb5eecf86a7407323044b6d6da6945694b05b3c33cbe57fea7d2a97d1d0a58",
+      "lyricsHash": "f933bd802843c0e92c162e451e7effc95426c3b8580265c5e744ea594da35a17",
+      "lyricsPreview": "\"I'm sure I'm not Ada,\" she said,\n\"for her hair goes in such long ringlets, and mine doesn't go in ringlets at all;\nand I'm sure I can't be Mabel,\nfor I know al"
+    },
+    {
+      "id": "external_audio_3291eab0503714debebfcbae",
+      "articleId": "92",
+      "title": "我是一根葱",
+      "audioPath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\song-assets\\external_audio\\article_92\\external_audio_3291eab0503714debebfcbae.mp3",
+      "timelinePath": "F:\\TomatoEnglishHappyTalking\\release\\windows\\tomato_english_happy_talking\\tomato_api_cache\\song-subtitle-timelines\\suno_song_subtitle_timeline_40f0545d0a0c049513b39a37aa3f2002d0a5a9c328dabb80138bf53d14a78334.json",
+      "cueCount": 51,
+      "durationMs": 284760,
+      "cjk": true,
+      "source": "external_audio",
+      "audioHash": "3291eab0503714debebfcbae2f01919ee8ed6572da7879ad2c510d5a8de2f821",
+      "lyricsHash": "c664e7566cd8a69e04e1de8d7286138e22ea8170865b61a751d8a44bffe48d57",
+      "lyricsPreview": "我是一根葱，我骄傲，我身洁白，我心狂热，\r\n我为油添香，为盐增味，为菜添色。\r\n\r\n那一天，我终于来到了厨房。\r\n大姐撕开了我的外衣，\r\n犹如轻轻撕开我沉睡的心灵，\r\n慢慢张开我的眼睛。\r\n看看忙碌的厨房，我裸露的身躯，\r\n我羞涩地望着油香四溢的厨房，浮想联翩。\r\n\r\n来嘛，把老子们切成颗颗、宰成节节，\r\n让我证明豆腐"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+# CTC forced aligner (MahmoudAshraf97) + runtime deps for offline eval.
+# Install with Python 3.13:
+#   D:\DevTools\python\Python313\python.exe -m venv .venv
+#   .\.venv\Scripts\python.exe -m pip install -U pip
+#   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+torch
+torchaudio
+numpy
+tqdm
+soundfile
+librosa
+transformers
+uroman
+nltk
+git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git
