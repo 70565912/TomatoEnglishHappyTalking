@@ -59,7 +59,7 @@ class DatabaseService {
     await _copyCurrentLegacyDatabaseIfNeeded(dbPath);
     return openDatabase(
       dbPath,
-      version: 7,
+      version: 8,
       onCreate: (db, _) async {
         await _createCoreTables(db);
         await _createApiCacheTables(db);
@@ -96,6 +96,11 @@ class DatabaseService {
         }
         if (oldVersion < 7) {
           await _migratePictureBookSeriesToV7(db);
+        }
+        if (oldVersion < 8) {
+          await db.execute(
+            "ALTER TABLE articles ADD COLUMN sentence_split_version TEXT NOT NULL DEFAULT 'legacy_v1'",
+          );
         }
       },
     );
@@ -216,6 +221,7 @@ class DatabaseService {
         title     TEXT    NOT NULL,
         content   TEXT    NOT NULL,
         sentences TEXT    NOT NULL,
+        sentence_split_version TEXT NOT NULL DEFAULT 'legacy_v1',
         created_at TEXT   NOT NULL
       )
     ''');
@@ -1152,6 +1158,18 @@ class DatabaseService {
       'picture_book_pages',
       where: 'article_id = ?',
       whereArgs: [articleId],
+    );
+  }
+
+  static Future<void> deletePictureBookPagesWithIndexAtOrAbove({
+    required int articleId,
+    required int pageIndex,
+  }) async {
+    final db = await _database;
+    await db.delete(
+      'picture_book_pages',
+      where: 'article_id = ? AND page_index >= ?',
+      whereArgs: [articleId, pageIndex],
     );
   }
 }

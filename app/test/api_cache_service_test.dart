@@ -66,11 +66,9 @@ void main() {
     }
   });
 
-  test(
-      'creates persistent cache, picture-book, translation, and safety tables at database version 7',
-      () async {
+  test('creates persistent cache, picture-book, translation, and safety tables at database version 8', () async {
     final db = await DatabaseService.database;
-    expect(await db.getVersion(), 7);
+    expect(await db.getVersion(), 8);
 
     final rows = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -88,6 +86,12 @@ void main() {
     expect(tableNames, contains('content_safety_failures'));
     expect(tableNames, contains('content_safety_rules'));
     expect(tableNames, isNot(contains('story_reference_assets')));
+    final articleColumns = await db.rawQuery('PRAGMA table_info(articles)');
+    final splitVersion = articleColumns.singleWhere(
+      (row) => row['name'] == 'sentence_split_version',
+    );
+    expect(splitVersion['notnull'], 1);
+    expect(splitVersion['dflt_value'], "'legacy_v1'");
     final seriesColumns = await db.rawQuery('PRAGMA table_info(story_series)');
     final seriesColumnNames = seriesColumns.map((row) => row['name']).toSet();
     expect(seriesColumnNames, contains('description'));
@@ -282,7 +286,7 @@ void main() {
     const content = 'Tom waves. He smiles.';
     final articleId = await _saveArticle(
       content,
-      sentences: NlpService.splitSentences(content),
+      sentences: const ['Tom waves.', 'He smiles.'],
     );
     await _writeCachedListeningTts(
       articleId: articleId,
@@ -374,7 +378,7 @@ void main() {
     const content = 'Tom waves. He smiles.';
     final articleId = await _saveArticle(
       content,
-      sentences: NlpService.splitSentences(content),
+      sentences: const ['Tom waves.', 'He smiles.'],
     );
     await _writeCachedListeningTts(
       articleId: articleId,
@@ -2424,11 +2428,12 @@ but the three were all crowded together at one corner of it.
         .map((message) => (message as Map)['content']?.toString() ?? '')
         .join('\n')
         .toLowerCase();
+    final prosePrompt = planningPrompt.replaceAll(RegExp(r'\n\d+\.\s*'), ' ');
 
     expect(planningPrompt, contains('please would you tell me'));
     expect(planningPrompt, contains("it's a cheshire cat"));
     expect(planningPrompt, contains("don't bother me"));
-    expect(planningPrompt, contains('here! you may nurse it a bit'));
+    expect(prosePrompt, contains('here! you may nurse it a bit'));
     expect(planningPrompt, contains('chapter text is the source prose'));
     expect(planningPrompt, contains('convert all direct dialogue'));
     expect(planningPrompt, contains('song lyrics'));
@@ -4892,7 +4897,153 @@ but the three were all crowded together at one corner of it.
         jsonDecode(chapter?.summaryJson ?? '{}') as Map<String, dynamic>;
     expect(summary['chapterDescription'], contains('Alice meets the Queen'));
     expect((summary['scenes'] as List), hasLength(2));
-    expect(await DatabaseService.getPictureBookPages(articleId), isEmpty);
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(2));
+    expect(pages.every((page) => page.status == 'error'), isTrue);
+    expect(
+      pages.every((page) => (page.errorMessage ?? '').contains('尚未导入图片')),
+      isTrue,
+    );
+  });
+
+  test('picture-book replaceChapterPlan accepts more than twelve scenes',
+      () async {
+    final sentences = [
+      for (var i = 0; i < 13; i += 1) 'Sentence number ${i + 1} is here.',
+    ];
+    final articleId = await _saveArticle(
+      sentences.join(' '),
+      sentences: sentences,
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series =
+        await PictureBookService.createSeries(title: 'Thirteen Scene Book');
+    await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+
+    final replaced = await PictureBookService.replaceChapterPlan(
+      articleId: articleId,
+      chapterDescription: 'Thirteen visible beats across one long chapter.',
+      scenes: [
+        for (var i = 0; i < 13; i += 1)
+          {
+            'pageIndex': i,
+            'sentenceStartIndex': i,
+            'sentenceEndIndex': i,
+            'sceneDescription': 'Visible beat ${i + 1} unfolds on screen.',
+          },
+      ],
+    );
+
+    expect(replaced['replaced'], isTrue);
+    expect((replaced['scenes'] as List), hasLength(13));
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    final summary =
+        jsonDecode(chapter?.summaryJson ?? '{}') as Map<String, dynamic>;
+    expect((summary['scenes'] as List), hasLength(13));
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(13));
+    expect(pages.last.pageIndex, 12);
+  });
+
+  test('picture-book image group rejects more than twelve scenes', () async {
+    await expectLater(
+      () => PictureBookImageService.generatePictureBookImageGroup(
+        requests: [
+          for (var i = 0; i < 13; i += 1)
+            VolcImageBatchRequest(
+              pageIndex: i,
+              prompt: 'Image ${i + 1}',
+              promptMetadata: const {'kind': 'test'},
+            ),
+        ],
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('AI 组图最多支持 12 个场景'),
+        ),
+      ),
+    );
+  });
+
+  test('picture-book confirmPromptReview rejects more than twelve scenes',
+      () async {
+    final sentences = [
+      for (var i = 0; i < 13; i += 1) 'Sentence number ${i + 1} is here.',
+    ];
+    final articleId = await _saveArticle(
+      sentences.join(' '),
+      sentences: sentences,
+    );
+    final article = await DatabaseService.getArticleById(articleId);
+    final series =
+        await PictureBookService.createSeries(title: 'Confirm Cap Book');
+    await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    await PictureBookService.replaceChapterPlan(
+      articleId: articleId,
+      chapterDescription: 'Thirteen beats that must not AI group.',
+      scenes: [
+        for (var i = 0; i < 13; i += 1)
+          {
+            'pageIndex': i,
+            'sentenceStartIndex': i,
+            'sentenceEndIndex': i,
+            'sceneDescription': 'Visible beat ${i + 1} unfolds on screen.',
+          },
+      ],
+    );
+    final chapter =
+        await DatabaseService.getStoryChapterForArticle(articleId);
+    var imageCalls = 0;
+    VolcImageService.setPostOverrideForTest(
+      ({required endpoint, required headers, required body}) async {
+        imageCalls += 1;
+        return {
+          'data': [
+            for (var i = 0; i < 13; i += 1) {'url': 'https://example.test/$i.png'},
+          ],
+        };
+      },
+    );
+
+    final review = await PictureBookService.promptReviewPayload(
+      article: article,
+      chapter: chapter!,
+    );
+    final scenes = (review['scenes'] as List)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList(growable: false);
+
+    await expectLater(
+      () => PictureBookService.confirmPromptReview(
+        reviewId: review['reviewId'] as String,
+        groupPrompt: review['groupPrompt'] as String? ?? 'group',
+        bookDescription: review['bookDescription'] as String? ?? '',
+        bookCharacters: const [],
+        newCharacters: const [],
+        chapterDescription:
+            review['chapterDescription'] as String? ?? 'Thirteen beats.',
+        scenes: scenes,
+      ),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          contains('AI 组图最多支持 12 个场景'),
+        ),
+      ),
+    );
+    expect(imageCalls, 0);
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    expect(pages, hasLength(13));
+    expect(pages.every((page) => page.status != 'generating'), isTrue);
   });
 
   test('picture-book replaceChapterPlan rejects overlapping sentence ranges',

@@ -110,8 +110,11 @@ Sequential/group request:
 ## Prompt Rules For This App
 
 - Generate one coherent picture-book image sequence per chapter/article. The
-  confirmed v4 plan has at most 12 scenes; image 1 maps to scene 1, image N
-  maps to scene N, and the app does not use the group as candidate alternatives.
+  confirmed AI group plan has at most 12 scenes (Wanx continuous-group product
+  cap); image 1 maps to scene 1, image N maps to scene N, and the app does not
+  use the group as candidate alternatives. Manual/QA `replaceChapterPlan` and
+  local `importPageImage` may exceed 12; `confirmPromptReview` must reject AI
+  group generation when scene count is above 12.
 - `picture_book_pages` stores one row per confirmed scene, with
   `sentenceStartIndex` and `sentenceEndIndex` covering that scene. All rows
   together must cover the full chapter sentence range.

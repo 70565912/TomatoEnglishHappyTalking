@@ -1,5 +1,10 @@
 # 修改日志
 
+## 2026-08-01
+
+- **绘本 12 景上限仅约束 AI 组图**：`replaceChapterPlan` / 手工分镜与本地 `importPageImage` 可超过 12 景；`replaceChapterPlan` 同步 `picture_book_pages` 骨架并保留同 pageIndex 已有 ready 图（景数减少时删除多余页）。`confirmPromptReview`、整章 AI 组图与 `PictureBookImageService` 在 >12 时明确中文拒绝且不调图片 API。AI 文本规划 /「按数量匹配分镜」仍 ≤12。文档同步：`AGENTS.md`、`docs/ai_cli_qa_remote_guide.md`、`docs/ai-call-flow-and-prompt-logic.md`、`docs/picture_book_chapter_plan_scene_split_tuning.md`。
+- **歌曲字幕本地对齐评估归档**：离线对比 CTC/MMS、英文 Wav2Vec2、torchaudio FA、MFA 与火山 BigASR 时间轴后，结论与脚本摘要存入 `docs/archive/ctc_forced_aligner_subtitle_eval_20260801/`。英文干净曲 MMS 接近 BigASR，难例仍需云兜底；MFA 因 RTF 过高不适合产品。正式 `SongSubtitleTimelineService` 未改；评测用 venv / Miniconda MFA / 相关模型缓存已清理。
+
 ## 2026-07-29
 
 - **Windows 绘本图片超分**：新增 `PictureBookImageUpscaleService`，随 Windows 程序打包 Real-ESRGAN NCNN Vulkan 与 `realesr-animevideov3` 2 倍 / 4 倍模型。AI 组图、单页生成与本地导入均可在确认时选择超分；默认开启，完全本地运行，不增加云图片 API 调用。

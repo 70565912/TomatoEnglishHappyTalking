@@ -209,6 +209,24 @@ void main() {
     expect(scenes.last.sentenceStartIndex, 1);
   });
 
+  test('validateManualChapterScenes accepts more than twelve scenes', () {
+    final scenes = PictureBookService.validateManualChapterScenesForTest(
+      scenes: [
+        for (var index = 0; index < 13; index += 1)
+          {
+            'pageIndex': index,
+            'sentenceStartIndex': index,
+            'sentenceEndIndex': index,
+            'sceneDescription': 'Visible scene ${index + 1}.',
+          },
+      ],
+      sentenceCount: 13,
+    );
+
+    expect(scenes, hasLength(13));
+    expect(scenes.last.pageIndex, 12);
+  });
+
   test('validateManualChapterScenes rejects empty descriptions', () {
     expect(
       () => PictureBookService.validateManualChapterScenesForTest(

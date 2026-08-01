@@ -328,11 +328,20 @@ $series = Invoke-TomatoBridge "series.list"
 ### 9.2 新建文章
 
 纯查询 QA 不应调用本命令。创建测试数据时使用唯一 `QA` 前缀，并在 finally 中清理。
+新建流程先调用 `article.prepareCreate`，它只做解析和最终英文提取，不写数据库；返回的
+`preparedId` 与正文哈希绑定、15 分钟过期，并在文章正文成功写入后消费。Web/Node 可用
+共享的 `read_aloud_dp_v2` 核心生成 `sentences`；人工审核稿使用 `reviewed_dp_v2`。
 
 ```powershell
+$prepared = Invoke-TomatoBridge "article.prepareCreate" @{
+    content = "Tom opens a book. He reads it aloud."
+}
 $created = Invoke-TomatoBridge "article.create" @{
     title = "QA Chapter 20260730"
     content = "Tom opens a book. He reads it aloud."
+    preparedId = $prepared.preparedId
+    sentences = @("Tom opens a book.", "He reads it aloud.")
+    sentenceSplitVersion = "read_aloud_dp_v2"
     pictureBookEnabled = $false
 }
 ```
@@ -343,10 +352,18 @@ $created = Invoke-TomatoBridge "article.create" @{
 $created = Invoke-TomatoBridge "article.create" @{
     title = "QA Chapter 20260730"
     content = "Tom opens a book. He reads it aloud."
+    preparedId = $prepared.preparedId
+    sentences = @("Tom opens a book.", "He reads it aloud.")
+    sentenceSplitVersion = "read_aloud_dp_v2"
     pictureBookEnabled = $true
     seriesId = 23
 }
 ```
+
+传入 `sentences` 时 Bridge 会逐块拒绝：空块、持久化显示换行、超过 30 词，或规范化
+拼接与 `prepareCreate` 的最终英文不等价。英文显示层允许按可用宽度自动换成多行；
+这种视觉换行不写入持久化句子。校验失败时不会静默重切。
+`resumeArticleId` 只续传已有创建流程，不再次调用 `prepareCreate`，也不重分已保存文章。
 
 创建过程可能调用文本、翻译或绘本规划云服务。超时应按阶段日志判断，不要重复提交。
 
@@ -404,7 +421,7 @@ $review = Invoke-TomatoBridge "pictureBook.promptReview" @{
 `generate`、`retryPage` 会生成或重新生成内容，可能产生费用。确认前必须读取审核结果，
 核对完整 scene 覆盖和目标文章。
 
-整表重设分镜（不调文本 AI、不删图、不出图）可用：
+整表重设分镜（不调文本 AI、不出图；可超过 12 景）可用：
 
 ```powershell
 Invoke-TomatoBridge "pictureBook.replaceChapterPlan" @{
@@ -427,7 +444,9 @@ Invoke-TomatoBridge "pictureBook.replaceChapterPlan" @{
 }
 ```
 
-要求：`articles.sentences` 已按朗读/字幕长度切好；`scenes` 必须 `pageIndex` 连续、区间无重叠且覆盖全部句子槽，描述非空。之后再 `promptReview` 核对，并用 `confirmPromptReview` 整章重生组图。
+要求：`articles.sentences` 已按朗读/字幕长度切好；`scenes` 必须 `pageIndex` 连续、区间无重叠且覆盖全部句子槽，描述非空。手工/QA 分镜**可以超过 12 景**；`replaceChapterPlan` 会同步 `picture_book_pages` 骨架（新页为「尚未导入图片」），随后可直接 `pictureBook.importPageImage` 逐页挂本地图。
+
+若走 AI 组图：再 `promptReview` 核对后用 `confirmPromptReview`。**超过 12 景时 `confirmPromptReview` 会明确拒绝**（万相连续组图上限），不会删图、不会调图片 API；本地导入不受此限制。
 
 UI 手工改景数：打开审核后设置场景数量，确认「按此数量匹配分镜」会调用
 `refreshPromptReview` 并带 `targetSceneCount`（文本 AI）。
@@ -533,6 +552,7 @@ app.back
 article.list
 article.translateToEnglish
 article.suggestTitle
+article.prepareCreate
 article.create
 article.rename
 article.fullText
@@ -811,4 +831,3 @@ QA 服务处理。
 
 先检查 `/health.runtimeState`、`/logs/recent` 和业务 state。区分“HTTP 客户端超时”、
 “任务仍在后台运行”和“服务已明确失败”，不要盲目重复提交。
-

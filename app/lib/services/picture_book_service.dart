@@ -111,7 +111,11 @@ class PictureBookService {
       'picture_book_chapter_scene_plan_v2';
   static const String _characterRosterRule =
       'Use short consistent labels and visible traits for recurring characters and visually important recurring groups; avoid one-off actions, emotions, and props.';
-  static const int _maxSceneCount = 12;
+  /// Hard cap for AI chapter planning and AI sequential group image generation
+  /// (aligned with Aliyun Wanx continuous group `n` ≤ 12). Manual/QA plans and
+  /// local `importPageImage` may exceed this; confirm/group gen must reject.
+  static const int _maxAiGroupSceneCount = 12;
+  static const int _maxSceneCount = _maxAiGroupSceneCount;
   static const String _bookDescriptionRefreshPurpose =
       'picture_book_book_description_refresh_v1';
   static const String _bookDescriptionDraftPurpose =
@@ -1090,6 +1094,8 @@ class PictureBookService {
       confirmedRelevantCharacters,
       confirmedNewCharacters,
     );
+    final confirmedSegments = _submittedSegmentsForDraft(draft, scenes);
+    _ensureAiGroupSceneCountAllowed(confirmedSegments.length);
     final mergedCharacters = _mergeBookCharacters(
       confirmedBookCharacters,
       confirmedNewCharacters,
@@ -1101,7 +1107,6 @@ class PictureBookService {
     );
     await DatabaseService.updateStorySeries(updatedSeries);
 
-    final confirmedSegments = _submittedSegmentsForDraft(draft, scenes);
     final fallbackGroupPrompt = _composeGroupPrompt(
       series: updatedSeries,
       plan: ChapterPicturePlan(
@@ -1970,6 +1975,15 @@ class PictureBookService {
       segments: segments,
       newCharacters: confirmedNewCharacters,
     );
+    await _syncPictureBookPagesFromPlanSegments(
+      article: article,
+      chapter: chapter,
+      series: updatedSeries,
+      chapterDescription: confirmedChapterDescription,
+      segments: segments,
+      relevantCharacters: finalRelevantCharacters,
+      newCharacters: confirmedNewCharacters,
+    );
     final refreshedChapter =
         await DatabaseService.getStoryChapterForArticle(articleId) ?? chapter;
 
@@ -2092,6 +2106,19 @@ class PictureBookService {
             page.status == 'ready' ||
             page.status == 'skipped' ||
             page.status == 'error')) {
+      await _emit(articleId, onProgress);
+      return;
+    }
+
+    try {
+      _ensureAiGroupSceneCountAllowed(pages.length);
+    } on FormatException catch (error) {
+      await _writePlanningErrorPage(
+        article: article,
+        chapter: currentChapter,
+        series: series,
+        errorMessage: _displayErrorMessage(error),
+      );
       await _emit(articleId, onProgress);
       return;
     }
@@ -3121,6 +3148,7 @@ class PictureBookService {
       sentenceCount: sentenceCount,
       strict: strictSceneValidation,
       expectedSceneCount: expectedSceneCount,
+      applyAiGroupCap: strictSceneValidation,
     );
     if (scenes.isEmpty) {
       return null;
@@ -3146,11 +3174,14 @@ class PictureBookService {
     required int sentenceCount,
     bool strict = false,
     int? expectedSceneCount,
+    bool applyAiGroupCap = false,
   }) {
     if (raw is! List) {
       return const [];
     }
-    final maxAllowed = _maxAllowedSceneCount(sentenceCount);
+    final maxAllowed = applyAiGroupCap
+        ? _maxAllowedAiSceneCount(sentenceCount)
+        : _maxAllowedManualSceneCount(sentenceCount);
     if (strict &&
         (raw.isEmpty ||
             raw.length > maxAllowed ||
@@ -3174,7 +3205,7 @@ class PictureBookService {
       if (strict && (rawIndex is! num || index != i)) {
         return const [];
       }
-      if (index < 0 || index >= _maxSceneCount) {
+      if (index < 0 || index >= maxAllowed) {
         if (strict) {
           return const [];
         }
@@ -3227,8 +3258,22 @@ class PictureBookService {
     return _normalizeSceneCoverage(scenes, sentenceCount);
   }
 
-  static int _maxAllowedSceneCount(int sentenceCount) =>
-      math.min(_maxSceneCount, math.max(0, sentenceCount));
+  static int _maxAllowedAiSceneCount(int sentenceCount) =>
+      math.min(_maxAiGroupSceneCount, math.max(0, sentenceCount));
+
+  static int _maxAllowedManualSceneCount(int sentenceCount) =>
+      math.max(0, sentenceCount);
+
+  static FormatException _aiGroupSceneCountExceeded(int sceneCount) =>
+      FormatException(
+        PictureBookImageService.aiGroupSceneCountExceededMessage(sceneCount),
+      );
+
+  static void _ensureAiGroupSceneCountAllowed(int sceneCount) {
+    if (sceneCount > _maxAiGroupSceneCount) {
+      throw _aiGroupSceneCountExceeded(sceneCount);
+    }
+  }
 
   static int? _normalizeTargetSceneCount(
     int? targetSceneCount, {
@@ -3237,13 +3282,13 @@ class PictureBookService {
     if (targetSceneCount == null) {
       return null;
     }
-    final maxAllowed = _maxAllowedSceneCount(sentenceCount);
+    final maxAllowed = _maxAllowedAiSceneCount(sentenceCount);
     if (maxAllowed <= 0) {
       throw const FormatException('章节句子不足，无法按指定数量匹配分镜。');
     }
     if (targetSceneCount < 1 || targetSceneCount > maxAllowed) {
       throw FormatException(
-        '场景数量须在 1 到 $maxAllowed 之间（受句子数与上限 $_maxSceneCount 限制）。',
+        '场景数量须在 1 到 $maxAllowed 之间（受句子数与 AI 组图上限 $_maxAiGroupSceneCount 限制）。',
       );
     }
     return targetSceneCount;
@@ -3253,7 +3298,7 @@ class PictureBookService {
     required List<Map<String, dynamic>> scenes,
     required int sentenceCount,
   }) {
-    final maxAllowed = _maxAllowedSceneCount(sentenceCount);
+    final maxAllowed = _maxAllowedManualSceneCount(sentenceCount);
     if (sentenceCount <= 0 || maxAllowed <= 0) {
       throw const FormatException('章节句子不足，无法重设分镜。');
     }
@@ -3267,6 +3312,7 @@ class PictureBookService {
       sentenceCount: sentenceCount,
       strict: true,
       expectedSceneCount: scenes.length,
+      applyAiGroupCap: false,
     );
     if (parsed.isEmpty) {
       throw FormatException(
@@ -3621,6 +3667,73 @@ class PictureBookService {
         updatedAt: DateTime.now(),
       ),
     );
+  }
+
+  /// Align `picture_book_pages` with a manual/QA plan without calling image AI.
+  ///
+  /// Preserves ready local images on matching [pageIndex]; creates importable
+  /// skeleton rows for new pages; drops pages beyond the new scene count.
+  static Future<void> _syncPictureBookPagesFromPlanSegments({
+    required Article article,
+    required StoryChapter chapter,
+    required StorySeries series,
+    required String chapterDescription,
+    required List<_PicturePageSegment> segments,
+    List<BookCharacter> relevantCharacters = const [],
+    List<BookCharacter> newCharacters = const [],
+  }) async {
+    final articleId = article.id;
+    final seriesId = series.id;
+    if (articleId == null || seriesId == null || segments.isEmpty) {
+      return;
+    }
+    final existingPages = await DatabaseService.getPictureBookPages(articleId);
+    final existingByIndex = <int, PictureBookPage>{
+      for (final page in existingPages) page.pageIndex: page,
+    };
+    final now = DateTime.now();
+    for (final segment in segments) {
+      final existing = existingByIndex[segment.pageIndex];
+      final hasReadyImage = existing != null &&
+          existing.status == 'ready' &&
+          (existing.imagePath?.trim().isNotEmpty ?? false);
+      final promptJson = ApiCacheService.canonicalJson(
+        _promptJsonForSegment(
+          series: series,
+          chapter: chapter,
+          segment: segment,
+          chapterDescription: chapterDescription,
+          relevantCharacters: relevantCharacters,
+          newCharacters: newCharacters,
+          groupPrompt: '',
+        ),
+      );
+      await DatabaseService.upsertPictureBookPage(
+        PictureBookPage(
+          id: existing?.id,
+          articleId: articleId,
+          seriesId: seriesId,
+          pageIndex: segment.pageIndex,
+          sentenceStartIndex: segment.sentenceStartIndex,
+          sentenceEndIndex: segment.sentenceEndIndex,
+          paragraphText: segment.text,
+          promptJson: promptJson,
+          imageCacheKey: hasReadyImage ? existing.imageCacheKey : null,
+          imagePath: hasReadyImage ? existing.imagePath : null,
+          status: hasReadyImage ? 'ready' : 'error',
+          errorMessage: hasReadyImage ? null : '尚未导入图片',
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        ),
+      );
+    }
+    await DatabaseService.deletePictureBookPagesWithIndexAtOrAbove(
+      articleId: articleId,
+      pageIndex: segments.length,
+    );
+    _imageUriCache.clear();
+    _thumbnailPathCache.clear();
+    _displayPathCache.clear();
   }
 
   static Future<void> _saveSinglePageConfirmedChapterPlan({

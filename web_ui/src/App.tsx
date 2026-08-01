@@ -3595,8 +3595,12 @@ function PictureBookPromptReviewDialog({
       (max, scene) => Math.max(max, scene.sentenceEndIndex + 1),
       0,
     );
+    // AI rematch / Wanx group generation hard cap; manual/QA plans may show more.
     return Math.min(12, Math.max(1, covered, scenes.length || 1));
   })();
+
+  const aiGroupSceneCountExceededMessage = (count: number) =>
+    `AI 组图最多支持 12 个场景（万相连续组图上限），当前为 ${count} 个。请减少分镜后再确认出图；本地导入图片不受此限制。`;
 
   const refreshPrompt = async (
     target: PictureBookPromptRefreshTarget,
@@ -3716,6 +3720,12 @@ function PictureBookPromptReviewDialog({
     }
     if (isSinglePageReview && referenceOptions.length > 0 && selectedReferencePageIndexes.length === 0) {
       setError('请至少选择一张参考图片');
+      return;
+    }
+    if (!isSinglePageReview && scenes.length > 12) {
+      const message = aiGroupSceneCountExceededMessage(scenes.length);
+      setError(message);
+      onNotice(message);
       return;
     }
     setSubmitting(true);
