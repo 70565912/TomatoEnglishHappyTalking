@@ -17,7 +17,6 @@ import '../../../shared/models/playback_visual_state.dart';
 import '../../../services/api_cache_service.dart';
 import '../../../services/database_service.dart';
 import '../../../services/listening_audio_material_service.dart';
-import '../../../services/nlp_service.dart';
 import '../../../services/recognition_based_assessment_service.dart';
 import '../../../services/scoring_service.dart';
 import '../../../services/streaming_asr_service.dart';
@@ -411,8 +410,8 @@ class FollowRead extends _$FollowRead {
       sentenceIndex: initialIndex,
       sentence: initialSentence,
     );
-    final initialRecording =
-        await _latestRecordingFor(index: initialIndex, sentence: initialSentence);
+    final initialRecording = await _latestRecordingFor(
+        index: initialIndex, sentence: initialSentence);
 
     _recorder = AudioRecorder();
 
@@ -488,8 +487,9 @@ class FollowRead extends _$FollowRead {
     var index = _s.currentIndex;
     var sentence = _s.currentSentence;
     if (isHiddenListeningSentence(sentence)) {
-      final visibleIndex = nextVisibleSentenceIndex(_s.article.sentences, index - 1) ??
-          firstVisibleSentenceIndex(_s.article.sentences);
+      final visibleIndex =
+          nextVisibleSentenceIndex(_s.article.sentences, index - 1) ??
+              firstVisibleSentenceIndex(_s.article.sentences);
       if (visibleIndex == null) {
         return;
       }
@@ -568,11 +568,9 @@ class FollowRead extends _$FollowRead {
       return article.copyWith(sentences: storedSentences);
     }
 
-    // Saved article sentences anchor generated materials. This fallback is
-    // read-only for incomplete rows; changing sentence boundaries requires
-    // rebuilding the article and regenerating dependent assets.
-    final fallback = NlpService.splitSentences(article.content);
-    return fallback.isEmpty ? article : article.copyWith(sentences: fallback);
+    // Never synthesize new boundaries for an existing article. Its stored
+    // sentences anchor TTS, subtitles, and recording material.
+    return article;
   }
 
   Future<AudioSource> _cachedTtsSource({

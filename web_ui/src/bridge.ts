@@ -455,12 +455,22 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   if (type === 'article.list' || type === 'app.ready') {
     return { articles: mockArticles, series: mockSeries };
   }
+  if (type === 'article.prepareCreate') {
+    const englishContent = normalizePracticeContent(String(payload.content ?? ''));
+    return {
+      preparedId: `mock-prepared-${Date.now()}`,
+      englishContent,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    };
+  }
   if (type === 'article.create') {
     const resumeArticleId = payload.resumeArticleId === undefined || payload.resumeArticleId === null
       ? null
       : Number(payload.resumeArticleId);
     const content = normalizePracticeContent(String(payload.content ?? ''));
-    const sentences = splitSentences(content);
+    const sentences = Array.isArray(payload.sentences)
+      ? payload.sentences.map((value) => String(value))
+      : splitSentences(content);
     const pictureBookEnabled = payload.pictureBookEnabled !== false;
     const requestedTitle = String(payload.title ?? '').trim();
     const resolvedTitle = requestedTitle || mockSuggestTitle(content);
@@ -487,6 +497,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       content,
       sentences,
       sentenceCount: sentences.length,
+      sentenceSplitVersion: String(payload.sentenceSplitVersion ?? 'read_aloud_dp_v2'),
       createdAt: new Date().toISOString(),
       averageScore: 0,
       pictureBookEnabled,

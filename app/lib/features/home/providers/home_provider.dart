@@ -2,7 +2,6 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../core/practice/listening_sentence_visibility.dart';
 import '../../../data/models/article_model.dart';
 import '../../../services/database_service.dart';
-import '../../../services/nlp_service.dart';
 
 part 'home_provider.g.dart';
 
@@ -21,10 +20,9 @@ Future<List<Article>> articleList(ArticleListRef ref) async {
     if (hasAnyStored) {
       return article.copyWith(sentences: storedSentences);
     }
-    // Saved sentences are the material boundary. Only synthesize an in-memory
-    // fallback for incomplete rows; rebuilding sentences requires rebuilding
-    // the article and its generated materials.
-    final fallback = NlpService.splitSentences(article.content);
-    return fallback.isEmpty ? article : article.copyWith(sentences: fallback);
+    // Persisted sentence boundaries are immutable for existing articles.
+    // Incomplete legacy rows must be explicitly rebuilt instead of silently
+    // receiving the current splitter's boundaries while they are being read.
+    return article;
   }).toList(growable: false);
 }

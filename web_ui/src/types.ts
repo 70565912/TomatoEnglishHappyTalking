@@ -27,6 +27,7 @@ export interface Article {
   title: string;
   content: string;
   sentences: string[];
+  sentenceSplitVersion?: 'legacy_v1' | 'read_aloud_dp_v2' | 'reviewed_dp_v2' | string;
   sentenceCount: number;
   visibleSentenceCount?: number;
   createdAt: string;

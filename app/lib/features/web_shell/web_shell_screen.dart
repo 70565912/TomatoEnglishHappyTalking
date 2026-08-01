@@ -10,6 +10,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as path_lib;
+import 'package:cryptography/cryptography.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/logging/tomato_logger.dart';
@@ -34,6 +35,7 @@ import '../../services/nlp_service.dart';
 import '../../services/picture_book_service.dart';
 import '../../services/practice_input_parser.dart';
 import '../../services/practice_text_service.dart';
+import '../../services/read_aloud_splitter_v2.dart';
 import '../../services/recording_export_service.dart';
 import '../../services/scoring_service.dart';
 import '../../services/song_subtitle_timeline_service.dart';
@@ -46,6 +48,18 @@ import 'suno/suno_external_launcher.dart';
 import 'suno/suno_utilities.dart';
 import 'web_bridge_protocol.dart';
 import 'web_shell_qa_server.dart';
+
+class _PreparedArticleInput {
+  const _PreparedArticleInput({
+    required this.sourceHash,
+    required this.englishContent,
+    required this.expiresAt,
+  });
+
+  final String sourceHash;
+  final String englishContent;
+  final DateTime expiresAt;
+}
 
 class WebShellScreen extends ConsumerStatefulWidget {
   const WebShellScreen({super.key});
@@ -68,6 +82,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   static final _qaRemoteToken = Platform.environment['TOMATO_QA_TOKEN'] ??
       const String.fromEnvironment('TOMATO_QA_TOKEN');
   static const _articleContentMaxChars = 8000;
+  static const _preparedArticleLifetime = Duration(minutes: 15);
   static const _sunoSongPurpose = 'article_suno_song_v1';
   static const _bailianSongPurpose = BailianMusicService.cachePurpose;
   static const _elevenLabsSongPurpose = ElevenLabsMusicService.cachePurpose;
@@ -96,6 +111,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   final Map<String, Future<ArticleSongVersion>> _songTimelineTasks = {};
   final Map<String, String> _songTimelineErrors = {};
   final Map<int, String> _sunoManualActionMessages = {};
+  final Map<String, _PreparedArticleInput> _preparedArticleInputs = {};
 
   bool get _supportsWindowsFrameRateLimit =>
       !kIsWeb &&
@@ -266,6 +282,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'article.list': _handleArticleList,
         'article.translateToEnglish': _handleArticleTranslateToEnglish,
         'article.suggestTitle': _handleArticleSuggestTitle,
+        'article.prepareCreate': _handleArticlePrepareCreate,
         'article.create': _handleArticleCreate,
         'article.rename': _handleArticleRename,
         'article.fullText': _handleArticleFullText,
@@ -492,9 +509,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
           child: InAppWebView(
             initialUrlRequest: URLRequest(
               url: WebUri(
-                _usesDevServer
-                    ? _devServerUrl.trim()
-                    : tomatoWebUiLocalUrl,
+                _usesDevServer ? _devServerUrl.trim() : tomatoWebUiLocalUrl,
               ),
             ),
             initialSettings: InAppWebViewSettings(
@@ -666,6 +681,43 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     return {'title': title.length > 80 ? title.substring(0, 80) : title};
   }
 
+  Future<Map<String, dynamic>> _handleArticlePrepareCreate(
+    BridgeMessage message,
+  ) async {
+    final content = _payloadString(message.payload, 'content').trim();
+    if (content.isEmpty) {
+      throw const FormatException('请填写文章内容');
+    }
+    _ensureArticleContentWithinLimit(content);
+    final parsedInput = PracticeInputParser.parse(content);
+    final englishContent = await _englishPracticeContent(
+      content,
+      parsedInput: parsedInput,
+      strictAi: true,
+    );
+    if (englishContent.trim().isEmpty) {
+      throw const FormatException('文章内容需要能转换为英文练习正文');
+    }
+    final sourceHash = await _articleContentHash(content);
+    final now = DateTime.now().toUtc();
+    final preparedId =
+        '${now.microsecondsSinceEpoch}_${sourceHash.substring(0, 16)}';
+    _preparedArticleInputs.removeWhere(
+      (_, value) => !value.expiresAt.isAfter(now),
+    );
+    final expiresAt = now.add(_preparedArticleLifetime);
+    _preparedArticleInputs[preparedId] = _PreparedArticleInput(
+      sourceHash: sourceHash,
+      englishContent: englishContent,
+      expiresAt: expiresAt,
+    );
+    return {
+      'preparedId': preparedId,
+      'englishContent': englishContent,
+      'expiresAt': expiresAt.toIso8601String(),
+    };
+  }
+
   Future<Map<String, dynamic>> _handleArticleCreate(
     BridgeMessage message,
   ) async {
@@ -673,6 +725,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         _payloadOptionalInt(message.payload, 'resumeArticleId');
     final requestedTitle = _payloadString(message.payload, 'title').trim();
     final content = _payloadString(message.payload, 'content').trim();
+    final preparedId = _payloadString(message.payload, 'preparedId').trim();
     final pictureBookEnabled = _payloadBool(
       message.payload,
       'pictureBookEnabled',
@@ -730,18 +783,61 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       progress: 0.12,
       message: '正在提取英文练习正文',
     );
-    final englishContent = await _englishPracticeContent(
-      content,
-      parsedInput: parsedInput,
-      strictAi: true,
-    );
+    _PreparedArticleInput? preparedInput;
+    late final String englishContent;
+    if (preparedId.isNotEmpty) {
+      preparedInput = _preparedArticleInputs[preparedId];
+      final now = DateTime.now().toUtc();
+      if (preparedInput == null || !preparedInput.expiresAt.isAfter(now)) {
+        _preparedArticleInputs.remove(preparedId);
+        throw const FormatException('preparedId 不存在或已过期，请重新预处理正文');
+      }
+      if (preparedInput.sourceHash != await _articleContentHash(content)) {
+        throw const FormatException('preparedId 与当前正文不匹配');
+      }
+      englishContent = preparedInput.englishContent;
+    } else {
+      englishContent = await _englishPracticeContent(
+        content,
+        parsedInput: parsedInput,
+        strictAi: true,
+      );
+    }
 
     await reportProgress(
       phase: 'sentences',
       progress: 0.2,
       message: '正在分句',
     );
-    final sentences = NlpService.splitSentences(englishContent);
+    final rawSentences = message.payload['sentences'];
+    late final List<String> sentences;
+    late final String sentenceSplitVersion;
+    if (rawSentences != null) {
+      if (rawSentences is! List) {
+        throw const FormatException('sentences 必须是字符串数组');
+      }
+      sentences = rawSentences.map((value) {
+        if (value is! String) {
+          throw const FormatException('sentences 必须只包含字符串');
+        }
+        return value.trim();
+      }).toList(growable: false);
+      sentenceSplitVersion =
+          _payloadString(message.payload, 'sentenceSplitVersion').trim();
+      if (sentenceSplitVersion != 'read_aloud_dp_v2' &&
+          sentenceSplitVersion != 'reviewed_dp_v2') {
+        throw const FormatException(
+          '传入 sentences 时 sentenceSplitVersion 必须为 read_aloud_dp_v2 或 reviewed_dp_v2',
+        );
+      }
+      ReadAloudSplitterV2.validateReviewedSentences(
+        englishContent,
+        sentences,
+      );
+    } else {
+      sentences = NlpService.splitSentences(englishContent);
+      sentenceSplitVersion = ReadAloudSplitterV2.version;
+    }
     if (sentences.isEmpty) {
       throw const FormatException('文章内容需要能转换为英文练习句子');
     }
@@ -780,6 +876,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
           title: title,
           content: englishContent,
           sentences: sentences,
+          sentenceSplitVersion: sentenceSplitVersion,
           createdAt: DateTime.now(),
         );
         series = await _ensureStorySeriesDescription(
@@ -808,9 +905,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         title: title,
         content: englishContent,
         sentences: sentences,
+        sentenceSplitVersion: sentenceSplitVersion,
         createdAt: DateTime.now(),
       );
       final id = await DatabaseService.saveArticle(article);
+      if (preparedInput != null) {
+        _preparedArticleInputs.remove(preparedId);
+      }
       savedArticleId = id;
       final savedArticle = article.copyWith(id: id);
       final listPayload = await _articleListPayload();
@@ -825,7 +926,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         await _saveArticleTranslationsAtCreate(
           articleId: id,
           sentences: sentences,
-          parsedInput: parsedInput,
         );
       } catch (error) {
         throw ArticleCreateResumeException(
@@ -927,7 +1027,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       await _saveArticleTranslationsAtCreate(
         articleId: resumeArticleId,
         sentences: article.sentences,
-        parsedInput: PracticeInputParser.parse(article.content),
       );
     } catch (error) {
       throw ArticleCreateResumeException(
@@ -6172,7 +6271,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<void> _saveArticleTranslationsAtCreate({
     required int articleId,
     required List<String> sentences,
-    required ParsedPracticeInput parsedInput,
   }) async {
     if (sentences.isEmpty) {
       return;
@@ -6196,27 +6294,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
           updatedAt: createdAt,
         ),
     };
-
-    if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
-      final imported = <ArticleSentenceTranslation>[];
-      for (final row in parsedInput.buildSentenceTranslations(
-        articleId: articleId,
-        sentences: sentences,
-        now: createdAt,
-      )) {
-        if (rowsByIndex.containsKey(row.sentenceIndex)) {
-          continue;
-        }
-        rowsByIndex[row.sentenceIndex] = row;
-        imported.add(row);
-      }
-      // Persist imported rows before the AI batch so a later failure does not
-      // lose bilingual mappings that were already known locally.
-      await DatabaseService.upsertArticleSentenceTranslations(
-        articleId,
-        imported,
-      );
-    }
 
     final missingSentences = <int, String>{
       for (var index = 0; index < sentences.length; index += 1)
@@ -6250,6 +6327,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       articleId,
       generated,
     );
+  }
+
+  Future<String> _articleContentHash(String content) async {
+    final hash = await Sha256().hash(utf8.encode(content.trim()));
+    return hash.bytes
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
   }
 
   Future<String> _englishPracticeContent(
@@ -6306,14 +6390,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       return article.copyWith(sentences: storedSentences);
     }
 
-    // Incomplete rows get an in-memory fallback only. Read/open/status paths
-    // must never rewrite article content or sentence boundaries.
-    final content = _normalizeEnglishWordJoiners(article.content);
-    final fallback = NlpService.splitSentences(content);
-    if (fallback.isEmpty) {
-      return article;
-    }
-    return article.copyWith(content: content, sentences: fallback);
+    // Existing articles keep their persisted boundaries. Even an in-memory
+    // fallback would silently move the TTS/subtitle material boundary.
+    return article;
   }
 
   String _contentWithUpdatedSentence({
@@ -6765,6 +6844,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       'title': article.title,
       'content': article.content,
       'sentences': article.sentences,
+      'sentenceSplitVersion': article.sentenceSplitVersion,
       'sentenceCount': article.sentences.length,
       'visibleSentenceCount': visibleSentenceCount(article.sentences),
       'createdAt': article.createdAt.toIso8601String(),
@@ -7027,7 +7107,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       TomatoLogger.warn(
         category: 'qa',
         event: 'screenshot.cdp_failed',
-        message: 'CDP full-page screenshot failed; falling back to viewport capture',
+        message:
+            'CDP full-page screenshot failed; falling back to viewport capture',
         error: error,
         stackTrace: stack,
       );

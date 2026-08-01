@@ -92,6 +92,14 @@ function adjacentChunks(chunks: string[], endsWith: RegExp, startsWith: RegExp):
   return false;
 }
 
+function preparedCreatePayload(content: unknown, englishContent?: string) {
+  return {
+    preparedId: 'test-prepared-id',
+    englishContent: englishContent ?? String(content ?? ''),
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  };
+}
+
 function installChapterOrderBridge(articles: Article[], series: StorySeries[]) {
   const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
     id: String(id),
@@ -942,7 +950,7 @@ describe('App', () => {
     fireEvent.change(bookTitleInput, { target: { value: 'Lunch Box Stories' } });
     expect(saveButton).not.toBeDisabled();
     expect(titleInput).toHaveValue('');
-    expect(screen.getByText('Tom opens a lunch box.')).toBeInTheDocument();
+    expect(screen.getAllByText('Tom opens a lunch box. He shares a red apple with Mia.')).toHaveLength(2);
 
     fireEvent.click(saveButton);
     expect(await screen.findByRole('dialog', { name: '绘本提示词审核' })).toBeInTheDocument();
@@ -967,6 +975,9 @@ describe('App', () => {
         calls.push({ type, payload });
         if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
           return ok(message.id, type, { articles: [], series: [] });
+        }
+        if (type === 'article.prepareCreate') {
+          return ok(message.id, type, preparedCreatePayload(payload.content));
         }
         if (type === 'article.create') {
           createAttempts += 1;
@@ -1028,6 +1039,11 @@ describe('App', () => {
     expect(
       await screen.findByText(/正文已写入书库，再次保存将继续补齐/),
     ).toBeInTheDocument();
+    const initialCreate = calls.find((call) => call.type === 'article.create');
+    expect(calls.filter((call) => call.type === 'article.prepareCreate')).toHaveLength(1);
+    expect(initialCreate?.payload.preparedId).toBe('test-prepared-id');
+    expect(initialCreate?.payload.sentenceSplitVersion).toBe('read_aloud_dp_v2');
+    expect(initialCreate?.payload.sentences).toEqual(['Alice sees a door.']);
 
     fireEvent.click(screen.getByRole('button', { name: /保存章节/ }));
     await waitFor(() => {
@@ -1054,6 +1070,9 @@ describe('App', () => {
         calls.push({ type, payload });
         if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
           return ok(message.id, type, { articles: [], series: [] });
+        }
+        if (type === 'article.prepareCreate') {
+          return ok(message.id, type, preparedCreatePayload(payload.content));
         }
         if (type === 'article.create') {
           if (!payload.resumeArticleId) {
@@ -1150,6 +1169,9 @@ describe('App', () => {
         }
         if (type === 'series.create') {
           return ok(message.id, type, { articles: [], series: [savedSeries] });
+        }
+        if (type === 'article.prepareCreate') {
+          return ok(message.id, type, preparedCreatePayload(payload.content));
         }
         if (type === 'article.create') {
           const article = {
@@ -2407,6 +2429,9 @@ describe('App', () => {
         if (type === 'series.list') {
           return ok(message.id, type, { series });
         }
+        if (type === 'article.prepareCreate') {
+          return ok(message.id, type, preparedCreatePayload(payload.content));
+        }
         if (type === 'article.create') {
           const article = {
             id: 42,
@@ -2608,6 +2633,13 @@ describe('App', () => {
         if (type === 'series.list') {
           return ok(message.id, type, { series: [] });
         }
+        if (type === 'article.prepareCreate') {
+          return ok(
+            message.id,
+            type,
+            preparedCreatePayload(payload.content, englishContent),
+          );
+        }
         if (type === 'article.create') {
           const article = {
             id: 42,
@@ -2742,8 +2774,7 @@ describe('App', () => {
 
   it('splits glued sentence starts without requiring whitespace', () => {
     expect(splitSentences('He left."She stayed behind."')).toEqual([
-      'He left.',
-      '"She stayed behind."',
+      'He left. "She stayed behind."',
     ]);
     expect(splitSentences('"Wait." she said quietly.')).toEqual([
       '"Wait." she said quietly.',
@@ -2756,12 +2787,9 @@ describe('App', () => {
     );
     const joined = chunks.join('\n');
 
-    expect(
-      chunks.some(
-        (chunk) => chunk.includes('thought Alice.') && !chunk.includes("I've so often"),
-      ),
-    ).toBe(true);
-    expect(chunks.some((chunk) => chunk.trimStart().startsWith("\"I've so often"))).toBe(true);
+    expect(chunks[0]).toContain('thought Alice. "I\'ve so often read in the newspapers,');
+    expect(chunks[1]).toContain("at the end of trials,'There was some attempt at applause,");
+    expect(chunks[2].trimStart()).toMatch(/^which was immediately suppressed/);
     expect(joined).not.toMatch(/some attempt\nat applause/);
     expect(chunks.some((chunk) => /some attempt\s*$/.test(chunk.trim()) && !chunk.includes('at applause'))).toBe(false);
     expect(

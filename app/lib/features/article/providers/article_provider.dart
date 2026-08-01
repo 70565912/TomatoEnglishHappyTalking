@@ -4,6 +4,7 @@ import '../../../services/database_service.dart';
 import '../../../services/nlp_service.dart';
 import '../../../services/practice_input_parser.dart';
 import '../../../services/practice_text_service.dart';
+import '../../../services/read_aloud_splitter_v2.dart';
 
 part 'article_provider.g.dart';
 
@@ -86,19 +87,11 @@ class ArticleForm extends _$ArticleForm {
         title: title,
         content: englishContent,
         sentences: sentences,
+        sentenceSplitVersion: ReadAloudSplitterV2.version,
         createdAt: DateTime.now(),
       );
 
-      final articleId = await DatabaseService.saveArticle(article);
-      if (parsedInput.sourceKind == PracticeInputSourceKind.standardBilingual) {
-        await DatabaseService.saveArticleSentenceTranslations(
-          articleId,
-          parsedInput.buildSentenceTranslations(
-            articleId: articleId,
-            sentences: sentences,
-          ),
-        );
-      }
+      await DatabaseService.saveArticle(article);
       state = const ArticleFormState(); // reset form
       return true;
     } catch (error) {

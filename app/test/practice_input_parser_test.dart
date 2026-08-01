@@ -83,8 +83,7 @@ They smile and walk home.
       expect(rows, hasLength(sentences.length));
       expect(rows.first.articleId, 7);
       expect(rows.first.sentenceIndex, 0);
-      expect(rows.first.chineseText, '汤姆发现了一个明亮的零食盒。');
-      expect(rows[1].chineseText, '他把它分享给自己的队友。');
+      expect(rows.first.chineseText, '汤姆发现了一个明亮的零食盒。他把它分享给自己的队友。');
       expect(rows.last.chineseText, '他们微笑着走回家。');
     });
 
@@ -156,7 +155,9 @@ The soldiers were silent, and looked at Alice, as the question was evidently mea
 "Come on then!" roared the Queen, and Alice joined the procession, wondering very much what would happen next.
 “那就过来！”王后吼道，爱丽丝加入了游行队伍，心里非常好奇接下来会发生什么。
 ''');
-      final sentences = NlpService.splitSentences(parsed.englishContent);
+      final sentences = parsed.paragraphPairs
+          .map((pair) => pair.englishParagraph)
+          .toList(growable: false);
 
       final rows = parsed.buildSentenceTranslations(
         articleId: 9,
@@ -354,8 +355,10 @@ The Queen said—
       expect(parsed.englishContent, isNot(contains('文化卡片')));
       expect(parsed.englishContent, isNot(contains('生词好句')));
       expect(sentences, isNotEmpty);
-      expect(sentences.last,
-          contains('it was as much as she could do to hold it.'));
+      expect(
+        sentences.join(' '),
+        contains('it was as much as she could do to hold it.'),
+      );
     });
 
     test('extracts E22 tea-party story without learning-note examples', () {

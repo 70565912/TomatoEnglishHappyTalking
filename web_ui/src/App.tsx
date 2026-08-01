@@ -12,7 +12,7 @@ import {
   visiblePositionForSlotIndex,
   visibleSentenceCountFromItems,
 } from './listeningSentenceVisibility';
-import { splitSentences } from './sentenceSplitter';
+import { READ_ALOUD_SPLIT_VERSION, splitSentences } from './sentenceSplitter';
 import {
   pictureBookGroupSubmitOverlay,
   pictureBookPromptRefreshOverlay,
@@ -63,6 +63,7 @@ import type {
   TtsProvider,
   StorySeries,
 } from './types';
+
 import { NativeCommandError } from './types';
 import './styles.css';
 
@@ -5713,6 +5714,15 @@ function ArticlePage({
         selectedSeriesId === 'new'
           ? newSeriesTitle.trim()
           : '';
+      const prepared = resumeArticleId == null
+        ? await sendNative<{ preparedId: string; englishContent: string; expiresAt: string }>(
+            'article.prepareCreate',
+            { content },
+          )
+        : null;
+      const preparedSentences = prepared == null
+        ? undefined
+        : splitSentences(prepared.englishContent);
       const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
         'article.create',
         {
@@ -5723,6 +5733,13 @@ function ArticlePage({
           seriesTitle: resolvedSeriesTitle,
           seriesDescription: seriesDescription.trim(),
           seriesCharacters: normalizeBookCharacters(seriesCharacters),
+          ...(prepared != null
+            ? {
+                preparedId: prepared.preparedId,
+                sentences: preparedSentences,
+                sentenceSplitVersion: READ_ALOUD_SPLIT_VERSION,
+              }
+            : {}),
           ...(resumeArticleId != null ? { resumeArticleId } : {}),
         },
       );
@@ -7640,11 +7657,7 @@ function FullscreenListeningPlayer({
             <h1 className={activePart === 'english' ? 'playing-text' : undefined}>
               {currentItem?.english ?? article.title}
             </h1>
-            {currentItem?.chinese && (
-              <p className={activePart === 'chinese' ? 'playing-text' : undefined}>
-                {currentItem.chinese}
-              </p>
-            )}
+            <p className={activePart === 'chinese' ? 'playing-text' : undefined}>{currentItem?.chinese ?? ''}</p>
           </div>
         </div>
       </div>
@@ -7965,7 +7978,7 @@ function FullscreenSongPlayer({
           )}
           <div className="fullscreen-listening-subtitles">
             <h1>{english}</h1>
-            {chinese && <p>{chinese}</p>}
+            <p>{chinese}</p>
           </div>
         </div>
       </div>
@@ -9613,7 +9626,10 @@ function PictureBookScene({
       {showSubtitles && (
         <div className="picture-book-subtitles">
           <div className="picture-book-subtitle-line english">
-            <h1 className={englishActive ? 'playing-text' : undefined} aria-label={english}>
+            <h1
+              aria-label={english}
+              className={englishActive ? 'playing-text' : undefined}
+            >
               <ClickableEnglishText
                 text={english}
                 sentence={english}
@@ -9621,11 +9637,9 @@ function PictureBookScene({
               />
             </h1>
           </div>
-          {chinese && (
-            <div className="picture-book-subtitle-line chinese">
-              <p className={chineseActive ? 'playing-text' : undefined}>{chinese}</p>
-            </div>
-          )}
+          <div className="picture-book-subtitle-line chinese">
+            <p className={chineseActive ? 'playing-text' : undefined}>{chinese ?? ''}</p>
+          </div>
         </div>
       )}
       {isRetryable && page && (
