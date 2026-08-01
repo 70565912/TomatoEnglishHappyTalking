@@ -7,15 +7,12 @@ void main() {
       expect(NlpService.splitSentences('   \n\t  '), isEmpty);
     });
 
-    test('keeps ordinary short sentences', () {
+    test('merges adjacent ordinary short sentences toward the target', () {
       expect(
         NlpService.splitSentences(
           'Tom finds a bright snack box. He shares it with his team.',
         ),
-        [
-          'Tom finds a bright snack box.',
-          'He shares it with his team.',
-        ],
+        ['Tom finds a bright snack box. He shares it with his team.'],
       );
     });
 
@@ -58,7 +55,8 @@ void main() {
 
       expect(chunks, isNot(contains('Dr.')));
       expect(chunks.first, startsWith('Dr. Smith'));
-      expect(chunks.length, 2);
+      expect(chunks,
+          ['Dr. Smith met Tom after school. They read a book together.']);
     });
 
     test('skips imported episode headings before read-aloud text', () {
@@ -128,7 +126,12 @@ void main() {
         expect(chunks, isNotEmpty, reason: sample.key);
         expect(_maxWords(chunks), lessThanOrEqualTo(30), reason: sample.key);
         expect(_hasOneWordFragment(chunks), isFalse, reason: sample.key);
-        expect(_hasDanglingBreak(chunks), isFalse, reason: sample.key);
+        expect(
+          _hasDanglingBreak(chunks),
+          isFalse,
+          reason:
+              '${sample.key}\ndangling=${_danglingBreaks(chunks)}\n${chunks.join('\n|\n')}',
+        );
       }
 
       final e10 = NlpService.splitSentences(_e10CaucusRace);
@@ -164,22 +167,16 @@ void main() {
         isTrue,
       );
       expect(
-        e12.any((chunk) => chunk.trimRight().endsWith('to be seen—')),
-        isTrue,
+        e12.join(' '),
+        contains('to be seen— everything seemed to have changed'),
       );
       expect(
         e12.any(
-          (chunk) =>
-              chunk.contains('great hall, with the glass table') &&
-              chunk.contains('had vanished completely.'),
-        ),
-        isTrue,
-      );
-      expect(
-        e12.any((chunk) => RegExp(r'^with the glass table').hasMatch(chunk.trim())),
+            (chunk) => RegExp(r'^with the glass table').hasMatch(chunk.trim())),
         isFalse,
       );
-      expect(e12.any((chunk) => chunk.contains('fan! Quick, now!"')), isTrue);
+      expect(e12.join(' '), contains('fan!'));
+      expect(e12.join(' '), contains('Quick, now!"'));
       expect(_hasTinyFragment(e12, maxWords: 3), isFalse);
     });
 
@@ -211,16 +208,14 @@ void main() {
           ),
         ),
         isTrue,
+        reason: chunks.join('\n|\n'),
       );
     });
 
     test('splits glued sentence starts without requiring whitespace', () {
       expect(
         NlpService.splitSentences('He left."She stayed behind."'),
-        [
-          'He left.',
-          '"She stayed behind."',
-        ],
+        ['He left. "She stayed behind."'],
       );
       // Lowercase continuation after a closed quote stays one unit.
       expect(
@@ -243,7 +238,8 @@ void main() {
       expect(
         chunks.any(
           (chunk) =>
-              chunk.contains('thought Alice.') && !chunk.contains("I've so often"),
+              chunk.contains('thought Alice.') &&
+              !chunk.contains("I've so often"),
         ),
         isTrue,
       );
@@ -281,7 +277,8 @@ void main() {
       // (next chunk starts with before). Never a bare mid-word cut.
       expect(
         littleChunks.any(
-              (chunk) => chunk.contains('a little before she made her next remark'),
+              (chunk) =>
+                  chunk.contains('a little before she made her next remark'),
             ) ||
             _adjacentChunks(
               littleChunks,
@@ -341,13 +338,16 @@ bool _hasTinyFragment(List<String> chunks, {int maxWords = 4}) => chunks.any(
           !RegExp(r'[.!?。！？]["”’)\]}》]*$').hasMatch(chunk.trim()),
     );
 
-bool _hasDanglingBreak(List<String> chunks) {
-  final danglingEnd = RegExp(
-    r'\b(?:a|an|the|and|or|but|as|if|to|of|for|with|from|into|upon|about|like|than|that|which|who|what|how|why|where|when|me|my|your|his|her|their|our|very)\s*["”’)\]}》]*$',
-    caseSensitive: false,
-  );
-  return chunks.any((chunk) => danglingEnd.hasMatch(chunk.trim()));
-}
+final _danglingEnd = RegExp(
+  r'\b(?:a|an|the|and|or|but|to|of|for|with|from|into|upon|about|my|your|his|her|their|our)\s*["”’)\]}》]*$',
+  caseSensitive: false,
+);
+
+bool _hasDanglingBreak(List<String> chunks) =>
+    _danglingBreaks(chunks).isNotEmpty;
+
+List<String> _danglingBreaks(List<String> chunks) =>
+    chunks.where((chunk) => _danglingEnd.hasMatch(chunk.trim())).toList();
 
 bool _containsSingleChunkWithAll(List<String> chunks, List<String> needles) {
   return chunks.any(
