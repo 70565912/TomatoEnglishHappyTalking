@@ -90,7 +90,11 @@ flutter:
     - assets/web/assets/ui/lego/animations/success/
     - assets/web/assets/ui/lego/animations/wave/
     - assets/web/assets/ui/lego/mascot-blink/
-  # Fonts are loaded via google_fonts package (no local font files needed)
+  fonts:
+    - family: Nunito
+      fonts:
+        - asset: assets/fonts/Nunito-VariableFont_wght.ttf
+          weight: 800
 
 hooks:
   user_defines:

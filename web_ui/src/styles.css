@@ -3945,10 +3945,11 @@ select:disabled {
 
 .fullscreen-listening-subtitles h1,
 .fullscreen-listening-subtitles p {
-  max-width: min(1180px, 100%);
+  width: min(1075px, 84%);
+  max-width: 100%;
   margin: 0;
   color: #fffaf3;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
   letter-spacing: 0;
   text-shadow:
     0 2px 4px rgba(0, 0, 0, 0.92),
@@ -3958,15 +3959,20 @@ select:disabled {
 }
 
 .fullscreen-listening-subtitles h1 {
+  font-family: "Nunito", var(--font-sans);
   font-size: 30px;
+  font-weight: 800;
   line-height: 1.18;
+  white-space: normal;
 }
 
 .fullscreen-listening-subtitles p {
   font-family: "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", var(--font-sans);
-  font-size: 25px;
+  --subtitle-base-font-size: 25px;
+  font-size: var(--subtitle-base-font-size);
   font-weight: 900;
   line-height: 1.24;
+  white-space: nowrap;
 }
 
 .fullscreen-listening-toolbar {
@@ -4203,6 +4209,7 @@ select:disabled {
 
 .picture-book-subtitle-line {
   display: inline-flex;
+  width: 100%;
   gap: 8px;
   align-items: center;
   justify-content: center;
@@ -4210,15 +4217,18 @@ select:disabled {
 }
 
 .picture-book-subtitle-line.chinese {
-  display: block;
+  display: inline-flex;
+  justify-content: center;
 }
 
 .picture-book-subtitles h1,
 .picture-book-subtitles p {
-  max-width: 980px;
+  width: min(1075px, 84%);
+  max-width: 100%;
   margin: 0;
   color: #fffaf3;
   letter-spacing: 0;
+  overflow-wrap: normal;
   text-shadow:
     0 2px 4px rgba(0, 0, 0, 0.92),
     0 0 2px rgba(0, 0, 0, 0.88),
@@ -4227,16 +4237,20 @@ select:disabled {
 }
 
 .picture-book-subtitles h1 {
+  font-family: "Nunito", var(--font-sans);
   font-size: 22px;
-  font-weight: 1000;
+  font-weight: 800;
   line-height: 1.16;
+  white-space: normal;
 }
 
 .picture-book-subtitles p {
   font-family: "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", var(--font-sans);
-  font-size: 20px;
+  --subtitle-base-font-size: 20px;
+  font-size: var(--subtitle-base-font-size);
   font-weight: 900;
   line-height: 1.28;
+  white-space: nowrap;
 }
 
 .picture-book-subtitles .word-token {

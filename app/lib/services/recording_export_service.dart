@@ -2428,7 +2428,12 @@ class RecordingExportService {
     final lineGap =
         chinese.isEmpty ? 0.0 : math.max(6.0, bounds.height * 0.006);
     final englishFont = math.max(28.0, math.min(54.0, bounds.width / 34));
-    final chineseFont = math.max(22.0, math.min(42.0, bounds.width / 46));
+    final chineseFont = _fitSingleLineSubtitleFontSize(
+      chinese,
+      desiredFontSize: math.max(22.0, math.min(42.0, bounds.width / 46)),
+      maxWidth: maxWidth,
+      fontWeight: FontWeight.w700,
+    );
     final outlineWidth = math.max(3.0, bounds.width * 0.0022);
     final englishParagraph = _subtitleParagraph(
       english,
@@ -2455,7 +2460,7 @@ class RecordingExportService {
             chinese,
             fontSize: chineseFont,
             fontWeight: FontWeight.w700,
-            maxLines: 2,
+            maxLines: 1,
             maxWidth: maxWidth,
           );
     final chineseOutline = chinese.isEmpty
@@ -2464,7 +2469,7 @@ class RecordingExportService {
             chinese,
             fontSize: chineseFont,
             fontWeight: FontWeight.w700,
-            maxLines: 2,
+            maxLines: 1,
             maxWidth: maxWidth,
             foreground: Paint()
               ..style = PaintingStyle.stroke
@@ -2540,6 +2545,28 @@ class RecordingExportService {
     final paragraph = builder.build()
       ..layout(ui.ParagraphConstraints(width: maxWidth));
     return paragraph;
+  }
+
+  static double _fitSingleLineSubtitleFontSize(
+    String text, {
+    required double desiredFontSize,
+    required double maxWidth,
+    required FontWeight fontWeight,
+  }) {
+    if (text.trim().isEmpty) return desiredFontSize;
+    var size = desiredFontSize;
+    while (size > 11) {
+      final paragraph = _subtitleParagraph(
+        text,
+        fontSize: size,
+        fontWeight: fontWeight,
+        maxLines: 1,
+        maxWidth: maxWidth,
+      );
+      if (!paragraph.didExceedMaxLines) return size;
+      size -= 1;
+    }
+    return 11;
   }
 
   static void _drawContainImage(

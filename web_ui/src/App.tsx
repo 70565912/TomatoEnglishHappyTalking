@@ -1,4 +1,4 @@
-import { FormEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { onNativeEvent, sendNative } from './bridge';
@@ -64,6 +64,94 @@ import type {
   StorySeries,
 } from './types';
 
+function AutoFitSubtitleLine({
+  as,
+  text,
+  className,
+  children,
+}: {
+  as: 'h1' | 'p';
+  text: string;
+  className?: string;
+  children?: ReactNode;
+}) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [fontSize, setFontSize] = useState<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    let active = true;
+    let measuredWidth = -1;
+    const fit = (force = false) => {
+      const current = ref.current;
+      if (!current) return;
+      const availableWidth = current.clientWidth;
+      if (!force && Math.abs(availableWidth - measuredWidth) < 0.5) return;
+      measuredWidth = availableWidth;
+
+      const computed = getComputedStyle(current);
+      const configuredBase = Number.parseFloat(
+        computed.getPropertyValue('--subtitle-base-font-size'),
+      );
+      const base = Number.isFinite(configuredBase)
+        ? configuredBase
+        : Number.parseFloat(computed.fontSize) || 20;
+      const probe = document.createElement('span');
+      probe.textContent = text;
+      probe.style.position = 'fixed';
+      probe.style.left = '-100000px';
+      probe.style.top = '0';
+      probe.style.width = 'max-content';
+      probe.style.maxWidth = 'none';
+      probe.style.visibility = 'hidden';
+      probe.style.whiteSpace = 'nowrap';
+      probe.style.fontFamily = computed.fontFamily;
+      probe.style.fontSize = `${base}px`;
+      probe.style.fontStyle = computed.fontStyle;
+      probe.style.fontWeight = computed.fontWeight;
+      probe.style.letterSpacing = computed.letterSpacing;
+      probe.style.lineHeight = computed.lineHeight;
+      document.body.appendChild(probe);
+      const naturalWidth = probe.getBoundingClientRect().width;
+      probe.remove();
+
+      const nextFontSize = naturalWidth <= availableWidth + 0.5
+        ? undefined
+        : Math.max(11, Math.floor((base * availableWidth / Math.max(1, naturalWidth)) * 10) / 10);
+      setFontSize((previous) => {
+        if (previous == null && nextFontSize == null) return previous;
+        if (previous != null && nextFontSize != null && Math.abs(previous - nextFontSize) < 0.05) {
+          return previous;
+        }
+        return nextFontSize;
+      });
+    };
+    fit(true);
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => fit());
+    observer.observe(element);
+    void document.fonts?.ready.then(() => {
+      if (active) fit(true);
+    });
+    return () => {
+      active = false;
+      observer.disconnect();
+    };
+  }, [text]);
+
+  const Tag = as;
+  return (
+    <Tag
+      ref={(node) => { ref.current = node; }}
+      className={className}
+      aria-label={text}
+      style={fontSize == null ? undefined : { fontSize: `${fontSize}px` }}
+    >
+      {children ?? text}
+    </Tag>
+  );
+}
 import { NativeCommandError } from './types';
 import './styles.css';
 
@@ -7657,7 +7745,11 @@ function FullscreenListeningPlayer({
             <h1 className={activePart === 'english' ? 'playing-text' : undefined}>
               {currentItem?.english ?? article.title}
             </h1>
-            <p className={activePart === 'chinese' ? 'playing-text' : undefined}>{currentItem?.chinese ?? ''}</p>
+            <AutoFitSubtitleLine
+              as="p"
+              text={currentItem?.chinese ?? ''}
+              className={activePart === 'chinese' ? 'playing-text' : undefined}
+            />
           </div>
         </div>
       </div>
@@ -7978,7 +8070,7 @@ function FullscreenSongPlayer({
           )}
           <div className="fullscreen-listening-subtitles">
             <h1>{english}</h1>
-            <p>{chinese}</p>
+            <AutoFitSubtitleLine as="p" text={chinese} />
           </div>
         </div>
       </div>
@@ -9638,7 +9730,11 @@ function PictureBookScene({
             </h1>
           </div>
           <div className="picture-book-subtitle-line chinese">
-            <p className={chineseActive ? 'playing-text' : undefined}>{chinese ?? ''}</p>
+            <AutoFitSubtitleLine
+              as="p"
+              text={chinese ?? ''}
+              className={chineseActive ? 'playing-text' : undefined}
+            />
           </div>
         </div>
       )}
