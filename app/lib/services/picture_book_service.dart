@@ -95,6 +95,7 @@ class PictureBookService {
   // creation-center lightbox preview should request the raw "full" original.
   static const int _creationDisplayMaxWidth = 1280;
   static const int _creationDisplayMaxHeight = 720;
+
   /// Matches Seedream remote full originals (16:9). Imported pages are
   /// cover-cropped and natively re-encoded to this size before cache write.
   static const int _importedFullWidth = 2560;
@@ -111,6 +112,7 @@ class PictureBookService {
       'picture_book_chapter_scene_plan_v2';
   static const String _characterRosterRule =
       'Use short consistent labels and visible traits for recurring characters and visually important recurring groups; avoid one-off actions, emotions, and props.';
+
   /// Hard cap for AI chapter planning and AI sequential group image generation
   /// (aligned with Aliyun Wanx continuous group `n` ≤ 12). Manual/QA plans and
   /// local `importPageImage` may exceed this; confirm/group gen must reject.
@@ -1653,15 +1655,13 @@ class PictureBookService {
     }
 
     final pages = await DatabaseService.getPictureBookPages(articleId);
-    final readyPages = pages
-        .where((page) {
-          if (page.status != 'ready') {
-            return false;
-          }
-          final path = (page.imagePath ?? '').trim();
-          return path.isNotEmpty;
-        })
-        .toList(growable: false)
+    final readyPages = pages.where((page) {
+      if (page.status != 'ready') {
+        return false;
+      }
+      final path = (page.imagePath ?? '').trim();
+      return path.isNotEmpty;
+    }).toList(growable: false)
       ..sort((a, b) => a.pageIndex.compareTo(b.pageIndex));
 
     if (readyPages.isEmpty) {
@@ -1679,10 +1679,10 @@ class PictureBookService {
         );
       }
       final extension = _normalizedImageExtension(sourcePath);
-      final safeExtension =
-          extension.isEmpty ? 'png' : extension.replaceAll(RegExp(r'[^a-z0-9]'), '');
-      final sceneLabel =
-          (page.pageIndex + 1).toString().padLeft(2, '0');
+      final safeExtension = extension.isEmpty
+          ? 'png'
+          : extension.replaceAll(RegExp(r'[^a-z0-9]'), '');
+      final sceneLabel = (page.pageIndex + 1).toString().padLeft(2, '0');
       final fileName = '$prefix$sceneLabel.$safeExtension';
       planned.add(
         _ExportChapterImagePlan(
@@ -2028,8 +2028,9 @@ class PictureBookService {
       'articleId': articleId,
       'replaced': true,
       'bookDescription': confirmedBookDescription,
-      'bookCharacters':
-          nextBookCharacters.map((item) => item.toJson()).toList(growable: false),
+      'bookCharacters': nextBookCharacters
+          .map((item) => item.toJson())
+          .toList(growable: false),
       'relevantCharacters': finalRelevantCharacters
           .map((item) => item.toJson())
           .toList(growable: false),
@@ -2537,14 +2538,8 @@ class PictureBookService {
   }) =>
       regenerateArticle(articleId: articleId, onProgress: onProgress);
 
-  static Future<Map<String, dynamic>> statePayload(
-    int articleId, {
-    bool includeImageUris = false,
-  }) async {
+  static Future<Map<String, dynamic>> statePayload(int articleId) async {
     final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
-    final series = chapter == null
-        ? null
-        : await DatabaseService.getStorySeriesById(chapter.seriesId);
     var pages = await DatabaseService.getPictureBookPages(articleId);
     if (chapter != null && pages.length > 1) {
       pages = await _recoverReadyPagesFromGroupCache(
@@ -2553,9 +2548,11 @@ class PictureBookService {
         pages: pages,
       );
     }
-    final pageJsons = await Future.wait(
-      pages.map((page) => _pageJson(page, includeImageUri: includeImageUris)),
-    );
+    // State is deliberately metadata-only. Prompt review owns prompt text, and
+    // pageImage owns one requested image variant. Keeping those boundaries
+    // prevents a state poll from serializing an entire chapter of prompts or
+    // base64 images (the original design produced QA responses above 60 MB).
+    final pageJsons = pages.map(_pageStateJson).toList(growable: false);
     final status =
         pages.isEmpty && _scheduledGenerationCounts[articleId] != null
             ? 'queued'
@@ -2564,8 +2561,6 @@ class PictureBookService {
       'articleId': articleId,
       'enabled': chapter != null,
       'status': status,
-      'series': series?.toJson(),
-      'chapter': chapter?.toJson(series),
       'pages': pageJsons,
     };
   }
@@ -2656,11 +2651,20 @@ class PictureBookService {
   static Future<Map<String, dynamic>> pageImagePayload({
     required int articleId,
     required int pageIndex,
-    String variant = 'full',
+    required String variant,
   }) async {
-    // Web UI <img> cannot load arbitrary cache-directory file:// URIs from the
-    // embedded WebView origin. Always return data:image/...;base64,... here.
-    // See docs/build-and-release-pitfalls.md (WebView 绘本图不要用 file:// 原图路径).
+    // A page image is the only bridge response allowed to carry image bytes.
+    // Web UI asks for thumbnail/display on demand; `full` is reserved for an
+    // explicit QA/native request because WebView2 must never render the remote
+    // original (large textures can trigger GPU-driver corruption).
+    final normalizedVariant = variant.trim().toLowerCase();
+    if (normalizedVariant != 'thumbnail' &&
+        normalizedVariant != 'display' &&
+        normalizedVariant != 'full') {
+      throw const FormatException(
+        'pictureBook.pageImage.variant must be thumbnail, display, or full',
+      );
+    }
     final pages = await DatabaseService.getPictureBookPages(articleId);
     PictureBookPage? targetPage;
     for (final page in pages) {
@@ -2674,11 +2678,12 @@ class PictureBookService {
       return {
         'articleId': articleId,
         'pageIndex': pageIndex,
+        'variant': normalizedVariant,
+        'imageRevision': null,
         'imageUri': null,
       };
     }
 
-    final normalizedVariant = variant.trim().toLowerCase();
     final useThumbnail = normalizedVariant == 'thumbnail';
     final useDisplay = normalizedVariant == 'display';
     final imageUri = useThumbnail
@@ -2693,6 +2698,7 @@ class PictureBookService {
       'articleId': articleId,
       'pageIndex': pageIndex,
       'variant': resolvedVariant,
+      'imageRevision': _pageImageRevision(targetPage),
       'imageUri': imageUri,
       'missing': imageUri == null && imagePath.isNotEmpty,
       'errorMessage': imageUri == null && imagePath.isNotEmpty
@@ -2730,7 +2736,7 @@ class PictureBookService {
     return true;
   }
 
-  static Future<Map<String, dynamic>?> coverImagePayloadForArticle(
+  static Future<Map<String, dynamic>?> coverDescriptorForArticle(
     int articleId,
   ) async {
     final pages = await DatabaseService.getPictureBookPages(articleId);
@@ -2742,14 +2748,9 @@ class PictureBookService {
       if (imagePath.isEmpty) {
         continue;
       }
-      final imageUri = await _thumbnailImageUriForPath(imagePath);
-      if (imageUri == null) {
-        continue;
-      }
       return {
-        'coverImagePath': imagePath,
-        'coverImageUri': imageUri,
-        'coverImageVariant': 'thumbnail',
+        'coverPageIndex': page.pageIndex,
+        'coverRevision': _pageImageRevision(page),
       };
     }
     return null;
@@ -4110,20 +4111,22 @@ class PictureBookService {
     ];
   }
 
-  static Future<Map<String, dynamic>> _pageJson(
-    PictureBookPage page, {
-    bool includeImageUri = true,
-  }) async {
-    final json = page.toJson();
-    if (!includeImageUri) {
-      return json;
-    }
+  static Map<String, dynamic> _pageStateJson(PictureBookPage page) => {
+        'pageIndex': page.pageIndex,
+        'sentenceStartIndex': page.sentenceStartIndex,
+        'sentenceEndIndex': page.sentenceEndIndex,
+        'status': page.status,
+        'errorMessage': page.errorMessage,
+        'hasImage': page.status == 'ready' &&
+            (page.imagePath?.trim().isNotEmpty ?? false),
+        'imageRevision': _pageImageRevision(page),
+      };
 
-    final imageUri = await _imageUriForPath(page.imagePath);
-    if (imageUri != null) {
-      json['imageUri'] = imageUri;
-    }
-    return json;
+  static String _pageImageRevision(PictureBookPage page) {
+    final cacheKey = page.imageCacheKey?.trim() ?? '';
+    return cacheKey.isNotEmpty
+        ? cacheKey
+        : page.updatedAt.toUtc().toIso8601String();
   }
 
   static Future<String?> _imageUriForPath(String? rawPath) async {
@@ -4301,8 +4304,7 @@ class PictureBookService {
         descriptor = await ui.ImageDescriptor.encoded(buffer);
         if (descriptor.width == _importedFullWidth &&
             descriptor.height == _importedFullHeight) {
-          final extension =
-              sourceExtension.isEmpty ? 'png' : sourceExtension;
+          final extension = sourceExtension.isEmpty ? 'png' : sourceExtension;
           return _PreparedImportedImage(
             bytes: bytes,
             resized: false,
@@ -4341,17 +4343,15 @@ class PictureBookService {
     Uint8List upscaleInput = cropped.bytes;
     var inputWidth = cropped.width;
     var inputHeight = cropped.height;
-    if (inputWidth > _importedFullWidth ||
-        inputHeight > _importedFullHeight) {
+    if (inputWidth > _importedFullWidth || inputHeight > _importedFullHeight) {
       upscaleInput = await _normalizeImportedImageToFullPng(upscaleInput);
       inputWidth = _importedFullWidth;
       inputHeight = _importedFullHeight;
     }
-    final upscaleScale =
-        inputWidth < _importedFullWidth ~/ 2 ||
-                inputHeight < _importedFullHeight ~/ 2
-            ? 4
-            : 2;
+    final upscaleScale = inputWidth < _importedFullWidth ~/ 2 ||
+            inputHeight < _importedFullHeight ~/ 2
+        ? 4
+        : 2;
     Uint8List upscaledBytes;
     try {
       upscaledBytes = await PictureBookImageUpscaleService.upscalePng(
@@ -4502,8 +4502,7 @@ class PictureBookService {
         _importedFullWidth,
         _importedFullHeight,
       );
-      final data =
-          await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      final data = await outputImage.toByteData(format: ui.ImageByteFormat.png);
       return data?.buffer.asUint8List() ?? Uint8List(0);
     } finally {
       outputImage?.dispose();

@@ -27,9 +27,38 @@ describe('bridge client', () => {
   });
 
   it('uses mock native response when Flutter bridge is unavailable', async () => {
-    const response = await sendNative<{ articles: unknown[] }>('article.list');
+    const response = await sendNative<{ articles: Array<Record<string, unknown>> }>('article.list');
 
     expect(response.articles.length).toBeGreaterThan(0);
+    expect(response.articles[0]).not.toHaveProperty('content');
+    expect(response.articles[0]).not.toHaveProperty('sentences');
+    expect(response.articles[0]).not.toHaveProperty('coverImagePath');
+    expect(response.articles[0]).not.toHaveProperty('coverImageUri');
+    expect(response.articles[0]).not.toHaveProperty('seriesDescription');
+    expect(response.articles[0]).not.toHaveProperty('chapterDescription');
+  });
+
+  it('keeps full text and picture images behind explicit on-demand commands', async () => {
+    const fullText = await sendNative<{
+      article: Record<string, unknown>;
+      items: unknown[];
+    }>('article.fullText', { articleId: 1 });
+    const state = await sendNative<{ pages: Array<Record<string, unknown>> }>(
+      'pictureBook.state',
+      { articleId: 1 },
+    );
+
+    expect(fullText.article).not.toHaveProperty('content');
+    expect(fullText.article).not.toHaveProperty('sentences');
+    expect(fullText.items.length).toBeGreaterThan(0);
+    expect(state.pages[0]).not.toHaveProperty('paragraphText');
+    expect(state.pages[0]).not.toHaveProperty('prompt');
+    expect(state.pages[0]).not.toHaveProperty('promptJson');
+    expect(state.pages[0]).not.toHaveProperty('imagePath');
+    expect(state.pages[0]).not.toHaveProperty('imageUri');
+    await expect(
+      sendNative('pictureBook.pageImage', { articleId: 1, pageIndex: 0 }),
+    ).rejects.toThrow(/variant is required/);
   });
 
   it('mocks external song imports when Flutter bridge is unavailable', async () => {
@@ -57,8 +86,8 @@ describe('bridge client', () => {
     const imported = await sendNative<BookTransferPayload>('series.import');
     expect(imported.cancelled).toBe(false);
     expect(imported.seriesId).toBe(99);
-    expect(imported.articles?.[0].seriesId).toBe(99);
-    expect(imported.series?.[0].title).toBe('Imported Book');
+    expect(imported.patch?.upsertArticles[0].seriesId).toBe(99);
+    expect(imported.patch?.upsertSeries[0].title).toBe('Imported Book');
   });
 
   it('waits for a delayed Flutter bridge in embedded WebView', async () => {

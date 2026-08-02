@@ -45,6 +45,7 @@ import type {
   ListeningSongPositionPayload,
   ListeningSongStatePayload,
   ListeningTranslationsPayload,
+  LibraryPatch,
   PictureBookPage,
   PictureBookPageImagePayload,
   PictureBookPromptReview,
@@ -402,12 +403,12 @@ function mergePictureBookState(
         (page) =>
           page.status === 'ready' &&
           page.imageUri?.trim() &&
-          page.imagePath?.trim(),
+          page.hasImage,
       )
       .map((page) => [
         page.pageIndex,
         {
-          imagePath: page.imagePath?.trim() ?? '',
+          imageRevision: page.imageRevision,
           imageUri: page.imageUri?.trim() ?? '',
           imageVariant: normalizedPictureBookImageVariant(page.imageVariant),
         },
@@ -418,12 +419,11 @@ function mergePictureBookState(
     if (page.imageUri?.trim()) {
       return page;
     }
-    const imagePath = page.imagePath?.trim() ?? '';
-    if (page.status !== 'ready' || !imagePath) {
+    if (page.status !== 'ready' || !page.hasImage) {
       return page;
     }
     const image = imageByPage.get(page.pageIndex);
-    if (!image?.imageUri || image.imagePath !== imagePath) {
+    if (!image?.imageUri || image.imageRevision !== page.imageRevision) {
       return page;
     }
     changed = true;
@@ -437,7 +437,7 @@ function mergePictureBookState(
   return normalizePictureBookState(changed ? { ...next, pages } : next);
 }
 
-function mergePictureBookPageImage(
+export function mergePictureBookPageImage(
   current: PictureBookState | null,
   payload: PictureBookPageImagePayload,
 ): PictureBookState | null {
@@ -451,6 +451,9 @@ function mergePictureBookPageImage(
   const currentPages = Array.isArray(current.pages) ? current.pages : [];
   const pages = currentPages.map((page) => {
     if (page.pageIndex !== payload.pageIndex) {
+      return page;
+    }
+    if (!payload.imageRevision || payload.imageRevision !== page.imageRevision) {
       return page;
     }
 
@@ -509,7 +512,27 @@ function normalizedPictureBookImageVariant(
 ): PictureBookImageVariant {
   if (variant === 'thumbnail') return 'thumbnail';
   if (variant === 'display') return 'display';
-  return 'full';
+  if (variant === 'full') return 'full';
+  return 'display';
+}
+
+export function applyEntityPatch<T extends { id: number }>(
+  current: T[],
+  upserts: T[],
+  removals: number[],
+  newestFirst = false,
+): T[] {
+  const removed = new Set(removals);
+  const upsertById = new Map(upserts.map((item) => [item.id, item]));
+  const retained = current
+    .filter((item) => !removed.has(item.id))
+    .map((item) => upsertById.get(item.id) ?? item);
+  const existingIds = new Set(retained.map((item) => item.id));
+  const added = upserts.filter((item) => !removed.has(item.id) && !existingIds.has(item.id));
+  const result = newestFirst ? [...added, ...retained] : [...retained, ...added];
+  return result.length === current.length && result.every((item, index) => item === current[index])
+    ? current
+    : result;
 }
 
 function pageHasPictureBookImageVariant(
@@ -623,6 +646,16 @@ function App() {
   const [picturePromptReviewLoadingArticleId, setPicturePromptReviewLoadingArticleId] = useState<number | null>(null);
   const pictureBookRetryGate = usePictureBookRetryGate();
 
+  const applyLibraryPatch = (patch: LibraryPatch) => {
+    invalidateArticleCoverCache(patch);
+    setArticles((current) =>
+      applyEntityPatch(current, patch.upsertArticles, patch.removeArticleIds, true),
+    );
+    setSeries((current) =>
+      applyEntityPatch(current, patch.upsertSeries, patch.removeSeriesIds),
+    );
+  };
+
   const rememberSeriesKey = (key: string | null) => {
     setRecentSeriesKey(key);
     try {
@@ -700,7 +733,11 @@ function App() {
     pageIndex: number,
     useSuperResolution = true,
   ) => {
-    const payload = await sendNative<PictureBookState & { cancelled?: boolean; imported?: boolean }>(
+    const payload = await sendNative<PictureBookState & {
+      cancelled?: boolean;
+      imported?: boolean;
+      patch?: LibraryPatch;
+    }>(
       'pictureBook.importPageImage',
       { articleId, pageIndex, useSuperResolution },
     );
@@ -711,20 +748,15 @@ function App() {
     setPictureBookState((current) =>
       current?.articleId === articleId ? mergePictureBookState(current, payload) : current,
     );
+    if (payload.patch) applyLibraryPatch(payload.patch);
     setNotice(`第 ${pageIndex + 1} 页图片已导入`);
   };
 
   useEffect(() => {
     let isMounted = true;
-    const offArticles = onNativeEvent<{ articles: Article[]; series?: StorySeries[] }>(
-      'article.state',
-      (payload) => {
-        if (isMounted) {
-          setArticles(payload.articles);
-          if (payload.series) setSeries(payload.series);
-        }
-      },
-    );
+    const offLibraryPatch = onNativeEvent<LibraryPatch>('library.patch', (patch) => {
+      if (isMounted) applyLibraryPatch(patch);
+    });
     const offFollow = onNativeEvent<FollowState>('follow.state', (payload) => {
       if (isMounted) setFollowState(payload);
     });
@@ -785,7 +817,7 @@ function App() {
 
     return () => {
       isMounted = false;
-      offArticles();
+      offLibraryPatch();
       offFollow();
       offPictureBook();
       offChat();
@@ -809,12 +841,11 @@ function App() {
     description: string,
     characters: BookCharacter[],
   ) => {
-    const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
+    const payload = await sendNative<{ series: StorySeries; patch: LibraryPatch }>(
       'series.update',
       { seriesId, title, description, characters: normalizeBookCharacters(characters) },
     );
-    setArticles(payload.articles);
-    if (payload.series) setSeries(payload.series);
+    applyLibraryPatch(payload.patch);
     rememberSeriesKey(`series:${seriesId}`);
     setNotice('书籍信息已更新');
   };
@@ -897,10 +928,10 @@ function App() {
           <ArticlePage
             series={series}
             onSeriesUpdated={setSeries}
+            onLibraryPatch={applyLibraryPatch}
             onCancel={() => navigate('/')}
             onSaved={(payload) => {
-              setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
+              applyLibraryPatch(payload.patch);
               rememberSeriesKey(bookKeyForArticle(payload.article));
               navigate(payload.article.seriesId != null ? `/books/${payload.article.seriesId}` : '/');
               setNotice('章节已加入书库');
@@ -978,37 +1009,31 @@ function App() {
             onOpenPicturePagePromptReview={openPictureBookPagePromptReview}
             onImportPicturePageImage={importPictureBookPageImage}
             onChapterOrderChange={rememberChapterOrder}
-            onArticlesUpdated={(payload) => {
-              if (payload.articles) setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
-            }}
+            onLibraryPatch={applyLibraryPatch}
             onRename={async (articleId, title) => {
-              const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
+              const payload = await sendNative<{ article: Article; patch: LibraryPatch }>(
                 'article.rename',
                 { articleId, title },
               );
-              setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
+              applyLibraryPatch(payload.patch);
               rememberSeriesKey(bookKeyForArticle(payload.article));
               setNotice('章节标题已更新');
             }}
             onDelete={async (articleId) => {
-              const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
+              const payload = await sendNative<{ articleId: number; patch: LibraryPatch }>(
                 'article.delete',
                 { articleId },
               );
-              setArticles(payload.articles);
-              if (payload.series) setSeries(payload.series);
+              applyLibraryPatch(payload.patch);
               setNotice('章节已删除');
             }}
             onDeleteSeries={async (seriesId) => {
               try {
-                const payload = await sendNative<{ articles: Article[]; series?: StorySeries[] }>(
+                const payload = await sendNative<{ seriesId: number; patch: LibraryPatch }>(
                   'series.delete',
                   { seriesId },
                 );
-                setArticles(payload.articles);
-                if (payload.series) setSeries(payload.series);
+                applyLibraryPatch(payload.patch);
                 setNotice('空书籍已删除');
               } catch (err) {
                 setNotice(err instanceof Error ? err.message : String(err));
@@ -1407,7 +1432,7 @@ function BookDetailPage({
       </TopBar>
 
       <section className="book-overview-panel">
-        <img src={bookCoverSource(book, 0)} alt="" />
+        <BookCoverImage book={book} index={0} />
         <div className="book-overview-copy">
           <h2>{book.title}</h2>
           {book.description && <p>{book.description}</p>}
@@ -1680,7 +1705,7 @@ function ChapterDrawer({
             >
               <b>{index + 1}</b>
               <span>{chapter.title}</span>
-              <small>{chapter.sentenceCount ?? chapter.sentences?.length ?? 0} 句</small>
+              <small>{chapter.sentenceCount ?? 0} 句</small>
             </button>
           ))}
         </div>
@@ -1781,7 +1806,7 @@ function BookLibrarySelectorPanel({
                     type="button"
                     onClick={() => onSelectBook(book)}
                   >
-                    <img src={bookCoverSource(book, index)} alt="" />
+                    <BookCoverImage book={book} index={index} />
                     <span>
                       <b>{book.title}</b>
                       <small>{book.articles.length} 篇章节 · {book.sentenceCount} 句子</small>
@@ -2074,7 +2099,7 @@ function CreationCenterPage({
   onOpenPicturePagePromptReview,
   onImportPicturePageImage,
   onChapterOrderChange,
-  onArticlesUpdated,
+  onLibraryPatch,
   onRename,
   onDelete,
   onDeleteSeries,
@@ -2100,7 +2125,7 @@ function CreationCenterPage({
     useSuperResolution?: boolean,
   ) => void | Promise<void>;
   onChapterOrderChange: (order: ChapterOrder) => void;
-  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
+  onLibraryPatch: (patch: LibraryPatch) => void;
   onRename: (articleId: number, title: string) => Promise<void>;
   onDelete: (articleId: number) => Promise<void>;
   onDeleteSeries: (seriesId: number) => Promise<void>;
@@ -2242,7 +2267,7 @@ function CreationCenterPage({
         onNotice('已取消导入书籍');
         return;
       }
-      onArticlesUpdated({ articles: payload.articles, series: payload.series });
+      if (payload.patch) onLibraryPatch(payload.patch);
       if (payload.seriesId != null) {
         setSelectedBookKey(`series:${payload.seriesId}`);
         setChapterPage(0);
@@ -2393,7 +2418,6 @@ function CreationCenterPage({
             pictureBookRetryGate={pictureBookRetryGate}
             promptReviewLoading={picturePromptReviewLoadingArticleId === selectedArticle.id}
             onNotice={onNotice}
-            onArticlesUpdated={onArticlesUpdated}
             onOpenPromptReview={onOpenPicturePromptReview}
             onOpenPagePromptReview={onOpenPicturePagePromptReview}
             onImportPageImage={onImportPicturePageImage}
@@ -2412,7 +2436,6 @@ function CreationCenterPage({
             recordingSettings={recordingSettings}
             onRecordingSettingsLoaded={onRecordingSettingsLoaded}
             onNotice={onNotice}
-            onArticlesUpdated={onArticlesUpdated}
           />
         )}
       </section>
@@ -2481,13 +2504,10 @@ function CreationCenterPage({
             setBookEditError(null);
             try {
               const article = bookEditDraft.articles[0] ?? null;
-              const descriptionContent = article?.content.trim()
-                ? article.content
-                : `Book title: ${descriptionSeedTitle}. Generate a concise book-level visual description for this picture-book series.`;
               const payload = await sendNative<{ description: string; characters?: BookCharacter[] }>('series.suggestDescription', {
                 seriesTitle: descriptionSeedTitle,
+                articleId: article?.id,
                 articleTitle: article?.title ?? '',
-                content: descriptionContent,
                 description: bookEditDescription.trim(),
                 characters: normalizeBookCharacters(bookEditCharacters),
               });
@@ -2746,7 +2766,6 @@ function PictureBookCreationPanel({
   pictureBookRetryGate,
   promptReviewLoading,
   onNotice,
-  onArticlesUpdated,
   onOpenPromptReview,
   onOpenPagePromptReview,
   onImportPageImage,
@@ -2755,7 +2774,6 @@ function PictureBookCreationPanel({
   pictureBookRetryGate: PictureBookRetryGate;
   promptReviewLoading: boolean;
   onNotice: (message: string) => void;
-  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
   onOpenPromptReview: (articleId: number, regenerate?: boolean) => void | Promise<void>;
   onOpenPagePromptReview: (articleId: number, pageIndex: number) => void | Promise<void>;
   onImportPageImage: (
@@ -2771,7 +2789,7 @@ function PictureBookCreationPanel({
   const [exportingChapterImages, setExportingChapterImages] = useState(false);
   const [exportConflict, setExportConflict] = useState<PictureBookExportConflictState | null>(null);
   const [picturePreview, setPicturePreview] = useState<PictureBookPagePreviewState | null>(null);
-  const [sentenceItems, setSentenceItems] = useState<ListeningItem[]>(() => listeningItemsFromArticle(article));
+  const [sentenceItems, setSentenceItems] = useState<ListeningItem[]>([]);
   const [sentenceItemsLoading, setSentenceItemsLoading] = useState(true);
   const [sentenceItemsError, setSentenceItemsError] = useState<string | null>(null);
   const [sentenceEdit, setSentenceEdit] = useState<SentenceEditState | null>(null);
@@ -2790,7 +2808,7 @@ function PictureBookCreationPanel({
 
   const loadState = () => {
     setLoading(true);
-    sendNative<PictureBookState>('pictureBook.state', { articleId: article.id, includeImageUris: false })
+    sendNative<PictureBookState>('pictureBook.state', { articleId: article.id })
       .then((payload) => setState((current) => mergePictureBookState(current, payload)))
       .catch((error) => onNotice(error instanceof Error ? error.message : '绘本状态加载失败'))
       .finally(() => setLoading(false));
@@ -2799,7 +2817,7 @@ function PictureBookCreationPanel({
   useEffect(loadState, [article.id]);
   useEffect(() => {
     let cancelled = false;
-    setSentenceItems(listeningItemsFromArticle(article));
+    setSentenceItems([]);
     setSentenceItemsLoading(true);
     setSentenceItemsError(null);
     setSentenceEdit(null);
@@ -2838,14 +2856,6 @@ function PictureBookCreationPanel({
       setLoading(false);
     });
   }, [article.id]);
-  useEnsureAllPictureBookPageImages({
-    articleId: article.id,
-    state,
-    enabled: Boolean(state),
-    imageVariant: 'display',
-    onPictureBookLoaded: setState,
-  });
-
   const retryPage = (page: PictureBookPage) => {
     if (!pictureBookRetryGate.begin(article.id, page.pageIndex)) return;
     Promise.resolve(onOpenPagePromptReview(article.id, page.pageIndex))
@@ -2869,7 +2879,6 @@ function PictureBookCreationPanel({
         // Bridge may push pictureBook.state; also refresh in case cancel/success skipped event.
         return sendNative<PictureBookState>('pictureBook.state', {
           articleId: article.id,
-          includeImageUris: false,
         }).then((payload) => setState((current) => mergePictureBookState(current, payload)));
       })
       .catch((error) => onNotice(error instanceof Error ? error.message : '导入图片失败'))
@@ -2877,7 +2886,7 @@ function PictureBookCreationPanel({
   };
 
   const readyExportPageCount =
-    state?.pages.filter((page) => page.status === 'ready' && Boolean(page.imagePath?.trim())).length ?? 0;
+    state?.pages.filter((page) => page.status === 'ready' && page.hasImage).length ?? 0;
 
   const runExportChapterImages = async (options?: {
     outputDirectory?: string;
@@ -2979,11 +2988,8 @@ function PictureBookCreationPanel({
 
   const applySentenceUpdatePayload = (payload: ListeningSentenceUpdatePayload) => {
     setSentenceItems((current) =>
-      payload.items ?? current.map((item) => (item.index === payload.item.index ? payload.item : item)),
+      current.map((item) => (item.index === payload.item.index ? payload.item : item)),
     );
-    if (payload.articles || payload.series) {
-      onArticlesUpdated(payload);
-    }
     if (payload.synthesis.status === 'error') {
       setSentenceSynthesisErrors((current) => ({
         ...current,
@@ -3188,26 +3194,19 @@ function PictureBookCreationPanel({
           ) : (
             state.pages.map((page, index) => {
               const safePageIndex = Number.isFinite(page.pageIndex) ? page.pageIndex : index;
-              const imageSource = directImageSource(page.imageUri);
               const pageSentenceItems = sentenceItemsForPictureBookPage(sentenceItems, page);
               const retrying = pictureBookRetryGate.isRetrying(article.id, safePageIndex);
               const importing = importingPageIndex === safePageIndex;
               return (
-                <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imagePath ?? page.imageUri ?? ''}`}>
-                  {imageSource ? (
-                    <button
-                      type="button"
-                      className="picture-creation-media is-clickable"
-                      onClick={() => void openPicturePreview(page, safePageIndex)}
-                      aria-label={`查看第 ${safePageIndex + 1} 页大图`}
-                    >
-                      <img src={imageSource} alt="" />
-                    </button>
-                  ) : (
-                    <div className="picture-creation-media is-empty">
-                      <span>{page.status === 'error' ? '生成失败' : pictureBookStatusLabel(page.status)}</span>
-                    </div>
-                  )}
+                <article className={`picture-creation-card ${page.status}`} key={`${safePageIndex}:${page.imageRevision}:${page.imageUri ?? ''}`}>
+                  <PictureBookCreationThumbnail
+                    articleId={article.id}
+                    state={state}
+                    page={page}
+                    pageIndex={safePageIndex}
+                    onPictureBookLoaded={setState}
+                    onOpen={() => void openPicturePreview(page, safePageIndex)}
+                  />
                   <div className="picture-creation-image-tools">
                     {page.errorMessage && <em>{page.errorMessage}</em>}
                     <button
@@ -3341,6 +3340,77 @@ function PictureBookCreationPanel({
         />
       )}
     </section>
+  );
+}
+
+function PictureBookCreationThumbnail({
+  articleId,
+  state,
+  page,
+  pageIndex,
+  onPictureBookLoaded,
+  onOpen,
+}: {
+  articleId: number;
+  state: PictureBookState;
+  page: PictureBookPage;
+  pageIndex: number;
+  onPictureBookLoaded: PictureBookStateSetter;
+  onOpen: () => void;
+}) {
+  const elementRef = useRef<HTMLElement | null>(null);
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '160px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [articleId, pageIndex]);
+
+  // Creation cards only need visible thumbnails. The display bitmap is fetched
+  // separately after an explicit preview click, so a long chapter never loads
+  // every 1280x720 image just to render its grid.
+  useEnsurePictureBookPageImage({
+    articleId,
+    state,
+    page: visible ? page : null,
+    imageVariant: 'thumbnail',
+    onPictureBookLoaded,
+  });
+
+  const imageSource = pageHasPictureBookImageVariant(page, 'thumbnail')
+    ? directImageSource(page.imageUri)
+    : null;
+  const attachElement = (element: HTMLElement | null) => {
+    elementRef.current = element;
+  };
+  if (imageSource) {
+    return (
+      <button
+        ref={attachElement}
+        type="button"
+        className="picture-creation-media is-clickable"
+        onClick={onOpen}
+        aria-label={`查看第 ${pageIndex + 1} 页大图`}
+      >
+        <img src={imageSource} alt="" loading="lazy" />
+      </button>
+    );
+  }
+  return (
+    <div ref={attachElement} className="picture-creation-media is-empty">
+      <span>{page.status === 'error' ? '生成失败' : pictureBookStatusLabel(page.status)}</span>
+    </div>
   );
 }
 
@@ -3612,7 +3682,6 @@ function PictureBookPromptReviewDialog({
     let cancelled = false;
     void sendNative<PictureBookState>('pictureBook.state', {
       articleId: review.articleId,
-      includeImageUris: false,
     })
       .then((payload) => {
         if (!cancelled) {
@@ -4834,13 +4903,11 @@ function VideoCreationPanel({
   recordingSettings,
   onRecordingSettingsLoaded,
   onNotice,
-  onArticlesUpdated,
 }: {
   article: Article;
   recordingSettings: RecordingSettings | null;
   onRecordingSettingsLoaded: (settings: RecordingSettings) => void;
   onNotice: (message: string) => void;
-  onArticlesUpdated: (payload: { articles?: Article[]; series?: StorySeries[] }) => void;
 }) {
   const [recordingReady, setRecordingReady] = useState<ListeningRecordingReadyPayload | null>(null);
   const [recordingReadyLoading, setRecordingReadyLoading] = useState(false);
@@ -4927,7 +4994,6 @@ function VideoCreationPanel({
       completeRecording(result);
       onNotice('听力视频导出完成');
       await loadVideoLibrary();
-      onArticlesUpdated({});
     } catch (error) {
       if (!failRecording()) {
         onNotice(error instanceof Error ? error.message : '听力视频导出失败');
@@ -5030,7 +5096,6 @@ function VideoCreationPanel({
       });
       setVideoLibrary(library);
       onNotice('视频已删除');
-      onArticlesUpdated({});
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '视频删除失败');
     } finally {
@@ -5380,15 +5445,6 @@ function AudioMaterialProgressDialog({ progress }: { progress: ListeningAudioMat
   );
 }
 
-function listeningItemsFromArticle(article: Article): ListeningItem[] {
-  return article.sentences.map((english, index) => ({
-    index,
-    english,
-    chinese: '',
-    hidden: isHiddenListeningSentence(english),
-  }));
-}
-
 function sentenceItemsForPictureBookPage(
   items: ListeningItem[],
   page: PictureBookPage,
@@ -5434,7 +5490,6 @@ type BookGroup = {
   articles: Article[];
   sentenceCount: number;
   averageScore: number;
-  coverImagePath?: string | null;
 };
 
 function bookGroupsForArticles(articles: Article[], series: StorySeries[]): BookGroup[] {
@@ -5450,7 +5505,6 @@ function bookGroupsForArticles(articles: Article[], series: StorySeries[]): Book
       articles: [],
       sentenceCount: 0,
       averageScore: 0,
-      coverImagePath: item.coverImagePath,
     });
   }
 
@@ -5467,7 +5521,7 @@ function bookGroupsForArticles(articles: Article[], series: StorySeries[]): Book
       groups.set(key, {
         key,
         title: fallbackTitle,
-        description: article.seriesDescription ?? '',
+        description: '',
         characters: [],
         articles: [],
         sentenceCount: 0,
@@ -5533,10 +5587,6 @@ function latestArticleTime(articles: Article[]): number {
   );
 }
 
-function chapterDescriptionForArticle(article: Article): string {
-  return article.chapterDescription?.replace(/\s+/g, ' ').trim() ?? '';
-}
-
 function formatArticleFullText(payload: ArticleFullTextPayload): string {
   const bookTitle = payload.bookTitle?.trim() || payload.article.seriesTitle?.trim() || payload.article.title.trim();
   const chapterTitle = payload.article.title.trim();
@@ -5588,27 +5638,18 @@ async function copyArticleFullText(payload: ArticleFullTextPayload): Promise<voi
   await writeTextToClipboard(text);
 }
 
-function bookCoverSource(book: BookGroup, index: number): string {
-  const firstGenerated = book.articles.find(
-    (article) => directImageSource(article.coverImageUri) || directImageSource(article.coverImagePath),
-  );
-  if (firstGenerated) return articleCoverSource(firstGenerated, index);
-  const seriesCover = directImageSource(book.coverImagePath);
-  if (seriesCover) return seriesCover;
-  if (book.articles.length === 0) return asset(fallbackCards[index % fallbackCards.length]);
-  return articleCoverSource(book.articles[0], index);
-}
-
 function ArticlePage({
   series,
   onSeriesUpdated,
+  onLibraryPatch,
   onCancel,
   onSaved,
 }: {
   series: StorySeries[];
   onSeriesUpdated: (series: StorySeries[]) => void;
+  onLibraryPatch: (patch: LibraryPatch) => void;
   onCancel: () => void;
-  onSaved: (payload: { article: Article; articles: Article[]; series?: StorySeries[] }) => void;
+  onSaved: (payload: { article: Article; patch: LibraryPatch }) => void;
 }) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
@@ -5746,15 +5787,13 @@ function ArticlePage({
     setSavingSeries(true);
     setError(null);
     try {
-      const payload = await sendNative<{ series?: StorySeries[] }>('series.create', {
+      const payload = await sendNative<{ series: StorySeries; patch: LibraryPatch }>('series.create', {
         title: trimmedTitle,
         description: seriesDescription.trim(),
         characters: normalizeBookCharacters(seriesCharacters),
       });
-      const nextSeries = payload.series ?? [];
-      onSeriesUpdated(nextSeries);
-      const savedSeries =
-        nextSeries.find((item) => item.title.trim().toLowerCase() === trimmedTitle.toLowerCase()) ?? nextSeries[0];
+      onLibraryPatch(payload.patch);
+      const savedSeries = payload.series;
       if (savedSeries?.id != null) {
         setSelectedSeriesId(String(savedSeries.id));
         setNewSeriesTitle('');
@@ -5811,7 +5850,7 @@ function ArticlePage({
       const preparedSentences = prepared == null
         ? undefined
         : splitSentences(prepared.englishContent);
-      const payload = await sendNative<{ article: Article; articles: Article[]; series?: StorySeries[] }>(
+      const payload = await sendNative<{ article: Article; patch: LibraryPatch }>(
         'article.create',
         {
           title: title.trim(),
@@ -6204,7 +6243,7 @@ function ListeningPage({
       pictureBookState.status,
       pictureBookState.pages.length,
       pictureBookState.pages
-        .map((page) => `${page.pageIndex}:${page.status}:${page.imagePath?.trim() ? 1 : 0}`)
+        .map((page) => `${page.pageIndex}:${page.status}:${page.hasImage ? page.imageRevision : ''}`)
         .join('|'),
     ].join(':');
   }, [articleId, pictureBookState]);
@@ -6240,7 +6279,7 @@ function ListeningPage({
     recordingReadyTokenRef.current += 1;
     onPictureBookLoaded(loadingPictureBookState(articleId));
 
-    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId, includeImageUris: false })
+    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId })
       .then((picturePayload) => {
         if (isMounted) {
           onPictureBookLoaded((current) => mergePictureBookState(current, picturePayload));
@@ -8274,7 +8313,7 @@ function FollowPage({
         const payload = await sendNative<FollowState>('follow.open', { articleId });
         if (!isMounted || !payload) return;
         onLoaded(payload);
-        sendNative<PictureBookState>('pictureBook.state', { articleId, includeImageUris: true })
+        sendNative<PictureBookState>('pictureBook.state', { articleId })
           .then((picturePayload) => {
             if (isMounted) {
               onPictureBookLoaded((current) => mergePictureBookState(current, picturePayload));
@@ -8562,10 +8601,7 @@ function FollowPage({
   const result = state?.result;
   const totalSentences = state?.totalSentences ?? 0;
   const visibleSentenceTotal = state?.visibleSentenceCount ?? totalSentences;
-  const visibleCurrentPosition = visiblePositionForSlotIndex(
-    state?.article?.sentences ?? [],
-    currentIndex,
-  );
+  const visibleCurrentPosition = state?.visibleCurrentPosition ?? currentIndex + 1;
   const canInterruptRecordingPlayback =
     commandBusy &&
     activeFollowControl === 'recording' &&
@@ -9026,7 +9062,7 @@ function useEnsurePictureBookPageImage({
   articleId,
   state,
   page,
-  imageVariant = 'full',
+  imageVariant = 'display',
   onPictureBookLoaded,
 }: {
   articleId: number;
@@ -9039,7 +9075,8 @@ function useEnsurePictureBookPageImage({
   const stateArticleId = state?.articleId ?? null;
   const pageIndex = page?.pageIndex ?? -1;
   const pageStatus = page?.status ?? '';
-  const imagePath = page?.imagePath?.trim() ?? '';
+  const imageRevision = page?.imageRevision ?? '';
+  const hasImage = page?.hasImage ?? false;
   const hasRequiredImage = pageHasPictureBookImageVariant(page, imageVariant);
 
   useEffect(() => {
@@ -9047,11 +9084,11 @@ function useEnsurePictureBookPageImage({
       requestKeyRef.current = '';
       return;
     }
-    if (pageStatus !== 'ready' || hasRequiredImage || !imagePath) {
+    if (pageStatus !== 'ready' || hasRequiredImage || !hasImage || !imageRevision) {
       return;
     }
 
-    const requestKey = `${imageVariant}:${articleId}:${pageIndex}:${imagePath}`;
+    const requestKey = `${imageVariant}:${articleId}:${pageIndex}:${imageRevision}`;
     if (requestKeyRef.current === requestKey) {
       return;
     }
@@ -9081,7 +9118,8 @@ function useEnsurePictureBookPageImage({
   }, [
     articleId,
     hasRequiredImage,
-    imagePath,
+    hasImage,
+    imageRevision,
     imageVariant,
     onPictureBookLoaded,
     pageIndex,
@@ -9094,7 +9132,7 @@ function useEnsureAllPictureBookPageImages({
   articleId,
   state,
   enabled,
-  imageVariant = 'full',
+  imageVariant = 'display',
   onPictureBookLoaded,
 }: {
   articleId: number;
@@ -9120,24 +9158,24 @@ function useEnsureAllPictureBookPageImages({
   const missing = enabled && state?.articleId === articleId
     ? state.pages
         .filter((page) => page.status === 'ready')
-        .filter((page) => !pageHasPictureBookImageVariant(page, imageVariant) && page.imagePath?.trim())
+        .filter((page) => !pageHasPictureBookImageVariant(page, imageVariant) && page.hasImage)
         .map((page) => ({
           pageIndex: page.pageIndex,
-          imagePath: page.imagePath?.trim() ?? '',
+          imageRevision: page.imageRevision,
         }))
         .filter((page) => {
-          const key = `${imageVariant}:${articleId}:${page.pageIndex}:${page.imagePath}`;
+          const key = `${imageVariant}:${articleId}:${page.pageIndex}:${page.imageRevision}`;
           return !requestedRef.current.has(key);
         })
     : [];
   const missingKey = missing
-    .map((page) => `${page.pageIndex}:${page.imagePath}`)
+    .map((page) => `${page.pageIndex}:${page.imageRevision}`)
     .join('|');
 
   useEffect(() => {
     if (!enabled || missing.length === 0) return;
     const page = missing[0];
-    const key = `${imageVariant}:${articleId}:${page.pageIndex}:${page.imagePath}`;
+    const key = `${imageVariant}:${articleId}:${page.pageIndex}:${page.imageRevision}`;
     requestedRef.current.add(key);
     void sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
       articleId,
@@ -9674,9 +9712,9 @@ function PictureBookScene({
   // Inline scene viewers render inside a small box (<= ~1120px wide) via CSS `object-fit: cover`.
   // Feeding the raw 2560x1440 "full" original through that heavy downscale triggers WebView2/ANGLE
   // GPU texture corruption (blocky color-noise artifacts) on some Windows GPU drivers. Use the
-  // pre-resized "display" bitmap here instead; only true fullscreen playback needs "full".
+  // pre-resized "display" bitmap here; native export is the only consumer of originals.
   const imageSrc = pageHasPictureBookImageVariant(page, 'display')
-    ? directImageSource(page?.imageUri) ?? directImageSource(page?.imagePath) ?? ''
+    ? directImageSource(page?.imageUri) ?? ''
     : '';
   const isReady = page?.status === 'ready' && imageSrc;
   const hasPotentialPicture = Boolean(
@@ -9685,7 +9723,7 @@ function PictureBookScene({
   const isLoadingImage =
     state?.status === 'loading' ||
     (!page && hasPotentialPicture) ||
-    (page?.status === 'ready' && !imageSrc && Boolean(page?.imagePath?.trim()));
+    (page?.status === 'ready' && !imageSrc && Boolean(page?.hasImage));
   const isBusy =
     isLoadingImage ||
     isRetrying ||
@@ -9760,7 +9798,6 @@ function storyTitlePartsFor(
 ): StoryTitleParts {
   const articleTitle = article?.title?.trim() ?? '';
   const seriesTitle =
-    pictureBookState?.series?.title?.trim() ||
     article?.seriesTitle?.trim() ||
     seriesFallback.trim();
   const chapterTitle = chapterTitleForDisplay(articleTitle, seriesTitle) || articleTitle || fallback.trim() || seriesTitle;
@@ -9824,7 +9861,7 @@ function ChatPage({
   useEffect(() => {
     let isMounted = true;
     onPictureBookLoaded(loadingPictureBookState(articleId));
-    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId, includeImageUris: true })
+    const picturePromise = sendNative<PictureBookState>('pictureBook.state', { articleId })
       .then((payload) => {
         if (isMounted) {
           onPictureBookLoaded((current) => mergePictureBookState(current, payload));
@@ -11487,7 +11524,6 @@ function MissionRow({
 }) {
   const score = article.averageScore > 0 ? Math.round(article.averageScore) : 40;
   const openArticle = onOpen ?? onListen ?? onFollow ?? onChat;
-  const chapterDescription = chapterDescriptionForArticle(article);
   return (
     <article className={`mission-row ${selected ? 'active' : ''}`}>
       <button
@@ -11497,7 +11533,7 @@ function MissionRow({
         disabled={!openArticle}
         aria-label={`进入《${article.title}》${openLabel ?? (onListen ? '听力' : '练习')}`}
       >
-        <img src={imageSrc} alt="" />
+        <ArticleCoverImage article={article} fallbackSrc={imageSrc} />
       </button>
       <div>
         <h3 className="mission-title-line">
@@ -11515,8 +11551,7 @@ function MissionRow({
             </button>
           )}
         </h3>
-        {chapterDescription && <p className="mission-chapter-brief">{chapterDescription}</p>}
-        <p className={chapterDescription ? 'mission-meta' : undefined}>{article.sentenceCount} 句子 · 最近学习 今天</p>
+        <p>{article.sentenceCount} 句子 · 最近学习 今天</p>
       </div>
       <span className="ring-score">{score}%</span>
       <div className="mission-actions">
@@ -12001,9 +12036,101 @@ function cardArtForArticle(article: Article, index: number): string {
 }
 
 function articleCoverSource(article: Article, index: number): string {
-  const generatedCover =
-    directImageSource(article.coverImageUri) ?? directImageSource(article.coverImagePath);
-  return generatedCover ?? asset(cardArtForArticle(article, index));
+  return asset(cardArtForArticle(article, index));
+}
+
+const articleCoverImageCache = new Map<string, string>();
+const articleCoverRequestCache = new Map<string, Promise<PictureBookPageImagePayload>>();
+
+function articleCoverCacheKey(article: Article): string | null {
+  const pageIndex = article.coverPageIndex;
+  const revision = article.coverRevision?.trim() ?? '';
+  return pageIndex == null || !revision ? null : `${article.id}:${pageIndex}:${revision}`;
+}
+
+function invalidateArticleCoverCache(patch: LibraryPatch) {
+  const affectedIds = new Set([
+    ...patch.removeArticleIds,
+    ...patch.upsertArticles.map((article) => article.id),
+  ]);
+  for (const key of articleCoverImageCache.keys()) {
+    const articleId = Number(key.slice(0, key.indexOf(':')));
+    if (affectedIds.has(articleId)) articleCoverImageCache.delete(key);
+  }
+}
+
+function ArticleCoverImage({
+  article,
+  index = 0,
+  fallbackSrc,
+}: {
+  article: Article;
+  index?: number;
+  fallbackSrc?: string;
+}) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined');
+  const fallback = fallbackSrc ?? articleCoverSource(article, index);
+  const cacheKey = articleCoverCacheKey(article);
+  const [src, setSrc] = useState(() => (cacheKey && articleCoverImageCache.get(cacheKey)) || fallback);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!image || typeof IntersectionObserver === 'undefined') {
+      setVisible(true);
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setVisible(true);
+        observer.disconnect();
+      }
+    }, { rootMargin: '160px' });
+    observer.observe(image);
+    return () => observer.disconnect();
+  }, [article.id]);
+
+  useEffect(() => {
+    let active = true;
+    const currentKey = articleCoverCacheKey(article);
+    setSrc((currentKey && articleCoverImageCache.get(currentKey)) || fallback);
+    if (!visible || !currentKey || article.coverPageIndex == null) {
+      return () => { active = false; };
+    }
+    let request = articleCoverRequestCache.get(currentKey);
+    if (!request) {
+      request = sendNative<PictureBookPageImagePayload>('pictureBook.pageImage', {
+        articleId: article.id,
+        pageIndex: article.coverPageIndex,
+        variant: 'thumbnail',
+      });
+      articleCoverRequestCache.set(currentKey, request);
+      // Clear in-flight dedupe for both outcomes without creating a second
+      // rejected promise that browsers would report as unhandled.
+      void request.then(
+        () => articleCoverRequestCache.delete(currentKey),
+        () => articleCoverRequestCache.delete(currentKey),
+      );
+    }
+    void request.then((payload) => {
+      const imageUri = directImageSource(payload.imageUri);
+      if (!active || payload.imageRevision !== article.coverRevision || !imageUri) return;
+      articleCoverImageCache.set(currentKey, imageUri);
+      setSrc(imageUri);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [article, fallback, visible]);
+
+  return <img ref={imageRef} src={src} alt="" loading="lazy" />;
+}
+
+function BookCoverImage({ book, index }: { book: BookGroup; index: number }) {
+  const representative = book.articles.find((article) => article.coverPageIndex != null && article.coverRevision) ??
+    book.articles[0];
+  if (!representative) {
+    return <img src={asset(fallbackCards[index % fallbackCards.length])} alt="" />;
+  }
+  return <ArticleCoverImage article={representative} index={index} />;
 }
 
 function directImageSource(source?: string | null): string | null {

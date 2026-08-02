@@ -365,6 +365,31 @@ Start-Process explorer.exe
 - 如果构建退出码为 0，且发布目录已更新，可以暂时忽略。
 - 不要把它当成破图或播放问题的根因。
 
+## Windows 构建 jni C4022（AttachCurrentThread 指针不匹配）
+
+症状：
+
+- `flutter build windows` / `tools/build_windows.ps1` 输出类似：
+  `...\ephemeral\.plugin_symlinks\jni\src\dartjni.h(...): warning C4022: “通过指针的函数”: 指针与实参 2 不匹配 [...\plugins\jni\shared\jni.vcxproj]`
+- 容易误判为“编译脚本坏了”或“必须改 dartjni.h / 写 patch 脚本”。
+
+原因：
+
+- `jni` 是传递依赖（当前经 `path_provider` → `path_provider_android` 拉入），Windows 上本机装了 JDK 时才会真正编译 `dartjni`。
+- Windows JNI 头里 `AttachCurrentThread` 的第 2 个参数是 `void**`，`dartjni.h` 传的是 `JNIEnv**`；上游用 `__ENVP_CAST`，`jni 1.0.3` 缺了这层转换，MSVC 报 C4022。
+- `.plugin_symlinks\jni\...` 指向 Pub Cache，**不是仓库源码**；直接改或写脚本改缓存文件，下次 `flutter pub get` / 清缓存后会丢。
+
+处理：
+
+- 在仓库自己的 [`app/windows/CMakeLists.txt`](../app/windows/CMakeLists.txt) 里，于 `include(flutter/generated_plugins.cmake)` 之后只对 `jni` 目标加 `/wd4022`，不要动第三方头文件，也不要为此加 patch 脚本。
+- 不要把 `/WX` 从 `APPLY_STANDARD_SETTINGS` 全局拿掉来“消警告”；只压制这一条已知第三方警告。
+- 若将来升级 `jni` 且上游已带 `__ENVP_CAST`，可再评估是否删除 `/wd4022`。
+
+验证：
+
+- 重新跑 `.\tools\build_windows.ps1`（或 `-Release`），日志中不再出现 `warning C4022` 与 `dartjni.h`。
+- `jni` 仍能产出 `dartjni.dll`，构建退出码为 0。
+
 ## Dart format telemetry 权限失败
 
 症状：
@@ -425,9 +450,9 @@ D:\DevTools\flutter\bin\cache\dart-sdk\bin\dart.exe analyze <files>
 
 处理：
 
-- `PictureBookService.pageImagePayload` 的 `full` / `thumbnail` 继续通过 `_imageUriForPath` 返回 `data:image/...;base64,...`；不要把磁盘 `imagePath` 转成 `file://` 给 Web UI。
-- Web UI `directImageSource` 只接受 `data:` / `blob:` / `http(s):` / bundled `assets/`；创作中心预览可先把 data URI 转成 Blob URL 再显示，并在 `onLoad` 后再露出图片。
-- 修改绘本图片加载或预览层样式后，用 Release + `TOMATO_QA_REMOTE=true` 验证：`pictureBook.pageImage` 前缀为 `data:image/`，`/listening/<id>` 与创作中心缩略图预览 `brokenImages=0`。详见 `docs/qa-remote-control.md`。
+- `PictureBookService.pageImagePayload` 的单张 `thumbnail` / `display` / `full` 通过 bridge 返回 `data:image/...;base64,...`；不要把磁盘 `imagePath` 转成 `file://` 给 Web UI。
+- Web UI `directImageSource` 只接受 `data:` / `blob:` / `http(s):` / bundled `assets/`；列表用 thumbnail，大图预览用 display 并可先转 Blob URL。full 只保留给显式 QA/原生链路，不得交给 WebView `<img>`。
+- 修改绘本图片加载或预览层样式后，用 Release + `TOMATO_QA_REMOTE=true` 验证：单张 display 前缀为 `data:image/`，`/listening/<id>` 与创作中心缩略图预览 `brokenImages=0`。详见 `docs/qa-remote-control.md`。
 
 ## WebView2 静止页面仍持续占用 GPU
 
@@ -874,3 +899,58 @@ $state.payload | Select-Object status,source,downloadComplete,detectedSongUrls,v
 - `versions[]` 中同一 `songUrl` 不会重复新增本地音频版本；旧 `styleKey` 不再影响分组。
 - `detectedSongUrls` 包含所有已检测到的完整歌曲链接；若只下载了一部分，`downloadComplete = false` 且“检测下载”只补缺失项。
 - 同一 `songUrl` 已下载后再次检测不会新增重复音频文件。
+
+## Bridge 列表、状态、写命令和 QA snapshot 禁止隐式携带正文/图片（曾 60+MB）
+
+症状：
+
+- `article.list` / `app.ready` 或 QA `/snapshot` 回包解析要等数秒到十几秒。
+- 即使客户端提前 abort，服务端仍要拼出完整 JSON；单次响应可达约 **60MB**。
+- 绘本 state 轮询把整章图片 data URI 一并返回，或 snapshot 再次序列化每个 `<img>`
+  的完整 `src/currentSrc`，会把同一图片复制多次。
+
+原因：
+
+- 旧列表序列化器把文章正文、句子和封面 data URI 混进列表；旧写命令和事件又重复广播整库。
+- 旧绘本 state 同时承担 prompt 审核、状态查询和图片传输；旧 snapshot 直接返回完整 data URI。
+- 实测当前书库的旧 `article.list` 约 62.7MB、旧 `/snapshot` 约 80.8MB。数据规模
+  放大了错误契约，但根因是接口边界不清晰，不是 JSON 解析器性能不足。
+
+处理原则：
+
+- `article.list` / `app.ready` 只返回 `ArticleSummary[] + StorySeries[]`；正文和句子只由
+  `article.fullText` 按文章读取，封面按可见项调用 `pictureBook.pageImage(thumbnail)`。
+- 所有书库写操作返回目标实体/ID + `LibraryPatch`，事件统一为 `library.patch`；客户端按 ID
+  upsert/delete。文章首次落库和关联/规划完成各推一次 patch，保证失败续传的文章仍可见。
+- `listening.updateSentence` 只 ack `{ item, synthesis }`；英文变更只 patch 当前文章，
+  中文-only 不更新书库。
+- 批量导入中文用 `listening.updateTranslations` → `{ ok, articleId, updated }`。
+- `pictureBook.state` 只含页元数据；prompt 仅在审核接口，图片仅由必填 variant 的
+  `pictureBook.pageImage` 单张按需返回。WebView 只用 thumbnail/display，禁止 full。
+- `/snapshot` 对图片源只返回 `{kind,length,preview}`；data URI preview 到逗号为止。
+- pending state/progress 按类型和 article/scope 合并，patch 按实体 ID 合并；一次性事件
+  FIFO 最多 100 条，超限仅告警。
+- Bridge 日志记录 `estimatedChars`，QA HTTP 日志记录真实 `bytes`；运行时超预算只告警，
+  测试和 Release QA 按接口预算阻断。
+- 详见 `docs/ai_cli_qa_remote_guide.md` §听力 `updateSentence` / `updateTranslations`。
+
+验证：
+
+```powershell
+$open = Invoke-TomatoBridge "listening.open" @{ articleId = <id> }
+$item = $open.payload.items[0]
+$json = @{
+  type = 'listening.updateSentence'
+  payload = @{
+    articleId = <id>; index = 0
+    english = $item.english; chinese = ($item.chinese ?? '测试')
+    previousEnglish = $item.english; previousChinese = $item.chinese
+  }
+} | ConvertTo-Json -Depth 8 -Compress
+$bytes = [Text.Encoding]::UTF8.GetBytes($json)
+$resp = Invoke-WebRequest http://127.0.0.1:39317/bridge -Method Post `
+  -ContentType 'application/json; charset=utf-8' -Body $bytes
+# 期望 RawContentLength 为 KB 级（通常 <5KB），且 payload 仅有 item / synthesis
+($resp.Content | ConvertFrom-Json).payload.PSObject.Properties.Name
+$resp.RawContentLength
+```

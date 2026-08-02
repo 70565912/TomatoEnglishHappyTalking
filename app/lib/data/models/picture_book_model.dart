@@ -96,7 +96,6 @@ class StorySeries {
         'title': title,
         'description': description,
         'characters': characters.map((item) => item.toJson()).toList(),
-        'coverImagePath': coverImagePath,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
       };

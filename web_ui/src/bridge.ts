@@ -7,6 +7,7 @@ import type {
   DiagnosticLogEntry,
   FollowState,
   ListeningOpenPayload,
+  LibraryPatch,
   NativeEvent,
   PictureBookPromptReview,
   PictureBookState,
@@ -23,6 +24,39 @@ import { splitSentences } from './sentenceSplitter';
 type NativeListener<T = unknown> = (payload: T) => void;
 type AiProvider = 'aliyun_bailian' | 'volcengine';
 type TtsProvider = AiProvider | 'elevenlabs';
+type MockArticle = Article & {
+  content: string;
+  sentences: string[];
+  seriesDescription?: string;
+  chapterDescription?: string;
+};
+
+function mockArticleSummary(article: MockArticle): Article {
+  return {
+    id: article.id,
+    title: article.title,
+    sentenceSplitVersion: article.sentenceSplitVersion,
+    sentenceCount: article.sentenceCount,
+    visibleSentenceCount: article.visibleSentenceCount,
+    createdAt: article.createdAt,
+    averageScore: article.averageScore,
+    coverPageIndex: article.coverPageIndex,
+    coverRevision: article.coverRevision,
+    pictureBookEnabled: article.pictureBookEnabled,
+    seriesId: article.seriesId,
+    seriesTitle: article.seriesTitle,
+    chapterOrder: article.chapterOrder,
+  };
+}
+
+function mockLibraryPatch({
+  upsertArticles = [],
+  removeArticleIds = [],
+  upsertSeries = [],
+  removeSeriesIds = [],
+}: Partial<LibraryPatch> = {}): LibraryPatch {
+  return { upsertArticles, removeArticleIds, upsertSeries, removeSeriesIds };
+}
 
 declare global {
   interface Window {
@@ -453,7 +487,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     return {accepted: true};
   }
   if (type === 'article.list' || type === 'app.ready') {
-    return { articles: mockArticles, series: mockSeries };
+    return { articles: mockArticles.map(mockArticleSummary), series: mockSeries };
   }
   if (type === 'article.prepareCreate') {
     const englishContent = normalizePracticeContent(String(payload.content ?? ''));
@@ -489,7 +523,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       ? requestedSeriesCharacters
       : existingSeries?.characters ?? [];
     const seriesId = requestedSeriesId ?? 12;
-    const article: Article = {
+    const article: MockArticle = {
       id: Number.isFinite(resumeArticleId) && (resumeArticleId as number) > 0
         ? (resumeArticleId as number)
         : 99,
@@ -516,7 +550,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
             title: seriesTitle,
             description: seriesDescription,
             characters: seriesCharacters,
-            coverImagePath: null,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           },
@@ -548,7 +581,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     for (const step of progressSteps) {
       emitNativeEvent({ type: 'article.save.progress', payload: { ...step } });
     }
-    return { article, articles: [article, ...mockArticles], series: nextSeries };
+    const summary = mockArticleSummary(article);
+    const patch = mockLibraryPatch({
+      upsertArticles: [summary],
+      upsertSeries: nextSeries.filter((item) => item.id === seriesId),
+    });
+    emitNativeEvent({ type: 'library.patch', payload: patch });
+    return { article: summary, patch };
   }
   if (type === 'article.rename') {
     const articleId = Number(payload.articleId ?? mockArticles[0].id);
@@ -556,17 +595,25 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const articles = mockArticles.map((article) =>
       article.id === articleId ? { ...article, title } : article,
     );
+    const article = articles.find((item) => item.id === articleId) ?? articles[0];
+    const patch = mockLibraryPatch({ upsertArticles: [mockArticleSummary(article)] });
     return {
-      article: articles.find((article) => article.id === articleId) ?? articles[0],
-      articles,
-      series: mockSeries,
+      article: mockArticleSummary(article),
+      patch,
+    };
+  }
+  if (type === 'article.delete') {
+    const articleId = Number(payload.articleId ?? mockArticles[0].id);
+    return {
+      articleId,
+      patch: mockLibraryPatch({ removeArticleIds: [articleId] }),
     };
   }
   if (type === 'article.fullText') {
     const articleId = Number(payload.articleId ?? mockArticles[0].id);
-    const article = mockArticles.find((item) => item.id === articleId) ?? mockListening.article;
+    const article = mockArticles.find((item) => item.id === articleId) ?? mockArticles[0];
     const fullText: ArticleFullTextPayload = {
-      article,
+      article: mockArticleSummary(article),
       bookTitle: article.seriesTitle || mockSeries[0]?.title || article.title,
       items: article.sentences.map((sentence, index) => ({
         index,
@@ -602,11 +649,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       title,
       description: String(payload.description ?? '').trim(),
       characters: normalizeMockBookCharacters(payload.characters),
-      coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    return { series: [series, ...mockSeries] };
+    return {
+      series,
+      patch: mockLibraryPatch({ upsertSeries: [series] }),
+    };
   }
   if (type === 'series.update') {
     const seriesId = Number(payload.seriesId ?? mockSeries[0].id);
@@ -623,13 +672,22 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         ? { ...article, seriesTitle: title, seriesDescription: description }
         : article,
     );
-    return { articles, series };
+    const updatedSeries = series.find((item) => item.id === seriesId) ?? series[0];
+    return {
+      series: updatedSeries,
+      patch: mockLibraryPatch({
+        upsertArticles: articles
+          .filter((article) => article.seriesId === seriesId)
+          .map(mockArticleSummary),
+        upsertSeries: [updatedSeries],
+      }),
+    };
   }
   if (type === 'series.delete') {
     const seriesId = Number(payload.seriesId ?? 0);
     return {
-      articles: mockArticles,
-      series: mockSeries.filter((item) => item.id !== seriesId),
+      seriesId,
+      patch: mockLibraryPatch({ removeSeriesIds: [seriesId] }),
     };
   }
   if (type === 'series.attachArticle') {
@@ -649,21 +707,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       chapterOrder: 1,
     };
     return {
-      article,
-      chapter: {
-        articleId,
-        seriesId,
-        chapterOrder: 1,
-        chapterTitle: article.title,
-      },
-      articles: mockArticles.map((item) =>
-        item.id === articleId ? article : item,
-      ),
-      series: mockSeries.map((item) =>
-        item.id === seriesId && seriesCharactersProvided
-          ? { ...item, characters: seriesCharacters }
-          : item,
-      ),
+      article: mockArticleSummary(article),
+      patch: mockLibraryPatch({
+        upsertArticles: [mockArticleSummary(article)],
+        upsertSeries: mockSeries
+          .filter((item) => item.id === seriesId)
+          .map((item) => seriesCharactersProvided ? { ...item, characters: seriesCharacters } : item),
+      }),
     };
   }
   if (type === 'series.export') {
@@ -685,11 +735,10 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       title: 'Imported Book',
       description: 'Imported from a Tomato English transfer package.',
       characters: [],
-      coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    const importedArticle: Article = {
+    const importedArticle: MockArticle = {
       ...mockArticles[0],
       id: 9901,
       title: 'Imported Chapter',
@@ -699,8 +748,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       chapterOrder: 1,
       createdAt: new Date().toISOString(),
     };
-    const articles = [importedArticle, ...mockArticles];
-    const series = [importedSeries, ...mockSeries];
     return {
       cancelled: false,
       seriesId: importedSeries.id,
@@ -709,17 +756,24 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       articleCount: 1,
       assetCount: 3,
       warnings: [],
-      articles,
-      series,
+      patch: mockLibraryPatch({
+        upsertArticles: [mockArticleSummary(importedArticle)],
+        upsertSeries: [importedSeries],
+      }),
     };
   }
   if (type === 'pictureBook.state') {
     return mockPictureBook(Number(payload.articleId ?? 1));
   }
   if (type === 'pictureBook.pageImage') {
+    if (payload.variant !== 'thumbnail' && payload.variant !== 'display' && payload.variant !== 'full') {
+      throw new Error('pictureBook.pageImage.variant is required');
+    }
     return {
       articleId: Number(payload.articleId ?? 1),
       pageIndex: Number(payload.pageIndex ?? 0),
+      variant: payload.variant,
+      imageRevision: 'mock-cover-v1',
       imageUri: assetUrl('card-space-snacks.png'),
     };
   }
@@ -1419,38 +1473,32 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const english = String(payload.english ?? mockListening.items[0].english).trim();
     const chinese = String(payload.chinese ?? mockListening.items[0].chinese).trim();
     const hidden = english.length === 0;
-    const item = {
-      index,
-      english,
-      chinese: hidden ? '' : chinese,
-      hidden,
-    };
-    const sentences = [...mockListening.article.sentences];
-    if (index >= 0 && index < sentences.length) {
-      sentences[index] = english;
-    }
-    const items = mockListening.items.map((current) =>
-      current.index === index ? item : current,
-    );
-    const article: Article = {
-      ...mockListening.article,
-      sentences,
-      content: sentences.filter((sentence) => sentence.trim()).join(' '),
-      sentenceCount: sentences.length,
-      visibleSentenceCount: sentences.filter((sentence) => sentence.trim()).length,
-    };
+    // Op-specific ack: patched slot + synthesis only (no library / chapter dump).
     return {
-      article,
-      item,
-      items,
+      item: {
+        index,
+        english,
+        chinese: hidden ? '' : chinese,
+        hidden,
+      },
       synthesis: {
-        status: hidden ? 'ready' : 'ready',
+        status: 'ready',
         english: hidden ? 'cleared' : 'ready',
-        chinese: hidden ? 'unchanged' : item.chinese ? 'ready' : 'unchanged',
+        chinese: hidden ? 'unchanged' : chinese ? 'ready' : 'unchanged',
         error: '',
       },
-      articles: mockArticles.map((current) => (current.id === article.id ? article : current)),
-      series: mockSeries,
+    };
+  }
+  if (type === 'listening.updateTranslations') {
+    const translations = Array.isArray(payload.translations)
+      ? payload.translations
+      : Array.isArray(payload.items)
+        ? payload.items
+        : [];
+    return {
+      ok: true,
+      articleId: Number(payload.articleId ?? mockListening.article.id),
+      updated: translations.length,
     };
   }
   if (type === 'listening.resynthesizeSentence') {
@@ -1890,7 +1938,7 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-const mockArticles: Article[] = [
+const mockArticles: MockArticle[] = [
   {
     id: 1,
     title: 'Space Snacks',
@@ -1902,8 +1950,8 @@ const mockArticles: Article[] = [
     sentenceCount: 2,
     createdAt: new Date().toISOString(),
     averageScore: 86,
-    coverImageUri: assetUrl('card-space-snacks.png'),
-    coverImagePath: null,
+    coverPageIndex: 0,
+    coverRevision: 'mock-cover-v1',
     pictureBookEnabled: true,
     seriesId: 1,
     seriesTitle: 'Space Story Series',
@@ -1924,7 +1972,6 @@ const mockSeries: StorySeries[] = [
         description: 'Curious child explorer wearing a red hoodie and small silver backpack.',
       },
     ],
-    coverImagePath: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   },
@@ -1938,23 +1985,13 @@ function mockPictureBook(
     articleId,
     enabled: true,
     status,
-    series: mockSeries[0],
-    chapter: {
-      articleId,
-      seriesId: mockSeries[0].id,
-      chapterOrder: 1,
-      chapterTitle: 'Space Snacks',
-    },
     pages: [
       {
-        articleId,
-        seriesId: mockSeries[0].id,
         pageIndex: 0,
         sentenceStartIndex: 0,
         sentenceEndIndex: 1,
-        paragraphText: mockArticles[0].content,
-        imageUri: assetUrl('card-space-snacks.png'),
-        imagePath: assetUrl('card-space-snacks.png'),
+        hasImage: status !== 'generating',
+        imageRevision: 'mock-cover-v1',
         status: status === 'generating' ? 'generating' : 'ready',
         errorMessage: null,
       },

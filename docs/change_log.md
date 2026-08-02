@@ -1,5 +1,12 @@
 # 修改日志
 
+## 2026-08-02
+
+- **QA / Bridge 回包契约全面瘦身**：`article.list` / `app.ready` 改为轻量 `ArticleSummary`，正文按 `article.fullText` 获取；所有书库写命令改为目标实体/ID + `LibraryPatch`，事件统一为按 ID upsert/delete 的 `library.patch`，删除旧整库响应和 `article.state`。创建文章在正文首次落库和关联/规划完成后分别推 patch，保留失败续传可见性。
+- **绘本图片按需加载**：`pictureBook.state` 只返回页元数据，删除 `includeImageUris`；`pictureBook.pageImage.variant` 必填。书籍/章节封面按可见项懒加载 thumbnail，听力/跟读/对话只按 current/next 请求 display，并用 `imageRevision` 丢弃过期异步图；WebView 不请求 full。
+- **QA snapshot 与载荷预算**：`/snapshot` 不再序列化完整图片 `src/currentSrc`，只保留 `{kind,length,preview}`、自然尺寸和加载状态。Bridge 记录 `estimatedChars`、QA HTTP 记录真实 bytes，超预算运行时只告警；契约测试和 Release QA 按 1 MiB / 512 KiB / 256 KiB / 128 KiB 分级阻断。`listening.updateSentence` 严格只返回 `{ item, synthesis }`，英文变更只 patch 当前文章，中文-only 不更新书库。
+- **Windows jni C4022 踩坑归档**：MSVC 对第三方 `dartjni.h` 的 `AttachCurrentThread` 指针类型告警不是构建脚本故障；`.plugin_symlinks/jni` 属 Pub Cache，勿直接改头文件或写 patch 脚本。已在 `app/windows/CMakeLists.txt` 仅对 `jni` 目标加 `/wd4022`。详见 `docs/build-and-release-pitfalls.md`。
+
 ## 2026-08-01
 
 - **绘本 12 景上限仅约束 AI 组图**：`replaceChapterPlan` / 手工分镜与本地 `importPageImage` 可超过 12 景；`replaceChapterPlan` 同步 `picture_book_pages` 骨架并保留同 pageIndex 已有 ready 图（景数减少时删除多余页）。`confirmPromptReview`、整章 AI 组图与 `PictureBookImageService` 在 >12 时明确中文拒绝且不调图片 API。AI 文本规划 /「按数量匹配分镜」仍 ≤12。文档同步：`AGENTS.md`、`docs/ai_cli_qa_remote_guide.md`、`docs/ai-call-flow-and-prompt-logic.md`、`docs/picture_book_chapter_plan_scene_split_tuning.md`。
@@ -287,7 +294,7 @@
 - 朗读块分句（`NlpService` / `sentenceSplitter.ts`）补充设计说明：输出 read-aloud chunks 而非语言学真分句；舒适上限约 20 词、硬上限 32 词；规则保持通用，回归样本不驱动特例。
 - 通用启发式优化：叙事破折号后的小写长从句不再被 merge 回卷；引号内 `!`/`?` 后短尾（≤5 词）并入同一句；逗号切分避开短介词尾句；舒适词数以上继续寻找断点。
 - `nlp_service_test.dart` 为 E12 增加 `seen—`、大厅+玻璃桌同块、`Quick, now!` 并入、≤3 词碎片等断言。
-- 创作中心绘本组图缩略图支持点击预览原图：列表仍只加载 `thumbnail`，点击后按需请求 `pictureBook.pageImage` `variant: full`（继续走 data URI，WebView 无法直接加载缓存目录 `file://` 原图；坑位记录见 `docs/build-and-release-pitfalls.md`）；预览通过 `createPortal` 固定在视口中央，遮罩与图片分层且不使用 `backdrop-filter`（避免 Windows WebView2 大图花屏）；`<img onLoad>` 后再显示，仅点击大图关闭。
+- 创作中心绘本组图缩略图支持点击预览：列表只加载 `thumbnail`，点击后按需取大图；该版本曾请求 `full`，后续 2026-07-02 已统一改为 `display`，避免 WebView2 大纹理花屏。预览通过 `createPortal` 固定在视口中央，遮罩与图片分层且不使用 `backdrop-filter`；`<img onLoad>` 后再显示，仅点击大图关闭。
 - 创作中心「覆盖听力材料」确认框改为 `createPortal` 挂到 `document.body`，避免页面滚动后弹窗出现在可视区域外。
 
 验证：
@@ -297,7 +304,7 @@
 - `npm --prefix web_ui test -- --run -t "full-size preview"`
 - `npm --prefix web_ui test -- --run -t "confirms before overwriting"`
 - `.\tools\build_windows.ps1 -Release`
-- Release + `TOMATO_QA_REMOTE=true`：`pictureBook.pageImage` full 返回 `data:image/`，E10 听力与创作中心预览 `brokenImages=0`
+- Release + `TOMATO_QA_REMOTE=true`：当时验证 full data URI；现行 Web UI 验收必须使用 display，full 仅供显式 QA/原生链路
 
 ## 2026-06-30
 

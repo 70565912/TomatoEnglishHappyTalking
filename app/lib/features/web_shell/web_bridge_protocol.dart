@@ -104,6 +104,7 @@ class BridgeRouter {
     try {
       final payload = await handler(message);
       stopwatch.stop();
+      final estimatedChars = estimateJsonChars(payload);
       TomatoLogger.info(
         category: 'bridge',
         event: 'command.end',
@@ -113,8 +114,27 @@ class BridgeRouter {
         data: {
           'type': message.type,
           'resultKeys': payload.keys.take(30).toList(growable: false),
+          'estimatedChars': estimatedChars,
         },
       );
+      // Runtime remains available when a provider unexpectedly returns a large
+      // payload; automated contract tests enforce these command budgets.
+      // pageImage is intentionally exempt because it is the one endpoint
+      // designed to carry a single requested image data URI.
+      final budgetChars = bridgePayloadBudgetChars(message.type);
+      if (budgetChars != null && estimatedChars > budgetChars) {
+        TomatoLogger.warn(
+          category: 'bridge',
+          event: 'payload.oversized',
+          flowId: message.id,
+          status: 'warning',
+          data: {
+            'type': message.type,
+            'estimatedChars': estimatedChars,
+            'budgetChars': budgetChars,
+          },
+        );
+      }
       return BridgeResponse.success(
         id: message.id,
         type: '${message.type}.result',
@@ -132,9 +152,8 @@ class BridgeRouter {
         error: error,
         stackTrace: stackTrace,
       );
-      final resumeData = error is ArticleCreateResumeException
-          ? error.toBridgeData()
-          : null;
+      final resumeData =
+          error is ArticleCreateResumeException ? error.toBridgeData() : null;
       return BridgeResponse.error(
         id: message.id,
         type: '${message.type}.error',
@@ -143,6 +162,35 @@ class BridgeRouter {
       );
     }
   }
+}
+
+/// Returns the non-image response budget used for telemetry and regression
+/// tests. Runtime only warns: rejecting a response would hide diagnostics and
+/// turn a size regression into a user-facing outage.
+int? bridgePayloadBudgetChars(String type) {
+  if (type == 'pictureBook.pageImage') return null;
+  if (type == 'pictureBook.state' || type == 'article.fullText') {
+    return 256 * 1024;
+  }
+  if (type == 'series.import') return 512 * 1024;
+  if (type == 'article.list' || type == 'app.ready') return 1024 * 1024;
+  if (type == 'library.patch' ||
+      (type.startsWith('article.') && type != 'article.list') ||
+      (type.startsWith('series.') &&
+          type != 'series.list' &&
+          type != 'series.export' &&
+          type != 'series.suggestDescription') ||
+      type.startsWith('listening.update') ||
+      type == 'listening.resynthesizeSentence' ||
+      (type.startsWith('pictureBook.') &&
+          type != 'pictureBook.state' &&
+          type != 'pictureBook.promptReview' &&
+          type != 'pictureBook.pagePromptReview' &&
+          type != 'pictureBook.resolveRelevantCharacters' &&
+          type != 'pictureBook.exportChapterImages')) {
+    return 128 * 1024;
+  }
+  return 1024 * 1024;
 }
 
 /// Raised when article body is already saved but a later create step failed.
@@ -237,4 +285,41 @@ Object? _valueSummary(Object? value) {
     };
   }
   return {'type': value.runtimeType.toString()};
+}
+
+/// Fast JSON-size approximation used for observability without serializing a
+/// large bridge payload a second time. Tests use real UTF-8 bytes for gating.
+int estimateJsonChars(Object? value, {int stopAfter = 2 * 1024 * 1024}) {
+  var total = 0;
+
+  void visit(Object? current) {
+    if (total > stopAfter) {
+      return;
+    }
+    if (current == null) {
+      total += 4;
+    } else if (current is bool) {
+      total += current ? 4 : 5;
+    } else if (current is num) {
+      total += current.toString().length;
+    } else if (current is String) {
+      total += current.length + 2;
+    } else if (current is List) {
+      total += 2 + (current.isEmpty ? 0 : current.length - 1);
+      for (final item in current) {
+        visit(item);
+      }
+    } else if (current is Map) {
+      total += 2 + (current.isEmpty ? 0 : current.length - 1);
+      for (final entry in current.entries) {
+        total += entry.key.toString().length + 3;
+        visit(entry.value);
+      }
+    } else {
+      total += current.toString().length + 2;
+    }
+  }
+
+  visit(value);
+  return total;
 }

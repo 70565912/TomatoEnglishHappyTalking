@@ -66,7 +66,9 @@ void main() {
     }
   });
 
-  test('creates persistent cache, picture-book, translation, and safety tables at database version 8', () async {
+  test(
+      'creates persistent cache, picture-book, translation, and safety tables at database version 8',
+      () async {
     final db = await DatabaseService.database;
     expect(await db.getVersion(), 8);
 
@@ -1007,7 +1009,8 @@ void main() {
       pages.every((page) => page.status == 'ready'),
       isTrue,
       reason: pages
-          .map((page) => '${page.pageIndex}:${page.status}:${page.errorMessage}')
+          .map(
+              (page) => '${page.pageIndex}:${page.status}:${page.errorMessage}')
           .join(' | '),
     );
     expect(pages.first.promptJson, contains('blue dress and white apron'));
@@ -1658,10 +1661,8 @@ void main() {
     expect(state['status'], 'ready');
     final pages = state['pages'] as List;
     expect(pages.map((page) => page['status']), ['ready', 'ready']);
-    expect(
-      pages.every((page) => (page['imagePath'] as String).isNotEmpty),
-      isTrue,
-    );
+    expect(pages.every((page) => page['hasImage'] == true), isTrue);
+    expect(pages.every((page) => !page.containsKey('imagePath')), isTrue);
   });
 
   test(
@@ -3875,12 +3876,8 @@ but the three were all crowded together at one corner of it.
         imageBody = body;
         return {
           'data': [
-            {
-              'b64_json': base64Encode(await generatedPageOne.readAsBytes())
-            },
-            {
-              'b64_json': base64Encode(await generatedPageTwo.readAsBytes())
-            },
+            {'b64_json': base64Encode(await generatedPageOne.readAsBytes())},
+            {'b64_json': base64Encode(await generatedPageTwo.readAsBytes())},
           ],
         };
       },
@@ -3914,7 +3911,8 @@ but the three were all crowded together at one corner of it.
       pages.every((page) => page.status == 'ready'),
       isTrue,
       reason: pages
-          .map((page) => '${page.pageIndex}:${page.status}:${page.errorMessage}')
+          .map(
+              (page) => '${page.pageIndex}:${page.status}:${page.errorMessage}')
           .join(' | '),
     );
     expect(upscaleArguments, hasLength(2));
@@ -4546,7 +4544,7 @@ but the three were all crowded together at one corner of it.
     expect(review.containsKey('referencePageIndex'), isFalse);
   });
 
-  test('picture-book cover payload uses the first ready generated image',
+  test('picture-book cover descriptor does not serialize the generated image',
       () async {
     final articleId = await _saveArticle('Mia opens a map and smiles.');
     final imageFile = await _writeTestPng(
@@ -4555,8 +4553,6 @@ but the three were all crowded together at one corner of it.
       width: 1280,
       height: 720,
     );
-    final originalDataUri =
-        'data:image/png;base64,${base64Encode(await imageFile.readAsBytes())}';
     final now = DateTime(2026, 1, 1);
 
     await DatabaseService.upsertPictureBookPage(
@@ -4574,18 +4570,15 @@ but the three were all crowded together at one corner of it.
       ),
     );
 
-    final payload = await PictureBookService.coverImagePayloadForArticle(
+    final payload = await PictureBookService.coverDescriptorForArticle(
       articleId,
     );
 
     expect(payload, isNotNull);
-    expect(payload?['coverImagePath'], imageFile.path);
-    expect(payload?['coverImageVariant'], 'thumbnail');
-    expect(
-      payload?['coverImageUri']?.toString(),
-      startsWith('data:image/png;base64,'),
-    );
-    expect(payload?['coverImageUri'], isNot(originalDataUri));
+    expect(payload?['coverPageIndex'], 0);
+    expect(payload?['coverRevision'], now.toUtc().toIso8601String());
+    expect(payload?.containsKey('coverImagePath'), isFalse);
+    expect(payload?.containsKey('coverImageUri'), isFalse);
 
     final thumbnailDirectory =
         await ApiCacheService.cacheDirectory('picture_book_thumbnails');
@@ -4593,11 +4586,121 @@ but the three were all crowded together at one corner of it.
         .list()
         .where((entity) => entity is File && entity.path.endsWith('.png'))
         .toList();
-    expect(thumbnails, hasLength(1));
+    expect(thumbnails, isEmpty);
   });
 
-  test(
-      'picture-book importPageImage replaces page with native 2560x1440 png',
+  test('picture-book state is metadata-only and stays within 256 KiB',
+      () async {
+    final articleId = await _saveArticle('Mia opens a map and smiles.');
+    final article = await DatabaseService.getArticleById(articleId);
+    final series = await PictureBookService.createSeries(title: 'Map Book');
+    await PictureBookService.ensureChapterForArticle(
+      seriesId: series.id!,
+      article: article!,
+    );
+    final imageFile = await _writeTestPng(
+      tempDir,
+      'state-page.png',
+      width: 1280,
+      height: 720,
+    );
+    final now = DateTime(2026, 8, 2);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        seriesId: series.id,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'private paragraph ${'p' * 300000}',
+        promptJson: jsonEncode({'prompt': 'private prompt ${'q' * 300000}'}),
+        imagePath: imageFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    final state = await PictureBookService.statePayload(articleId);
+    final page = (state['pages'] as List).single as Map<String, dynamic>;
+    final encoded = jsonEncode(state);
+
+    expect(
+      page.keys.toSet(),
+      {
+        'pageIndex',
+        'sentenceStartIndex',
+        'sentenceEndIndex',
+        'status',
+        'errorMessage',
+        'hasImage',
+        'imageRevision',
+      },
+    );
+    expect(encoded, isNot(contains('private paragraph')));
+    expect(encoded, isNot(contains('private prompt')));
+    expect(encoded, isNot(contains(imageFile.path)));
+    expect(encoded, isNot(contains('data:image/')));
+    expect(encoded.length, lessThanOrEqualTo(256 * 1024));
+  });
+
+  test('picture-book page image rejects an unsupported variant', () async {
+    await expectLater(
+      PictureBookService.pageImagePayload(
+        articleId: 1,
+        pageIndex: 0,
+        variant: 'original',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('picture-book page image bounds thumbnail and display dimensions',
+      () async {
+    final articleId = await _saveArticle('Mia opens a map and smiles.');
+    final imageFile = await _writeTestPng(
+      tempDir,
+      'variant-source.png',
+      width: 2560,
+      height: 1440,
+    );
+    final now = DateTime(2026, 8, 2);
+    await DatabaseService.upsertPictureBookPage(
+      PictureBookPage(
+        articleId: articleId,
+        pageIndex: 0,
+        sentenceStartIndex: 0,
+        sentenceEndIndex: 0,
+        paragraphText: 'Mia opens a map and smiles.',
+        promptJson: '{}',
+        imagePath: imageFile.path,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+      ),
+    );
+
+    Future<(int, int)> dimensions(String variant) async {
+      final payload = await PictureBookService.pageImagePayload(
+        articleId: articleId,
+        pageIndex: 0,
+        variant: variant,
+      );
+      final uri = payload['imageUri'] as String;
+      final bytes = base64Decode(uri.substring(uri.indexOf(',') + 1));
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final result = (frame.image.width, frame.image.height);
+      frame.image.dispose();
+      codec.dispose();
+      return result;
+    }
+
+    expect(await dimensions('thumbnail'), (640, 360));
+    expect(await dimensions('display'), (1280, 720));
+  });
+
+  test('picture-book importPageImage replaces page with native 2560x1440 png',
       () async {
     final articleId = await _saveArticle('Mia opens a map and smiles.');
     final series = await PictureBookService.createSeries(title: 'Import Book');
@@ -4658,10 +4761,12 @@ but the three were all crowded together at one corner of it.
     expect(state['status'], 'ready');
     final pages = state['pages'] as List;
     expect(pages, hasLength(1));
-    final page = pages.single as Map;
-    expect(page['status'], 'ready');
-    expect(page['errorMessage'], anyOf(isNull, isEmpty));
-    final importedPath = (page['imagePath'] as String?)?.trim() ?? '';
+    final statePage = pages.single as Map;
+    expect(statePage['status'], 'ready');
+    expect(statePage['errorMessage'], anyOf(isNull, isEmpty));
+    final persistedPage =
+        (await DatabaseService.getPictureBookPages(articleId)).single;
+    final importedPath = persistedPage.imagePath?.trim() ?? '';
     expect(importedPath, isNotEmpty);
     expect(await File(importedPath).exists(), isTrue);
     expect(importedPath, isNot(oldCachedPath));
@@ -4690,8 +4795,7 @@ but the three were all crowded together at one corner of it.
     expect(upscaleArguments.single, containsAllInOrder(['-s', '4']));
   });
 
-  test(
-      'picture-book importPageImage enhances exact 2560x1440 input at 2x',
+  test('picture-book importPageImage enhances exact 2560x1440 input at 2x',
       () async {
     final articleId = await _saveArticle('Mia opens a map and smiles.');
     final series = await PictureBookService.createSeries(title: 'Import Exact');
@@ -4727,8 +4831,10 @@ but the three were all crowded together at one corner of it.
       sourcePath: sourceFile.path,
     );
 
-    final page = (state['pages'] as List).single as Map;
-    final importedPath = (page['imagePath'] as String?)?.trim() ?? '';
+    expect((state['pages'] as List).single['hasImage'], isTrue);
+    final persistedPage =
+        (await DatabaseService.getPictureBookPages(articleId)).single;
+    final importedPath = persistedPage.imagePath?.trim() ?? '';
     expect(importedPath, endsWith('.png'));
     expect(await File(importedPath).readAsBytes(), isNot(sourceBytes));
     expect(upscaleArguments.single, containsAllInOrder(['-s', '2']));
@@ -4771,8 +4877,10 @@ but the three were all crowded together at one corner of it.
       useSuperResolution: false,
     );
 
-    final page = (state['pages'] as List).single as Map;
-    final importedPath = (page['imagePath'] as String?)?.trim() ?? '';
+    expect((state['pages'] as List).single['hasImage'], isTrue);
+    final persistedPage =
+        (await DatabaseService.getPictureBookPages(articleId)).single;
+    final importedPath = persistedPage.imagePath?.trim() ?? '';
     expect(await File(importedPath).readAsBytes(), sourceBytes);
   });
 
@@ -4848,7 +4956,8 @@ but the three were all crowded together at one corner of it.
     expect(await File(oldCachedPath).exists(), isTrue);
   });
 
-  test('picture-book replaceChapterPlan writes summary without image API', () async {
+  test('picture-book replaceChapterPlan writes summary without image API',
+      () async {
     final articleId = await _saveArticle(
       'Alice walks into the garden. The Queen points at the croquet ground.',
       sentences: const [
@@ -4857,7 +4966,8 @@ but the three were all crowded together at one corner of it.
       ],
     );
     final article = await DatabaseService.getArticleById(articleId);
-    final series = await PictureBookService.createSeries(title: 'Replace Plan Book');
+    final series =
+        await PictureBookService.createSeries(title: 'Replace Plan Book');
     await PictureBookService.ensureChapterForArticle(
       seriesId: series.id!,
       article: article!,
@@ -4999,15 +5109,15 @@ but the three were all crowded together at one corner of it.
           },
       ],
     );
-    final chapter =
-        await DatabaseService.getStoryChapterForArticle(articleId);
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
     var imageCalls = 0;
     VolcImageService.setPostOverrideForTest(
       ({required endpoint, required headers, required body}) async {
         imageCalls += 1;
         return {
           'data': [
-            for (var i = 0; i < 13; i += 1) {'url': 'https://example.test/$i.png'},
+            for (var i = 0; i < 13; i += 1)
+              {'url': 'https://example.test/$i.png'},
           ],
         };
       },
@@ -5056,7 +5166,8 @@ but the three were all crowded together at one corner of it.
       ],
     );
     final article = await DatabaseService.getArticleById(articleId);
-    final series = await PictureBookService.createSeries(title: 'Reject Plan Book');
+    final series =
+        await PictureBookService.createSeries(title: 'Reject Plan Book');
     await PictureBookService.ensureChapterForArticle(
       seriesId: series.id!,
       article: article!,
@@ -5090,7 +5201,8 @@ but the three were all crowded together at one corner of it.
     expect(chapter?.summaryJson ?? '', beforeSummary);
   });
 
-  test('picture-book exportChapterImages writes scene files and resolves conflicts',
+  test(
+      'picture-book exportChapterImages writes scene files and resolves conflicts',
       () async {
     final articleId = await _saveArticle('Mia opens a map and smiles.');
     final series = await PictureBookService.createSeries(title: 'Export Book');
@@ -5159,9 +5271,8 @@ but the three were all crowded together at one corner of it.
       ),
     );
 
-    final exportDir =
-        Directory(path_lib.join(tempDir.path, 'chapter-export'))
-          ..createSync(recursive: true);
+    final exportDir = Directory(path_lib.join(tempDir.path, 'chapter-export'))
+      ..createSync(recursive: true);
     await File(path_lib.join(exportDir.path, '01.png'))
         .writeAsBytes([1, 2, 3], flush: true);
 
@@ -5177,7 +5288,8 @@ but the three were all crowded together at one corner of it.
           .toList(),
       contains('01.png'),
     );
-    expect(await File(path_lib.join(exportDir.path, '02.png')).exists(), isFalse);
+    expect(
+        await File(path_lib.join(exportDir.path, '02.png')).exists(), isFalse);
 
     final renamed = await PictureBookService.exportChapterImages(
       articleId: articleId,
@@ -5191,8 +5303,10 @@ but the three were all crowded together at one corner of it.
       'v2_chapter-english.txt',
       'v2_group-prompt.txt',
     ]);
-    expect(await File(path_lib.join(exportDir.path, 'v2_01.png')).exists(), isTrue);
-    expect(await File(path_lib.join(exportDir.path, 'v2_02.png')).exists(), isTrue);
+    expect(await File(path_lib.join(exportDir.path, 'v2_01.png')).exists(),
+        isTrue);
+    expect(await File(path_lib.join(exportDir.path, 'v2_02.png')).exists(),
+        isTrue);
     expect(
       await File(path_lib.join(exportDir.path, 'v2_chapter-english.txt'))
           .readAsString(),

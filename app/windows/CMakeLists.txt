@@ -57,6 +57,13 @@ add_subdirectory("runner")
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# package:jni (transitive via path_provider_android) calls AttachCurrentThread
+# with JNIEnv** while the Windows JNI headers expect void**. Upstream uses an
+# __ENVP_CAST helper; jni 1.0.3 omits it and MSVC emits C4022. Silence only that
+# known third-party warning on the jni target — do not weaken /WX for our code.
+if(TARGET jni)
+  target_compile_options(jni PRIVATE /wd4022)
+endif()
 
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can

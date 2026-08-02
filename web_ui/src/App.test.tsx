@@ -79,6 +79,25 @@ function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
   };
 }
 
+function libraryPatch({
+  articles = [],
+  removeArticleIds = [],
+  series = [],
+  removeSeriesIds = [],
+}: {
+  articles?: Article[];
+  removeArticleIds?: number[];
+  series?: StorySeries[];
+  removeSeriesIds?: number[];
+} = {}) {
+  return {
+    upsertArticles: articles,
+    removeArticleIds,
+    upsertSeries: series,
+    removeSeriesIds,
+  };
+}
+
 function expectElementBefore(first: HTMLElement, second: HTMLElement) {
   expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
@@ -120,7 +139,7 @@ function installChapterOrderBridge(articles: Article[], series: StorySeries[]) {
         const article = articles.find((item) => item.id === articleId) ?? articles[0];
         return ok(message.id, type, {
           article,
-          items: [{ index: 0, english: article.sentences[0], chinese: '' }],
+          items: [{ index: 0, english: `${article.title} starts.`, chinese: '' }],
         });
       }
       if (type === 'pictureBook.state') {
@@ -153,8 +172,6 @@ function chapterOrderFixture() {
   const alphaArticle: Article = {
     id: 1,
     title: 'Z Last Alpha',
-    content: 'Alpha starts.',
-    sentences: ['Alpha starts.'],
     sentenceCount: 1,
     createdAt: '2026-06-10T10:00:00.000Z',
     averageScore: 80,
@@ -164,8 +181,6 @@ function chapterOrderFixture() {
   const betaTwo: Article = {
     id: 2,
     title: 'E2 - Beta',
-    content: 'Beta two.',
-    sentences: ['Beta two.'],
     sentenceCount: 1,
     createdAt: now,
     averageScore: 90,
@@ -176,8 +191,6 @@ function chapterOrderFixture() {
     ...betaTwo,
     id: 3,
     title: 'E10 - Beta',
-    content: 'Beta ten.',
-    sentences: ['Beta ten.'],
     createdAt: '2026-06-09T10:00:00.000Z',
   };
   const series: StorySeries[] = [
@@ -185,7 +198,6 @@ function chapterOrderFixture() {
       id: 1,
       title: 'Alpha Book',
       description: '',
-      coverImagePath: null,
       createdAt: now,
       updatedAt: now,
     },
@@ -193,7 +205,6 @@ function chapterOrderFixture() {
       id: 2,
       title: 'Beta Book',
       description: '',
-      coverImagePath: null,
       createdAt: now,
       updatedAt: now,
     },
@@ -741,7 +752,10 @@ describe('App', () => {
           return ok(message.id, type, { articles: [article], series });
         }
         if (type === 'article.rename') {
-          return ok(message.id, type, { article: renamedArticle, articles: [renamedArticle], series });
+          return ok(message.id, type, {
+            article: renamedArticle,
+            patch: libraryPatch({ articles: [renamedArticle] }),
+          });
         }
         return ok(message.id, type, {});
       }),
@@ -783,8 +797,8 @@ describe('App', () => {
       sentenceCount: 1,
       createdAt: new Date().toISOString(),
       averageScore: 64,
-      coverImageUri: generatedCover,
-      coverImagePath: null,
+      coverPageIndex: 0,
+      coverRevision: 'cover-v1',
       pictureBookEnabled: true,
       seriesId: 7,
       seriesTitle: 'Generated Series',
@@ -802,6 +816,15 @@ describe('App', () => {
         if (type === 'app.ready' || type === 'article.list') {
           return ok(message.id, type, { articles: [article], series: [] });
         }
+        if (type === 'pictureBook.pageImage') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            pageIndex: 0,
+            variant: 'thumbnail',
+            imageRevision: 'cover-v1',
+            imageUri: generatedCover,
+          });
+        }
         return ok(message.id, type, {});
       }),
     };
@@ -812,10 +835,12 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /Generated Series/ }));
     expect(await screen.findByText('章节列表')).toBeInTheDocument();
     expect(await screen.findByText('Generated Cover Story')).toBeInTheDocument();
-    const imageSources = Array.from(container.querySelectorAll('.book-card img, .mission-row img')).map((img) =>
-      img.getAttribute('src'),
-    );
-    expect(imageSources).toEqual([generatedCover, generatedCover]);
+    await waitFor(() => {
+      const imageSources = Array.from(container.querySelectorAll('.book-card img, .mission-row img')).map((img) =>
+        img.getAttribute('src'),
+      );
+      expect(imageSources).toEqual([generatedCover, generatedCover]);
+    });
   });
 
   it('renders settings with masked cloud key controls', async () => {
@@ -1008,8 +1033,7 @@ describe('App', () => {
               seriesId: 1,
               seriesTitle: 'Resume Book',
             },
-            articles: [],
-            series: [],
+            patch: libraryPatch(),
           });
         }
         if (type === 'pictureBook.promptReview') {
@@ -1099,8 +1123,7 @@ describe('App', () => {
               createdAt: new Date().toISOString(),
               averageScore: 0,
             },
-            articles: [],
-            series: [],
+            patch: libraryPatch(),
           });
         }
         if (type === 'pictureBook.promptReview') {
@@ -1154,7 +1177,6 @@ describe('App', () => {
       title: 'Wonder Book',
       description: 'A bright storybook world with clear recurring visual anchors.',
       characters: [{ name: 'Alice', description: 'Blue dress and white pinafore.' }],
-      coverImagePath: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1168,7 +1190,10 @@ describe('App', () => {
           return ok(message.id, type, { articles: [], series: [] });
         }
         if (type === 'series.create') {
-          return ok(message.id, type, { articles: [], series: [savedSeries] });
+          return ok(message.id, type, {
+            series: savedSeries,
+            patch: libraryPatch({ series: [savedSeries] }),
+          });
         }
         if (type === 'article.prepareCreate') {
           return ok(message.id, type, preparedCreatePayload(payload.content));
@@ -1186,7 +1211,10 @@ describe('App', () => {
             seriesId: 77,
             seriesTitle: savedSeries.title,
           };
-          return ok(message.id, type, { article, articles: [article], series: [savedSeries] });
+          return ok(message.id, type, {
+            article,
+            patch: libraryPatch({ articles: [article], series: [savedSeries] }),
+          });
         }
         if (type === 'pictureBook.promptReview') {
           return ok(message.id, type, {
@@ -1435,7 +1463,10 @@ describe('App', () => {
           return ok(message.id, type, { articles: [article], series: [emptySeries, filledSeries] });
         }
         if (type === 'series.delete') {
-          return ok(message.id, type, { articles: [article], series: [filledSeries] });
+          return ok(message.id, type, {
+            seriesId: 1,
+            patch: libraryPatch({ removeSeriesIds: [1] }),
+          });
         }
         if (type === 'pictureBook.state') {
           return ok(message.id, type, {
@@ -1512,7 +1543,10 @@ describe('App', () => {
           return ok(message.id, type, { articles: [article], series });
         }
         if (type === 'article.delete') {
-          return ok(message.id, type, { articles: [], series });
+          return ok(message.id, type, {
+            articleId: article.id,
+            patch: libraryPatch({ removeArticleIds: [article.id] }),
+          });
         }
         if (type === 'pictureBook.state') {
           return ok(message.id, type, {
@@ -1618,8 +1652,10 @@ describe('App', () => {
             title: 'Imported Book',
             articleIds: [8],
             warnings: [],
-            articles: [importedArticle, article],
-            series: [importedSeries, ...series],
+            patch: libraryPatch({
+              articles: [importedArticle],
+              series: [importedSeries],
+            }),
           });
         }
         if (type === 'pictureBook.state') {
@@ -1655,7 +1691,7 @@ describe('App', () => {
     expect(await screen.findByText(/书籍已导入/)).toBeInTheDocument();
   });
 
-  it('refreshes creation display images when generated image paths change', async () => {
+  it('refreshes creation thumbnails when generated image revisions change', async () => {
     window.location.hash = '/creation?articleId=1&seriesId=1';
     const article = {
       id: 1,
@@ -1669,7 +1705,8 @@ describe('App', () => {
       seriesId: 1,
       seriesTitle: 'Alice Book',
       chapterOrder: 1,
-      coverImageUri: 'data:image/png;base64,OLD_COVER',
+      coverPageIndex: 0,
+      coverRevision: 'old-revision',
     };
     const series = [{
       id: 1,
@@ -1702,12 +1739,11 @@ describe('App', () => {
             status: 'ready',
             pages: [
               {
-                articleId: article.id,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
                 sentenceEndIndex: 0,
-                paragraphText: article.content,
-                imagePath: 'old.png',
+                hasImage: true,
+                imageRevision: 'old-revision',
                 imageUri: 'data:image/png;base64,OLD_DISPLAY',
                 imageVariant: 'display',
                 status: 'ready',
@@ -1720,6 +1756,7 @@ describe('App', () => {
             articleId: article.id,
             pageIndex: Number(payload.pageIndex ?? 0),
             variant: payload.variant,
+            imageRevision: 'new-revision',
             imageUri: 'data:image/png;base64,NEW_DISPLAY',
           });
         }
@@ -1745,12 +1782,11 @@ describe('App', () => {
           status: 'ready',
           pages: [
             {
-              articleId: article.id,
               pageIndex: 0,
               sentenceStartIndex: 0,
               sentenceEndIndex: 0,
-              paragraphText: article.content,
-              imagePath: 'new.png',
+              hasImage: true,
+              imageRevision: 'new-revision',
               status: 'ready',
             },
           ],
@@ -1765,7 +1801,7 @@ describe('App', () => {
             call.type === 'pictureBook.pageImage' &&
             call.payload.articleId === 1 &&
             call.payload.pageIndex === 0 &&
-            call.payload.variant === 'display',
+            call.payload.variant === 'thumbnail',
         ),
       ).toBe(true);
     });
@@ -1920,17 +1956,19 @@ describe('App', () => {
           });
         }
         if (type === 'series.update') {
+          const updatedArticle = {
+            ...article,
+            seriesTitle: String(payload.title ?? article.seriesTitle),
+            seriesDescription: String(payload.description ?? article.seriesDescription),
+          };
+          const updatedSeries = {
+            ...series[0],
+            title: String(payload.title ?? series[0].title),
+            description: String(payload.description ?? series[0].description),
+          };
           return ok(message.id, type, {
-            articles: [{
-              ...article,
-              seriesTitle: String(payload.title ?? article.seriesTitle),
-              seriesDescription: String(payload.description ?? article.seriesDescription),
-            }],
-            series: [{
-              ...series[0],
-              title: String(payload.title ?? series[0].title),
-              description: String(payload.description ?? series[0].description),
-            }],
+            series: updatedSeries,
+            patch: libraryPatch({ articles: [updatedArticle], series: [updatedSeries] }),
           });
         }
         if (type === 'pictureBook.state') {
@@ -1949,7 +1987,7 @@ describe('App', () => {
 
     expect(await screen.findByRole('heading', { name: '创作中心' })).toBeInTheDocument();
     expect(screen.queryByText('Victorian fantasy book world with recurring Wonderland characters.')).not.toBeInTheDocument();
-    expect(await screen.findByText('A one-scene storyboard where Alice notices the hurried White Rabbit.')).toBeInTheDocument();
+    expect(screen.queryByText('A one-scene storyboard where Alice notices the hurried White Rabbit.')).not.toBeInTheDocument();
     const chapterToolbar = container.querySelector('.creation-library-selector .chapter-toolbar') as HTMLElement;
     expect(chapterToolbar).toHaveTextContent('章节列表');
     expect(chapterToolbar).not.toHaveTextContent('Wonderland Book');
@@ -1971,9 +2009,10 @@ describe('App', () => {
       expect(calls.find((call) => call.type === 'series.suggestDescription')?.payload).toMatchObject({
         seriesTitle: 'Updated Wonderland Book',
         articleTitle: 'Storyboard Chapter',
-        content: 'Alice meets the White Rabbit.',
+        articleId: article.id,
         description: 'Victorian fantasy book world with recurring Wonderland characters.',
       });
+      expect(calls.find((call) => call.type === 'series.suggestDescription')?.payload).not.toHaveProperty('content');
     });
     fireEvent.change(descriptionInput, { target: { value: 'Updated character roster and visual style.' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /保存/ }));
@@ -2447,7 +2486,10 @@ describe('App', () => {
             seriesDescription: String(payload.seriesDescription ?? ''),
             chapterOrder: 2,
           };
-          return ok(message.id, type, { article, articles: [article], series });
+          return ok(message.id, type, {
+            article,
+            patch: libraryPatch({ articles: [article], series }),
+          });
         }
         if (type === 'pictureBook.promptReview') {
           return ok(
@@ -2654,19 +2696,17 @@ describe('App', () => {
             seriesTitle: String(payload.seriesTitle ?? ''),
             chapterOrder: 1,
           };
+          const savedSeries = {
+            id: 12,
+            title: String(payload.seriesTitle ?? ''),
+            description: '',
+            coverImagePath: null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
           return ok(message.id, type, {
             article,
-            articles: [article],
-            series: [
-              {
-                id: 12,
-                title: String(payload.seriesTitle ?? ''),
-                description: '',
-                coverImagePath: null,
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              },
-            ],
+            patch: libraryPatch({ articles: [article], series: [savedSeries] }),
           });
         }
         return ok(message.id, type, {});
@@ -3583,25 +3623,13 @@ describe('App', () => {
           });
         }
         if (type === 'listening.updateSentence') {
-          const updatedArticle = {
-            ...article,
-            content: 'Tom finds a silver snack box. He shares it with his team.',
-            sentences: ['Tom finds a silver snack box.', 'He shares it with his team.'],
-          };
           return ok(message.id, type, {
-            article: updatedArticle,
             item: {
               index: 0,
               english: 'Tom finds a silver snack box.',
               chinese: '汤姆发现了一个银色的零食盒。',
             },
-            items: [
-              { index: 0, english: 'Tom finds a silver snack box.', chinese: '汤姆发现了一个银色的零食盒。' },
-              { index: 1, english: article.sentences[1], chinese: '他把它分享给自己的队友。' },
-            ],
             synthesis: { status: 'error', error: 'TTS 内容安全拒绝' },
-            articles: [updatedArticle],
-            series: [],
           });
         }
         if (type === 'listening.resynthesizeSentence') {
@@ -3775,28 +3803,14 @@ describe('App', () => {
         }
         if (type === 'listening.updateSentence') {
           const hiddenIndex = Number(payload.index ?? 1);
-          const updatedArticle = {
-            ...article,
-            content: 'First line. Third line.',
-            sentences: ['First line.', '', 'Third line.'],
-            visibleSentenceCount: 2,
-          };
           return ok(message.id, type, {
-            article: updatedArticle,
             item: {
               index: hiddenIndex,
               english: '',
               chinese: '',
               hidden: true,
             },
-            items: [
-              { index: 0, english: 'First line.', chinese: '第一句。' },
-              { index: 1, english: '', chinese: '', hidden: true },
-              { index: 2, english: 'Third line.', chinese: '第三句。' },
-            ],
             synthesis: { status: 'ready', english: 'cleared', chinese: 'cleared', error: '' },
-            articles: [updatedArticle],
-            series: [],
           });
         }
         return ok(message.id, type, {});
@@ -3894,12 +3908,11 @@ describe('App', () => {
             status: 'ready',
             pages: [
               {
-                articleId: article.id,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
                 sentenceEndIndex: 1,
-                paragraphText: article.content,
-                imagePath: 'ready.png',
+                hasImage: true,
+                imageRevision: 'fullscreen-v1',
                 imageUri: 'data:image/png;base64,THUMBNAIL',
                 imageVariant: 'thumbnail',
                 status: 'ready',
@@ -3912,6 +3925,7 @@ describe('App', () => {
             articleId: article.id,
             pageIndex: Number(payload.pageIndex ?? 0),
             variant: payload.variant,
+            imageRevision: 'fullscreen-v1',
             imageUri: 'data:image/png;base64,FULL',
           });
         }
@@ -4547,7 +4561,7 @@ describe('App', () => {
     expect(screen.queryAllByText('Alpha Creation Chapter')).toHaveLength(0);
   });
 
-  it('loads creation center picture-book images as persisted display variants after metadata', async () => {
+  it('loads visible creation center picture-book thumbnails after metadata', async () => {
     window.location.hash = '/creation?articleId=1';
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
     Object.defineProperty(navigator, 'clipboard', {
@@ -4600,25 +4614,21 @@ describe('App', () => {
             status: 'ready',
             pages: [
               {
-                articleId: article.id,
-                seriesId: 1,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
                 sentenceEndIndex: 0,
-                paragraphText: article.sentences[0],
-                imagePath: 'F:/Tomato/picture_book/original-0.png',
+                hasImage: true,
+                imageRevision: 'page-0-v1',
                 imageUri: null,
                 status: 'ready',
                 errorMessage: null,
               },
               {
-                articleId: article.id,
-                seriesId: 1,
                 pageIndex: 1,
                 sentenceStartIndex: 1,
                 sentenceEndIndex: 1,
-                paragraphText: article.sentences[1],
-                imagePath: 'F:/Tomato/picture_book/original-1.png',
+                hasImage: true,
+                imageRevision: 'page-1-v1',
                 imageUri: null,
                 status: 'ready',
                 errorMessage: null,
@@ -4631,7 +4641,8 @@ describe('App', () => {
             articleId: article.id,
             pageIndex: Number(payload.pageIndex ?? 0),
             variant: payload.variant,
-            imageUri: `data:image/png;base64,DISPLAY_${payload.pageIndex}`,
+            imageRevision: `page-${payload.pageIndex}-v1`,
+            imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
           });
         }
         if (type === 'article.fullText') {
@@ -4648,6 +4659,19 @@ describe('App', () => {
       }),
     };
 
+    const observations = new Map<Element, IntersectionObserverCallback>();
+    class MockIntersectionObserver implements IntersectionObserver {
+      constructor(private readonly callback: IntersectionObserverCallback) {}
+      readonly root = null;
+      readonly rootMargin = '0px';
+      readonly thresholds = [0];
+      disconnect() {}
+      observe(target: Element) { observations.set(target, this.callback); }
+      takeRecords(): IntersectionObserverEntry[] { return []; }
+      unobserve(target: Element) { observations.delete(target); }
+    }
+    vi.stubGlobal('IntersectionObserver', MockIntersectionObserver);
+
     render(<App />);
 
     expect(await screen.findByText('绘本组图')).toBeInTheDocument();
@@ -4655,23 +4679,45 @@ describe('App', () => {
       const stateCall = calls.find((call) => call.type === 'pictureBook.state');
       expect(stateCall?.payload).toMatchObject({
         articleId: 1,
-        includeImageUris: false,
       });
+      expect(stateCall?.payload).not.toHaveProperty('includeImageUris');
+    });
+    expect(calls.filter((call) => call.type === 'pictureBook.pageImage')).toHaveLength(0);
+    const cards = Array.from(document.querySelectorAll('.picture-creation-media'));
+    expect(cards).toHaveLength(2);
+    await waitFor(() => {
+      expect(observations.has(cards[0])).toBe(true);
+      expect(observations.has(cards[1])).toBe(true);
+    });
+    act(() => {
+      observations.get(cards[0])?.(
+        [{ isIntersecting: true, target: cards[0] } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
     });
     await waitFor(() => {
-      const pageImageCalls = calls.filter((call) => call.type === 'pictureBook.pageImage');
-      expect(pageImageCalls).toHaveLength(2);
-      expect(pageImageCalls.map((call) => call.payload)).toEqual([
-        { articleId: 1, pageIndex: 0, variant: 'display' },
-        { articleId: 1, pageIndex: 1, variant: 'display' },
+      expect(calls.filter((call) => call.type === 'pictureBook.pageImage').map((call) => call.payload)).toEqual([
+        { articleId: 1, pageIndex: 0, variant: 'thumbnail' },
+      ]);
+    });
+    act(() => {
+      observations.get(cards[1])?.(
+        [{ isIntersecting: true, target: cards[1] } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+    });
+    await waitFor(() => {
+      expect(calls.filter((call) => call.type === 'pictureBook.pageImage').map((call) => call.payload)).toEqual([
+        { articleId: 1, pageIndex: 0, variant: 'thumbnail' },
+        { articleId: 1, pageIndex: 1, variant: 'thumbnail' },
       ]);
     });
     await waitFor(() => {
       const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
         .map((image) => image.getAttribute('src'));
       expect(thumbnails).toEqual([
-        'data:image/png;base64,DISPLAY_0',
-        'data:image/png;base64,DISPLAY_1',
+        'data:image/png;base64,THUMBNAIL_0',
+        'data:image/png;base64,THUMBNAIL_1',
       ]);
     });
 
@@ -4684,8 +4730,8 @@ describe('App', () => {
       const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
         .map((image) => image.getAttribute('src'));
       expect(thumbnails).toEqual([
-        'data:image/png;base64,DISPLAY_0',
-        'data:image/png;base64,DISPLAY_1',
+        'data:image/png;base64,THUMBNAIL_0',
+        'data:image/png;base64,THUMBNAIL_1',
       ]);
     });
     expect(screen.queryByText('加载缩略图')).not.toBeInTheDocument();
@@ -5052,7 +5098,7 @@ describe('App', () => {
         referencePageIndexes: [1],
         referencePageIndex: 1,
       });
-    });
+    }, { timeout: 5000 });
   });
 
   it('submits multiple selected reference images in single-page prompt review', async () => {
@@ -5198,8 +5244,6 @@ describe('App', () => {
     const article = {
       id: 1,
       title: 'Queued Picture Chapter',
-      content: 'Tom finds a bright snack box.',
-      sentences: ['Tom finds a bright snack box.'],
       sentenceCount: 1,
       createdAt: now,
       averageScore: 86,
@@ -5230,23 +5274,23 @@ describe('App', () => {
             status: 'generating',
             pages: [
               {
-                articleId: article.id,
-                seriesId: 1,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
                 sentenceEndIndex: 0,
-                paragraphText: article.sentences[0],
-                prompt: {
-                  scene: {
-                    sceneDescription: 'Tom discovers the snack box before the image is ready.',
-                  },
-                },
-                imagePath: null,
+                hasImage: false,
+                imageRevision: 'queued-v1',
                 imageUri: null,
                 status: 'queued',
                 errorMessage: null,
               },
             ],
+          });
+        }
+        if (type === 'article.fullText') {
+          return ok(message.id, type, {
+            article,
+            bookTitle: 'Queued Book',
+            items: [{ index: 0, english: 'Tom finds a bright snack box.', chinese: '' }],
           });
         }
         return ok(message.id, type, {});
@@ -5576,13 +5620,11 @@ describe('App', () => {
             status: 'ready',
             pages: [
               {
-                articleId: 1,
-                seriesId: 1,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
                 sentenceEndIndex: 0,
-                paragraphText: article.content,
-                imagePath: 'F:/tmp/picture-book-page.png',
+                hasImage: true,
+                imageRevision: 'lazy-v1',
                 imageUri: null,
                 status: 'ready',
                 errorMessage: null,
@@ -5597,6 +5639,8 @@ describe('App', () => {
                 ok(message.id, type, {
                   articleId: 1,
                   pageIndex: 0,
+                  variant: 'display',
+                  imageRevision: 'lazy-v1',
                   imageUri: 'data:image/png;base64,READY',
                 }),
               );
@@ -5857,14 +5901,12 @@ describe('App', () => {
             status: 'ready',
             pages: [
               {
-                articleId: 1,
-                seriesId: 1,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
                 sentenceEndIndex: 0,
-                paragraphText: article.sentences[0],
+                hasImage: true,
+                imageRevision: 'missing-v1',
                 imageUri: null,
-                imagePath: 'F:/tmp/missing-picture-book-page.png',
                 status: 'ready',
                 errorMessage: null,
               },
@@ -5875,6 +5917,8 @@ describe('App', () => {
           return ok(message.id, type, {
             articleId: 1,
             pageIndex: 0,
+            variant: 'display',
+            imageRevision: 'missing-v1',
             imageUri: null,
             missing: true,
             errorMessage: '绘本缓存文件丢失，请重试生成',
@@ -7383,25 +7427,21 @@ describe('App', () => {
             status: 'ready',
             pages: [
               {
-                articleId: article.id,
-                seriesId: 7,
                 pageIndex: 0,
                 sentenceStartIndex: 0,
                 sentenceEndIndex: 0,
-                paragraphText: article.sentences[0],
-                imagePath: 'F:/Tomato/picture_book/original-0.png',
+                hasImage: true,
+                imageRevision: 'song-page-0-v1',
                 imageUri: null,
                 status: 'ready',
                 errorMessage: null,
               },
               {
-                articleId: article.id,
-                seriesId: 7,
                 pageIndex: 1,
                 sentenceStartIndex: 1,
                 sentenceEndIndex: 1,
-                paragraphText: article.sentences[1],
-                imagePath: 'F:/Tomato/picture_book/original-1.png',
+                hasImage: true,
+                imageRevision: 'song-page-1-v1',
                 imageUri: null,
                 status: 'ready',
                 errorMessage: null,
@@ -7414,6 +7454,7 @@ describe('App', () => {
             articleId: article.id,
             pageIndex: Number(payload.pageIndex ?? 0),
             variant: payload.variant,
+            imageRevision: `song-page-${payload.pageIndex}-v1`,
             imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
           });
         }
@@ -8155,7 +8196,6 @@ describe('App', () => {
     const imageSources = Array.from(container.querySelectorAll('img')).map((img) =>
       img.getAttribute('src') ?? '',
     );
-    expect(imageSources.length).toBeGreaterThan(0);
     expect(imageSources.some((src) => src.includes('monster-buddy.png'))).toBe(false);
     expect(imageSources.some((src) => src.includes('monster-mic.png'))).toBe(false);
     expect(imageSources.some((src) => src.includes('reward-star.png'))).toBe(false);

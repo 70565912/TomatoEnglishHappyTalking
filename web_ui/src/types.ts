@@ -22,25 +22,23 @@ export interface AvatarState {
   volume: number;
 }
 
-export interface Article {
+export interface ArticleSummary {
   id: number;
   title: string;
-  content: string;
-  sentences: string[];
   sentenceSplitVersion?: 'legacy_v1' | 'read_aloud_dp_v2' | 'reviewed_dp_v2' | string;
   sentenceCount: number;
   visibleSentenceCount?: number;
   createdAt: string;
   averageScore: number;
-  coverImagePath?: string | null;
-  coverImageUri?: string | null;
+  coverPageIndex?: number | null;
+  coverRevision?: string | null;
   pictureBookEnabled?: boolean;
   seriesId?: number | null;
   seriesTitle?: string;
-  seriesDescription?: string;
-  chapterDescription?: string;
   chapterOrder?: number | null;
 }
+
+export type Article = ArticleSummary;
 
 export interface BookCharacter {
   name: string;
@@ -52,7 +50,6 @@ export interface StorySeries {
   title: string;
   description?: string;
   characters?: BookCharacter[];
-  coverImagePath?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -66,8 +63,14 @@ export interface BookTransferPayload {
   articleCount?: number;
   assetCount?: number;
   warnings?: string[];
-  articles?: Article[];
-  series?: StorySeries[];
+  patch?: LibraryPatch;
+}
+
+export interface LibraryPatch {
+  upsertArticles: ArticleSummary[];
+  removeArticleIds: number[];
+  upsertSeries: StorySeries[];
+  removeSeriesIds: number[];
 }
 
 export interface PreloadState {
@@ -81,18 +84,16 @@ export interface PreloadState {
   failed: number;
 }
 
+export type PictureBookImageVariant = 'thumbnail' | 'display' | 'full';
+
 export interface PictureBookPage {
-  id?: number;
-  articleId: number;
-  seriesId?: number | null;
   pageIndex: number;
   sentenceStartIndex: number;
   sentenceEndIndex: number;
-  paragraphText: string;
-  prompt?: Record<string, unknown> | null;
-  imagePath?: string | null;
+  hasImage: boolean;
+  imageRevision: string;
   imageUri?: string | null;
-  imageVariant?: 'full' | 'display' | 'thumbnail' | string;
+  imageVariant?: PictureBookImageVariant;
   status: 'queued' | 'prompting' | 'generating' | 'ready' | 'skipped' | 'error' | string;
   errorMessage?: string | null;
 }
@@ -101,15 +102,14 @@ export interface PictureBookState {
   articleId: number;
   enabled: boolean;
   status: 'loading' | 'empty' | 'queued' | 'generating' | 'ready' | 'partial' | 'skipped' | 'error' | string;
-  series?: StorySeries | null;
-  chapter?: Record<string, unknown> | null;
   pages: PictureBookPage[];
 }
 
 export interface PictureBookPageImagePayload {
   articleId: number;
   pageIndex: number;
-  variant?: 'full' | 'display' | 'thumbnail' | string;
+  variant: PictureBookImageVariant;
+  imageRevision?: string | null;
   imageUri?: string | null;
   missing?: boolean;
   errorMessage?: string | null;
@@ -169,6 +169,7 @@ export interface FollowState {
   currentIndex?: number;
   totalSentences?: number;
   visibleSentenceCount?: number;
+  visibleCurrentPosition?: number;
   currentSentence?: string;
   currentTranslation?: string;
   isLastSentence?: boolean;
@@ -319,13 +320,16 @@ export interface ListeningSongAudioExportPayload {
   outputDirectory: string;
 }
 
+/** Ack for listening.updateSentence / resynthesizeSentence — op-specific, not a library dump. */
 export interface ListeningSentenceUpdatePayload {
-  article?: Article;
   item: ListeningItem;
-  items?: ListeningItem[];
   synthesis: ListeningSynthesisPayload;
-  articles?: Article[];
-  series?: StorySeries[];
+}
+
+export interface ListeningUpdateTranslationsPayload {
+  ok: boolean;
+  articleId: number;
+  updated: number;
 }
 
 export interface ListeningFullscreenReadyPayload {

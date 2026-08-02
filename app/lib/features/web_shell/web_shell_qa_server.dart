@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../../core/logging/tomato_logger.dart';
+import 'web_bridge_protocol.dart';
 
 typedef QaBridgeDispatcher = Future<Map<String, dynamic>> Function(Object? raw);
 typedef QaJsonProducer = Future<Map<String, dynamic>> Function();
@@ -345,10 +346,53 @@ class WebShellQaServer {
     Map<String, dynamic> payload, {
     int statusCode = HttpStatus.ok,
   }) async {
+    final encoded = utf8.encode(jsonEncode(payload));
+    final path = request.uri.path;
+    TomatoLogger.info(
+      category: 'qa',
+      event: 'http.response',
+      data: {
+        'method': request.method,
+        'path': path,
+        'statusCode': statusCode,
+        'bytes': encoded.length,
+      },
+    );
+    // QA must report the real wire size. Runtime warns but does not reject so
+    // diagnostics remain usable; Release QA/tests are responsible for failing
+    // the command-specific budgets.
+    final budgetBytes = _responseBudgetBytes(path, payload);
+    if (budgetBytes != null && encoded.length > budgetBytes) {
+      TomatoLogger.warn(
+        category: 'qa',
+        event: 'payload.oversized',
+        data: {
+          'method': request.method,
+          'path': path,
+          'bytes': encoded.length,
+          'budgetBytes': budgetBytes,
+        },
+      );
+    }
     request.response
       ..statusCode = statusCode
       ..headers.contentType = ContentType.json
-      ..write(jsonEncode(payload));
+      ..add(encoded);
     await request.response.close();
+  }
+
+  int? _responseBudgetBytes(
+    String path,
+    Map<String, dynamic> payload,
+  ) {
+    if (path == '/snapshot') return 1024 * 1024;
+    if (path != '/bridge') return 1024 * 1024;
+    final responseType = payload['type']?.toString() ?? '';
+    final commandType = responseType.endsWith('.result')
+        ? responseType.substring(0, responseType.length - '.result'.length)
+        : responseType.endsWith('.error')
+            ? responseType.substring(0, responseType.length - '.error'.length)
+            : responseType;
+    return bridgePayloadBudgetChars(commandType);
   }
 }

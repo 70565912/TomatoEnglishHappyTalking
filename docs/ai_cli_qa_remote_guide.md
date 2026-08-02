@@ -360,6 +360,9 @@ $created = Invoke-TomatoBridge "article.create" @{
 }
 ```
 
+- `skipChapterPlan=true`: create/attach into an existing series without the AI text chapter-plan call (also skipped when `pictureBookEnabled=false` and `seriesId`/`seriesTitle` is set). Use this for local-illustration imports that will set the plan via `pictureBook.replaceChapterPlan` later.
+
+
 传入 `sentences` 时 Bridge 会逐块拒绝：空块、持久化显示换行、超过 30 词，或规范化
 拼接与 `prepareCreate` 的最终英文不等价。英文显示层允许按可用宽度自动换成多行；
 这种视觉换行不写入持久化句子。校验失败时不会静默重切。
@@ -395,7 +398,6 @@ Invoke-TomatoBridge "series.delete" @{ seriesId = 23 }
 ```powershell
 $state = Invoke-TomatoBridge "pictureBook.state" @{
     articleId = 72
-    includeImageUris = $false
 }
 
 $image = Invoke-TomatoBridge "pictureBook.pageImage" @{
@@ -405,8 +407,11 @@ $image = Invoke-TomatoBridge "pictureBook.pageImage" @{
 }
 ```
 
-`variant` 可为 `thumbnail`、`display`、`full`。WebView 视觉验证使用 `display`；
+`variant` 为必填，只可为 `thumbnail`、`display`、`full`；缺失或传其它值会明确失败。
+WebView 视觉验证使用 `display`；
 列表使用 `thumbnail`；`full` 只用于原生导出等用途，不应交给 WebView `<img>`。
+`pictureBook.state` 永远只返回页码、句子范围、状态、错误、`hasImage` 和
+`imageRevision`，不返回 prompt、段落正文、本地路径或 data URI。
 
 读取已持久化的审核草稿不会调用图片 API：
 
@@ -475,7 +480,7 @@ $result = Invoke-TomatoBridge "listening.audioGenerate" @{
 修改或软隐藏句子：
 
 ```powershell
-Invoke-TomatoBridge "listening.updateSentence" @{
+$result = Invoke-TomatoBridge "listening.updateSentence" @{
     articleId = 72
     index = 4
     english = "Updated English sentence."
@@ -483,10 +488,62 @@ Invoke-TomatoBridge "listening.updateSentence" @{
     previousEnglish = "Old English sentence."
     previousChinese = "旧中文字幕。"
 }
+# Slim ack only — not a library dump:
+# $result.payload.item / $result.payload.synthesis
 ```
 
 `index` 为 0-based。`english=""` 表示软隐藏原槽位，不会重排 index。执行前必须先通过
 `article.fullText` 获取当前句子，不能凭旧截图提交。
+
+**响应原则（按操作返回该操作需要的数据）**：`listening.updateSentence` 只返回
+`{ item, synthesis }`（当前编辑槽 + TTS 刷新状态）。Web UI 用 `item` 就地 patch 字幕行；
+英文变更时另推 `library.patch`，且只 upsert 当前文章；中文-only 不更新书库。
+**不会**把 `articles` / `series` / 全章 `items` / 整篇 `article` 塞进本命令的 bridge 响应。批量写中文请用下面的
+`listening.updateTranslations`，避免逐句拖几十 MB 的旧 UI 同步包。
+
+所有书库写命令都返回操作结果 + 严格的 `patch`，并推送同结构 `library.patch`：
+`upsertArticles`、`removeArticleIds`、`upsertSeries`、`removeSeriesIds`。消费方必须按 ID
+upsert/delete，不能再等待 `article.state` 或用响应覆盖整库。
+
+### 9.5.1 回包原始字节预算
+
+Release QA 应先读原始 byte array 再决定是否解析，避免测试工具本身先卡在巨大 JSON：
+
+```powershell
+function Measure-TomatoBridgeBytes([string]$Type, [hashtable]$Payload) {
+    $client = [Net.Http.HttpClient]::new()
+    try {
+        $json = @{ type = $Type; payload = $Payload } | ConvertTo-Json -Depth 30 -Compress
+        $body = [Net.Http.StringContent]::new($json, [Text.Encoding]::UTF8, 'application/json')
+        $response = $client.PostAsync('http://127.0.0.1:39317/bridge', $body).GetAwaiter().GetResult()
+        $bytes = $response.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+        [pscustomobject]@{ type = $Type; status = [int]$response.StatusCode; bytes = $bytes.Length; raw = $bytes }
+    } finally {
+        $client.Dispose()
+    }
+}
+```
+
+阻断预算：`article.list` / `app.ready` / `/snapshot` ≤ 1 MiB；`pictureBook.state` /
+`article.fullText` ≤ 256 KiB；普通 mutation / `library.patch` ≤ 128 KiB；
+`series.import` patch ≤ 512 KiB。`pictureBook.pageImage` 是单图豁免接口，但 thumbnail
+必须 ≤640×360、display 必须 ≤1280×720。运行时只写 `payload.oversized` 告警，
+自动测试和 Release QA 才负责阻断。
+
+批量只写中文字幕（不改英文、不重生 TTS、不推书库）：
+
+```powershell
+Invoke-TomatoBridge "listening.updateTranslations" @{
+    articleId = 72
+    translations = @(
+        @{ index = 0; chinese = "第一句中文。" }
+        @{ index = 1; chinese = "第二句中文。" }
+    )
+}
+# -> { ok, articleId, updated }
+```
+
+`chinese=""` 会清除该句译文。隐藏句（空英文槽）不能写入中文。
 
 ### 9.6 跟读与对话
 
@@ -635,6 +692,7 @@ listening.songResume
 listening.songRecordVideo
 listening.songExportAudio
 listening.updateSentence
+listening.updateTranslations
 listening.resynthesizeSentence
 listening.stop
 listening.pause
