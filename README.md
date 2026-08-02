@@ -1,332 +1,152 @@
-# Tomato English Happy Talking
+<div align="center">
+  <img src="app/assets/web/assets/ui/lego/brand-tomato.png" width="104" alt="Tomato English Happy Talking">
+  <h1>Tomato English Happy Talking</h1>
+  <p><strong>把一篇英文或中英文章，变成可以听、读、说和分享的英语学习材料。</strong></p>
+  <p>面向家长和教师的本地优先英语内容制作工具，支持 Windows 与 Android。</p>
+  <p>
+    <a href="README.md">简体中文</a> ·
+    <a href="README.en.md">English</a>
+  </p>
+  <p>
+    <a href="https://github.com/70565912/TomatoEnglishHappyTalking/releases/latest"><img src="https://img.shields.io/github/v/release/70565912/TomatoEnglishHappyTalking?label=Release" alt="Latest release"></a>
+    <img src="https://img.shields.io/badge/platform-Windows%20%7C%20Android-2563EB" alt="Windows and Android">
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/70565912/TomatoEnglishHappyTalking" alt="Apache-2.0 license"></a>
+    <img src="https://img.shields.io/badge/Flutter-3.41.9-02569B?logo=flutter" alt="Flutter 3.41.9">
+  </p>
+  <p>
+    <a href="https://github.com/70565912/TomatoEnglishHappyTalking/releases/latest"><strong>下载 Windows ZIP / Android APK</strong></a>
+    · <a href="https://github.com/70565912/TomatoEnglishHappyTalking/issues/new/choose">报告问题或建议</a>
+  </p>
+</div>
 
-[English](README.md) | [中文](README.zh-CN.md)
+![Tomato 产品总览](docs/readme/product-overview.webp)
 
-Tomato English Happy Talking is a standalone Flutter app for AI-assisted
-English listening, speaking, picture-book, song, and video practice.
+## 从文章到完整学习材料
 
-It runs without a private backend. The Windows and Android clients call the
-configured cloud AI services directly, while all learning content, generated
-assets, playback cache, diagnostics, and user settings stay on the local device.
+![Tomato 四步工作流](docs/readme/workflow.webp)
 
-The project is open sourced under the Apache License 2.0. See
-[LICENSE](LICENSE) for details. Cloud services, third-party models, fonts,
-media, and generated user content remain subject to their own terms.
+1. **导入文章**：粘贴英文或中英对照内容，按书籍和章节保存。
+2. **制作素材**：审核绘本分镜，生成组图和逐句听力，也可以制作或导入歌曲。
+3. **开始练习**：孩子可以进行绘本听力、逐句跟读、识别评分和章节对话。
+4. **导出分享**：导出听力或歌曲视频，并选择 SRT 字幕或内嵌字幕。
 
-## Author And Origin
+[使用问题](https://github.com/70565912/TomatoEnglishHappyTalking/discussions) · [功能建议](https://github.com/70565912/TomatoEnglishHappyTalking/issues/new/choose) · [查看路线图](ROADMAP.md)
 
-- Author: 兔子先生 / Ryan Chen
-- Email: [70565912@qq.com](mailto:70565912@qq.com)
+## 公开作品案例
 
-This app began as an AI English practice tool that 兔子先生 built for his child
-「番茄」(Tomato). The design goal is to turn arbitrary articles into English
-picture-book learning videos, and to support everyday listening / speaking
-practice. Because the features call paid cloud APIs, you must apply for the
-corresponding API keys and configure them in the app before normal use.
-Application URLs and setup steps are included further below.
+点击下面的真实成品封面，可播放 45 秒无水印演示。视频来自 Tomato 本地导出的 1080p 内嵌中英字幕版本，并作为 GitHub Release 资产独立托管。
 
-## What It Does
+[![播放 Tomato 45 秒绘本听力演示](docs/readme/demo-alice-e03.webp)](https://github.com/70565912/TomatoEnglishHappyTalking/releases/download/v1.2.0/tomato-demo-alice-e03-45s.mp4)
 
-- Imports English or bilingual text and saves it as book chapters.
-- Organizes learning material around books, chapters, listening, shadowing, and
-  conversation practice.
-- Generates picture-book scenes for a full chapter after a prompt review step.
-- Optionally enhances generated or imported picture-book images on Windows with
-  bundled Real-ESRGAN 2x/4x super-resolution before normalizing them to
-  2560x1440.
-- Creates or imports song versions for chapter lyrics, then builds subtitle
-  timelines from ASR timing.
-- Plays chapter audio with cached TTS and optional full-screen picture-book
-  playback.
-- Supports follow-read recording and recognition-based pronunciation scoring.
-- Provides English conversation practice based on chapter content.
-- Exports listening and song videos with SRT or burned-in subtitles.
-- Stores settings locally and avoids returning plaintext API keys through the
-  Flutter/Web bridge.
+**[播放 45 秒演示](https://github.com/70565912/TomatoEnglishHappyTalking/releases/download/v1.2.0/tomato-demo-alice-e03-45s.mp4)** · [趣配音 E03 完整版](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKqCe7rdsMp0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg) · [趣配音 E09 完整版](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKuCe67bsKR0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg)
 
-## Screenshots
+《爱丽丝梦游仙境（原著领唱版）》已经使用 Tomato 制作并发布为 41 个连续学习视频，可在[英语趣配音移动端作品集](https://wap.qupeiyin.cn/app/v736/albumShare?shareUid=MDAwMDAwMDAwMLGdxGaAscyUsbeEcg&albumId=MDAwMDAwMDAwMLCHpmKAsa7e)查看。趣配音链接由第三方平台承载，页面可用性和播放方式以平台当前规则为准。
 
-Creation Center: manage picture books, songs, and video export per chapter.
+## 适合谁
 
-![Creation Center](docs/readme/creation-center.png)
+- 想把孩子正在读的英文故事制作成绘本听力的家长。
+- 需要把自有文章整理成课堂听说材料的英语教师。
+- 希望保留本地书库、音频、图片和视频，不依赖自建后端的个人用户。
+- 愿意自行申请并承担云 AI 服务费用、需要控制模型与素材版本的进阶用户。
 
-Practice Center: open listening, follow-read, and conversation practice by book.
+## 有什么不同
 
-![Practice Center](docs/readme/practice-center.png)
+Tomato 不是预置固定课程的闯关 App。它围绕你自己的文章建立一条完整内容链路：持久化分句、逐句翻译、绘本分镜审核、听力、跟读、章节对话、歌曲和视频导出都归属于同一本书和章节。已经生成的成功素材优先从本地缓存复用，减少重复云调用。
 
-## Download
+## 主要能力
 
-Ship builds are on GitHub Releases:
+- 导入英文或中英对照文本，并保存为书籍章节。
+- 审核整章绘本提示词后，按顺序生成连续分镜组图。
+- 生成并缓存逐句英文 TTS，支持绘本全屏听力播放。
+- 跟读录音、语音识别和基于识别结果的发音评分。
+- 基于当前章节内容开展英语对话练习。
+- 生成或导入歌曲，并根据 ASR 时间生成歌词字幕时间轴。
+- 导出听力或歌曲视频，支持 SRT 和内嵌字幕。
+- Windows 可使用随包提供的 Real-ESRGAN NCNN Vulkan 进行本地 2x/4x 绘本超分。
 
-- [Latest release](https://github.com/70565912/TomatoEnglishHappyTalking/releases/latest)
-- Windows zip and Android APK are attached per tag (for example `v1.0.0`)
+![Windows 本地 Real-ESRGAN 超分对比](docs/readme/upscale-comparison.webp)
 
-## Apply And Configure API Keys
+## 平台支持
 
-This repository does **not** ship any cloud credentials. After install, open
-**Settings → Cloud services** in the app and paste your keys there (the UI
-stores them securely and only returns masked status over the bridge). Cloud
-calls are billed by each provider—read their pricing before enabling features.
+| 能力 | Windows | Android |
+| --- | :---: | :---: |
+| 书库、章节与创作中心 | ✅ | ✅ |
+| 绘本、听力、跟读与对话 | ✅ | ✅ |
+| 歌曲与字幕视频工作流 | ✅ | ✅ |
+| 本地 Real-ESRGAN 绘本超分 | ✅ 需要 Vulkan | 暂不支持 |
+| GitHub 发布包 | ZIP | APK（当前为测试签名侧载版） |
 
-### Which keys you need
+## 使用前须知
 
-| Label in Settings | Used for | Required? |
-| --- | --- | --- |
-| **Bailian Key** | Default Aliyun path: text, picture-book groups, TTS, ASR, Bailian Fun-Music | Required when using Aliyun (the default platform) |
-| **Ark Key** | Volcengine path: Ark text, Seedream picture-book groups | Required when using Volcengine text / images |
-| **Speech Key** | Volcengine TTS / BigASR; conversation practice uses Realtime speech | Required for Volcengine speech, follow-read ASR on Volc, or conversation |
+- 本项目不提供云账号或 API Key。文本、图片、TTS、ASR、实时对话和歌曲能力按所选服务商实际计费。
+- Windows/Android 客户端直接调用你配置的云服务，不需要部署 Tomato 私有后端。
+- 文章、数据库、下载素材、生成图片、音频、视频、缓存、日志和设置保存在本机。
+- Release 不包含开发者账号、API Key、本地数据库、缓存、日志或用户生成内容。
+- Suno 使用系统浏览器手动生成和下载，再回到创作中心导入本地 MP3。
 
-Recommended start: create and configure the **Bailian Key** first so you can
-import chapters, generate picture books, and use listening / most creation
-flows. Add **Ark Key** and **Speech Key** when you switch to Volcengine or need
-conversation practice.
+完整申请和配置步骤见 [云服务配置指南](docs/cloud-service-setup.md)。
 
-Suno does not use an in-app API key: choose Suno in settings, complete generate
-/ download in the system browser with your own Suno account, then import the
-local MP3 from Creation Center.
+## 下载与安装
 
-### Where to apply
+前往 [最新 Release](https://github.com/70565912/TomatoEnglishHappyTalking/releases/latest)：
 
-1. **Aliyun Bailian (DashScope) API Key**
-   - Console: [Bailian API Key management](https://bailian.console.aliyun.com/?tab=model#/api-key)
-   - Guide: [Get an API Key](https://help.aliyun.com/zh/model-studio/get-api-key)
-   - Copy the key immediately when created; plaintext is usually not shown again.
-2. **Volcengine Ark API Key**
-   - Console: [Ark API Key](https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey)
-   - Enable Ark and the text / image models you plan to use (for example Seedream
-     sequential images).
-3. **Volcengine Speech API Key (new console)**
-   - Console: [Doubao Speech · API Key management](https://console.volcengine.com/speech/new/setting/apikeys)
-   - Guide: [Console API Key management](https://www.volcengine.com/docs/6561/2119699)
-   - This app uses the new `X-Api-Key` auth style; enable TTS / ASR / Realtime as
-     needed before calling those features.
+- **Windows**：下载 `tomato_english_happy_talking-windows-*.zip`，解压后运行 `tomato_english_happy_talking.exe`。需要 Microsoft Edge WebView2 Runtime；本地超分还需要支持 Vulkan 的显卡。
+- **Android**：下载 `tomato_english_happy_talking-android-*.apk` 后侧载安装。当前公开 APK 使用项目测试签名，不是应用商店正式签名。
+- 发布页提供 SHA-256 校验清单时，可在安装前核对下载文件完整性。
 
-### Configure inside the app
+## 更多界面
 
-1. Install and launch the Windows or Android app.
-2. Open **Settings → Cloud services**.
-3. In **Credentials**, paste **Bailian Key**, **Ark Key**, and **Speech Key** for
-   the providers you actually use (leave unused fields empty).
-4. Set the active **platform** to Aliyun Bailian or Volcengine to match those
-   keys.
-5. Save. New remote generations use the current provider; existing local cache
-   is reused first.
-
-Never commit keys, paste them into issues / screenshots / logs, or ship local
-`security/` / `settings.json` inside a public Windows zip.
-
-## Current Platforms
-
-- Windows desktop app: `tomato_english_happy_talking.exe`
-- Android APK: `com.example.tomato_english_happy_talking`
-
-The main UI is a bundled React/Vite WebView. Flutter owns native capabilities
-such as local storage, secure settings, recording, playback, TTS, ASR, AI calls,
-and file export.
-
-Picture-book prompt review and local image import expose a super-resolution
-option. It is enabled by default on Windows and runs entirely on the local
-machine, so it does not consume a cloud image API request. Images below half of
-the target dimensions use 4x enhancement; larger inputs use 2x enhancement,
-then the result is normalized to 2560x1440. This feature requires a
-Vulkan-capable Windows GPU and is currently unavailable on Android.
-
-## Architecture
-
-```text
-TomatoEnglishHappyTalking/
-├── app/                  # Flutter app
-│   ├── lib/              # Dart source
-│   ├── assets/web/       # Built Web UI bundled into the app
-│   ├── android/          # Android platform project
-│   └── windows/          # Windows platform project
-├── web_ui/               # React + Vite + TypeScript UI
-├── tools/                # Build and local automation scripts
-├── docs/                 # Design notes, migration notes, and change log
-├── README.md             # English
-└── README.zh-CN.md       # 中文
-```
-
-Runtime flow:
-
-```text
-React/Vite Web UI
-        |
-        | typed bridge commands/events
-        v
-Flutter WebShellScreen
-        |
-        +-- Riverpod providers
-        +-- local SQLite and secure storage
-        +-- recording and playback services
-        +-- cloud AI service clients
-        +-- export and diagnostic tooling
-```
-
-## Cloud Services
-
-The app can be configured to use different providers for text, image, speech,
-ASR, and music generation.
-
-| Area | Supported provider path |
+| 创作中心 | 听力与绘本 |
 | --- | --- |
-| Text generation | Aliyun Bailian OpenAI-compatible Chat Completions, Volcengine Ark |
-| Picture-book images | Aliyun Wanxiang sequential images, Volcengine Seedream sequential images |
-| Picture-book super-resolution | Local Real-ESRGAN NCNN Vulkan on Windows |
-| TTS | Aliyun CosyVoice, Volcengine Doubao TTS 2.0 |
-| ASR | Aliyun Qwen-ASR, Volcengine BigASR |
-| Realtime conversation | Volcengine Realtime dialogue |
-| Song generation | Aliyun Bailian Fun-Music; Suno via system-browser manual import |
+| ![创作中心](docs/readme/creation-center.png) | ![听力与绘本](docs/readme/listening-preview.webp) |
 
-API keys are not included in this repository. Configure them from the app
-settings page during local use. Do not commit keys, exported diagnostics, local
-databases, generated media, or release runtime data.
+| 跟读练习 | 章节对话 |
+| --- | --- |
+| ![跟读练习](docs/readme/follow-preview.webp) | ![章节对话](docs/readme/chat-preview.webp) |
 
-## Requirements
+歌曲生成、字幕与视频/音频导出：
 
-The repository is developed on Windows. Other environments may work, but the
-provided release scripts are PowerShell-based.
+![歌曲与视频导出](docs/readme/song-video-preview.webp)
 
-- Flutter stable SDK
-- Dart SDK included with Flutter
-- Node.js and npm for `web_ui/`
-- Android SDK for APK builds
-- Microsoft Edge WebView2 Runtime for the Windows app
-- FFmpeg for video/audio export in the packaged Windows runtime
-- A Vulkan-capable GPU for optional Windows picture-book super-resolution
+## 作者与缘起
 
-The original development machine uses Flutter under `D:\DevTools\flutter` and
-Android SDK under `D:\Android\SDK`, but those paths are local conventions rather
-than repository requirements.
+- 作者：兔子先生 / Ryan Chen
+- 邮箱：[70565912@qq.com](mailto:70565912@qq.com)
 
-## Quick Start
+这款应用最初是兔子先生为自家的「番茄」小朋友制作的 AI 英语学习工具。最初的愿望很直接：把孩子正在阅读的任意文章自动制作成英文绘本视频，同时支持日常听力和口语练习。项目后来逐步扩展为围绕书籍、章节、绘本、听力、跟读、对话、歌曲和视频导出的完整工作台。
 
-Install Flutter dependencies:
+## 本地与云端边界
 
-```powershell
-cd app
-flutter pub get
-```
+| 范围 | 处理方式 |
+| --- | --- |
+| 书库、分句、翻译映射和素材索引 | 本地 SQLite |
+| API Key | 本机安全存储；桥接只返回脱敏状态 |
+| 图片超分 | Windows 本地 Real-ESRGAN NCNN Vulkan |
+| 文本、图片、TTS、ASR、实时对话 | 按设置调用阿里云或火山引擎 |
+| Suno 歌曲 | 系统浏览器手动流程后导入本地文件 |
+| 导出与诊断 | 本机文件系统 |
 
-Install and build the Web UI:
+## 文档
 
-```powershell
-cd web_ui
-npm install
-npm run build
-```
+- [用户指南与截图](docs/user-guide/)
+- [云服务配置](docs/cloud-service-setup.md)
+- [开发与构建指南](docs/development-guide.md)
+- [AI CLI / QA 远程调用指南](docs/ai_cli_qa_remote_guide.md)
+- [变更记录](docs/change_log.md)
+- [路线图](ROADMAP.md)
+- [贡献说明](CONTRIBUTING.md)
+- [安全政策](SECURITY.md)
 
-Build the Windows app from the repository root:
+## 技术与致谢
 
-```powershell
-.\tools\build_windows.ps1 -Release
-```
+主应用使用 [Flutter](https://github.com/flutter/flutter)，Web UI 使用 React、Vite 和 TypeScript。项目还使用或集成了 [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN)、[ncnn](https://github.com/Tencent/ncnn)、[FFmpeg](https://github.com/FFmpeg/FFmpeg)、[flutter_inappwebview](https://github.com/pichillilorenzo/flutter_inappwebview) 和 [just_audio](https://github.com/ryanheise/just_audio) 等开源项目。第三方组件、模型、字体和媒体仍遵守各自许可证与使用条款。
 
-Build the Android release APK:
+## 参与项目
 
-```powershell
-.\tools\build_android.ps1
-```
+普通用户可以在 [Discussions](https://github.com/70565912/TomatoEnglishHappyTalking/discussions) 提问或展示作品，在 [Issue Forms](https://github.com/70565912/TomatoEnglishHappyTalking/issues/new/choose) 报告问题和提出建议。提交前请删除 API Key、账号、本机路径、数据库和未脱敏日志。
 
-Publish a GitHub Release from this machine (builds Windows + Android, creates a
-clean Windows zip, tags `vX.Y.Z`, and uploads both assets):
-
-```powershell
-.\tools\publish_github_release.ps1 -Version 1.0.0
-```
-
-Use `-SkipBuild` to reuse existing build outputs, or `-Draft` for a draft
-Release. Do not zip `release/windows/tomato_english_happy_talking/` directly;
-the publish script stages a clean package under `release/dist/`.
-
-Run Web UI tests:
-
-```powershell
-npm --prefix web_ui test
-```
-
-Run Flutter analysis:
-
-```powershell
-cd app
-flutter analyze
-```
-
-## Build Scripts
-
-### `tools/build_windows.ps1`
-
-- Builds the bundled Web UI before the Flutter build.
-- Supports Debug, Release, and optional `-Run`.
-- Copies the runnable Windows app to `release/windows/tomato_english_happy_talking/`.
-- Keeps runtime data in that local release directory during development.
-
-### `tools/build_android.ps1`
-
-- Builds an Android release APK.
-- Copies the APK to `release/android/`.
-- Can run Android Debug/Release on a connected device or emulator when invoked
-  with the relevant flags.
-
-### `tools/publish_github_release.ps1`
-
-- Builds Windows Release and Android Release APK (unless `-SkipBuild`).
-- Stages a clean Windows zip from `app/build/windows/x64/runner/Release` plus
-  FFmpeg into `release/dist/`, excluding local runtime data and secrets.
-- Includes the bundled Real-ESRGAN executable and the 2x/4x
-  `realesr-animevideov3` models required by Windows super-resolution.
-- Copies a versioned APK into `release/dist/`.
-- Creates annotated tag `vX.Y.Z`, pushes it, and runs `gh release create` with
-  both assets.
-
-Cold Android release builds may take more than 15 minutes while Gradle,
-Flutter plugins, R8, resources, and mapping outputs initialize. Give automated
-builds a wider timeout, especially on a clean machine.
-
-## Release And Data Safety
-
-The local Windows release directory is also a development runtime directory. It
-may contain logs, diagnostics, databases, API cache, exported videos, imported
-songs, generated audio, and old local configuration files.
-
-For public distribution, do not zip that directory directly. Create a clean
-staging folder containing only the executable, DLLs, Flutter `data/` assets,
-FFmpeg, and required runtime files. Exclude at least:
-
-- `logs/`
-- `diagnostics/`
-- `recording-export/`
-- `suno-music/`
-- API cache directories
-- SQLite databases
-- `security/`
-- settings files
-- any API key or token material
-
-## Third-Party Components
-
-Windows packages include the portable Real-ESRGAN NCNN Vulkan executable and
-`realesr-animevideov3` models for local picture-book super-resolution.
-Real-ESRGAN is distributed under the BSD 3-Clause License; its bundled license
-and upstream notes are in
-[`app/windows/third_party/realesrgan/`](app/windows/third_party/realesrgan/).
-
-## Development Notes
-
-- App feature work should keep Flutter services separate from UI state.
-- Web UI must communicate with Flutter through the typed bridge protocol.
-- Cloud calls should prefer local parsing, local cache, and saved business data
-  before making new paid requests.
-- Successful remote results may be cached; API keys, failed responses, mock
-  fallbacks, and diagnostics with sensitive data must not be cached as reusable
-  content.
-- The default product model is a book/chapter learning workspace, not a game
-  lobby or reward system.
-
-More implementation details live under [docs/](docs/), especially the change
-log, migration notes, prompt-review notes, and release/build troubleshooting
-documents.
+如果 Tomato 对你的家庭学习或教学准备有帮助，可以为仓库点一个 Star，让更多有相同需求的人看到它。
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+项目以 [Apache License 2.0](LICENSE) 开源。云服务、第三方模型、字体、媒体以及用户生成内容仍各自遵守其原有条款。

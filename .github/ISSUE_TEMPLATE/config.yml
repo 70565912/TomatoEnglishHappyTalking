@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问答与作品展示
+    url: https://github.com/70565912/TomatoEnglishHappyTalking/discussions
+    about: 不确定是否为程序问题时，请先在 Discussions 提问。
+  - name: 安全问题
+    url: mailto:70565912@qq.com
+    about: 密钥泄露或安全漏洞请私下报告，不要创建公开 Issue。

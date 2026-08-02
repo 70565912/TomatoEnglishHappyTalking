@@ -513,6 +513,28 @@ function New-VersionedAndroidApk {
     Write-Host "Android APK ready: $ApkPath" -ForegroundColor Green
 }
 
+function New-ChecksumManifest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$AssetPaths,
+        [Parameter(Mandatory = $true)]
+        [string]$ManifestPath
+    )
+
+    $lines = foreach ($assetPath in $AssetPaths) {
+        if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) {
+            throw "Release asset missing for checksum: $assetPath"
+        }
+
+        $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        "$hash  $([System.IO.Path]::GetFileName($assetPath))"
+    }
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllLines($ManifestPath, $lines, $utf8NoBom)
+    Write-Host "Checksum manifest ready: $ManifestPath" -ForegroundColor Green
+}
+
 function Publish-GitTagAndRelease {
     param(
         [Parameter(Mandatory = $true)]
@@ -522,7 +544,9 @@ function Publish-GitTagAndRelease {
         [Parameter(Mandatory = $true)]
         [string]$ZipPath,
         [Parameter(Mandatory = $true)]
-        [string]$ApkPath
+        [string]$ApkPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ChecksumPath
     )
 
     Push-Location $workspaceRoot
@@ -540,17 +564,20 @@ function Publish-GitTagAndRelease {
 
 ### Assets
 - Windows: ``$([System.IO.Path]::GetFileName($ZipPath))`` (clean zip, no local runtime data)
-- Android: ``$([System.IO.Path]::GetFileName($ApkPath))``
+- Android: ``$([System.IO.Path]::GetFileName($ApkPath))`` (test-signed sideload build)
+- SHA-256: ``$([System.IO.Path]::GetFileName($ChecksumPath))``
 
 ### Notes
 - Android APK currently uses the project debug signing config (not a store keystore).
 - Windows package is staged from the Flutter Release runner output plus FFmpeg; it does not include local databases, caches, logs, or API keys.
+- Verify both downloads against the included SHA-256 manifest before installation.
 "@
 
         $ghArgs = @(
             "release", "create", $TagName,
             $ZipPath,
             $ApkPath,
+            $ChecksumPath,
             "--title", "Tomato English Happy Talking $TagName",
             "--notes", $notes
         )
@@ -583,6 +610,7 @@ $zipFileName = "$packageName-windows-$tagName.zip"
 $apkFileName = "$packageName-android-$tagName.apk"
 $zipPath = Join-Path $distRoot $zipFileName
 $apkPath = Join-Path $distRoot $apkFileName
+$checksumPath = Join-Path $distRoot "SHA256SUMS.txt"
 
 Write-Host "=== Preflight checks ($tagName) ===" -ForegroundColor Cyan
 Assert-VersionFormat -Value $Version
@@ -604,11 +632,15 @@ New-CleanWindowsDistZip -TagName $tagName -ZipPath $zipPath
 Write-Host "=== Package versioned Android APK ===" -ForegroundColor Cyan
 New-VersionedAndroidApk -TagName $tagName -ApkPath $apkPath
 
-Publish-GitTagAndRelease -TagName $tagName -VersionValue $Version -ZipPath $zipPath -ApkPath $apkPath
+Write-Host "=== Generate SHA-256 manifest ===" -ForegroundColor Cyan
+New-ChecksumManifest -AssetPaths @($zipPath, $apkPath) -ManifestPath $checksumPath
+
+Publish-GitTagAndRelease -TagName $tagName -VersionValue $Version -ZipPath $zipPath -ApkPath $apkPath -ChecksumPath $checksumPath
 
 Write-Host "`nRelease published: $tagName" -ForegroundColor Green
 Write-Host "  Windows: $zipPath"
 Write-Host "  Android: $apkPath"
+Write-Host "  SHA-256: $checksumPath"
 $previousErrorAction = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 try {
