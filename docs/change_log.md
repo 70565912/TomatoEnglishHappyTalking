@@ -1,5 +1,18 @@
 # 修改日志
 
+## 2026-08-03
+
+- **创作中心懒加载图片清晰度修复**：绘本卡片继续只在进入视口时按需取图，但请求变体由 `thumbnail`（640×360）调整为 WebView 安全的 `display`（1280×720），避免 Windows 大尺寸创作列把缩略图放大后出现锯齿和边缘发虚；点击预览直接复用已加载的 display 位图，不请求 `full` 原图。
+- **Web UI 回归与静态资源同步**：更新创作中心图片按需加载、revision 刷新和大图预览用例；重新构建 `app/assets/web`，入口更新到新的哈希资源。
+- **GitHub 项目展示统一为 E07**：中英文 README 的产品总览、四步工作流、创作中心、练习中心、听力、跟读、对话、歌曲/视频、Real-ESRGAN 对比和演示封面全部改用 `E07 - Am I Still Alice` 的真实本地素材；删除旧 E03 演示封面，演示入口改为 41 集公开作品集。
+- **Social Preview 更新**：重新制作并上传 1280×640 的 E07 GitHub Social Preview；所有 README 图片均压缩到 1 MiB 以下，不包含账号、密钥、日志、绝对路径或运行数据库内容。
+
+验证：
+
+- `npm --prefix web_ui test -- src/App.test.tsx`
+- `npm --prefix web_ui run build`
+- `git diff --check -- README.md README.en.md docs/readme web_ui/src app/assets/web`
+
 ## 2026-08-02
 
 - **QA / Bridge 回包契约全面瘦身**：`article.list` / `app.ready` 改为轻量 `ArticleSummary`，正文按 `article.fullText` 获取；所有书库写命令改为目标实体/ID + `LibraryPatch`，事件统一为按 ID upsert/delete 的 `library.patch`，删除旧整库响应和 `article.state`。创建文章在正文首次落库和关联/规划完成后分别推 patch，保留失败续传可见性。

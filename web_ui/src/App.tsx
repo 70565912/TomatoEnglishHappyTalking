@@ -3377,18 +3377,17 @@ function PictureBookCreationThumbnail({
     return () => observer.disconnect();
   }, [articleId, pageIndex]);
 
-  // Creation cards only need visible thumbnails. The display bitmap is fetched
-  // separately after an explicit preview click, so a long chapter never loads
-  // every 1280x720 image just to render its grid.
+  // Keep viewport lazy loading, but use the 1280x720 display cache for cards.
+  // Scaling the 640x360 thumbnail to the creation column produces visible aliasing.
   useEnsurePictureBookPageImage({
     articleId,
     state,
     page: visible ? page : null,
-    imageVariant: 'thumbnail',
+    imageVariant: 'display',
     onPictureBookLoaded,
   });
 
-  const imageSource = pageHasPictureBookImageVariant(page, 'thumbnail')
+  const imageSource = pageHasPictureBookImageVariant(page, 'display')
     ? directImageSource(page.imageUri)
     : null;
   const attachElement = (element: HTMLElement | null) => {

@@ -34,11 +34,11 @@
 
 ## Public showcase
 
-Click the real output frame below to play a 45-second watermark-free demo. It was cut from Tomato's local 1080p export with burned-in English and Chinese subtitles and is hosted as a GitHub Release asset.
+The frame below comes from Tomato's real local 1080p export of E07, *Am I Still Alice*, with burned-in English and Chinese subtitles. Click it to open the complete *Alice's Adventures in Wonderland* collection.
 
-[![Play the 45-second Tomato picture-book listening demo](docs/readme/demo-alice-e03.webp)](https://github.com/70565912/TomatoEnglishHappyTalking/releases/download/v1.2.0/tomato-demo-alice-e03-45s.mp4)
+[![View the Tomato E07 picture-book listening output](docs/readme/demo-alice-e07.webp)](https://wap.qupeiyin.cn/app/v736/albumShare?shareUid=MDAwMDAwMDAwMLGdxGaAscyUsbeEcg&albumId=MDAwMDAwMDAwMLCHpmKAsa7e)
 
-**[Play the 45-second demo](https://github.com/70565912/TomatoEnglishHappyTalking/releases/download/v1.2.0/tomato-demo-alice-e03-45s.mp4)** · [Full E03 on English Fun Dubbing](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKqCe7rdsMp0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg) · [Full E09 on English Fun Dubbing](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKuCe67bsKR0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg)
+**[View all 41 videos](https://wap.qupeiyin.cn/app/v736/albumShare?shareUid=MDAwMDAwMDAwMLGdxGaAscyUsbeEcg&albumId=MDAwMDAwMDAwMLCHpmKAsa7e)** · [Full E03 on English Fun Dubbing](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKqCe7rdsMp0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg) · [Full E09 on English Fun Dubbing](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKuCe67bsKR0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg)
 
 The *Alice's Adventures in Wonderland* read-along collection was produced with Tomato and published as 41 sequential learning videos. [View the complete collection on the English Fun Dubbing mobile page](https://wap.qupeiyin.cn/app/v736/albumShare?shareUid=MDAwMDAwMDAwMLGdxGaAscyUsbeEcg&albumId=MDAwMDAwMDAwMLCHpmKAsa7e). These full-version links are hosted by a third party, so availability and playback behavior depend on that platform.
 

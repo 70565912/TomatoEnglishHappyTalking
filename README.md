@@ -34,11 +34,11 @@
 
 ## 公开作品案例
 
-点击下面的真实成品封面，可播放 45 秒无水印演示。视频来自 Tomato 本地导出的 1080p 内嵌中英字幕版本，并作为 GitHub Release 资产独立托管。
+下图来自 Tomato 为 E07 `Am I Still Alice` 本地导出的真实 1080p 内嵌中英字幕视频。点击封面可打开《爱丽丝梦游仙境（原著领唱版）》完整作品集。
 
-[![播放 Tomato 45 秒绘本听力演示](docs/readme/demo-alice-e03.webp)](https://github.com/70565912/TomatoEnglishHappyTalking/releases/download/v1.2.0/tomato-demo-alice-e03-45s.mp4)
+[![查看 Tomato E07 绘本听力成片](docs/readme/demo-alice-e07.webp)](https://wap.qupeiyin.cn/app/v736/albumShare?shareUid=MDAwMDAwMDAwMLGdxGaAscyUsbeEcg&albumId=MDAwMDAwMDAwMLCHpmKAsa7e)
 
-**[播放 45 秒演示](https://github.com/70565912/TomatoEnglishHappyTalking/releases/download/v1.2.0/tomato-demo-alice-e03-45s.mp4)** · [趣配音 E03 完整版](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKqCe7rdsMp0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg) · [趣配音 E09 完整版](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKuCe67bsKR0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg)
+**[查看 41 集完整作品集](https://wap.qupeiyin.cn/app/v736/albumShare?shareUid=MDAwMDAwMDAwMLGdxGaAscyUsbeEcg&albumId=MDAwMDAwMDAwMLCHpmKAsa7e)** · [趣配音 E03 完整版](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKqCe7rdsMp0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg) · [趣配音 E09 完整版](https://movie.qupeiyin.com/home/share/original_video/app/1/course/MDAwMDAwMDAwMLCHxKuCe67bsKR0cg/uid/MDAwMDAwMDAwMLGdxGaAscyUsbeEcg)
 
 《爱丽丝梦游仙境（原著领唱版）》已经使用 Tomato 制作并发布为 41 个连续学习视频，可在[英语趣配音移动端作品集](https://wap.qupeiyin.cn/app/v736/albumShare?shareUid=MDAwMDAwMDAwMLGdxGaAscyUsbeEcg&albumId=MDAwMDAwMDAwMLCHpmKAsa7e)查看。趣配音链接由第三方平台承载，页面可用性和播放方式以平台当前规则为准。
 

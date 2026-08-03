@@ -1691,7 +1691,7 @@ describe('App', () => {
     expect(await screen.findByText(/书籍已导入/)).toBeInTheDocument();
   });
 
-  it('refreshes creation thumbnails when generated image revisions change', async () => {
+  it('refreshes creation display images when generated image revisions change', async () => {
     window.location.hash = '/creation?articleId=1&seriesId=1';
     const article = {
       id: 1,
@@ -1801,7 +1801,7 @@ describe('App', () => {
             call.type === 'pictureBook.pageImage' &&
             call.payload.articleId === 1 &&
             call.payload.pageIndex === 0 &&
-            call.payload.variant === 'thumbnail',
+            call.payload.variant === 'display',
         ),
       ).toBe(true);
     });
@@ -1812,7 +1812,7 @@ describe('App', () => {
     });
   });
 
-  it('opens a blocking full-size preview when clicking a creation picture thumbnail', async () => {
+  it('opens a blocking full-size preview when clicking a creation picture image', async () => {
     window.location.hash = '/creation?articleId=1&seriesId=1';
     const article = {
       id: 1,
@@ -1863,8 +1863,10 @@ describe('App', () => {
               sentenceEndIndex: 0,
               paragraphText: article.content,
               imagePath: 'page-0.png',
-              imageUri: 'data:image/png;base64,THUMB',
-              imageVariant: 'thumbnail',
+              hasImage: true,
+              imageRevision: 'page-0-v1',
+              imageUri: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAD0lEQVR42mP8z5QBDwAFhQZYgOy/0wAAAABJRU5ErkJggg==',
+              imageVariant: 'display',
               status: 'ready',
             }],
           });
@@ -1888,15 +1890,9 @@ describe('App', () => {
 
     const previewDialog = await screen.findByRole('dialog', { name: '第 1 页绘本大图' });
     expect(previewDialog.closest('.picture-book-preview-overlay')?.parentElement).toBe(document.body);
-    await waitFor(() => {
-      // The lightbox requests "display" (1280x720), never the raw 2560x1440 original:
-      // the WebView must not render the original (GPU downscale corruption on Windows).
-      expect(calls.find((call) => call.type === 'pictureBook.pageImage')?.payload).toMatchObject({
-        articleId: 1,
-        pageIndex: 0,
-        variant: 'display',
-      });
-    });
+    // The card and lightbox reuse the WebView-safe display bitmap and never
+    // request the raw 2560x1440 original (GPU downscale corruption on Windows).
+    expect(calls.filter((call) => call.type === 'pictureBook.pageImage')).toHaveLength(0);
     const previewButton = await within(previewDialog).findByRole('button', { name: '关闭大图预览' });
     const previewImage = previewButton.querySelector('img');
     expect(previewImage?.getAttribute('src')).toMatch(/^(blob:|data:image\/)/);
@@ -4561,7 +4557,7 @@ describe('App', () => {
     expect(screen.queryAllByText('Alpha Creation Chapter')).toHaveLength(0);
   });
 
-  it('loads visible creation center picture-book thumbnails after metadata', async () => {
+  it('lazy-loads visible creation center picture-book display images after metadata', async () => {
     window.location.hash = '/creation?articleId=1';
     const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
     Object.defineProperty(navigator, 'clipboard', {
@@ -4642,7 +4638,7 @@ describe('App', () => {
             pageIndex: Number(payload.pageIndex ?? 0),
             variant: payload.variant,
             imageRevision: `page-${payload.pageIndex}-v1`,
-            imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
+            imageUri: `data:image/png;base64,DISPLAY_${payload.pageIndex}`,
           });
         }
         if (type === 'article.fullText') {
@@ -4697,7 +4693,7 @@ describe('App', () => {
     });
     await waitFor(() => {
       expect(calls.filter((call) => call.type === 'pictureBook.pageImage').map((call) => call.payload)).toEqual([
-        { articleId: 1, pageIndex: 0, variant: 'thumbnail' },
+        { articleId: 1, pageIndex: 0, variant: 'display' },
       ]);
     });
     act(() => {
@@ -4708,16 +4704,16 @@ describe('App', () => {
     });
     await waitFor(() => {
       expect(calls.filter((call) => call.type === 'pictureBook.pageImage').map((call) => call.payload)).toEqual([
-        { articleId: 1, pageIndex: 0, variant: 'thumbnail' },
-        { articleId: 1, pageIndex: 1, variant: 'thumbnail' },
+        { articleId: 1, pageIndex: 0, variant: 'display' },
+        { articleId: 1, pageIndex: 1, variant: 'display' },
       ]);
     });
     await waitFor(() => {
-      const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
+      const displayImages = Array.from(document.querySelectorAll('.picture-creation-media img'))
         .map((image) => image.getAttribute('src'));
-      expect(thumbnails).toEqual([
-        'data:image/png;base64,THUMBNAIL_0',
-        'data:image/png;base64,THUMBNAIL_1',
+      expect(displayImages).toEqual([
+        'data:image/png;base64,DISPLAY_0',
+        'data:image/png;base64,DISPLAY_1',
       ]);
     });
 
@@ -4727,11 +4723,11 @@ describe('App', () => {
       expect(stateCalls.length).toBeGreaterThanOrEqual(2);
     });
     await waitFor(() => {
-      const thumbnails = Array.from(document.querySelectorAll('.picture-creation-media img'))
+      const displayImages = Array.from(document.querySelectorAll('.picture-creation-media img'))
         .map((image) => image.getAttribute('src'));
-      expect(thumbnails).toEqual([
-        'data:image/png;base64,THUMBNAIL_0',
-        'data:image/png;base64,THUMBNAIL_1',
+      expect(displayImages).toEqual([
+        'data:image/png;base64,DISPLAY_0',
+        'data:image/png;base64,DISPLAY_1',
       ]);
     });
     expect(screen.queryByText('加载缩略图')).not.toBeInTheDocument();
