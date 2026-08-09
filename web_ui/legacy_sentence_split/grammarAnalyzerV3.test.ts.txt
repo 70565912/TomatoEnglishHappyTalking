@@ -1,0 +1,109 @@
+// RETIRED REFERENCE TEST: inputs are retained in Dart V3 fixtures.
+import { describe, expect, it } from 'vitest';
+import fixtureJson from '../../app/test/fixtures/grammar_parser_v3_cases.json';
+import {
+  analyzeEnglishGrammarV3,
+  splitOrthographicSentencesV3,
+} from './grammarAnalyzerV3';
+
+type SentenceCase = { id: string; input: string; expected: string[] };
+type TagCase = {
+  id: string;
+  input: string;
+  expect: Record<string, string[]>;
+  expectedIssues?: string[];
+};
+type BoundaryCase = {
+  id: string;
+  input: string;
+  requiredClauseStarts: string[];
+  forbiddenCuts: string[];
+};
+
+const fixture = fixtureJson as unknown as {
+  sentenceCases: SentenceCase[];
+  tagCases: TagCase[];
+  boundaryCases: BoundaryCase[];
+};
+
+function normalizedWords(value: string): string[] {
+  return value
+    .trim()
+    .split(/\s+/u)
+    .map((word) => word.toLowerCase().replace(/^[^a-z]+|[^a-z]+$/gu, ''))
+    .filter(Boolean);
+}
+
+function matchingBoundaryPositions(source: string, expression: string): number[] {
+  const [leftText, rightText] = expression.split('|').map((part) => part.trim());
+  const leftWords = normalizedWords(leftText);
+  const rightWords = normalizedWords(rightText);
+  const words = normalizedWords(source);
+  const positions: number[] = [];
+  for (let position = 1; position < words.length; position += 1) {
+    const left = words.slice(Math.max(0, position - leftWords.length), position);
+    const right = words.slice(position, position + rightWords.length);
+    if (left.join(' ') === leftWords.join(' ') && right.join(' ') === rightWords.join(' ')) {
+      positions.push(position);
+    }
+  }
+  return positions;
+}
+
+describe('grammar parser v3 sentence boundary acceptance', () => {
+  for (const testCase of fixture.sentenceCases) {
+    it(testCase.id, () => {
+      expect(splitOrthographicSentencesV3(testCase.input)).toEqual(testCase.expected);
+      const analysis = analyzeEnglishGrammarV3(testCase.input);
+      expect(analysis.healthy).toBe(true);
+      expect(analysis.tokenCoverage).toBe(1);
+    });
+  }
+});
+
+describe('grammar parser v3 POS acceptance', () => {
+  for (const testCase of fixture.tagCases) {
+    it(testCase.id, () => {
+      const analysis = analyzeEnglishGrammarV3(testCase.input);
+      expect(analysis.healthy).toBe(true);
+      for (const [raw, expectedPos] of Object.entries(testCase.expect)) {
+        const token = analysis.tokens.find((candidate) => candidate.raw === raw);
+        expect(token, `missing parser token ${raw}`).toBeDefined();
+        expect(token?.pos).toEqual(expect.arrayContaining(expectedPos));
+      }
+      for (const issue of testCase.expectedIssues ?? []) {
+        expect(analysis.issues).toContain(issue);
+      }
+    });
+  }
+});
+
+describe('grammar parser v3 structural boundary acceptance', () => {
+  for (const testCase of fixture.boundaryCases) {
+    it(testCase.id, () => {
+      const analysis = analyzeEnglishGrammarV3(testCase.input);
+      expect(analysis.healthy).toBe(true);
+      for (const start of testCase.requiredClauseStarts) {
+        const positions = matchingBoundaryPositions(testCase.input, `| ${start}`);
+        expect(positions.length, `missing token sequence ${start}`).toBeGreaterThan(0);
+        expect(
+          positions.some((position) => analysis.boundaries.find(
+            (boundary) => boundary.position === position,
+          )?.clauseBoundary),
+          `not recognized as clause start: ${start}`,
+        ).toBe(true);
+      }
+      for (const expression of testCase.forbiddenCuts) {
+        const positions = matchingBoundaryPositions(testCase.input, expression);
+        expect(positions.length, `missing boundary expression ${expression}`).toBeGreaterThan(0);
+        for (const position of positions) {
+          expect(
+            analysis.boundaries.find((boundary) => boundary.position === position)
+              ?.protectedByPhrase,
+            `parser did not protect ${expression}`,
+          ).toBe(true);
+        }
+      }
+    });
+  }
+});

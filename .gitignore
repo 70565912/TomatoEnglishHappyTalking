@@ -12,8 +12,11 @@ security/
 # Build outputs
 build/
 **/build/
+**/.cxx/
 release/
 .tmp/
+output/
+.playwright-cli/
 node_modules/
 **/node_modules/
 *.tsbuildinfo

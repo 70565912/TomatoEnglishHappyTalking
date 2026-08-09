@@ -70,9 +70,13 @@ dependencies:
   # 字体
   google_fonts: ^6.2.1
   just_audio_windows: ^0.2.3
+  udpipe_parser_v3:
+    path: packages/udpipe_parser_v3
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ^4.0.0
   build_runner: ^2.4.13
@@ -90,6 +94,7 @@ flutter:
     - assets/web/assets/ui/lego/animations/success/
     - assets/web/assets/ui/lego/animations/wave/
     - assets/web/assets/ui/lego/mascot-blink/
+    - assets/models/
   fonts:
     - family: Nunito
       fonts:

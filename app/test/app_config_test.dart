@@ -1,20 +1,58 @@
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tomato_english_happy_talking/core/config/app_config.dart';
 
 void main() {
-  setUp(() async {
-    await AppConfig.saveCloudSettings(clearElevenLabsApiKey: true);
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const secureStorageChannel =
+      MethodChannel('plugins.it_nomads.com/flutter_secure_storage');
+  final secureValues = <String, String>{};
+
+  setUpAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(secureStorageChannel, (call) async {
+      final arguments = Map<String, dynamic>.from(call.arguments as Map);
+      final key = arguments['key']?.toString() ?? '';
+      switch (call.method) {
+        case 'read':
+          return secureValues[key];
+        case 'write':
+          secureValues[key] = arguments['value']?.toString() ?? '';
+          return null;
+        case 'delete':
+          secureValues.remove(key);
+          return null;
+        case 'readAll':
+          return Map<String, String>.from(secureValues);
+        case 'deleteAll':
+          secureValues.clear();
+          return null;
+        case 'containsKey':
+          return secureValues.containsKey(key);
+      }
+      return null;
+    });
+  });
+
+  setUp(() {
+    secureValues.clear();
     AppConfig.resetRuntimeConfigForTest();
   });
-  tearDown(() async {
-    await AppConfig.saveCloudSettings(clearElevenLabsApiKey: true);
+
+  tearDown(() {
     AppConfig.resetRuntimeConfigForTest();
+  });
+
+  tearDownAll(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(secureStorageChannel, null);
   });
 
   test('defaults text provider to Aliyun Bailian and songs to Suno', () async {
     expect(await AppConfig.aiProvider, AppConfig.aiProviderAliyunBailian);
+    expect(await AppConfig.asrProvider, AppConfig.aiProviderAliyunBailian);
     expect(await AppConfig.textProvider, AppConfig.aiProviderAliyunBailian);
     expect(await AppConfig.imageProvider, AppConfig.aiProviderAliyunBailian);
     expect(await AppConfig.ttsProvider, AppConfig.aiProviderAliyunBailian);
@@ -34,6 +72,9 @@ void main() {
         AppConfig.defaultAliyunBailianTtsVoice);
     expect(await AppConfig.aliyunBailianAsrModel,
         AppConfig.defaultAliyunBailianAsrModel);
+    expect(await AppConfig.aliyunBailianRealtimeAsrModel,
+        AppConfig.defaultAliyunBailianRealtimeAsrModel);
+    expect(await AppConfig.volcAsrModel, AppConfig.defaultVolcAsrModel);
     expect(
         await AppConfig.elevenLabsBaseUrl, AppConfig.defaultElevenLabsBaseUrl);
     expect(await AppConfig.elevenLabsTtsModel,
@@ -88,11 +129,14 @@ void main() {
     expect(await AppConfig.textProvider, AppConfig.aiProviderVolcengine);
     expect(await AppConfig.imageProvider, AppConfig.aiProviderVolcengine);
     expect(await AppConfig.ttsProvider, AppConfig.aiProviderVolcengine);
+    expect(await AppConfig.asrProvider, AppConfig.aiProviderVolcengine);
   });
 
-  test('text provider is independent from image and tts providers', () async {
+  test('asr and text providers are independent from image and tts providers',
+      () async {
     AppConfig.setRuntimeConfigForTest(
       aiProvider: AppConfig.aiProviderVolcengine,
+      asrProvider: AppConfig.aiProviderVolcengine,
       textProvider: AppConfig.aiProviderAliyunBailian,
       imageProvider: AppConfig.aiProviderVolcengine,
       ttsProvider: AppConfig.aiProviderElevenLabs,
@@ -104,6 +148,7 @@ void main() {
     final config = await AppConfig.openAiTextConfig;
 
     expect(config.provider, AppConfig.aiProviderAliyunBailian);
+    expect(await AppConfig.asrProvider, AppConfig.aiProviderVolcengine);
     expect(await AppConfig.imageProvider, AppConfig.aiProviderVolcengine);
     expect(await AppConfig.ttsProvider, AppConfig.aiProviderElevenLabs);
   });
@@ -112,6 +157,7 @@ void main() {
       () async {
     AppConfig.setRuntimeConfigForTest(
       aiProvider: AppConfig.aiProviderAliyunBailian,
+      asrProvider: AppConfig.aiProviderVolcengine,
       aliyunBailianApiKey: 'bailian-secret-1234567890',
       volcArkApiKey: 'volc-ark-secret-abcdefgh',
       volcSpeechApiKey: 'speech-secret-abcdef',
@@ -124,8 +170,9 @@ void main() {
       aliyunBailianImageModel: 'wan-test',
       aliyunBailianTtsModel: 'cosy-test',
       aliyunBailianTtsVoice: 'loongabby_v3',
-      aliyunBailianAsrModel: 'asr-test',
-      aliyunBailianRealtimeAsrModel: 'asr-realtime-test',
+      aliyunBailianAsrModel: 'qwen3-asr-flash-2026-02-10',
+      aliyunBailianRealtimeAsrModel: 'qwen3-asr-flash-realtime-2026-02-10',
+      volcAsrModel: AppConfig.volcAsrModelSeedAsrV2,
       volcArkTextModel: 'doubao-live',
       volcArkImageModel: 'seedream-live',
     );
@@ -133,7 +180,8 @@ void main() {
     final payload = await AppConfig.cloudSettingsPayload();
     final text = payload.toString();
 
-    expect(payload['aiProvider'], AppConfig.aiProviderAliyunBailian);
+    expect(payload['aiProvider'], AppConfig.aiProviderVolcengine);
+    expect(payload['asrProvider'], AppConfig.aiProviderVolcengine);
     expect(payload['textProvider'], AppConfig.aiProviderVolcengine);
     expect(payload['imageProvider'], AppConfig.aiProviderAliyunBailian);
     expect(payload['ttsProvider'], AppConfig.aiProviderElevenLabs);
@@ -144,14 +192,16 @@ void main() {
     expect(payload['aliyunBailian']['imageModel'], 'wan-test');
     expect(payload['aliyunBailian']['ttsModel'], 'cosy-test');
     expect(payload['aliyunBailian']['ttsVoice'], 'loongabby_v3');
-    expect(payload['aliyunBailian']['asrModel'], 'asr-test');
-    expect(payload['aliyunBailian']['realtimeAsrModel'], 'asr-realtime-test');
+    expect(payload['aliyunBailian']['asrModel'], 'qwen3-asr-flash-2026-02-10');
+    expect(payload['aliyunBailian']['realtimeAsrModel'],
+        'qwen3-asr-flash-realtime-2026-02-10');
     expect(payload['volcengine']['arkApiKeyConfigured'], isTrue);
     expect(payload['volcengine']['arkApiKeyMask'], '****efgh');
     expect(payload['volcengine']['speechApiKeyConfigured'], isTrue);
     expect(payload['volcengine']['speechApiKeyMask'], '****cdef');
     expect(payload['volcengine']['arkTextModel'], 'doubao-live');
     expect(payload['volcengine']['arkImageModel'], 'seedream-live');
+    expect(payload['volcengine']['asrModel'], AppConfig.volcAsrModelSeedAsrV2);
     expect(payload['elevenLabs']['apiKeyConfigured'], isTrue);
     expect(payload['elevenLabs']['apiKeyMask'], '****z987');
     expect(
@@ -162,6 +212,69 @@ void main() {
     expect(text, isNot(contains('volc-ark-secret-abcdefgh')));
     expect(text, isNot(contains('speech-secret-abcdef')));
     expect(text, isNot(contains('elevenlabs-secret-xyz987')));
+    expect(payload['aliyunBailian'], isNot(contains('baseUrl')));
+    expect(payload['aliyunBailian'], isNot(contains('apiBaseUrl')));
+    expect(payload['aliyunBailian'], isNot(contains('realtimeAsrUrl')));
+    expect(payload['volcengine'], isNot(contains('arkBaseUrl')));
+    expect(payload['elevenLabs'], isNot(contains('baseUrl')));
+  });
+
+  test('normalizes unsupported and legacy ASR models', () async {
+    AppConfig.setRuntimeConfigForTest(
+      aliyunBailianAsrModel: 'fun-asr',
+      aliyunBailianRealtimeAsrModel: 'qwen3-asr-realtime',
+      volcAsrModel: 'unsupported',
+    );
+
+    expect(await AppConfig.aliyunBailianAsrModel,
+        AppConfig.defaultAliyunBailianAsrModel);
+    expect(await AppConfig.aliyunBailianRealtimeAsrModel,
+        AppConfig.defaultAliyunBailianRealtimeAsrModel);
+    expect(await AppConfig.volcAsrModel, AppConfig.defaultVolcAsrModel);
+  });
+
+  test('migrates legacy ASR provider and removes saved endpoint overrides',
+      () async {
+    final previousDirectory = Directory.current;
+    final tempDirectory =
+        Directory.systemTemp.createTempSync('tomato_asr_migration_test_');
+    addTearDown(() {
+      Directory.current = previousDirectory;
+      if (tempDirectory.existsSync()) {
+        tempDirectory.deleteSync(recursive: true);
+      }
+    });
+    Directory.current = tempDirectory;
+    secureValues.addAll({
+      'ai_provider': AppConfig.aiProviderVolcengine,
+      'text_provider': AppConfig.aiProviderAliyunBailian,
+      'aliyun_bailian_realtime_asr_model': 'qwen3-asr-realtime',
+      'aliyun_bailian_base_url': 'https://legacy.example/compatible',
+      'aliyun_bailian_api_base_url': 'https://legacy.example/api',
+      'aliyun_bailian_realtime_asr_url': 'wss://legacy.example/realtime',
+      'volc_ark_base_url': 'https://legacy.example/ark',
+      'elevenlabs_base_url': 'https://legacy.example/elevenlabs',
+    });
+
+    await AppConfig.seedSecureStorageFromEnvironment();
+    AppConfig.resetRuntimeConfigForTest();
+
+    expect(await AppConfig.asrProvider, AppConfig.aiProviderVolcengine);
+    expect(await AppConfig.textProvider, AppConfig.aiProviderAliyunBailian);
+    expect(await AppConfig.imageProvider, AppConfig.aiProviderVolcengine);
+    expect(await AppConfig.ttsProvider, AppConfig.aiProviderVolcengine);
+    expect(await AppConfig.aliyunBailianRealtimeAsrModel,
+        AppConfig.defaultAliyunBailianRealtimeAsrModel);
+    expect(await AppConfig.aliyunBailianBaseUrl,
+        AppConfig.defaultAliyunBailianBaseUrl);
+    expect(await AppConfig.volcArkBaseUrl, AppConfig.defaultVolcArkBaseUrl);
+    expect(
+        await AppConfig.elevenLabsBaseUrl, AppConfig.defaultElevenLabsBaseUrl);
+    expect(secureValues, isNot(contains('aliyun_bailian_base_url')));
+    expect(secureValues, isNot(contains('aliyun_bailian_api_base_url')));
+    expect(secureValues, isNot(contains('aliyun_bailian_realtime_asr_url')));
+    expect(secureValues, isNot(contains('volc_ark_base_url')));
+    expect(secureValues, isNot(contains('elevenlabs_base_url')));
   });
 
   test('seeds ElevenLabs key from security file without switching provider',

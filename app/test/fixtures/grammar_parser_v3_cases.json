@@ -1,0 +1,115 @@
+{
+  "version": "grammar_parser_acceptance_v3",
+  "sentenceCases": [
+    {
+      "id": "abbreviation-and-decimal",
+      "input": "Mr. Toad paid 3.5 shillings. Rat waited outside.",
+      "expected": [
+        "Mr. Toad paid 3.5 shillings.",
+        "Rat waited outside."
+      ]
+    },
+    {
+      "id": "lowercase-quote-attribution",
+      "input": "\"Wait.\" she said quietly. Then Alice smiled.",
+      "expected": [
+        "\"Wait.\" she said quietly.",
+        "Then Alice smiled."
+      ]
+    },
+    {
+      "id": "capitalized-quote-attribution",
+      "input": "\"Wait!\" Mole cried. Rat stopped.",
+      "expected": [
+        "\"Wait!\" Mole cried.",
+        "Rat stopped."
+      ]
+    },
+    {
+      "id": "multiple-sentences-inside-quotation",
+      "input": "\"Look here! If you are free, come along?\" Rat asked.",
+      "expected": [
+        "\"Look here!",
+        "If you are free, come along?\" Rat asked."
+      ]
+    },
+    {
+      "id": "quoted-sentence-followed-by-new-narration",
+      "input": "\"This is better than whitewashing!\" The sunshine warmed his fur.",
+      "expected": [
+        "\"This is better than whitewashing!\"",
+        "The sunshine warmed his fur."
+      ]
+    }
+  ],
+  "tagCases": [
+    {
+      "id": "willows-list-nouns",
+      "input": "Then on ladders and steps and chairs, till he had dust in his throat and eyes.",
+      "expect": {
+        "steps": ["NOUN"],
+        "chairs,": ["NOUN"],
+        "eyes.": ["NOUN"]
+      }
+    },
+    {
+      "id": "preposition-not-adjective",
+      "input": "Rat needed all the cleaning tools beside the river before breakfast.",
+      "expect": {
+        "beside": ["ADP"]
+      }
+    },
+    {
+      "id": "past-participle-modifies-compound-noun",
+      "input": "He made for the gravelled carriage-drive owned by animals.",
+      "expect": {
+        "carriage-drive": ["NOUN"],
+        "owned": ["VERB"]
+      },
+      "expectedIssues": ["ambiguous_determiner_verb_noun:1"]
+    }
+  ],
+  "boundaryCases": [
+    {
+      "id": "because-clause",
+      "input": "Mole carried every dusty brush and heavy bucket through the dark hallway because Rat needed all the cleaning tools beside the river before breakfast.",
+      "requiredClauseStarts": ["because Rat"],
+      "forbiddenCuts": [
+        "every | dusty",
+        "through | the",
+        "the | dark",
+        "all | the",
+        "beside | the"
+      ]
+    },
+    {
+      "id": "willows-relative-clause",
+      "input": "Something up above was calling him imperiously, and he made for the steep little tunnel which answered in his case to the gravelled carriage-drive owned by animals whose residences are nearer to the sun and air.",
+      "requiredClauseStarts": ["and he", "whose residences"],
+      "forbiddenCuts": [
+        "to | the",
+        "the | gravelled",
+        "gravelled | carriage-drive",
+        "by | animals",
+        "whose | residences",
+        "nearer | to",
+        "to | the"
+      ]
+    },
+    {
+      "id": "verb-complement-and-phrasal-structure",
+      "input": "The Mole could hardly sit in his chair for excitement and wanted to hurry out at once.",
+      "requiredClauseStarts": [],
+      "forbiddenCuts": [
+        "could | hardly",
+        "hardly | sit",
+        "in | his",
+        "his | chair",
+        "wanted | to",
+        "to | hurry",
+        "out | at",
+        "at | once"
+      ]
+    }
+  ]
+}

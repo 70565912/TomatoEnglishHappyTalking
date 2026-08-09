@@ -1,0 +1,67 @@
+// RETIRED REFERENCE ONLY: this tool targets the removed Web splitter.
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import process from 'node:process';
+import { splitReadAloudV3 } from '../src/readAloudSplitterV3';
+
+type LegacyGoldItem = {
+  id: string;
+  episode: string;
+  source: string;
+  expectedChunks: string[];
+  reviewStatus: string;
+};
+
+function argument(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 && process.argv[index + 1]
+    ? path.resolve(process.argv[index + 1])
+    : undefined;
+}
+
+async function main(): Promise<void> {
+  const corpusPath = argument('--corpus')
+    ?? path.resolve(process.cwd(), '../../柳林风声/work');
+  const sourcePath = argument('--source')
+    ?? path.join(corpusPath, 'sentence-split-gold-v2.json');
+  const outputPath = argument('--output')
+    ?? path.resolve(process.cwd(), '../app/test/fixtures/sentence_split_gold_v3.json');
+  const sourceGold = JSON.parse(await readFile(sourcePath, 'utf8')) as {
+    items: LegacyGoldItem[];
+  };
+  const items = sourceGold.items
+    .filter((item) => item.reviewStatus === 'human_reviewed'
+      || item.reviewStatus === 'reviewed_reference')
+    .map((item) => {
+      const expectedChunks = splitReadAloudV3(item.source);
+      const changed = JSON.stringify(item.expectedChunks) !== JSON.stringify(expectedChunks);
+      return {
+        id: item.id,
+        episode: item.episode,
+        reviewStatus: item.reviewStatus,
+        source: item.source,
+        legacyExpectedChunks: item.expectedChunks,
+        expectedChunks,
+        changeReason: changed
+          ? 'v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries'
+          : 'unchanged_from_reviewed_v2',
+      };
+    });
+  const output = {
+    version: 'read_aloud_dp_v3',
+    source: 'sentence-split-gold-v2.json',
+    policy: 'only_split_no_merge_punctuation_first_20_unpunctuated_30_total',
+    itemCount: items.length,
+    changedItemCount: items.filter((item) => item.changeReason !== 'unchanged_from_reviewed_v2').length,
+    items,
+  };
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
+  process.stdout.write(`${JSON.stringify({
+    outputPath,
+    itemCount: output.itemCount,
+    changedItemCount: output.changedItemCount,
+  }, null, 2)}\n`);
+}
+
+await main();

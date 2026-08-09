@@ -8,13 +8,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173",
     "build": "tsc --noEmit && vite build",
-    "test": "vitest run",
-    "split:sentences": "tsx scripts/split-sentences-cli.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@fontsource/nunito": "^5.2.6",
     "@vitejs/plugin-react": "^5.0.4",
-    "compromise": "^14.14.4",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "typescript": "^5.9.3",

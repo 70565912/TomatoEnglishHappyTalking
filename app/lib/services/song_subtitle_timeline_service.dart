@@ -210,11 +210,14 @@ class SongSubtitleTimelineService {
     final lyricsText = lines.join('\n');
     final lyricsHash = await ApiCacheService.hashUtf8(lyricsText);
     final asrLanguage = lyricsAsrLanguage(lyricsText);
-    final asrProvider = await AppConfig.aiProvider;
+    final asrProvider = await AppConfig.asrProvider;
+    final asrModel = asrProvider == AppConfig.aiProviderAliyunBailian
+        ? await AppConfig.aliyunBailianAsrModel
+        : await AppConfig.volcAsrModel;
     if (asrLanguage == 'zh-CN' &&
         asrProvider == AppConfig.aiProviderAliyunBailian) {
       throw const SongSubtitleTimelineException(
-        '中文歌曲字幕需要火山 BigASR 词级时间轴，请在设置中将 AI 平台切换为火山引擎后再生成。',
+        '中文歌曲字幕需要火山词级时间轴，请在设置中将语音识别供应商切换为火山引擎后再生成。',
       );
     }
     final originalMimeType = _audioMimeTypeForPath(audioPath);
@@ -230,6 +233,7 @@ class SongSubtitleTimelineService {
           ? 'qwen_asr'
           : 'bigasr',
       'provider': asrProvider,
+      'asrModel': asrModel,
       'purpose': purpose,
       'audioHash': audioHash,
       'lyricsHash': lyricsHash,
@@ -241,11 +245,36 @@ class SongSubtitleTimelineService {
     };
     final cacheKey = await ApiCacheService.keyForJson(
         'suno_song_subtitle_timeline', request);
-    final cachedPath = await ApiCacheService.getFilePath(
+    var resolvedCacheKey = cacheKey;
+    var cachedPath = await ApiCacheService.getFilePath(
       cacheKey,
       articleId: articleId,
       purpose: purpose,
     );
+    if (cachedPath == null || cachedPath.trim().isEmpty) {
+      final legacyRequests = <Map<String, dynamic>>[
+        Map<String, dynamic>.from(request)..remove('asrModel'),
+        if (asrProvider == AppConfig.aiProviderVolcengine)
+          (Map<String, dynamic>.from(request)
+            ..remove('asrModel')
+            ..remove('provider')),
+      ];
+      for (final legacyRequest in legacyRequests) {
+        final legacyKey = await ApiCacheService.keyForJson(
+          'suno_song_subtitle_timeline',
+          legacyRequest,
+        );
+        cachedPath = await ApiCacheService.getFilePath(
+          legacyKey,
+          articleId: articleId,
+          purpose: purpose,
+        );
+        if (cachedPath != null && cachedPath.trim().isNotEmpty) {
+          resolvedCacheKey = legacyKey;
+          break;
+        }
+      }
+    }
     if (cachedPath != null && cachedPath.trim().isNotEmpty) {
       final cachedTimeline = SongSubtitleTimeline.fromJson(
         jsonDecode(await File(cachedPath).readAsString()),
@@ -254,7 +283,7 @@ class SongSubtitleTimelineService {
       return SongSubtitleTimelineGenerationResult(
         timeline: cachedTimeline,
         timelinePath: cachedPath,
-        cacheKey: cacheKey,
+        cacheKey: resolvedCacheKey,
         lyricsHash: lyricsHash,
         fromCache: true,
         asrSnapshotPath: null,
@@ -427,7 +456,7 @@ class SongSubtitleTimelineService {
       throw const SongSubtitleTimelineException('歌曲音频文件为空');
     }
 
-    final asrProvider = await AppConfig.aiProvider;
+    final asrProvider = await AppConfig.asrProvider;
     final originalMimeType = _audioMimeTypeForPath(audioPath);
     final originalFormat = _audioFormatFromMimeType(originalMimeType);
     final useOriginalAudio = _providerSupportsOriginalAudio(
@@ -494,6 +523,10 @@ class SongSubtitleTimelineService {
         'lyricsHash': lyricsHash.trim(),
       'audioBytes': audioBytes.length,
       'asrProvider': asrProvider,
+      if (asr.raw['configuredModel'] != null)
+        'asrModel': asr.raw['configuredModel'],
+      if (asr.raw['resourceId'] != null) 'asrResourceId': asr.raw['resourceId'],
+      'asrCacheHit': asr.raw['cacheHit'] == true,
       'originalAudioMimeType': originalMimeType,
       'submittedAudioMimeType': submittedMimeType,
       'submittedAudioFormat': submittedFormat,
@@ -1006,8 +1039,7 @@ class SongSubtitleTimelineService {
       .toList(growable: false);
 
   /// Exposed for unit tests covering CJK vs Latin lyric tokenization.
-  static List<String> tokensForLineForTest(String line) =>
-      _tokensForLine(line);
+  static List<String> tokensForLineForTest(String line) => _tokensForLine(line);
 
   static String _removeParentheticalSegments(String line) {
     var current = line;
@@ -1165,8 +1197,7 @@ class SongSubtitleTimelineService {
     const dirUp = 1; // consume lyric token
     const dirLeft = 2; // consume ASR word
 
-    final directions =
-        List<Uint8List>.generate(p + 1, (_) => Uint8List(m + 1));
+    final directions = List<Uint8List>.generate(p + 1, (_) => Uint8List(m + 1));
     var prev = List<double>.filled(m + 1, 0);
     for (var w = 1; w <= m; w += 1) {
       prev[w] = prev[w - 1] + wordGap;
@@ -1206,7 +1237,8 @@ class SongSubtitleTimelineService {
     while (a > 0 || w > 0) {
       final dir = directions[a][w];
       if (a > 0 && w > 0 && dir == dirDiag) {
-        final sim = _tokenSimilarity(flatTokens[a - 1], words[w - 1].normalized);
+        final sim =
+            _tokenSimilarity(flatTokens[a - 1], words[w - 1].normalized);
         if (sim >= matchAccept) {
           tokenWord[a - 1] = w - 1;
           tokenScore[a - 1] = sim;

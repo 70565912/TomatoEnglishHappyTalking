@@ -1,0 +1,109 @@
+{
+  "version": "read_aloud_dp_v3",
+  "cases": [
+    {
+      "id": "willows-e01-semicolon-priority",
+      "input": "The Mole had been working very hard all the morning, spring-cleaning his little home. First with brooms, then with dusters; then on ladders and steps and chairs, with a brush and a pail of whitewash; till he had dust in his throat and eyes, and splashes of whitewash all over his black fur, and an aching back and weary arms.",
+      "expected": [
+        "The Mole had been working very hard all the morning, spring-cleaning his little home.",
+        "First with brooms, then with dusters; then on ladders and steps and chairs, with a brush and a pail of whitewash;",
+        "till he had dust in his throat and eyes, and splashes of whitewash all over his black fur, and an aching back and weary arms."
+      ]
+    },
+    {
+      "id": "never-merge-short-original-sentences",
+      "input": "Mole looked up. Rat waved back. Toad laughed loudly.",
+      "expected": [
+        "Mole looked up.",
+        "Rat waved back.",
+        "Toad laughed loudly."
+      ]
+    },
+    {
+      "id": "never-merge-two-comfortable-sentences",
+      "input": "Mole cleaned the dusty room and packed every brush neatly away. Rat opened the round window and called him toward the sunshine.",
+      "expected": [
+        "Mole cleaned the dusty room and packed every brush neatly away.",
+        "Rat opened the round window and called him toward the sunshine."
+      ]
+    },
+    {
+      "id": "abbreviation-decimal-and-original-boundary",
+      "input": "Mr. Toad paid 3.5 shillings. Rat waited outside.",
+      "expected": [
+        "Mr. Toad paid 3.5 shillings.",
+        "Rat waited outside."
+      ]
+    },
+    {
+      "id": "quoted-initial-does-not-hide-following-sentence-boundary",
+      "input": "The plate was engraved with the name \"W. RABBIT,\" upon it. She went inside.",
+      "expected": [
+        "The plate was engraved with the name \"W. RABBIT,\" upon it.",
+        "She went inside."
+      ]
+    },
+    {
+      "id": "quote-attribution-stays-one-original-sentence",
+      "input": "\"Wait.\" she said quietly. Then Alice smiled.",
+      "expected": [
+        "\"Wait.\" she said quietly.",
+        "Then Alice smiled."
+      ]
+    },
+    {
+      "id": "multiple-sentences-inside-one-quotation-keep-their-boundaries",
+      "input": "\"Look here! If you are free, come along?\" Rat asked.",
+      "expected": [
+        "\"Look here!",
+        "If you are free, come along?\" Rat asked."
+      ]
+    },
+    {
+      "id": "quoted-exclamation-before-capitalized-new-sentence",
+      "input": "\"This is better than whitewashing!\" The sunshine warmed his fur.",
+      "expected": [
+        "\"This is better than whitewashing!\"",
+        "The sunshine warmed his fur."
+      ]
+    },
+    {
+      "id": "capitalized-speaker-attribution-stays-attached",
+      "input": "\"Wait!\" Mole cried. Rat stopped.",
+      "expected": [
+        "\"Wait!\" Mole cried.",
+        "Rat stopped."
+      ]
+    },
+    {
+      "id": "list-commas-are-not-cut-candidates",
+      "input": "Camps, villages, towns, cities!",
+      "expected": [
+        "Camps, villages, towns, cities!"
+      ]
+    },
+    {
+      "id": "twenty-unpunctuated-words-remain-intact",
+      "input": "One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty.",
+      "expected": [
+        "One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty."
+      ]
+    },
+    {
+      "id": "twenty-one-unpunctuated-words-use-emergency-cut",
+      "input": "One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone.",
+      "expected": [
+        "One two three four five six seven eight nine ten",
+        "eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone."
+      ]
+    },
+    {
+      "id": "semantic-fallback-before-subordinator",
+      "input": "Mole carried every dusty brush and heavy bucket through the dark hallway because Rat needed all the cleaning tools beside the river before breakfast.",
+      "expected": [
+        "Mole carried every dusty brush and heavy bucket through the dark hallway",
+        "because Rat needed all the cleaning tools beside the river before breakfast."
+      ]
+    }
+  ]
+}

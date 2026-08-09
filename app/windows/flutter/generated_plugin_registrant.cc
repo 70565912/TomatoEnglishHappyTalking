@@ -13,6 +13,7 @@
 #include <record_windows/record_windows_plugin_c_api.h>
 #include <rive_native/rive_native_plugin.h>
 #include <sqlite3_flutter_libs/sqlite3_flutter_libs_plugin.h>
+#include <udpipe_parser_v3/udpipe_parser_v3_plugin_c_api.h>
 
 void RegisterPlugins(flutter::PluginRegistry* registry) {
   FlutterInappwebviewWindowsPluginCApiRegisterWithRegistrar(
@@ -29,4 +30,6 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("RiveNativePlugin"));
   Sqlite3FlutterLibsPluginRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("Sqlite3FlutterLibsPlugin"));
+  UdpipeParserV3PluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("UdpipeParserV3PluginCApi"));
 }

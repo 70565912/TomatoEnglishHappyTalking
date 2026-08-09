@@ -312,12 +312,24 @@ function Invoke-WebUiBuildInTempWorkspace {
     $workspaceOutputRoot = Join-Path $workspaceRoot "app\assets\web"
     $workspaceSunoFixtureRoot = Join-Path $workspaceRoot "app\test\fixtures\suno"
     $tempSunoFixtureRoot = Join-Path $tempWorkspaceRoot "app\test\fixtures\suno"
+    $workspaceSentenceFixtureRoot = Join-Path $workspaceRoot "app\test\fixtures"
+    $tempSentenceFixtureRoot = Join-Path $tempWorkspaceRoot "app\test\fixtures"
 
     New-Item -ItemType Directory -Path $tempWebUiRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $tempOutputRoot -Force | Out-Null
     if (Test-Path $workspaceSunoFixtureRoot) {
         New-Item -ItemType Directory -Path $tempSunoFixtureRoot -Force | Out-Null
         Copy-Item -Path (Join-Path $workspaceSunoFixtureRoot "*") -Destination $tempSunoFixtureRoot -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $tempSentenceFixtureRoot -Force | Out-Null
+    foreach ($fixtureName in @(
+        "grammar_parser_v3_cases.json",
+        "read_aloud_splitter_v3_cases.json"
+    )) {
+        $fixturePath = Join-Path $workspaceSentenceFixtureRoot $fixtureName
+        if (Test-Path $fixturePath) {
+            Copy-Item -LiteralPath $fixturePath -Destination (Join-Path $tempSentenceFixtureRoot $fixtureName) -Force
+        }
     }
 
     try {

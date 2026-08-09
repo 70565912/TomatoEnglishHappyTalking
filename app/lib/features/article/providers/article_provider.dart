@@ -1,10 +1,10 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import '../../../data/models/article_model.dart';
+import '../../../services/article_segmentation_service_v3.dart';
 import '../../../services/database_service.dart';
-import '../../../services/nlp_service.dart';
 import '../../../services/practice_input_parser.dart';
 import '../../../services/practice_text_service.dart';
-import '../../../services/read_aloud_splitter_v2.dart';
+import '../../../services/read_aloud_splitter_v3.dart';
 
 part 'article_provider.g.dart';
 
@@ -64,7 +64,9 @@ class ArticleForm extends _$ArticleForm {
             ))
               .text
               .trim();
-      final sentences = NlpService.splitSentences(englishContent);
+      final segmentation =
+          await const ArticleSegmentationServiceV3().split(englishContent);
+      final sentences = segmentation.sentences;
       if (sentences.isEmpty) {
         state = state.copyWith(
           isSaving: false,
@@ -87,11 +89,14 @@ class ArticleForm extends _$ArticleForm {
         title: title,
         content: englishContent,
         sentences: sentences,
-        sentenceSplitVersion: ReadAloudSplitterV2.version,
+        sentenceSplitVersion: ReadAloudSplitterV3.reviewedVersion,
         createdAt: DateTime.now(),
       );
 
-      await DatabaseService.saveArticle(article);
+      await DatabaseService.saveArticleWithSegmentationRun(
+        article: article,
+        segmentationRun: segmentation.audit,
+      );
       state = const ArticleFormState(); // reset form
       return true;
     } catch (error) {

@@ -112,6 +112,7 @@ class StreamingAsrService {
       'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel';
   static const _chunkSize = 8 * 1024;
   static const _aliyunAudioDataLimit = 10 * 1024 * 1024;
+  static const _timelineCachePurpose = 'asr_timeline_recognize_v1';
 
   static const _protocolVersionAndHeader = 0x11; // v1 + 4-byte header
   static const _reservedByte = 0x00;
@@ -126,12 +127,28 @@ class StreamingAsrService {
 
   static const _compressionGzip = 0x1;
 
-  static const _resourceIds = <String>[
-    'volc.seedasr.sauc.duration',
-    'volc.bigasr.sauc.duration',
-    'volc.seedasr.sauc.concurrent',
-    'volc.bigasr.sauc.concurrent',
-  ];
+  static List<String> _resourceIdsForModel(String model) {
+    switch (model) {
+      case AppConfig.volcAsrModelSeedAsrV2:
+        return const [
+          'volc.seedasr.sauc.duration',
+          'volc.seedasr.sauc.concurrent',
+        ];
+      case AppConfig.volcAsrModelBigAsrV1:
+        return const [
+          'volc.bigasr.sauc.duration',
+          'volc.bigasr.sauc.concurrent',
+        ];
+      case AppConfig.volcAsrModelAuto:
+      default:
+        return const [
+          'volc.seedasr.sauc.duration',
+          'volc.bigasr.sauc.duration',
+          'volc.seedasr.sauc.concurrent',
+          'volc.bigasr.sauc.concurrent',
+        ];
+    }
+  }
 
   static final Dio _dio = Dio(
     BaseOptions(
@@ -150,7 +167,7 @@ class StreamingAsrService {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '录音为空，无法识别');
     }
-    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
+    if (await AppConfig.asrProvider == AppConfig.aiProviderAliyunBailian) {
       return _recognizeAliyun(
         audioBytes: audioBytes,
         articleId: articleId,
@@ -162,8 +179,11 @@ class StreamingAsrService {
     final audioFormat = _audioFormatFromMimeType(audioMimeType);
     final normalizedMimeType = _normalizeAudioMimeType(audioMimeType);
     final audioHash = await ApiCacheService.hashBytes(audioBytes);
+    final configuredModel = await AppConfig.volcAsrModel;
     final cacheRequest = {
       'service': 'bigasr',
+      'provider': AppConfig.aiProviderVolcengine,
+      'model': configuredModel,
       'endpoint': _endpoint,
       'audioFormat': audioFormat,
       'audioMimeType': normalizedMimeType,
@@ -175,12 +195,35 @@ class StreamingAsrService {
       'language': 'en-US',
       'audioHash': audioHash,
     };
-    final cacheKey = await ApiCacheService.keyForJson('asr', cacheRequest);
-    final cachedText = await ApiCacheService.getText(
-      cacheKey,
-      articleId: articleId,
-      purpose: cachePurpose,
-    );
+    String? cachedText;
+    for (final resourceId in _resourceIdsForModel(configuredModel)) {
+      final resourceRequest = {
+        ...cacheRequest,
+        'resourceId': resourceId,
+      };
+      final resourceCacheKey =
+          await ApiCacheService.keyForJson('asr', resourceRequest);
+      cachedText = await ApiCacheService.getText(
+        resourceCacheKey,
+        articleId: articleId,
+        purpose: cachePurpose,
+      );
+      if (cachedText != null && cachedText.trim().isNotEmpty) {
+        return cachedText.trim();
+      }
+    }
+    if ((cachedText == null || cachedText.trim().isEmpty) &&
+        configuredModel == AppConfig.volcAsrModelAuto) {
+      final legacyRequest = Map<String, dynamic>.from(cacheRequest)
+        ..remove('provider')
+        ..remove('model');
+      final legacyKey = await ApiCacheService.keyForJson('asr', legacyRequest);
+      cachedText = await ApiCacheService.getText(
+        legacyKey,
+        articleId: articleId,
+        purpose: cachePurpose,
+      );
+    }
     if (cachedText != null && cachedText.trim().isNotEmpty) {
       return cachedText.trim();
     }
@@ -197,11 +240,13 @@ class StreamingAsrService {
     final requestId = _newRequestId();
     try {
       _trace('connect requestId=$requestId bytes=${audioBytes.length}');
-      socket = await _connectSocket(
+      final connection = await _connectSocket(
         endpoint: _endpoint,
         apiKey: apiKey,
         requestId: requestId,
+        resourceIds: _resourceIdsForModel(configuredModel),
       );
+      socket = connection.socket;
 
       socket.add(_buildFullClientRequestFrame(audioFormat: audioFormat));
 
@@ -285,11 +330,17 @@ class StreamingAsrService {
         _trace(
             'success requestId=$requestId textLen=${recognized.trim().length}');
         final trimmedRecognized = recognized.trim();
+        final resolvedRequest = {
+          ...cacheRequest,
+          'resourceId': connection.resourceId,
+        };
+        final resolvedCacheKey =
+            await ApiCacheService.keyForJson('asr', resolvedRequest);
         await ApiCacheService.putText(
-          cacheKey: cacheKey,
+          cacheKey: resolvedCacheKey,
           kind: 'asr',
           purpose: cachePurpose,
-          request: cacheRequest,
+          request: resolvedRequest,
           textValue: trimmedRecognized,
           articleId: articleId,
         );
@@ -327,6 +378,7 @@ class StreamingAsrService {
     final model = await AppConfig.aliyunBailianAsrModel;
     final cacheRequest = {
       'service': 'aliyun_qwen_asr',
+      'provider': AppConfig.aiProviderAliyunBailian,
       'endpoint': endpoint,
       'model': model,
       'audioFormat': _audioFormatFromMimeType(audioMimeType),
@@ -340,11 +392,21 @@ class StreamingAsrService {
       'audioHash': audioHash,
     };
     final cacheKey = await ApiCacheService.keyForJson('asr', cacheRequest);
-    final cachedText = await ApiCacheService.getText(
+    var cachedText = await ApiCacheService.getText(
       cacheKey,
       articleId: articleId,
       purpose: cachePurpose,
     );
+    if (cachedText == null || cachedText.trim().isEmpty) {
+      final legacyRequest = Map<String, dynamic>.from(cacheRequest)
+        ..remove('provider');
+      final legacyKey = await ApiCacheService.keyForJson('asr', legacyRequest);
+      cachedText = await ApiCacheService.getText(
+        legacyKey,
+        articleId: articleId,
+        purpose: cachePurpose,
+      );
+    }
     if (cachedText != null && cachedText.trim().isNotEmpty) {
       return cachedText.trim();
     }
@@ -483,13 +545,71 @@ class StreamingAsrService {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '音频为空，无法识别');
     }
-    final asrLanguage =
-        language.trim().isEmpty ? 'en-US' : language.trim();
-    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
-      return _recognizeAliyunWithTimeline(
+    final asrLanguage = language.trim().isEmpty ? 'en-US' : language.trim();
+    final provider = await AppConfig.asrProvider;
+    final configuredModel = provider == AppConfig.aiProviderAliyunBailian
+        ? await AppConfig.aliyunBailianAsrModel
+        : await AppConfig.volcAsrModel;
+    final cacheRequest = await _buildTimelineCacheRequest(
+      audioBytes: audioBytes,
+      audioMimeType: audioMimeType,
+      language: asrLanguage,
+      provider: provider,
+      configuredModel: configuredModel,
+    );
+    var cacheKey =
+        await ApiCacheService.keyForJson('asr_timeline', cacheRequest);
+    AsrTimelineResult? cachedResult;
+    String? cachedResourceId;
+    final resourceIds = provider == AppConfig.aiProviderVolcengine
+        ? _resourceIdsForModel(configuredModel)
+        : const <String?>[null];
+    for (final resourceId in resourceIds) {
+      final candidateRequest = resourceId == null
+          ? cacheRequest
+          : <String, dynamic>{
+              ...cacheRequest,
+              'resourceId': resourceId,
+            };
+      final candidateKey =
+          await ApiCacheService.keyForJson('asr_timeline', candidateRequest);
+      final cachedEntry = await ApiCacheService.getEntry(
+        candidateKey,
+        purpose: _timelineCachePurpose,
+      );
+      cachedResult = _timelineResultFromCacheEntry(cachedEntry?.jsonValue);
+      if (cachedResult != null) {
+        cacheKey = candidateKey;
+        cachedResourceId = resourceId;
+        break;
+      }
+    }
+    if (cachedResult != null) {
+      return _withTimelineMetadata(
+        cachedResult,
+        provider: provider,
+        configuredModel: configuredModel,
+        resourceId: cachedResourceId,
+        cacheHit: true,
+      );
+    }
+
+    if (provider == AppConfig.aiProviderAliyunBailian) {
+      final remoteResult = await _recognizeAliyunWithTimeline(
         audioBytes: audioBytes,
         audioMimeType: audioMimeType,
       );
+      final result = _withTimelineMetadata(
+        remoteResult,
+        provider: provider,
+        configuredModel: configuredModel,
+      );
+      await _cacheTimelineResult(
+        cacheKey: cacheKey,
+        request: cacheRequest,
+        result: result,
+      );
+      return result;
     }
 
     final apiKey = await AppConfig.volcBigAsrApiKey;
@@ -501,16 +621,20 @@ class StreamingAsrService {
     }
 
     WebSocket? socket;
+    String? resolvedResourceId;
     final requestId = _newRequestId();
     try {
       _trace(
         'timeline connect requestId=$requestId bytes=${audioBytes.length} language=$asrLanguage',
       );
-      socket = await _connectSocket(
+      final connection = await _connectSocket(
         endpoint: _endpoint,
         apiKey: apiKey,
         requestId: requestId,
+        resourceIds: _resourceIdsForModel(configuredModel),
       );
+      socket = connection.socket;
+      resolvedResourceId = connection.resourceId;
 
       final audioFormat = _audioFormatFromMimeType(audioMimeType);
       socket.add(_buildFullClientRequestFrame(
@@ -613,7 +737,26 @@ class StreamingAsrService {
             'BigASR 未返回词级时间，无法生成歌曲字幕',
           );
         }
-        return result;
+        final enrichedResult = _withTimelineMetadata(
+          result,
+          provider: provider,
+          configuredModel: configuredModel,
+          resourceId: resolvedResourceId,
+        );
+        final resolvedRequest = {
+          ...cacheRequest,
+          'resourceId': resolvedResourceId,
+        };
+        final resolvedCacheKey = await ApiCacheService.keyForJson(
+          'asr_timeline',
+          resolvedRequest,
+        );
+        await _cacheTimelineResult(
+          cacheKey: resolvedCacheKey,
+          request: resolvedRequest,
+          result: enrichedResult,
+        );
+        return enrichedResult;
       } finally {
         await subscription.cancel();
       }
@@ -640,7 +783,7 @@ class StreamingAsrService {
     required Stream<List<int>> audioChunks,
     void Function(String text)? onPartial,
   }) async {
-    if (await AppConfig.aiProvider == AppConfig.aiProviderAliyunBailian) {
+    if (await AppConfig.asrProvider == AppConfig.aiProviderAliyunBailian) {
       return _recognizeLiveAliyun(
         audioChunks: audioChunks,
         onPartial: onPartial,
@@ -659,10 +802,17 @@ class StreamingAsrService {
     var sentAudio = false;
     try {
       _trace('live connect requestId=$requestId');
-      socket = await _connectSocket(
+      final configuredModel = await AppConfig.volcAsrModel;
+      final connection = await _connectSocket(
         endpoint: _liveEndpoint,
         apiKey: apiKey,
         requestId: requestId,
+        resourceIds: _resourceIdsForModel(configuredModel),
+      );
+      socket = connection.socket;
+      _trace(
+        'live connected requestId=$requestId model=$configuredModel '
+        'resourceId=${connection.resourceId}',
       );
 
       socket.add(_buildFullClientRequestFrame(audioFormat: 'pcm'));
@@ -933,6 +1083,123 @@ class StreamingAsrService {
   ) =>
       _extractTimelineResult(payload);
 
+  static List<String> resourceIdsForModelForTest(String model) =>
+      List<String>.unmodifiable(_resourceIdsForModel(model));
+
+  static Future<Map<String, dynamic>> timelineCacheRequestForTest({
+    required List<int> audioBytes,
+    String audioMimeType = 'audio/wav',
+    String language = 'en-US',
+  }) async {
+    final provider = await AppConfig.asrProvider;
+    final configuredModel = provider == AppConfig.aiProviderAliyunBailian
+        ? await AppConfig.aliyunBailianAsrModel
+        : await AppConfig.volcAsrModel;
+    return _buildTimelineCacheRequest(
+      audioBytes: audioBytes,
+      audioMimeType: audioMimeType,
+      language: language,
+      provider: provider,
+      configuredModel: configuredModel,
+    );
+  }
+
+  static Future<Map<String, dynamic>> _buildTimelineCacheRequest({
+    required List<int> audioBytes,
+    required String audioMimeType,
+    required String language,
+    required String provider,
+    required String configuredModel,
+  }) async =>
+      {
+        'service': 'asr_timeline',
+        'provider': provider,
+        'model': configuredModel,
+        'audioHash': await ApiCacheService.hashBytes(audioBytes),
+        'audioFormat': _audioFormatFromMimeType(audioMimeType),
+        'audioMimeType': _normalizeAudioMimeType(audioMimeType),
+        'language': language.trim().isEmpty ? 'en-US' : language.trim(),
+        'showUtterances': provider != AppConfig.aiProviderAliyunBailian,
+        'cacheVersion': 1,
+      };
+
+  static Future<void> _cacheTimelineResult({
+    required String cacheKey,
+    required Map<String, dynamic> request,
+    required AsrTimelineResult result,
+  }) async {
+    if (result.text.trim().isEmpty) {
+      return;
+    }
+    await ApiCacheService.putJson(
+      cacheKey: cacheKey,
+      kind: 'asr_timeline',
+      purpose: _timelineCachePurpose,
+      request: request,
+      jsonValue: result.toJson(),
+    );
+  }
+
+  static AsrTimelineResult? _timelineResultFromCacheEntry(String? jsonValue) {
+    if (jsonValue == null || jsonValue.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(jsonValue);
+      if (decoded is! Map) {
+        return null;
+      }
+      final source = Map<String, dynamic>.from(decoded);
+      final text = source['text']?.toString().trim() ?? '';
+      if (text.isEmpty) {
+        return null;
+      }
+      final utterances = <AsrUtteranceTiming>[];
+      final rawUtterances = source['utterances'];
+      if (rawUtterances is List) {
+        for (final rawUtterance in rawUtterances) {
+          final utterance = _parseUtterance(rawUtterance);
+          if (utterance != null) {
+            utterances.add(utterance);
+          }
+        }
+      }
+      final raw = source['raw'] is Map
+          ? Map<String, dynamic>.from(source['raw'] as Map)
+          : <String, dynamic>{};
+      return AsrTimelineResult(
+        text: text,
+        utterances: utterances,
+        raw: raw,
+        durationMs: (source['durationMs'] as num?)?.toInt(),
+      );
+    } catch (e) {
+      _trace('timeline cache decode failed error=$e');
+      return null;
+    }
+  }
+
+  static AsrTimelineResult _withTimelineMetadata(
+    AsrTimelineResult result, {
+    required String provider,
+    required String configuredModel,
+    String? resourceId,
+    bool cacheHit = false,
+  }) =>
+      AsrTimelineResult(
+        text: result.text,
+        utterances: result.utterances,
+        durationMs: result.durationMs,
+        raw: {
+          ...result.raw,
+          'provider': provider,
+          'configuredModel': configuredModel,
+          if (resourceId != null && resourceId.trim().isNotEmpty)
+            'resourceId': resourceId,
+          'cacheHit': cacheHit,
+        },
+      );
+
   static String _normalizeAudioMimeType(String mimeType) {
     final normalized = mimeType.trim().toLowerCase();
     if (normalized.isEmpty) {
@@ -1052,19 +1319,20 @@ class StreamingAsrService {
     return raw?.toString() ?? '未知错误';
   }
 
-  static Future<WebSocket> _connectSocket({
+  static Future<_VolcAsrConnection> _connectSocket({
     required String endpoint,
     required String apiKey,
     required String requestId,
+    required List<String> resourceIds,
   }) async {
     final errors = <String>[];
 
-    for (final resourceId in _resourceIds) {
+    for (final resourceId in resourceIds) {
       try {
         _trace(
           'connect try requestId=$requestId resourceId=$resourceId auth=X-Api-Key',
         );
-        return await WebSocket.connect(
+        final socket = await WebSocket.connect(
           endpoint,
           headers: <String, String>{
             'X-Api-Key': apiKey,
@@ -1072,6 +1340,10 @@ class StreamingAsrService {
             'X-Api-Request-Id': requestId,
             'X-Api-Sequence': '-1',
           },
+        );
+        return _VolcAsrConnection(
+          socket: socket,
+          resourceId: resourceId,
         );
       } on WebSocketException catch (e) {
         final detail = 'resourceId=$resourceId error=$e';
@@ -1460,6 +1732,16 @@ class StreamingAsrService {
       force: true,
     );
   }
+}
+
+class _VolcAsrConnection {
+  const _VolcAsrConnection({
+    required this.socket,
+    required this.resourceId,
+  });
+
+  final WebSocket socket;
+  final String resourceId;
 }
 
 class _AsrServerPacket {

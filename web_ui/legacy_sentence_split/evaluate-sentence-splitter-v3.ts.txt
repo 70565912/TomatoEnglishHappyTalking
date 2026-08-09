@@ -1,0 +1,448 @@
+// RETIRED REFERENCE ONLY: this tool targets the removed Web splitter.
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import process from 'node:process';
+import { splitReadAloudV2 } from '../src/readAloudSplitterV2';
+import {
+  HARD_MAX_UNPUNCTUATED_WORDS,
+  HARD_MAX_WORDS,
+  normalizeForRoundTrip,
+  maxUnpunctuatedWordCount,
+  splitReadAloudV3,
+  splitReadAloudV3Detailed,
+  splitOriginalSentencesV3,
+  wordCount,
+} from '../src/readAloudSplitterV3';
+
+type GoldBoundary = { offset: number; label: 'SPLIT' | 'KEEP'; reason: string };
+type GoldItem = {
+  id: string;
+  episode: string;
+  source: string;
+  expectedChunks: string[];
+  forbiddenPhrases: string[];
+  labeledBoundaries: GoldBoundary[];
+  reviewStatus: string;
+};
+type FixedV3GoldItem = {
+  id: string;
+  episode: string;
+  source: string;
+  expectedChunks: string[];
+  changeReason: string;
+};
+
+function argument(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 && process.argv[index + 1]
+    ? path.resolve(process.argv[index + 1])
+    : undefined;
+}
+
+function normalizeGold(value: string): string {
+  return value
+    .replace(/[—–…]/gu, (character) => character === '…' ? '...' : '-')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+function splitOffsets(source: string, chunks: string[]): number[] {
+  const normalized = normalizeGold(source);
+  const result: number[] = [];
+  let cursor = 0;
+  for (const chunk of chunks.slice(0, -1)) {
+    const needle = normalizeGold(chunk);
+    const position = normalized.indexOf(needle, cursor);
+    if (position < 0) throw new Error(`cannot align prediction: ${needle.slice(0, 100)}`);
+    cursor = position + needle.length;
+    while (cursor < normalized.length && /\s/u.test(normalized[cursor])) cursor += 1;
+    result.push(cursor);
+  }
+  return result;
+}
+
+function cutsPhrase(chunks: string[], phrase: string): boolean {
+  const joined = chunks.map(normalizeGold).join('\n');
+  const words = normalizeGold(phrase).split(' ');
+  for (let index = 1; index < words.length; index += 1) {
+    if (joined.includes(`${words.slice(0, index).join(' ')}\n${words.slice(index).join(' ')}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function evaluateGold(goldPath: string | undefined): Promise<Record<string, unknown> | null> {
+  if (!goldPath) return null;
+  const gold = JSON.parse(await readFile(goldPath, 'utf8')) as { items: GoldItem[] };
+  const reviewed = gold.items.filter(
+    (item) => item.reviewStatus === 'human_reviewed'
+      || item.reviewStatus === 'reviewed_reference',
+  );
+  let correct = 0;
+  let count = 0;
+  let compatibleCorrect = 0;
+  let compatibleCount = 0;
+  let forbiddenViolations = 0;
+  let policyConflictCount = 0;
+  let unresolvedBoundaryFailures = 0;
+  const failures: Array<Record<string, unknown>> = [];
+  for (const item of reviewed) {
+    const predicted = splitReadAloudV3(item.source);
+    const predictedOffsets = new Set(splitOffsets(item.source, predicted));
+    const normalizedSource = normalizeGold(item.source);
+    const boundaryFailures: Array<Record<string, unknown>> = [];
+    for (const boundary of item.labeledBoundaries) {
+      const actualSplit = predictedOffsets.has(boundary.offset);
+      const expectedSplit = boundary.label === 'SPLIT';
+      count += 1;
+      if (actualSplit === expectedSplit) correct += 1;
+      const prefix = normalizedSource.slice(0, boundary.offset).trimEnd();
+      const hardSentenceConflict = boundary.label === 'KEEP'
+        && actualSplit
+        && /[.!?]["'”’)}\]]*$/u.test(prefix);
+      let validChunkPreserved = false;
+      if (boundary.label === 'SPLIT' && !actualSplit) {
+        const offsets = [0, ...[...predictedOffsets].sort((a, b) => a - b), normalizedSource.length];
+        for (let index = 0; index < offsets.length - 1; index += 1) {
+          if (boundary.offset > offsets[index] && boundary.offset < offsets[index + 1]) {
+            const containingChunk = predicted[index];
+            validChunkPreserved = wordCount(containingChunk) <= HARD_MAX_WORDS
+              && maxUnpunctuatedWordCount(containingChunk) <= HARD_MAX_UNPUNCTUATED_WORDS;
+            break;
+          }
+        }
+      }
+      const policyConflict = hardSentenceConflict
+        ? 'v3_original_sentence_hard_boundary'
+        : validChunkPreserved
+          ? 'v3_valid_original_sentence_preserved'
+          : null;
+      if (!policyConflict) {
+        compatibleCount += 1;
+        if (actualSplit === expectedSplit) compatibleCorrect += 1;
+      }
+      if (actualSplit !== expectedSplit) {
+        if (policyConflict) policyConflictCount += 1;
+        else unresolvedBoundaryFailures += 1;
+        boundaryFailures.push({
+          ...boundary,
+          actual: actualSplit ? 'SPLIT' : 'KEEP',
+          policyConflict,
+        });
+      }
+    }
+    const violations = item.forbiddenPhrases.filter((phrase) => cutsPhrase(predicted, phrase));
+    forbiddenViolations += violations.length;
+    if (boundaryFailures.length || violations.length) {
+      failures.push({
+        id: item.id,
+        episode: item.episode,
+        expected: item.expectedChunks,
+        predicted,
+        boundaryFailures,
+        forbiddenViolations: violations,
+      });
+    }
+  }
+  return {
+    path: goldPath,
+    reviewedItemCount: reviewed.length,
+    referenceItemCount: gold.items.length - reviewed.length,
+    labeledBoundaryCount: count,
+    exactAccuracy: correct / Math.max(1, count),
+    compatibleBoundaryCount: compatibleCount,
+    compatibleAccuracy: compatibleCorrect / Math.max(1, compatibleCount),
+    policyConflictCount,
+    unresolvedBoundaryFailures,
+    forbiddenBoundaryViolations: forbiddenViolations,
+    failures,
+  };
+}
+
+async function evaluateFixedV3Gold(
+  goldPath: string,
+): Promise<Record<string, unknown>> {
+  const gold = JSON.parse(await readFile(goldPath, 'utf8')) as {
+    version: string;
+    items: FixedV3GoldItem[];
+  };
+  const failures: Array<Record<string, unknown>> = [];
+  let exactMatches = 0;
+  for (const item of gold.items) {
+    const actual = splitReadAloudV3(item.source);
+    if (JSON.stringify(actual) === JSON.stringify(item.expectedChunks)) {
+      exactMatches += 1;
+    } else {
+      failures.push({
+        id: item.id,
+        episode: item.episode,
+        changeReason: item.changeReason,
+        expected: item.expectedChunks,
+        actual,
+      });
+    }
+  }
+  return {
+    path: goldPath,
+    version: gold.version,
+    itemCount: gold.items.length,
+    exactMatches,
+    exactAccuracy: exactMatches / Math.max(1, gold.items.length),
+    failures,
+  };
+}
+
+async function evaluateCorpus(corpusPath: string | undefined): Promise<Record<string, unknown> | null> {
+  if (!corpusPath) return null;
+  const entries = (await readdir(corpusPath, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && /^E\d{2}$/u.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const chapters: Array<Record<string, unknown>> = [];
+  let totalChunks = 0;
+  let roundTripFailures = 0;
+  let crossedOriginalSentenceBoundaries = 0;
+  let over30 = 0;
+  let over20Unpunctuated = 0;
+  let over16Unpunctuated = 0;
+  let generatedUnder8 = 0;
+  let punctuationCuts = 0;
+  let grammarClauseCuts = 0;
+  let grammarPhraseCuts = 0;
+  let emergencyCuts = 0;
+  let aiReviewCuts = 0;
+  let parserIssueChunks = 0;
+  let changedChapters = 0;
+  for (const entry of entries) {
+    const sourcePath = path.join(corpusPath, entry.name, 'english.txt');
+    const source = await readFile(sourcePath, 'utf8');
+    const v2 = splitReadAloudV2(source);
+    const details = splitReadAloudV3Detailed(source);
+    const v3 = details.map((chunk) => chunk.text);
+    const roundTrip = normalizeForRoundTrip(v3.join(' ')) === normalizeForRoundTrip(source);
+    if (!roundTrip) roundTripFailures += 1;
+    const crossedBoundaries = details.filter(
+      (chunk) => splitOriginalSentencesV3(chunk.text).length > 1,
+    );
+    crossedOriginalSentenceBoundaries += crossedBoundaries.length;
+    const risks = details
+      .map((chunk, index) => ({ index, ...chunk }))
+      .filter((chunk) => chunk.maxUnpunctuatedWords > 16
+        || (chunk.wasSplit && chunk.wordCount < 8)
+        || chunk.boundaryKind === 'grammar_clause'
+        || chunk.boundaryKind === 'grammar_phrase'
+        || chunk.requiresAiReview
+        || chunk.boundaryKind === 'emergency');
+    totalChunks += details.length;
+    over30 += details.filter((chunk) => chunk.wordCount > HARD_MAX_WORDS).length;
+    over20Unpunctuated += details.filter(
+      (chunk) => chunk.maxUnpunctuatedWords > HARD_MAX_UNPUNCTUATED_WORDS,
+    ).length;
+    over16Unpunctuated += details.filter((chunk) => chunk.maxUnpunctuatedWords > 16).length;
+    generatedUnder8 += details.filter((chunk) => chunk.wasSplit && chunk.wordCount < 8).length;
+    punctuationCuts += details.filter((chunk) => chunk.boundaryKind === 'punctuation').length;
+    grammarClauseCuts += details.filter(
+      (chunk) => chunk.boundaryKind === 'grammar_clause',
+    ).length;
+    grammarPhraseCuts += details.filter(
+      (chunk) => chunk.boundaryKind === 'grammar_phrase',
+    ).length;
+    emergencyCuts += details.filter((chunk) => chunk.boundaryKind === 'emergency').length;
+    aiReviewCuts += details.filter((chunk) => chunk.requiresAiReview).length;
+    parserIssueChunks += details.filter((chunk) => chunk.parserIssues.length > 0).length;
+    const changed = JSON.stringify(v2) !== JSON.stringify(v3);
+    if (changed) changedChapters += 1;
+    chapters.push({
+      episode: entry.name,
+      sourcePath,
+      sourceWordCount: source.trim().split(/\s+/u).filter(Boolean).length,
+      v2SentenceCount: v2.length,
+      v3SentenceCount: v3.length,
+      changed,
+      roundTrip,
+      crossedOriginalSentenceBoundaries: crossedBoundaries.length,
+      maxWords: Math.max(0, ...details.map((chunk) => chunk.wordCount)),
+      maxUnpunctuatedWords: Math.max(0, ...details.map((chunk) => chunk.maxUnpunctuatedWords)),
+      generatedUnder8: details.filter((chunk) => chunk.wasSplit && chunk.wordCount < 8).length,
+      punctuationCuts: details.filter((chunk) => chunk.boundaryKind === 'punctuation').length,
+      grammarClauseCuts: details.filter(
+        (chunk) => chunk.boundaryKind === 'grammar_clause',
+      ).length,
+      grammarPhraseCuts: details.filter(
+        (chunk) => chunk.boundaryKind === 'grammar_phrase',
+      ).length,
+      emergencyCuts: details.filter((chunk) => chunk.boundaryKind === 'emergency').length,
+      aiReviewCuts: details.filter((chunk) => chunk.requiresAiReview).length,
+      parserIssueChunks: details.filter((chunk) => chunk.parserIssues.length > 0).length,
+      risks,
+      chunks: details,
+    });
+  }
+  return {
+    path: corpusPath,
+    chapterCount: entries.length,
+    changedChapters,
+    totalChunks,
+    roundTripFailures,
+    crossedOriginalSentenceBoundaries,
+    over30,
+    over20Unpunctuated,
+    over16Unpunctuated,
+    generatedUnder8,
+    punctuationCuts,
+    grammarClauseCuts,
+    grammarPhraseCuts,
+    emergencyCuts,
+    aiReviewCuts,
+    parserIssueChunks,
+    chapters,
+  };
+}
+
+function markdown(report: Record<string, unknown>): string {
+  const corpus = report.corpus as Record<string, unknown> | null;
+  const gold = report.gold as Record<string, unknown> | null;
+  const fixedV3Gold = report.fixedV3Gold as Record<string, unknown> | null;
+  const lines = [
+    '# 英文朗读分句 v3 回归报告',
+    '',
+    `- 版本：\`${report.version}\``,
+    `- 发布门槛：${report.passed ? 'PASS' : 'FAIL'}`,
+    '- 策略：只切分、不合并；无标点优选 8–16，硬上限 20；句长硬上限 30。',
+  ];
+  if (gold) {
+    lines.push(
+      '',
+      '## 参考与人工金标',
+      '',
+      `- 参考/人工审核项目：${gold.reviewedItemCount}`,
+      `- 标注边界：${gold.labeledBoundaryCount}`,
+      `- 原始准确率：${Number(gold.exactAccuracy).toFixed(4)}`,
+      `- 排除明确 v2/v3 政策冲突后的准确率：${Number(gold.compatibleAccuracy).toFixed(4)}`,
+      `- 已记录的旧政策冲突边界：${gold.policyConflictCount}`,
+      `- 未解释的边界失败：${gold.unresolvedBoundaryFailures}`,
+      `- 禁止短语切断：${gold.forbiddenBoundaryViolations}`,
+      `- 已记录旧结果/v3 差异项目：${(gold.failures as unknown[]).length}`,
+    );
+  }
+  if (fixedV3Gold) {
+    lines.push(
+      '',
+      '## v3 固定金标',
+      '',
+      `- 项目：${fixedV3Gold.itemCount}`,
+      `- 精确一致：${fixedV3Gold.exactMatches}`,
+      `- 准确率：${Number(fixedV3Gold.exactAccuracy).toFixed(4)}`,
+      `- 失败：${(fixedV3Gold.failures as unknown[]).length}`,
+    );
+  }
+  if (corpus) {
+    lines.push(
+      '',
+      '## 全书语料',
+      '',
+      `- 章节：${corpus.chapterCount}`,
+      `- v2/v3 有差异章节：${corpus.changedChapters}`,
+      `- v3 分句总数：${corpus.totalChunks}`,
+      `- 回拼失败：${corpus.roundTripFailures}`,
+      `- 跨原文句末边界：${corpus.crossedOriginalSentenceBoundaries}`,
+      `- 超过 30 词：${corpus.over30}`,
+      `- 无标点连续段超过 20 词：${corpus.over20Unpunctuated}`,
+      `- 无标点连续段超过 16 词：${corpus.over16Unpunctuated}`,
+      `- 切分后不足 8 词的新片段：${corpus.generatedUnder8}`,
+      `- 标点/语法从句/语法短语/最终兜底：${corpus.punctuationCuts}/${corpus.grammarClauseCuts}/${corpus.grammarPhraseCuts}/${corpus.emergencyCuts}`,
+      `- 需要 AI 或人工对照的切点：${corpus.aiReviewCuts}`,
+      `- 带解析器诊断问题的分句：${corpus.parserIssueChunks}`,
+      '',
+      '| 章 | v2 | v3 | 最大句长 | 最大无标点 | 新增 <8 | 标点/从句/短语/兜底 | AI复核 | 回拼 |',
+      '|---|---:|---:|---:|---:|---:|---:|---|',
+    );
+    for (const chapter of corpus.chapters as Array<Record<string, unknown>>) {
+      lines.push(
+        `| ${chapter.episode} | ${chapter.v2SentenceCount} | ${chapter.v3SentenceCount} | ${chapter.maxWords} | ${chapter.maxUnpunctuatedWords} | ${chapter.generatedUnder8} | ${chapter.punctuationCuts}/${chapter.grammarClauseCuts}/${chapter.grammarPhraseCuts}/${chapter.emergencyCuts} | ${chapter.aiReviewCuts} | ${chapter.roundTrip ? 'ok' : 'FAIL'} |`,
+      );
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+async function main(): Promise<void> {
+  const outputPath = argument('--output')
+    ?? path.resolve(process.cwd(), '../app/build/sentence_split_v3');
+  const corpusPath = argument('--corpus')
+    ?? path.resolve(process.cwd(), '../../柳林风声/work');
+  const goldPath = argument('--gold')
+    ?? path.join(corpusPath, 'sentence-split-gold-v2.json');
+  const fixedV3GoldPath = argument('--v3-gold')
+    ?? path.resolve(process.cwd(), '../app/test/fixtures/sentence_split_gold_v3.json');
+  const report = {
+    version: 'read_aloud_dp_v3',
+    generatedAt: new Date().toISOString(),
+    gold: await evaluateGold(goldPath),
+    fixedV3Gold: await evaluateFixedV3Gold(fixedV3GoldPath),
+    corpus: await evaluateCorpus(corpusPath),
+  };
+  const goldPassed = !report.gold
+    || (report.gold.compatibleAccuracy === 1
+      && report.gold.unresolvedBoundaryFailures === 0
+      && report.gold.forbiddenBoundaryViolations === 0);
+  const fixedV3GoldPassed = report.fixedV3Gold.exactAccuracy === 1;
+  const corpusPassed = !report.corpus
+    || (report.corpus.roundTripFailures === 0
+      && report.corpus.over30 === 0
+      && report.corpus.over20Unpunctuated === 0
+      && report.corpus.crossedOriginalSentenceBoundaries === 0
+      && report.corpus.emergencyCuts === 0);
+  const passed = goldPassed && fixedV3GoldPassed && corpusPassed;
+  const persistedReport = { ...report, passed };
+  await mkdir(outputPath, { recursive: true });
+  await writeFile(
+    path.join(outputPath, 'sentence-split-v3-report.json'),
+    `${JSON.stringify(persistedReport, null, 2)}\n`,
+    'utf8',
+  );
+  await writeFile(
+    path.join(outputPath, 'sentence-split-v3-report.md'),
+    markdown(persistedReport),
+    'utf8',
+  );
+  process.stdout.write(`${JSON.stringify({
+    outputPath,
+    gold: report.gold && {
+      reviewedItemCount: report.gold.reviewedItemCount,
+      labeledBoundaryCount: report.gold.labeledBoundaryCount,
+      exactAccuracy: report.gold.exactAccuracy,
+      compatibleAccuracy: report.gold.compatibleAccuracy,
+      policyConflictCount: report.gold.policyConflictCount,
+      unresolvedBoundaryFailures: report.gold.unresolvedBoundaryFailures,
+      forbiddenBoundaryViolations: report.gold.forbiddenBoundaryViolations,
+      failures: (report.gold.failures as unknown[]).length,
+    },
+    fixedV3Gold: {
+      itemCount: report.fixedV3Gold.itemCount,
+      exactMatches: report.fixedV3Gold.exactMatches,
+      exactAccuracy: report.fixedV3Gold.exactAccuracy,
+      failures: (report.fixedV3Gold.failures as unknown[]).length,
+    },
+    corpus: report.corpus && {
+      chapterCount: report.corpus.chapterCount,
+      totalChunks: report.corpus.totalChunks,
+      roundTripFailures: report.corpus.roundTripFailures,
+      crossedOriginalSentenceBoundaries: report.corpus.crossedOriginalSentenceBoundaries,
+      over30: report.corpus.over30,
+      over20Unpunctuated: report.corpus.over20Unpunctuated,
+      over16Unpunctuated: report.corpus.over16Unpunctuated,
+      generatedUnder8: report.corpus.generatedUnder8,
+      punctuationCuts: report.corpus.punctuationCuts,
+      grammarClauseCuts: report.corpus.grammarClauseCuts,
+      grammarPhraseCuts: report.corpus.grammarPhraseCuts,
+      emergencyCuts: report.corpus.emergencyCuts,
+      aiReviewCuts: report.corpus.aiReviewCuts,
+      parserIssueChunks: report.corpus.parserIssueChunks,
+    },
+    passed,
+  }, null, 2)}\n`);
+  if (!passed) process.exitCode = 1;
+}
+
+await main();

@@ -1,0 +1,51 @@
+{
+  "version": "legacy_freeform_contract_retired_in_read_aloud_dp_v3",
+  "reason": "The old model-generated endToken protocol was removed from production. These cases remain in the regression inventory and are now enforced by the dependency parser, deterministic solver, or candidate-path contract.",
+  "cases": [
+    {
+      "id": "locked-original-boundaries",
+      "source": "Mole looked up. Rat waved back.",
+      "v3Invariant": "Never cross an original orthographic sentence boundary."
+    },
+    {
+      "id": "safe-original-remains-whole",
+      "source": "Mole looked up.",
+      "v3Invariant": "An original sentence within both hard limits is unchanged."
+    },
+    {
+      "id": "punctuation-path-before-emergency",
+      "source": "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen; seventeen eighteen nineteen twenty twentyone twentytwo twentythree twentyfour twentyfive twentysix twentyseven twentyeight twentynine thirty thirtyone thirtytwo.",
+      "v3Invariant": "A feasible strong-punctuation path forbids a non-punctuation path."
+    },
+    {
+      "id": "comma-must-be-parser-confirmed-clause",
+      "source": "one two three four five six seven eight nine ten eleven, twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone twentytwo.",
+      "v3Invariant": "A comma is a candidate only when the dependency tree confirms a clause boundary."
+    },
+    {
+      "id": "quote-boundary-requires-complete-dependency-unit",
+      "source": "one two three four five six seven eight nine ten eleven twelve thirteen fourteen whispered \"whitewash!\" sixteen seventeen eighteen nineteen twenty twentyone twentytwo twentythree twentyfour twentyfive twentysix twentyseven twentyeight twentynine thirty thirtyone.",
+      "v3Invariant": "Quotation punctuation cannot override an attribution or other crossing dependency."
+    },
+    {
+      "id": "invented-token-anchor-protocol-removed",
+      "source": "one two three four five six seven eight nine ten eleven twelve thirteen fourteen whispered \"whitewash!\" sixteen seventeen eighteen nineteen twenty twentyone twentytwo twentythree twentyfour twentyfive twentysix twentyseven twentyeight twentynine thirty thirtyone.",
+      "v3Invariant": "AI cannot return token indexes or token anchors; only a supplied candidatePathId is accepted."
+    },
+    {
+      "id": "willows-e01-no-optional-short-fragment",
+      "source": "First with brooms, then with dusters; then on ladders and steps and chairs, with a brush and a pail of whitewash; till he had dust in his throat and eyes, and splashes of whitewash all over his black fur, and an aching back and weary arms.",
+      "v3Invariant": "Use the minimum required strong-punctuation cuts; do not cut after the first semicolon merely for balance."
+    },
+    {
+      "id": "syntax-fallback-only-after-punctuation-failure",
+      "source": "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone twentytwo.",
+      "v3Invariant": "Dependency candidates are admitted only after the punctuation-only graph has no feasible path."
+    },
+    {
+      "id": "short-syntax-boundary-is-not-auto-merged",
+      "source": "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twentyone.",
+      "v3Invariant": "The solver ranks complete paths once; it never post-merges a selected dependency boundary."
+    }
+  ]
+}

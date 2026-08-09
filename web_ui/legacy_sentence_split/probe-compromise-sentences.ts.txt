@@ -1,0 +1,57 @@
+// RETIRED REFERENCE ONLY: this tool targets the removed Web splitter.
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import nlp from 'compromise';
+
+const require = createRequire(import.meta.url);
+const winkNLP = require('wink-nlp') as (model: unknown) => {
+  readDoc(text: string): {
+    sentences(): { out(): string[] };
+    tokens(): { out(property: unknown): string[] };
+  };
+};
+const winkModel = require('wink-eng-lite-web-model') as unknown;
+const winkIts = require('wink-nlp/src/its.js') as { value: unknown; pos: unknown };
+const wink = winkNLP(winkModel);
+
+const fixturePath = new URL('../../app/test/fixtures/read_aloud_splitter_v3_cases.json', import.meta.url);
+const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8')) as {
+  cases: Array<{ id: string; input: string }>;
+};
+
+for (const testCase of fixture.cases) {
+  const document = nlp(testCase.input);
+  const winkDocument = wink.readDoc(testCase.input);
+  const sentenceAnalysis = document.sentences().json() as Array<{
+    text?: string;
+    sentence?: { subject?: string; verb?: string; predicate?: string };
+  }>;
+  const sentences = sentenceAnalysis
+    .map((entry) => String(entry.text ?? '').trim())
+    .filter(Boolean);
+  process.stdout.write(`${JSON.stringify({
+    id: testCase.id,
+    winkSentences: winkDocument.sentences().out(),
+    winkTokens: winkDocument.tokens().out(winkIts.value).map((value, index) => ({
+      value,
+      pos: winkDocument.tokens().out(winkIts.pos)[index],
+    })),
+    sentences,
+    sentenceGrammar: sentenceAnalysis.map((entry) => entry.sentence ?? null),
+    clauses: (document.clauses().json() as Array<{ text?: string }>).map((entry) => entry.text),
+    chunks: (document.chunks().json() as Array<{ text?: string }>).map((entry) => entry.text),
+    terms: (document.terms().json() as Array<{ terms?: Array<{
+      text?: string;
+      normal?: string;
+      tags?: string[];
+      chunk?: string;
+      confidence?: number;
+    }> }>).flatMap((entry) => entry.terms ?? []).map((term) => ({
+      text: term.text,
+      normal: term.normal,
+      tags: term.tags,
+      chunk: term.chunk,
+      confidence: term.confidence,
+    })),
+  })}\n`);
+}

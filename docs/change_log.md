@@ -1,5 +1,33 @@
 # 修改日志
 
+## 2026-08-09
+
+- **火山 DeepSeek V4 Flash 分句验收**：账号可见正式模型 ID 为
+  `deepseek-v4-flash-ga-260731`。在十类通用困难样本上，P8 通用句法提示词配合首轮精简扩展
+  候选连续三次达到 10/10，JSON/path 协议合法率与重复一致性均为 100%；生产分句白名单新增
+  该模型。火山 Lite/Pro 仍未验收，不会触发付费分句 AI。
+- **火山文本模型推荐项**：设置页新增“DeepSeek V4 Flash 正式版 · 推荐使用模型”，新配置
+  默认使用该模型；已有用户保存的豆包模型不强制迁移。推荐面向通用“文本处理”全链路，
+  包括受约束分句复核、翻译、绘本章节规划与分镜描述；分句严格测试作为英文结构理解和
+  指令遵循能力的可量化指标，不代表模型只推荐用于分句。它与 ASR、TTS、图片供应商设置彼此独立。
+- **双分句协议**：阿里 `qwen3.7-max` 保持已验收的 P7 初轮/扩展协议；DeepSeek 使用 P8 精简
+  扩展协议。两者都只能选择程序给出的 path ID，不能改写原文或创造切点；文章版本继续保持
+  `read_aloud_dp_v3` / `reviewed_dp_v3`。
+- **豆包 Lite 同协议复测**：`doubao-seed-2-0-lite-260215` 使用与 DeepSeek 相同的 P8 通用提示词
+  和精简扩展候选连续运行三轮，结果为协议失败、9/10、8/10，且三轮不一致；仍不进入生产分句
+  白名单。调优入口新增仅在未验收模型、强制远程和费用预算同时开启时可用的完整 P8 测试开关，
+  不改变正式运行行为。报告保存在 `output/sentence-split-v3/`。
+
+验证：
+
+- DeepSeek V4 Flash 正式版真实调用：3×10/10，62,814 输入 token、645 输出 token
+- 豆包 Lite P8 真实调用：三个逻辑重复，协议失败、9/10、8/10；保守费用 0.180705 元
+- `npm test -- --run`（101）
+- `npm run build`
+- `flutter test --reporter expanded -j 1`（376 通过，5 个显式 live 测试跳过）
+- `flutter analyze`（无 error；保留 3 个与本轮无关的既有 `unused_element` warning）
+- `tools/build_windows.ps1 -Release`（成功；Release Web 资源包含正式 DeepSeek 模型 ID）
+
 ## 2026-08-03
 
 - **发布 v1.3.0**：`app/pubspec.yaml` → `1.3.0+5`。相对 v1.2.0 主要包含：朗读分句 DP v2、中文字幕自适应、绘本场景数量/12 景上限修正、Bridge/书库载荷瘦身与绘本按需加载、创作中心 display 清晰度修复，以及 Windows `jni` C4022 构建告警处理。

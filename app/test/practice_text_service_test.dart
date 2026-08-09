@@ -10,6 +10,10 @@ import 'package:tomato_english_happy_talking/services/practice_text_service.dart
 import 'package:tomato_english_happy_talking/services/text_generation_service.dart';
 
 void main() {
+  final retiredSplitFixture = jsonDecode(
+    File('test/fixtures/legacy_freeform_split_contract_v3.json')
+        .readAsStringSync(),
+  ) as Map<String, dynamic>;
   late Directory tempDir;
   late Directory previousDirectory;
 
@@ -231,6 +235,37 @@ I can't stand it when people don't attend to the rules.
         ),
       ),
     );
+  });
+
+  test('retired free-form split cases remain in the V3 regression inventory',
+      () {
+    final cases =
+        (retiredSplitFixture['cases'] as List).cast<Map<String, dynamic>>();
+
+    expect(cases, hasLength(9));
+    expect(
+      cases.map((item) => item['id']),
+      containsAll(const [
+        'locked-original-boundaries',
+        'safe-original-remains-whole',
+        'punctuation-path-before-emergency',
+        'comma-must-be-parser-confirmed-clause',
+        'quote-boundary-requires-complete-dependency-unit',
+        'invented-token-anchor-protocol-removed',
+        'willows-e01-no-optional-short-fragment',
+        'syntax-fallback-only-after-punctuation-failure',
+        'short-syntax-boundary-is-not-auto-merged',
+      ]),
+    );
+    for (final item in cases) {
+      expect((item['source'] as String).trim(), isNotEmpty,
+          reason: '${item['id']}');
+      expect(
+        (item['v3Invariant'] as String).trim(),
+        isNotEmpty,
+        reason: '${item['id']}',
+      );
+    }
   });
 
   test('cleans generated title to a compact English title', () async {

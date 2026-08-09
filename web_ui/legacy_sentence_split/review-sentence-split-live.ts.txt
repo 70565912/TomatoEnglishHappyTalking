@@ -1,0 +1,147 @@
+// RETIRED REFERENCE ONLY: this tool targets the removed Web splitter.
+import { readFile, writeFile } from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import process from 'node:process';
+
+import { splitSentencesDetailed } from '../src/sentenceSplitter';
+
+type JsonRecord = Record<string, unknown>;
+
+function valueAfter(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+function requiredPath(name: string): string {
+  const value = valueAfter(name);
+  if (!value) throw new Error(`missing ${name}`);
+  return path.resolve(value);
+}
+
+const inputPath = requiredPath('--input');
+const outputPath = requiredPath('--output');
+const port = Number(valueAfter('--port') ?? '39317');
+if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  throw new Error(`invalid --port: ${port}`);
+}
+
+async function request(route: string, body?: JsonRecord): Promise<JsonRecord> {
+  const encoded = body == null ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: route,
+        method: encoded == null ? 'GET' : 'POST',
+        headers: encoded == null
+          ? undefined
+          : {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(encoded),
+            },
+        timeout: 300_000,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let decoded: unknown;
+          try {
+            decoded = JSON.parse(text);
+          } catch {
+            reject(new Error(`${route} returned non-JSON: ${text.slice(0, 2000)}`));
+            return;
+          }
+          if ((res.statusCode ?? 500) >= 400) {
+            reject(new Error(`${route} failed: ${res.statusCode} ${text.slice(0, 4000)}`));
+            return;
+          }
+          if (decoded == null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+            reject(new Error(`${route} returned an invalid object`));
+            return;
+          }
+          resolve(decoded as JsonRecord);
+        });
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error(`${route} timed out`)));
+    req.on('error', reject);
+    if (encoded != null) req.write(encoded);
+    req.end();
+  });
+}
+
+function bridgePayload(response: JsonRecord, command: string): JsonRecord {
+  if (response.ok === false) {
+    throw new Error(`${command} failed: ${JSON.stringify(response.error ?? response)}`);
+  }
+  const payload = response.payload;
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(`${command} returned no payload`);
+  }
+  return payload as JsonRecord;
+}
+
+const health = await request('/health');
+if (health.ok !== true || health.webReady !== true || health.usesDevServer !== false) {
+  throw new Error(`Release QA is not ready: ${JSON.stringify(health)}`);
+}
+
+const source = (await readFile(inputPath, 'utf8')).trim();
+if (!source) throw new Error('input is empty');
+
+const prepared = bridgePayload(
+  await request('/bridge', {
+    type: 'article.prepareCreate',
+    payload: { content: source },
+  }),
+  'article.prepareCreate',
+);
+const englishContent = String(prepared.englishContent ?? '').trim();
+const preparedId = String(prepared.preparedId ?? '').trim();
+if (!englishContent || !preparedId) {
+  throw new Error('article.prepareCreate returned incomplete data');
+}
+
+const localDetails = splitSentencesDetailed(englishContent);
+const reviewed = bridgePayload(
+  await request('/bridge', {
+    type: 'article.reviewSplitTranslate',
+    payload: {
+      preparedId,
+      englishContent,
+      localSentences: localDetails.map((item) => item.text),
+      localDiagnostics: localDetails.map((item) => ({
+        boundaryKind: item.boundaryKind,
+        boundaryReason: item.boundaryReason,
+        parserHealthy: item.parserHealthy,
+        parserConfidence: item.parserConfidence,
+        parserIssues: item.parserIssues,
+        requiresAiReview: item.requiresAiReview,
+      })),
+    },
+  }),
+  'article.reviewSplitTranslate',
+);
+
+const report = {
+  generatedAt: new Date().toISOString(),
+  note: 'Diagnostic only: article.create was not called and no article was saved.',
+  health: {
+    ok: health.ok,
+    webReady: health.webReady,
+    usesDevServer: health.usesDevServer,
+  },
+  inputPath,
+  englishContent,
+  local: {
+    sentenceCount: localDetails.length,
+    details: localDetails,
+  },
+  reviewed,
+};
+await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

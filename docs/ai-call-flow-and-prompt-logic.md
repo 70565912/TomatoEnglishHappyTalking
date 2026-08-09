@@ -22,18 +22,19 @@
 | ElevenLabs | `AppConfig.elevenLabs*` | secure storage：`elevenlabs_api_key` 等；启动时可从 `security/elevenlabs.txt` 读取纯 key 或 `ELEVENLABS_API_KEY=...` 并写入 secure storage |
 | 阿里云百聆（Fun-Music） | `AppConfig.aliyunBailianApiKey` / `AppConfig.aliyunBailianMusicModel` | secure storage：百炼 key 与音乐模型 |
 | 歌曲生成 | `AppConfig.songGenerationProvider` | secure storage：`song_provider`；支持 Suno、阿里云百聆、ElevenLabs Music |
-| ASR | `AppConfig.aiProvider` | 阿里云 Qwen-ASR 或火山 BigASR，仍沿用旧全局 provider |
+| ASR | `AppConfig.asrProvider` | secure storage：`asr_provider`；阿里云 Qwen-ASR 或火山 SeedASR/BigASR，旧 `ai_provider` 仅作首次迁移和兼容别名 |
 | 图片模型 | `AppConfig` / env | 阿里云默认 `wan2.7-image-pro`，火山默认 `doubao-seedream-5-0-260128` |
 | 图片尺寸 | `AppConfig` / `VolcImageService` env | 阿里云默认 `2K`；火山远程默认 `2560x1440`，本地显示按 16:9 缩放 |
 
 ### 按能力拆分 provider
 
-- `ai_provider` 保留为旧设置兼容字段；新设置页按能力写入 `text_provider`、`image_provider`、`tts_provider` 和 `song_provider`。
+- `ai_provider` 保留为旧设置兼容别名，并在升级时迁移到 `asr_provider`；新设置页按能力写入 `asr_provider`、`text_provider`、`image_provider`、`tts_provider` 和 `song_provider`。
 - 文本处理只允许 `aliyun_bailian` / `volcengine`，用于标题、翻译、单词释义、对话提纲和绘本章节规划。
 - 图片生成只允许 `aliyun_bailian` / `volcengine`，分别走阿里云万相和火山 Seedream。
 - 语音合成允许 `aliyun_bailian` / `volcengine` / `elevenlabs`。ElevenLabs 不参与文本生成或图片生成。
+- 语音识别只允许 `aliyun_bailian` / `volcengine`，普通识别、字幕时间轴和实时识别统一读取 `asr_provider`；火山可选 `auto`、SeedASR 2.0 或 BigASR 1.0。
 - 歌曲生成允许 `suno` / `bailian_fun_music` / `elevenlabs_music`。Suno 仍是默认；ElevenLabs Music 不影响 Suno 下载检测规则。
-- `settings.load.cloud` 返回 `aiProvider`、`textProvider`、`imageProvider`、`ttsProvider` 和 `elevenLabs` 配置状态；UI 只显示 key mask，不回传明文 key。
+- `settings.load.cloud` 返回 `asrProvider`、兼容别名 `aiProvider`、`textProvider`、`imageProvider`、`ttsProvider` 和各厂家模型/Key 状态；UI 只显示 key mask，不回传明文 key，也不暴露或保存生产 Base URL/WebSocket 地址。
 - `voiceCatalog.elevenLabs` 来自 ElevenLabs 在线声音列表，失败时返回空列表和展示错误；不会暴露 key。TTS 保存和试听 payload 使用 `ttsProvider`，旧 `aiProvider` payload 仍作为兼容 fallback。
 
 ## 调用矩阵
@@ -41,13 +42,15 @@
 | 场景 | 本地优先逻辑 | 远程服务 | cachePurpose / kind | 输出 |
 | --- | --- | --- | --- | --- |
 | 新增文章正文处理 | `PracticeInputParser` 判定纯英文/标准中英对照直接使用 | OpenAI-compatible 文本 | `translate_to_english_practice` / `openai_text` | 英文练习正文 |
+| 新增文章分句与中文翻译 | UDPipe 端侧依存树 + Dart 确定性求解；纯标点路径不调用 AI，只有无标点候选才允许已验收模型从既有 path ID 中选择；分句冻结后再补译缺失句子 | OpenAI-compatible 文本仅用于受约束路径复核和翻译 | 阿里 `article_split_v3_candidate_path_p7` / 火山 DeepSeek `article_split_v3_candidate_path_p8` + `article_split_translate_v3_translation_v12` / `openai_text` | `reviewed_dp_v3` 原文片段、初轮/扩展候选、最终 path ID、依存理由、软警告、诊断与逐句中文 |
 | 自动标题 | 用户标题 > 本地英文标题候选 > 与首次章节规划同一次 AI（`includeTitle`） | OpenAI-compatible 文本 | `picture_book_chapter_scene_plan_v2`（无绘本时仍可走 `suggest_article_title`） | 2-5 词英文标题 |
 | 中文对照 | 导入时保存的 `article_sentence_translations` > 内存 Future cache | OpenAI-compatible 文本 | `follow_translation` / `listening_translation` / `chat_translation` | 简体中文翻译 |
 | 单词释义 | 规范化单词与句子，缓存命中直接返回 | OpenAI-compatible 文本 | `word_lookup` / `openai_text` | JSON: 拼写、音标、含义、句中义 |
 | 对话提纲 | 同一章节教学提纲缓存命中直接返回 | OpenAI-compatible 文本 | `chapter_dialogue_guide_v2` / `openai_text` | 8 个以内章节覆盖点 |
 | AI 对话 | 完整 turns 转 textQuery，但 turns 只包含提纲、进度和历史，不重复带全文 | Realtime V3 | `chat_start` / `chat_reply` / `realtime` | AI 英文回复 |
 | 跟读/听力/对话朗读 | TTS 文件缓存命中直接播放 | 当前 TTS provider：阿里云 CosyVoice、火山 Doubao TTS 2.0 或 ElevenLabs TTS | `follow_tts` / `listening_tts` / `chat_tts` / `word_pronunciation` / `voice_preview` / `tts` | MP3 文件 |
-| 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | 当前云平台 ASR：阿里云 Qwen-ASR 或火山 BigASR | `asr_recognize` / `asr` | 识别文本 |
+| 跟读/聊天识别 | 音频 SHA-256 缓存命中直接返回 | 当前 ASR provider：阿里云 Qwen-ASR 或火山 SeedASR/BigASR | `asr_recognize` / `asr` | 识别文本 |
+| 字幕时间轴识别 | `recognizeWithTimeline` 按音频、语言、厂家、配置模型和最终 Resource ID 查持久缓存 | 当前 ASR provider；火山返回词级时间 | `asr_timeline_recognize_v1` / `asr_timeline` | ASR 文本、utterances、词级时间和可追踪 metadata |
 | 跟读最近录音 | 读 `latest_sentence_recordings` | 无 | 独立表 + recordings 文件 | 最近录音、识别文本、评分 JSON |
 | 绘本提示词审核 | 打开时只读取本地持久化章节计划/章节描述；`article.create` 已写入首次规划时直接展示；缺失时显示空草稿 | OpenAI-compatible 文本在保存时首次生成，之后仅在用户点击刷新时再调用 | `picture_book_chapter_scene_plan_v2` / `openai_text` | `chapterDescription`、`scenes[].sceneDescription`、可选 `title`、group prompt |
 | 绘本组图 | 图片文件缓存命中直接返回；失败页可整体重试 | 当前云平台图片：阿里云万相异步连续组图或火山 Seedream 顺序组图 | `picture_book_image_group` / file | 与分镜一一对应的本地图片文件 |
@@ -67,12 +70,13 @@
    - 非标准中英混杂：提取英文故事原文。
    - 纯中文：翻译成适合练习的英文故事。
    - 长文本按约 8000 字符目标分块，全量处理，不截断前 1600/2200 字符。
-5. `NlpService.splitSentences` 生成适合跟读的短语块；Flutter 与 Web 预览共用约 10–20 词的目标窗口和 **30 词硬上限**，避免后续逐句字幕提交超过外部配音平台的前端限制。
-6. 准备书籍信息；**先**把文章与分句写入 `articles`（缺标题时可用临时 `Untitled Chapter`，后续规划同次补标题）。
-7. 中文对照：合并已有行与导入译文并 upsert；仅对仍缺的句子调用一批 `translateSentencesToChineseStrict`。译文或章节规划失败**不再删除文章**，错误带回 `resumeArticleId`，再次保存只续传。
-8. 绘本开启时：若 `summary_json` 已有有效 `picture_book_chapter_scene_plan_v2` 则跳过 AI；否则再请求章节规划并写入 `story_chapters.summary_json`。
-9. 保存过程通过 `article.save.progress` 推送阶段与百分比（解析 → 英文 → 分句 → 书籍 → 写入 → 译文 → 关联 → 章节规划）；续传时从译文/规划开始。
-10. 保存返回后 Web UI 调用 `pictureBook.promptReview` 打开提示词审核弹窗（此时应已能读到保存时写入的规划）；用户确认后才提交顺序组图生成。
+5. `article.reviewSplitTranslate` 只在 Flutter 原生端执行。UDPipe 1.4 插件返回保留原文 offset 的 token、POS 和依存树，Dart `ReadAloudSplitterV3` 锁定正字句并按“纯标点 → 完整依存子树 → 应急词间路径”生成每个超限原句最多 8 条完整候选。Web 不再运行或提交 Wink/Compromise 结果。
+6. 纯标点完整路径由代码直接选择，不调用分句 AI。候选包含无标点切点时，AI 只允许返回 `originalIndex + candidatePathId` 或 `REJECT`，不能返回 token 位置、修改英文或创建路径。阿里 `qwen3.7-max` 使用已验收的 P7 协议，先给初轮候选，必要时扩展；火山 `deepseek-v4-flash-ga-260731` 使用 P8 协议，首轮直接给精简扩展候选。整篇最多两次远程请求；失败后使用本地路径并写入应急诊断。其余未验收模型不会触发正式分句 AI。分句冻结后，`article_split_translate_v3_translation_v12` 才批量补译缺失句子。分句和翻译使用独立缓存，最终版本仍为 `reviewed_dp_v3`。
+7. 准备书籍信息；**先**把文章与已验收分句写入 `articles`（缺标题时可用临时 `Untitled Chapter`，后续规划同次补标题）。
+8. 中文对照直接写入同一次分句翻译调用的结果；仅当历史续传或数据缺失时才调用 `translateSentencesToChineseStrict` 补缺。译文或章节规划失败**不再删除文章**，错误带回 `resumeArticleId`，再次保存只续传。
+9. 绘本开启时：若 `summary_json` 已有有效 `picture_book_chapter_scene_plan_v2` 则跳过 AI；否则再请求章节规划并写入 `story_chapters.summary_json`。
+10. 保存过程通过 `article.save.progress` 推送阶段与百分比（解析 → 英文 → 分句/翻译 → 书籍 → 写入 → 译文 → 关联 → 章节规划）；续传时从译文/规划开始。
+11. 保存返回后 Web UI 调用 `pictureBook.promptReview` 打开提示词审核弹窗（此时应已能读到保存时写入的规划）；用户确认后才提交顺序组图生成。
 
 ### 绘本提示词审核手动触发规则
 

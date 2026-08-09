@@ -127,6 +127,7 @@ describe('bridge client', () => {
     expect(rawResponse.bigAsr).toBeUndefined();
     expect(rawResponse.realtime).toBeUndefined();
     expect((response.tts as unknown as Record<string, unknown>).apiKey).toBeUndefined();
+    expect(response.cloud?.asrProvider).toBe('aliyun_bailian');
     expect(response.cloud?.textProvider).toBe('aliyun_bailian');
     expect(response.cloud?.imageProvider).toBe('aliyun_bailian');
     expect(response.cloud?.ttsProvider).toBe('aliyun_bailian');
@@ -142,6 +143,7 @@ describe('bridge client', () => {
 
   it('saves split cloud providers and masks ElevenLabs key in mock settings', async () => {
     const response = await sendNative<SettingsState>('settings.saveCloud', {
+      asrProvider: 'volcengine',
       textProvider: 'volcengine',
       imageProvider: 'aliyun_bailian',
       ttsProvider: 'elevenlabs',
@@ -149,18 +151,35 @@ describe('bridge client', () => {
       elevenLabsTtsModel: 'eleven_turbo_v2_5',
       elevenLabsTtsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
       elevenLabsMusicModel: 'music_v2',
+      volcAsrModel: 'seedasr_v2',
     });
 
     expect(response.cloud?.aiProvider).toBe('volcengine');
+    expect(response.cloud?.asrProvider).toBe('volcengine');
     expect(response.cloud?.textProvider).toBe('volcengine');
     expect(response.cloud?.imageProvider).toBe('aliyun_bailian');
     expect(response.cloud?.ttsProvider).toBe('elevenlabs');
+    expect(response.cloud?.volcengine.asrModel).toBe('seedasr_v2');
+    expect(response.cloud?.volcengine.arkTextModel).toBe('deepseek-v4-flash-ga-260731');
     expect(response.cloud?.elevenLabs?.apiKeyConfigured).toBe(true);
     expect(response.cloud?.elevenLabs?.apiKeyMask).toBe('****MOCK');
     expect(response.cloud?.elevenLabs?.ttsModel).toBe('eleven_turbo_v2_5');
     expect(response.tts.resourceId).toBe('eleven_turbo_v2_5');
     expect(response.tts.speakerId).toBe('JBFqnCBsd6RMkjVDRZzb');
     expect(JSON.stringify(response)).not.toContain('eleven-secret-key-123456');
+    expect(JSON.stringify(response)).not.toContain('Base URL');
+  });
+
+  it('changes ASR provider without changing text provider', async () => {
+    const response = await sendNative<SettingsState>('settings.saveCloud', {
+      asrProvider: 'aliyun_bailian',
+      volcAsrModel: 'bigasr_v1',
+    });
+
+    expect(response.cloud?.asrProvider).toBe('aliyun_bailian');
+    expect(response.cloud?.aiProvider).toBe('aliyun_bailian');
+    expect(response.cloud?.textProvider).toBe('volcengine');
+    expect(response.cloud?.volcengine.asrModel).toBe('bigasr_v1');
   });
 
   it('saves selected voice in mock settings payload', async () => {

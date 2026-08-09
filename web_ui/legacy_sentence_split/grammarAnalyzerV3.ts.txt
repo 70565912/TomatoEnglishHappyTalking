@@ -1,0 +1,561 @@
+// RETIRED REFERENCE ONLY: production V3 uses the bundled UDPipe parser.
+import compromise from 'compromise';
+import winkNLP from 'wink-nlp';
+import winkModel from 'wink-eng-lite-web-model';
+
+export type GrammarConfidence = 'high' | 'medium' | 'low';
+
+export type GrammarToken = {
+  raw: string;
+  start: number;
+  end: number;
+  pos: string[];
+  compromiseTags: string[];
+  chunkIndexes: number[];
+  parserAgreement: boolean | null;
+  abbreviation: boolean;
+};
+
+export type GrammarSpan = {
+  text: string;
+  start: number;
+  end: number;
+  startToken: number;
+  endToken: number;
+};
+
+export type GrammarBoundary = {
+  position: number;
+  sentenceBoundary: boolean;
+  clauseBoundary: boolean;
+  phraseBoundary: boolean;
+  protectedByPhrase: boolean;
+  confidence: GrammarConfidence;
+  reasons: string[];
+};
+
+export type GrammarAnalysis = {
+  parser: 'wink_pos_sbd_plus_compromise_clause_chunk';
+  healthy: boolean;
+  confidence: GrammarConfidence;
+  issues: string[];
+  tokenCoverage: number;
+  posCoverage: number;
+  parserAgreement: number;
+  tokens: GrammarToken[];
+  winkSentences: GrammarSpan[];
+  clauses: GrammarSpan[];
+  chunks: GrammarSpan[];
+  boundaries: GrammarBoundary[];
+};
+
+type LocatedParserToken = {
+  value: string;
+  pos: string;
+  start: number;
+  end: number;
+  abbreviation: boolean;
+};
+
+type CompromiseTerm = {
+  text?: string;
+  normal?: string;
+  tags?: string[];
+};
+
+const wink = winkNLP(winkModel, ['sbd', 'pos']);
+const alphabetic = /[\p{L}\p{N}]/u;
+const visiblePause = /[.!?…;:—–,]/u;
+
+/**
+ * Runs two independent local parsers and exposes their raw structural evidence.
+ *
+ * Project-maintained semantic word lists are deliberately forbidden here. A
+ * parser defect must be visible in diagnostics and fixtures; it must never be
+ * hidden by adding the failing word, character name, verb, preposition or
+ * fixed phrase to source code.
+ */
+export function analyzeEnglishGrammarV3(text: string): GrammarAnalysis {
+  const rawTokens = whitespaceTokens(text);
+  const winkDocument = wink.readDoc(text);
+  const winkValues = asStringArray(winkDocument.tokens().out(wink.its.value));
+  const winkPos = asStringArray(winkDocument.tokens().out(wink.its.pos));
+  const winkAbbreviations = asBooleanArray(
+    winkDocument.tokens().out(wink.its.abbrevFlag),
+  );
+  const winkSpaces = asStringArray(
+    winkDocument.tokens().out(wink.its.precedingSpaces),
+  );
+  const winkTokens = locateWinkTokens(
+    text,
+    winkValues,
+    winkPos,
+    winkSpaces,
+    winkAbbreviations,
+  );
+  const winkSentences = locateOrderedSpans(
+    text,
+    asStringArray(winkDocument.sentences().out()),
+    rawTokens,
+  );
+
+  const compromiseDocument = compromise(text);
+  const compromiseTerms = (
+    compromiseDocument.terms().json() as Array<{ terms?: CompromiseTerm[] }>
+  ).flatMap((entry) => entry.terms ?? []);
+  const termSpans = locateCompromiseTerms(text, compromiseTerms);
+  const clauses = locateOrderedSpans(
+    text,
+    (compromiseDocument.clauses().json() as Array<{ text?: string }>)
+      .map((entry) => String(entry.text ?? '').trim())
+      .filter(Boolean),
+    rawTokens,
+  );
+  const chunks = locateOrderedSpans(
+    text,
+    (compromiseDocument.chunks().json() as Array<{ text?: string }>)
+      .map((entry) => String(entry.text ?? '').trim())
+      .filter(Boolean),
+    rawTokens,
+  );
+
+  const tokens: GrammarToken[] = rawTokens.map((rawToken) => {
+    const matchingWink = winkTokens.filter((token) => overlaps(rawToken, token));
+    const matchingTerms = termSpans.filter((term) => overlaps(rawToken, term));
+    const pos = unique(
+      matchingWink
+        .filter((token) => token.pos !== 'PUNCT' && alphabetic.test(token.value))
+        .map((token) => token.pos),
+    );
+    const compromiseTags = unique(
+      matchingTerms.flatMap((term) => term.tags),
+    );
+    const universalCompromise = universalPosFromCompromise(compromiseTags);
+    const parserAgreement = pos.length === 0 || universalCompromise.length === 0
+      ? null
+      : pos.some((value) => universalCompromise.some(
+        (other) => compatibleUniversalPos(value, other),
+      ));
+    return {
+      ...rawToken,
+      pos,
+      compromiseTags,
+      chunkIndexes: chunks
+        .map((span, index) => overlaps(rawToken, span) ? index : -1)
+        .filter((index) => index >= 0),
+      parserAgreement,
+      abbreviation: matchingWink.some((token) => token.abbreviation),
+    };
+  });
+
+  const lexicalTokens = tokens.filter((token) => alphabetic.test(token.raw));
+  const tokenCoverage = lexicalTokens.length === 0
+    ? 1
+    : lexicalTokens.filter((token) => token.pos.length > 0).length / lexicalTokens.length;
+  const posCoverage = tokenCoverage;
+  const comparable = lexicalTokens.filter((token) => token.parserAgreement !== null);
+  const parserAgreement = comparable.length === 0
+    ? 0
+    : comparable.filter((token) => token.parserAgreement).length / comparable.length;
+
+  const sentenceRoundTrip = normalizeStructure(
+    winkSentences.map((span) => span.text).join(' '),
+  ) === normalizeStructure(text);
+  const issues: string[] = [];
+  if (!sentenceRoundTrip) issues.push('wink_sentence_roundtrip_failed');
+  if (tokenCoverage < 0.98) issues.push('wink_token_or_pos_coverage_below_98_percent');
+  if (parserAgreement < 0.75) issues.push('parser_pos_agreement_below_75_percent');
+  if (clauses.length === 0) issues.push('compromise_returned_no_clause_spans');
+  if (chunks.length === 0) issues.push('compromise_returned_no_chunk_spans');
+  const ambiguousModifierCount = tokens.filter((token, index) => (
+    index > 0
+    && index + 1 < tokens.length
+    && hasAnyPos(tokens[index - 1], 'DET')
+    && hasAnyPos(token, 'VERB')
+    && hasAnyPos(tokens[index + 1], 'NOUN', 'PROPN')
+  )).length;
+  if (ambiguousModifierCount > 0) {
+    issues.push(`ambiguous_determiner_verb_noun:${ambiguousModifierCount}`);
+  }
+
+  const healthy = sentenceRoundTrip && tokenCoverage >= 0.98;
+  const confidence: GrammarConfidence = !healthy
+    ? 'low'
+    : parserAgreement >= 0.88 && ambiguousModifierCount === 0
+      ? 'high'
+      : 'medium';
+  const boundaries = buildGrammarBoundaries(tokens, winkSentences, clauses, chunks);
+
+  return {
+    parser: 'wink_pos_sbd_plus_compromise_clause_chunk',
+    healthy,
+    confidence,
+    issues,
+    tokenCoverage,
+    posCoverage,
+    parserAgreement,
+    tokens,
+    winkSentences,
+    clauses,
+    chunks,
+    boundaries,
+  };
+}
+
+export function splitOrthographicSentencesV3(text: string): string[] {
+  const analysis = analyzeEnglishGrammarV3(text);
+  const output: string[] = [];
+  let start = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (!'.!?…'.includes(character)) continue;
+    if (character === '.' && isDecimalPoint(text, index)) continue;
+    if (character === '.' && isAbbreviationPeriod(analysis, index)) continue;
+    if (character === '.' && nextNonWhitespace(text, index + 1) === '.') continue;
+
+    let end = index + 1;
+    while (end < text.length && /["'”’)}\]]/u.test(text[end])) {
+      // `He left."She stayed` uses the ASCII quote as the next sentence's
+      // opening delimiter, not as the previous sentence's closing delimiter.
+      if (end === index + 1
+          && /["']/u.test(text[end])
+          && end + 1 < text.length
+          && /[A-Z]/u.test(text[end + 1])) {
+        break;
+      }
+      end += 1;
+    }
+    let lookahead = end;
+    while (lookahead < text.length && /\s/u.test(text[lookahead])) lookahead += 1;
+    if (lookahead >= text.length) {
+      const finalSentence = text.slice(start, end).trim();
+      if (finalSentence) output.push(finalSentence);
+      start = text.length;
+      break;
+    }
+
+    const nextCharacter = text[lookahead];
+    const glued = lookahead === end;
+    const nextStartsSentence = /[A-Z0-9"“'‘(]/u.test(nextCharacter);
+    if (!nextStartsSentence || (glued && !/[A-Z"“'‘]/u.test(nextCharacter))) continue;
+
+    const candidate = text.slice(start, end).trim();
+    const attributionCandidate = firstSentenceLikeSpan(text.slice(lookahead));
+    if (shouldAttachQuotationAttribution(candidate, attributionCandidate)) continue;
+    if (candidate) output.push(candidate);
+    start = lookahead;
+    index = lookahead - 1;
+  }
+  const tail = text.slice(start).trim();
+  if (tail) output.push(tail);
+  return output;
+}
+
+function shouldAttachQuotationAttribution(previous: string, current: string): boolean {
+  if (!/[.!?…]["”’]\s*$/u.test(previous)) return false;
+  if (/^[a-z]/u.test(current)) return true;
+
+  const parsed = analyzeEnglishGrammarV3(current);
+  const lexical = parsed.tokens.filter((token) => alphabetic.test(token.raw));
+  if (lexical.length < 2 || lexical.length > 6) return false;
+  const predicateIndexes = lexical
+    .map((token, index) => token.pos.some((pos) => pos === 'VERB' || pos === 'AUX') ? index : -1)
+    .filter((index) => index >= 0);
+  if (predicateIndexes.length !== 1) return false;
+  const predicateIndex = predicateIndexes[0];
+  if (predicateIndex === 0) {
+    return lexical.slice(1).some((token) => token.pos.some(
+      (pos) => pos === 'NOUN' || pos === 'PROPN' || pos === 'PRON',
+    ));
+  }
+  const subject = lexical.slice(0, predicateIndex);
+  const tail = lexical.slice(predicateIndex + 1);
+  const subjectIsNominal = subject.some((token) => token.pos.some(
+    (pos) => pos === 'NOUN' || pos === 'PROPN' || pos === 'PRON',
+  ));
+  const tailIsModifierOnly = tail.every((token) => token.pos.every(
+    (pos) => pos === 'ADV' || pos === 'PART' || pos === 'PUNCT',
+  ));
+  return subjectIsNominal && tailIsModifierOnly;
+}
+
+function buildGrammarBoundaries(
+  tokens: GrammarToken[],
+  sentences: GrammarSpan[],
+  clauses: GrammarSpan[],
+  chunks: GrammarSpan[],
+): GrammarBoundary[] {
+  const output: GrammarBoundary[] = [];
+  for (let position = 1; position < tokens.length; position += 1) {
+    const charOffset = tokens[position].start;
+    const left = tokens[position - 1];
+    const right = tokens[position];
+    const reasons: string[] = [];
+    const sentenceBoundary = spansEndAt(sentences, position);
+    const compromiseClauseBoundary = spansEndAt(clauses, position);
+    const posClauseBoundary = isPosClauseBoundary(tokens, position);
+    const clauseBoundary = compromiseClauseBoundary
+      ? hasPredicate(tokens, 0, position) && hasPredicate(tokens, position, tokens.length)
+      : posClauseBoundary;
+    const phraseBoundary = spansEndAt(chunks, position);
+    const protectedByChunk = chunks.some(
+      (span) => charOffset > span.start && charOffset < span.end,
+    );
+    const protectedByPos = isProtectedPosAdjacency(tokens, position);
+    const protectedByPhrase = !visiblePause.test(left.raw)
+      && (protectedByChunk || protectedByPos)
+      && !clauseBoundary;
+
+    if (sentenceBoundary) reasons.push('wink_sentence_boundary');
+    if (compromiseClauseBoundary) reasons.push('compromise_clause_boundary');
+    if (posClauseBoundary) reasons.push('wink_pos_clause_transition');
+    if (phraseBoundary) reasons.push('compromise_chunk_boundary');
+    if (protectedByChunk) reasons.push('inside_compromise_chunk');
+    if (protectedByPos) reasons.push('protected_pos_adjacency');
+    const confidence: GrammarConfidence = clauseBoundary
+      && compromiseClauseBoundary
+      && posClauseBoundary
+      ? 'high'
+      : clauseBoundary || phraseBoundary
+        ? 'medium'
+        : 'low';
+    output.push({
+      position,
+      sentenceBoundary,
+      clauseBoundary,
+      phraseBoundary,
+      protectedByPhrase,
+      confidence,
+      reasons,
+    });
+  }
+  return output;
+}
+
+function isPosClauseBoundary(tokens: GrammarToken[], position: number): boolean {
+  const right = tokens[position];
+  const startsConnector = hasAnyPos(right, 'SCONJ', 'CCONJ');
+  if (!startsConnector) return false;
+  if (!hasPredicate(tokens, Math.max(0, position - 24), position)) return false;
+  const rightEnd = Math.min(tokens.length, position + 24);
+  if (!hasPredicate(tokens, position, rightEnd)) return false;
+  const predicateIndex = firstPredicateIndex(tokens, position, rightEnd);
+  if (predicateIndex < 0) return false;
+  return tokens.slice(position + 1, predicateIndex).some((token) => hasAnyPos(
+    token,
+    'NOUN',
+    'PROPN',
+    'PRON',
+  ));
+}
+
+function isProtectedPosAdjacency(tokens: GrammarToken[], position: number): boolean {
+  const left = tokens[position - 1];
+  const right = tokens[position];
+  if (hasAnyPos(left, 'DET', 'ADP', 'AUX', 'PART', 'CCONJ', 'SCONJ')) return true;
+  if (hasAnyPos(left, 'ADJ') && hasAnyPos(right, 'NOUN', 'PROPN')) return true;
+  if (hasAnyPos(left, 'NOUN', 'PROPN') && hasAnyPos(right, 'NOUN', 'PROPN')) return true;
+  if (hasAnyPos(left, 'AUX') && hasAnyPos(right, 'VERB', 'ADJ', 'ADV')) return true;
+  if (hasAnyPos(left, 'ADV') && hasAnyPos(right, 'VERB', 'ADJ', 'ADV')) return true;
+  if (hasAnyPos(left, 'VERB') && hasAnyPos(right, 'ADP', 'PART')) return true;
+  if (position >= 2
+      && hasAnyPos(tokens[position - 2], 'DET')
+      && hasAnyPos(left, 'VERB')
+      && hasAnyPos(right, 'NOUN', 'PROPN')) return true;
+  return false;
+}
+
+function hasPredicate(tokens: GrammarToken[], start: number, end: number): boolean {
+  return firstPredicateIndex(tokens, start, end) >= 0;
+}
+
+function firstPredicateIndex(tokens: GrammarToken[], start: number, end: number): number {
+  for (let index = start; index < end; index += 1) {
+    if (hasAnyPos(tokens[index], 'VERB', 'AUX')) return index;
+  }
+  return -1;
+}
+
+function hasAnyPos(token: GrammarToken, ...values: string[]): boolean {
+  return token.pos.some((pos) => values.includes(pos));
+}
+
+function spansEndAt(spans: GrammarSpan[], tokenPosition: number): boolean {
+  return spans.some((span) => span.endToken === tokenPosition);
+}
+
+function whitespaceTokens(text: string): GrammarToken[] {
+  return [...text.matchAll(/\S+/gu)].map((match) => {
+    const raw = match[0];
+    const start = match.index ?? 0;
+    return {
+      raw,
+      start,
+      end: start + raw.length,
+      pos: [],
+      compromiseTags: [],
+      chunkIndexes: [],
+      parserAgreement: null,
+      abbreviation: false,
+    };
+  });
+}
+
+function locateWinkTokens(
+  source: string,
+  values: string[],
+  pos: string[],
+  precedingSpaces: string[],
+  abbreviations: boolean[],
+): LocatedParserToken[] {
+  const output: LocatedParserToken[] = [];
+  let cursor = 0;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    cursor += precedingSpaces[index]?.length ?? 0;
+    let start = source.indexOf(value, cursor);
+    if (start < 0) start = source.toLowerCase().indexOf(value.toLowerCase(), cursor);
+    if (start < 0) continue;
+    output.push({
+      value,
+      pos: pos[index] ?? '',
+      start,
+      end: start + value.length,
+      abbreviation: abbreviations[index] ?? false,
+    });
+    cursor = start + value.length;
+  }
+  return output;
+}
+
+function locateCompromiseTerms(
+  source: string,
+  terms: CompromiseTerm[],
+): Array<{ start: number; end: number; tags: string[] }> {
+  const output: Array<{ start: number; end: number; tags: string[] }> = [];
+  let cursor = 0;
+  for (const term of terms) {
+    const value = String(term.text ?? '').trim();
+    if (!value) continue;
+    let start = source.indexOf(value, cursor);
+    if (start < 0) start = source.toLowerCase().indexOf(value.toLowerCase(), cursor);
+    if (start < 0) continue;
+    output.push({ start, end: start + value.length, tags: term.tags ?? [] });
+    cursor = start + value.length;
+  }
+  return output;
+}
+
+function locateOrderedSpans(
+  source: string,
+  values: string[],
+  tokens: GrammarToken[],
+): GrammarSpan[] {
+  const output: GrammarSpan[] = [];
+  let cursor = 0;
+  for (const rawValue of values) {
+    const value = rawValue.trim();
+    if (!value) continue;
+    let start = source.indexOf(value, cursor);
+    if (start < 0) start = source.toLowerCase().indexOf(value.toLowerCase(), cursor);
+    if (start < 0) continue;
+    const end = start + value.length;
+    const indexes = tokens
+      .map((token, index) => token.end > start && token.start < end ? index : -1)
+      .filter((index) => index >= 0);
+    if (indexes.length > 0) {
+      output.push({
+        text: source.slice(start, end),
+        start,
+        end,
+        startToken: indexes[0],
+        endToken: indexes.at(-1)! + 1,
+      });
+    }
+    cursor = end;
+  }
+  return output;
+}
+
+function universalPosFromCompromise(tags: string[]): string[] {
+  const mapped = new Set<string>();
+  for (const tag of tags) {
+    if (tag === 'ProperNoun') mapped.add('PROPN');
+    else if (tag === 'Noun') mapped.add('NOUN');
+    else if (tag === 'Pronoun') mapped.add('PRON');
+    else if (tag === 'Determiner' || tag === 'Possessive') mapped.add('DET');
+    else if (tag === 'Auxiliary' || tag === 'Modal') mapped.add('AUX');
+    else if (tag === 'Verb') mapped.add('VERB');
+    else if (tag === 'Adjective') mapped.add('ADJ');
+    else if (tag === 'Adverb') mapped.add('ADV');
+    else if (tag === 'Preposition') mapped.add('ADP');
+    else if (tag === 'Conjunction') mapped.add('CONJ');
+    else if (tag === 'Particle') mapped.add('PART');
+    else if (tag === 'Value') mapped.add('NUM');
+  }
+  return [...mapped];
+}
+
+function compatibleUniversalPos(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (right === 'CONJ') return left === 'CCONJ' || left === 'SCONJ';
+  if (left === 'AUX' && right === 'VERB') return true;
+  if (left === 'PROPN' && right === 'NOUN') return true;
+  return false;
+}
+
+function overlaps(
+  left: { start: number; end: number },
+  right: { start: number; end: number },
+): boolean {
+  return left.end > right.start && left.start < right.end;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)) : [];
+}
+
+function asBooleanArray(value: unknown): boolean[] {
+  return Array.isArray(value) ? value.map((item) => item === true) : [];
+}
+
+function isDecimalPoint(text: string, index: number): boolean {
+  return index > 0
+    && index + 1 < text.length
+    && /\d/u.test(text[index - 1])
+    && /\d/u.test(text[index + 1]);
+}
+
+function isAbbreviationPeriod(analysis: GrammarAnalysis, index: number): boolean {
+  const token = analysis.tokens.find(
+    (candidate) => index >= candidate.start && index < candidate.end,
+  );
+  if (token?.abbreviation) return true;
+  const prefix = token?.raw ?? '';
+  return /^(?:[A-Z]\.){1,4}$/u.test(prefix);
+}
+
+function nextNonWhitespace(text: string, start: number): string {
+  for (let index = start; index < text.length; index += 1) {
+    if (!/\s/u.test(text[index])) return text[index];
+  }
+  return '';
+}
+
+function firstSentenceLikeSpan(text: string): string {
+  for (let index = 0; index < text.length; index += 1) {
+    if (!'.!?…;'.includes(text[index])) continue;
+    let end = index + 1;
+    while (end < text.length && /["'”’)}\]]/u.test(text[end])) end += 1;
+    return text.slice(0, end).trim();
+  }
+  return text.trim();
+}
+
+function normalizeStructure(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim();
+}

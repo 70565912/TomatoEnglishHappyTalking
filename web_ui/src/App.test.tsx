@@ -1,7 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
-import { splitSentences } from './sentenceSplitter';
 import type { Article, BridgeResponse, ListeningSongStatePayload, StorySeries } from './types';
 
 async function clickSelectedCreationAction(name: string | RegExp) {
@@ -102,20 +101,26 @@ function expectElementBefore(first: HTMLElement, second: HTMLElement) {
   expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 }
 
-function adjacentChunks(chunks: string[], endsWith: RegExp, startsWith: RegExp): boolean {
-  for (let index = 0; index < chunks.length - 1; index += 1) {
-    if (endsWith.test(chunks[index].trim()) && startsWith.test(chunks[index + 1].trim())) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function preparedCreatePayload(content: unknown, englishContent?: string) {
   return {
     preparedId: 'test-prepared-id',
     englishContent: englishContent ?? String(content ?? ''),
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  };
+}
+
+function reviewedSplitPayload(payload: Record<string, unknown>) {
+  const englishContent = String(payload.englishContent ?? '').trim();
+  const sentences = englishContent ? [englishContent] : [];
+  return {
+    sentences,
+    sentenceSplitVersion: 'reviewed_dp_v3',
+    source: 'stored',
+    comparison: {
+      originalSentenceCount: sentences.length,
+      reviewedSentenceCount: sentences.length,
+      riskOriginalCount: 0,
+    },
   };
 }
 
@@ -905,21 +910,34 @@ describe('App', () => {
     expect(await screen.findByText('文本处理')).toBeInTheDocument();
     expect(screen.getByText('图片生成')).toBeInTheDocument();
     expect(screen.getByText('语音合成')).toBeInTheDocument();
+    expect(screen.getByText('语音识别')).toBeInTheDocument();
     expect(screen.getByText('音乐生成模型')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '阿里云百炼' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: '阿里云万相' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: '阿里云 CosyVoice' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '阿里云 Qwen-ASR' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByLabelText(/^百炼 Key/)).toBeInTheDocument();
     expect(screen.queryAllByLabelText(/^百炼 Key/)).toHaveLength(1);
-    expect(screen.getByText('百炼兼容模式 Base URL')).toBeInTheDocument();
-    expect(screen.getByText('DashScope API Base URL')).toBeInTheDocument();
-    expect(screen.getByText('ElevenLabs Base URL')).toBeInTheDocument();
+    expect(screen.queryByText(/Base URL/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/WebSocket/)).not.toBeInTheDocument();
     expect(screen.getByLabelText(/^ElevenLabs Key/)).toBeInTheDocument();
     expect(screen.queryByText('Key 操作')).not.toBeInTheDocument();
-    expect(screen.getByText('方舟 Base URL')).toBeInTheDocument();
+    expect(screen.getByLabelText('百炼文本模型')).toHaveTextContent('qwen3.7-max');
+    expect(screen.getByLabelText('百炼文本模型')).toHaveTextContent('qwen3.7-plus');
+    expect(screen.getByLabelText('百炼文本模型')).toHaveTextContent('qwen3.7-flash');
+    expect(screen.getByLabelText('百炼文本模型')).not.toHaveTextContent('qwen3.6-flash');
+    expect(screen.getByText('Qwen-ASR 文件模型')).toBeInTheDocument();
+    expect(screen.getByText(/不返回词级时间戳/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('tab', { name: '火山引擎' }));
     expect(screen.getByRole('tab', { name: '火山引擎' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('方舟文本模型')).toBeInTheDocument();
+    expect(screen.getByLabelText('方舟文本模型')).toHaveTextContent('DeepSeek V4 Flash 正式版');
+    expect(screen.getByLabelText('方舟文本模型')).toHaveTextContent('推荐使用模型');
+    fireEvent.click(screen.getByRole('tab', { name: '火山语音识别' }));
+    expect(screen.getByRole('tab', { name: '火山语音识别' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('火山 ASR 模型')).toBeInTheDocument();
+    expect(screen.getByText(/ASR 与语音合成是独立服务/)).toBeInTheDocument();
     expect(screen.getByText('方舟文本模型')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '火山 Seedream' }));
     expect(screen.getByRole('tab', { name: '火山 Seedream' })).toHaveAttribute('aria-selected', 'true');
@@ -963,7 +981,11 @@ describe('App', () => {
     expect(screen.getByLabelText('书籍')).toBeInTheDocument();
     expect(screen.queryByText('任务编辑台')).not.toBeInTheDocument();
     expect(screen.queryByText('短句越清楚，闯关越顺滑。')).not.toBeInTheDocument();
-    expect(screen.getByText('输入短文后，这里会自动切成适合跟读的英文短句。')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '保存时由 Windows / Android 共用的端侧依存句法器生成正式分句；此处不再用 Web 近似算法预切。',
+      ),
+    ).toBeInTheDocument();
 
     fireEvent.change(contentInput, {
       target: {
@@ -975,7 +997,8 @@ describe('App', () => {
     fireEvent.change(bookTitleInput, { target: { value: 'Lunch Box Stories' } });
     expect(saveButton).not.toBeDisabled();
     expect(titleInput).toHaveValue('');
-    expect(screen.getAllByText('Tom opens a lunch box. He shares a red apple with Mia.')).toHaveLength(2);
+    expect(screen.getAllByText('Tom opens a lunch box. He shares a red apple with Mia.')).toHaveLength(1);
+    expect(screen.getByText('端侧 V3 分句')).toBeInTheDocument();
 
     fireEvent.click(saveButton);
     expect(await screen.findByRole('dialog', { name: '绘本提示词审核' })).toBeInTheDocument();
@@ -1003,6 +1026,9 @@ describe('App', () => {
         }
         if (type === 'article.prepareCreate') {
           return ok(message.id, type, preparedCreatePayload(payload.content));
+        }
+        if (type === 'article.reviewSplitTranslate') {
+          return ok(message.id, type, reviewedSplitPayload(payload));
         }
         if (type === 'article.create') {
           createAttempts += 1;
@@ -1066,7 +1092,7 @@ describe('App', () => {
     const initialCreate = calls.find((call) => call.type === 'article.create');
     expect(calls.filter((call) => call.type === 'article.prepareCreate')).toHaveLength(1);
     expect(initialCreate?.payload.preparedId).toBe('test-prepared-id');
-    expect(initialCreate?.payload.sentenceSplitVersion).toBe('read_aloud_dp_v2');
+    expect(initialCreate?.payload.sentenceSplitVersion).toBe('reviewed_dp_v3');
     expect(initialCreate?.payload.sentences).toEqual(['Alice sees a door.']);
 
     fireEvent.click(screen.getByRole('button', { name: /保存章节/ }));
@@ -1097,6 +1123,9 @@ describe('App', () => {
         }
         if (type === 'article.prepareCreate') {
           return ok(message.id, type, preparedCreatePayload(payload.content));
+        }
+        if (type === 'article.reviewSplitTranslate') {
+          return ok(message.id, type, reviewedSplitPayload(payload));
         }
         if (type === 'article.create') {
           if (!payload.resumeArticleId) {
@@ -1197,6 +1226,9 @@ describe('App', () => {
         }
         if (type === 'article.prepareCreate') {
           return ok(message.id, type, preparedCreatePayload(payload.content));
+        }
+        if (type === 'article.reviewSplitTranslate') {
+          return ok(message.id, type, reviewedSplitPayload(payload));
         }
         if (type === 'article.create') {
           const article = {
@@ -2467,6 +2499,9 @@ describe('App', () => {
         if (type === 'article.prepareCreate') {
           return ok(message.id, type, preparedCreatePayload(payload.content));
         }
+        if (type === 'article.reviewSplitTranslate') {
+          return ok(message.id, type, reviewedSplitPayload(payload));
+        }
         if (type === 'article.create') {
           const article = {
             id: 42,
@@ -2647,6 +2682,78 @@ describe('App', () => {
     });
   });
 
+  it('delegates the canonical V3 split to native without Web boundary proposals', async () => {
+    window.location.hash = '/article/new';
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const source = 'Mole looked up. Rat waved back.';
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
+        if (type === 'app.ready' || type === 'article.list' || type === 'series.list') {
+          return ok(message.id, type, { articles: [], series: [] });
+        }
+        if (type === 'article.prepareCreate') {
+          return ok(message.id, type, preparedCreatePayload(payload.content, source));
+        }
+        if (type === 'article.reviewSplitTranslate') {
+          return ok(message.id, type, reviewedSplitPayload(payload));
+        }
+        if (type === 'article.create') {
+          const sentences = payload.sentences as string[];
+          const article = {
+            id: 43,
+            title: 'Risk Review',
+            content: source,
+            sentences,
+            sentenceCount: sentences.length,
+            sentenceSplitVersion: String(payload.sentenceSplitVersion ?? ''),
+            createdAt: new Date().toISOString(),
+            averageScore: 0,
+            pictureBookEnabled: false,
+          };
+          return ok(message.id, type, {
+            article,
+            patch: libraryPatch({ articles: [article] }),
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+    fireEvent.change(await screen.findByLabelText(/文章标题/), {
+      target: { value: 'Risk Review' },
+    });
+    fireEvent.change(screen.getByLabelText('新书籍名称'), {
+      target: { value: 'Risk Book' },
+    });
+    fireEvent.change(screen.getByLabelText(/文章内容/), {
+      target: { value: source },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /保存章节/ }));
+
+    await waitFor(() => {
+      expect(calls.filter((call) => call.type === 'article.reviewSplitTranslate')).toHaveLength(1);
+      expect(calls.find((call) => call.type === 'article.create')?.payload.sentenceSplitVersion)
+        .toBe('reviewed_dp_v3');
+    });
+    const reviewCall = calls.find((call) => call.type === 'article.reviewSplitTranslate');
+    expect(reviewCall?.payload).toEqual({
+      preparedId: 'test-prepared-id',
+      englishContent: source,
+    });
+    expect(reviewCall?.payload.localSentences).toBeUndefined();
+    expect(reviewCall?.payload.localDiagnostics).toBeUndefined();
+  });
+
   it('lets native generate missing titles and extract English from mixed input on save', async () => {
     window.location.hash = '/article/new';
     const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -2677,6 +2784,9 @@ describe('App', () => {
             type,
             preparedCreatePayload(payload.content, englishContent),
           );
+        }
+        if (type === 'article.reviewSplitTranslate') {
+          return ok(message.id, type, reviewedSplitPayload(payload));
         }
         if (type === 'article.create') {
           const article = {
@@ -2739,123 +2849,6 @@ describe('App', () => {
     expect(calls.some((call) => call.type === 'article.translateToEnglish')).toBe(false);
     expect(calls.some((call) => call.type === 'article.suggestTitle')).toBe(false);
     expect((await screen.findAllByText('I Quit My Job')).length).toBeGreaterThan(0);
-  });
-
-  it('splits long article preview text into short read-aloud chunks', () => {
-    const chunks = splitSentences(
-      'Tom walks into the bright library, finds a tiny blue robot beside the big window, and asks it to help him read a funny story before lunch, because his little sister wants to hear every silly voice before bedtime.',
-    );
-
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 30)).toBe(true);
-  });
-
-  it('keeps hyphenated English words joined in article preview chunks', () => {
-    const chunks = splitSentences(
-      'The well - known mother - in - law smiles at the child.',
-    );
-
-    expect(chunks.join(' ')).toContain('well-known');
-    expect(chunks.join(' ')).toContain('mother-in-law');
-    expect(chunks.join(' ')).not.toContain('well - known');
-  });
-
-  it('skips imported Alice episode headings in article preview text', () => {
-    const chunks = splitSentences(
-      [
-        'E25',
-        '',
-        '爱丽丝梦游仙境（原著领读版）- E61',
-        '',
-        "Alice's Adventures in Wonderland - Episod 61",
-        '"They were learning to draw," the Dormouse went on, yawning and rubbing its eyes.',
-      ].join('\n'),
-    );
-
-    expect(chunks[0]).toMatch(/^"They were learning to draw,"/);
-    expect(chunks.join(' ')).not.toContain('爱丽丝');
-    expect(chunks.join(' ')).not.toContain('E25');
-    expect(chunks.join(' ')).not.toContain('Episod 61');
-  });
-
-  it('splits Alice Mad Tea-Party long sentences into read-aloud phrase chunks', () => {
-    const chunks = splitSentences(
-      [
-        'A Mad Tea-Party',
-        'There was a table set out under a tree in front of the house, and the March Hare and the Hatter were having tea at it: a Dormouse was sitting between them, fast asleep, and the other two were using it as a cushion, resting their elbows on it, and talking over its head.',
-        '"Very uncomfortable for the Dormouse," thought Alice: "only as it\'s asleep, I suppose it doesn\'t mind."',
-        'The table was a large one, but the three were all crowded together at one corner of it: "No room! No room!" they cried out when they saw Alice coming.',
-      ].join('\n'),
-    );
-
-    expect(chunks.length).toBeGreaterThanOrEqual(4);
-    expect(chunks.join(' ')).toContain('a Dormouse was sitting between them');
-    expect(chunks.join(' ')).toContain('"No room! No room!"');
-    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 30)).toBe(true);
-    expect(chunks.join(' ')).not.toContain('A Mad Tea-Party');
-  });
-
-  it('splits long pre-quote Alice narration before forcing direct quote breaks', () => {
-    const chunks = splitSentences(
-      'It was so large a house, that she did not like to go nearer till she had nibbled some more of the left-hand bit of mushroom, and raised herself to about two feet high; even then she walked up toward it rather timidly, saying to herself, "Suppose it should be raving mad after all, I almost wish I\'d gone to see the Hatter instead."',
-    );
-    const joined = chunks.join(' ');
-
-    expect(chunks.length).toBeGreaterThan(2);
-    expect(chunks.every((chunk) => chunk.split(/\s+/).length <= 30)).toBe(true);
-    expect(joined).toContain('left-hand bit of mushroom,');
-    expect(joined).toContain('and raised herself to about two feet high;');
-    expect(joined).toContain('"Suppose it should be raving mad after all');
-  });
-
-  it('splits glued sentence starts without requiring whitespace', () => {
-    expect(splitSentences('He left."She stayed behind."')).toEqual([
-      'He left. "She stayed behind."',
-    ]);
-    expect(splitSentences('"Wait." she said quietly.')).toEqual([
-      '"Wait." she said quietly.',
-    ]);
-  });
-
-  it('prefers punctuation over mid-clause hard cuts in long nested quotes', () => {
-    const chunks = splitSentences(
-      "\"I'm glad I've seen that done,\" thought Alice.\"I've so often read in the newspapers, at the end of trials,'There was some attempt at applause, which was immediately suppressed by the officers of the'court,'and I never understood what it meant till now.\"",
-    );
-    const joined = chunks.join('\n');
-
-    expect(chunks[0]).toContain('thought Alice. "I\'ve so often read in the newspapers,');
-    expect(chunks[1]).toContain("at the end of trials,'There was some attempt at applause,");
-    expect(chunks[2].trimStart()).toMatch(/^which was immediately suppressed/);
-    expect(joined).not.toMatch(/some attempt\nat applause/);
-    expect(chunks.some((chunk) => /some attempt\s*$/.test(chunk.trim()) && !chunk.includes('at applause'))).toBe(false);
-    expect(
-      chunks.some(
-        (chunk) =>
-          chunk.includes('at the end of trials,') ||
-          chunk.includes('at applause, which was immediately suppressed') ||
-          chunk.includes('at applause,'),
-      ),
-    ).toBe(true);
-    expect(chunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 30)).toBe(true);
-  });
-
-  it('breaks before connector rather than after a little / go', () => {
-    const littleChunks = splitSentences(
-      'This was quite a new idea to Alice, and she thought it over a little before she made her next remark. Then she asked another question.',
-    );
-    expect(
-      littleChunks.some((chunk) => chunk.includes('a little before she made her next remark')) ||
-        adjacentChunks(littleChunks, /a little\s*$/, /^before\b/),
-    ).toBe(true);
-
-    const goChunks = splitSentences(
-      'but on the whole she thought it would be quite as safe to stay with it as to go after that savage Queen: so she waited.',
-    );
-    expect(
-      goChunks.some((chunk) => chunk.includes('as to go after that savage Queen')) ||
-        adjacentChunks(goChunks, /as to go\s*$/, /^after\b/),
-    ).toBe(true);
-    expect(goChunks.every((chunk) => chunk.split(/\s+/).filter(Boolean).length <= 30)).toBe(true);
   });
 
   it('auto-plays the first follow sentence and enables recording afterward', async () => {

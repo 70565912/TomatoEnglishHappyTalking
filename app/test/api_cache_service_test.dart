@@ -67,10 +67,10 @@ void main() {
   });
 
   test(
-      'creates persistent cache, picture-book, translation, and safety tables at database version 8',
+      'creates persistent cache, picture-book, translation, safety, and segmentation tables at database version 9',
       () async {
     final db = await DatabaseService.database;
-    expect(await db.getVersion(), 8);
+    expect(await db.getVersion(), 9);
 
     final rows = await db.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'table'",
@@ -87,6 +87,7 @@ void main() {
     expect(tableNames, contains('article_chat_guides'));
     expect(tableNames, contains('content_safety_failures'));
     expect(tableNames, contains('content_safety_rules'));
+    expect(tableNames, contains('article_segmentation_runs'));
     expect(tableNames, isNot(contains('story_reference_assets')));
     final articleColumns = await db.rawQuery('PRAGMA table_info(articles)');
     final splitVersion = articleColumns.singleWhere(

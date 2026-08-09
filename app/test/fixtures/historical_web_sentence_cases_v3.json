@@ -1,0 +1,57 @@
+{
+  "version": "read_aloud_dp_v3",
+  "origin": "Retired Web preview splitter tests",
+  "reason": "Web no longer owns production segmentation. The inputs remain canonical-parser regression material instead of executing the retired Wink/Compromise implementation.",
+  "cases": [
+    {
+      "id": "generic-long-library-sentence",
+      "source": "Tom walks into the bright library, finds a tiny blue robot beside the big window, and asks it to help him read a funny story before lunch, because his little sister wants to hear every silly voice before bedtime.",
+      "invariants": ["hard_limits", "round_trip", "parser_confirmed_clause_comma"]
+    },
+    {
+      "id": "normalizes-spaced-hyphen-compounds-before-parse",
+      "source": "The well - known mother - in - law smiles at the child.",
+      "invariants": ["normalized_word_joiners", "round_trip_after_normalization"]
+    },
+    {
+      "id": "imported-alice-heading-filter",
+      "source": "E25\n\n爱丽丝梦游仙境（原著领读版）- E61\n\nAlice's Adventures in Wonderland - Episod 61\n\"They were learning to draw,\" the Dormouse went on, yawning and rubbing its eyes.",
+      "invariants": ["input_parser_removes_episode_headings", "quote_attribution_stays_attached"]
+    },
+    {
+      "id": "alice-mad-tea-party",
+      "source": "A Mad Tea-Party\nThere was a table set out under a tree in front of the house, and the March Hare and the Hatter were having tea at it: a Dormouse was sitting between them, fast asleep, and the other two were using it as a cushion, resting their elbows on it, and talking over its head.\n\"Very uncomfortable for the Dormouse,\" thought Alice: \"only as it's asleep, I suppose it doesn't mind.\"\nThe table was a large one, but the three were all crowded together at one corner of it: \"No room! No room!\" they cried out when they saw Alice coming.",
+      "invariants": ["hard_limits", "strong_punctuation_priority", "quote_attribution_stays_attached"]
+    },
+    {
+      "id": "alice-long-pre-quote-narration",
+      "source": "It was so large a house, that she did not like to go nearer till she had nibbled some more of the left-hand bit of mushroom, and raised herself to about two feet high; even then she walked up toward it rather timidly, saying to herself, \"Suppose it should be raving mad after all, I almost wish I'd gone to see the Hatter instead.\"",
+      "invariants": ["strong_punctuation_priority", "no_mid_phrase_cut", "quote_attribution_stays_attached"]
+    },
+    {
+      "id": "glued-sentence-start",
+      "source": "He left.\"She stayed behind.\"",
+      "invariants": ["orthographic_boundaries_without_whitespace", "round_trip"]
+    },
+    {
+      "id": "lowercase-quote-attribution",
+      "source": "\"Wait.\" she said quietly.",
+      "invariants": ["quote_attribution_stays_attached", "round_trip"]
+    },
+    {
+      "id": "alice-nested-quote-punctuation",
+      "source": "\"I'm glad I've seen that done,\" thought Alice.\"I've so often read in the newspapers, at the end of trials,'There was some attempt at applause, which was immediately suppressed by the officers of the'court,'and I never understood what it meant till now.\"",
+      "invariants": ["orthographic_boundaries_without_whitespace", "punctuation_before_dependency_fallback", "no_some_attempt_at_applause_cut"]
+    },
+    {
+      "id": "alice-before-clause",
+      "source": "This was quite a new idea to Alice, and she thought it over a little before she made her next remark. Then she asked another question.",
+      "invariants": ["no_a_little_before_cut", "locked_original_boundaries"]
+    },
+    {
+      "id": "alice-go-after-phrase",
+      "source": "but on the whole she thought it would be quite as safe to stay with it as to go after that savage Queen: so she waited.",
+      "invariants": ["no_go_after_cut", "colon_priority"]
+    }
+  ]
+}

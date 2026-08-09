@@ -330,7 +330,8 @@ $series = Invoke-TomatoBridge "series.list"
 纯查询 QA 不应调用本命令。创建测试数据时使用唯一 `QA` 前缀，并在 finally 中清理。
 新建流程先调用 `article.prepareCreate`，它只做解析和最终英文提取，不写数据库；返回的
 `preparedId` 与正文哈希绑定、15 分钟过期，并在文章正文成功写入后消费。Web/Node 可用
-共享的 `read_aloud_dp_v2` 核心生成 `sentences`；人工审核稿使用 `reviewed_dp_v2`。
+共享的 `read_aloud_dp_v3` 核心生成 `sentences`；人工审核稿使用 `reviewed_dp_v3`。v3 只切分、
+不合并原文句子；无标点连续段优选 8–16 词、硬上限 20 词，单块硬上限 30 词。
 
 ```powershell
 $prepared = Invoke-TomatoBridge "article.prepareCreate" @{
@@ -341,7 +342,7 @@ $created = Invoke-TomatoBridge "article.create" @{
     content = "Tom opens a book. He reads it aloud."
     preparedId = $prepared.preparedId
     sentences = @("Tom opens a book.", "He reads it aloud.")
-    sentenceSplitVersion = "read_aloud_dp_v2"
+    sentenceSplitVersion = "read_aloud_dp_v3"
     pictureBookEnabled = $false
 }
 ```
@@ -354,7 +355,7 @@ $created = Invoke-TomatoBridge "article.create" @{
     content = "Tom opens a book. He reads it aloud."
     preparedId = $prepared.preparedId
     sentences = @("Tom opens a book.", "He reads it aloud.")
-    sentenceSplitVersion = "read_aloud_dp_v2"
+    sentenceSplitVersion = "read_aloud_dp_v3"
     pictureBookEnabled = $true
     seriesId = 23
 }
@@ -363,9 +364,11 @@ $created = Invoke-TomatoBridge "article.create" @{
 - `skipChapterPlan=true`: create/attach into an existing series without the AI text chapter-plan call (also skipped when `pictureBookEnabled=false` and `seriesId`/`seriesTitle` is set). Use this for local-illustration imports that will set the plan via `pictureBook.replaceChapterPlan` later.
 
 
-传入 `sentences` 时 Bridge 会逐块拒绝：空块、持久化显示换行、超过 30 词，或规范化
+传入 v3 `sentences` 时 Bridge 会逐块拒绝：空块、持久化显示换行、超过 30 词、最长
+无标点连续段超过 20 词，或规范化
 拼接与 `prepareCreate` 的最终英文不等价。英文显示层允许按可用宽度自动换成多行；
 这种视觉换行不写入持久化句子。校验失败时不会静默重切。
+旧 `read_aloud_dp_v2` / `reviewed_dp_v2` 仅为已准备请求和历史数据兼容保留，不触发旧文章重分。
 `resumeArticleId` 只续传已有创建流程，不再次调用 `prepareCreate`，也不重分已保存文章。
 
 创建过程可能调用文本、翻译或绘本规划云服务。超时应按阶段日志判断，不要重复提交。

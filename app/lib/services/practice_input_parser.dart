@@ -1,5 +1,4 @@
 import '../data/models/article_sentence_translation_model.dart';
-import 'nlp_service.dart';
 
 enum PracticeInputSourceKind {
   english,
@@ -55,10 +54,7 @@ class ParsedPracticeInput {
         break;
       }
 
-      final localEnglishSentences = NlpService.splitSentences(
-        pair.englishParagraph,
-      );
-      if (localEnglishSentences.isEmpty) {
+      if (pair.englishParagraph.trim().isEmpty) {
         continue;
       }
 

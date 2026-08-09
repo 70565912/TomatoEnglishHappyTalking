@@ -7,12 +7,12 @@ void main() {
       expect(NlpService.splitSentences('   \n\t  '), isEmpty);
     });
 
-    test('merges adjacent ordinary short sentences toward the target', () {
+    test('preserves adjacent ordinary short sentences exactly', () {
       expect(
         NlpService.splitSentences(
           'Tom finds a bright snack box. He shares it with his team.',
         ),
-        ['Tom finds a bright snack box. He shares it with his team.'],
+        ['Tom finds a bright snack box.', 'He shares it with his team.'],
       );
     });
 
@@ -55,8 +55,10 @@ void main() {
 
       expect(chunks, isNot(contains('Dr.')));
       expect(chunks.first, startsWith('Dr. Smith'));
-      expect(chunks,
-          ['Dr. Smith met Tom after school. They read a book together.']);
+      expect(chunks, [
+        'Dr. Smith met Tom after school.',
+        'They read a book together.',
+      ]);
     });
 
     test('skips imported episode headings before read-aloud text', () {
@@ -194,18 +196,17 @@ void main() {
       expect(_maxWords(chunks), lessThanOrEqualTo(30));
     });
 
-    test('keeps direct command together after an em dash', () {
+    test('keeps the hard sentence boundary and direct-command attribution', () {
       final chunks = NlpService.splitSentences(
         '"The Queen will hear you! You see she came rather late, and the Queen said—" '
         '"Get to your places!" shouted the Queen in a voice of thunder, and people began running about in all directions.',
       );
 
-      expect(chunks, isNot(contains('"Get')));
+      expect(chunks, hasLength(2));
+      expect(chunks.first, '"The Queen will hear you!');
       expect(
-        chunks.any(
-          (chunk) => chunk.startsWith(
-            '"Get to your places!" shouted the Queen in a voice of thunder,',
-          ),
+        chunks.last.contains(
+          '"Get to your places!" shouted the Queen in a voice of thunder,',
         ),
         isTrue,
         reason: chunks.join('\n|\n'),
@@ -215,7 +216,7 @@ void main() {
     test('splits glued sentence starts without requiring whitespace', () {
       expect(
         NlpService.splitSentences('He left."She stayed behind."'),
-        ['He left. "She stayed behind."'],
+        ['He left.', '"She stayed behind."'],
       );
       // Lowercase continuation after a closed quote stays one unit.
       expect(

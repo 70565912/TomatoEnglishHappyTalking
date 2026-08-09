@@ -1,0 +1,769 @@
+// RETIRED REFERENCE ONLY: this tool targets the removed Web splitter.
+import { createHash } from 'node:crypto';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import process from 'node:process';
+import { pathToFileURL } from 'node:url';
+
+import {
+  maxUnpunctuatedWordCount,
+  normalizeForRoundTrip,
+  validateCanonicalReadAloudV3,
+  wordCount,
+} from '../src/readAloudSplitterV3';
+import { splitSentencesDetailed } from '../src/sentenceSplitter';
+
+type JsonRecord = Record<string, unknown>;
+
+type Snapshot = {
+  article: {
+    id: number;
+    title: string;
+    content: string;
+    canonicalSource: string;
+    sentences: string[];
+    sentenceSplitVersion: string;
+    sentencesSha256: string;
+  };
+  translations: Array<{
+    index: number;
+    english: string;
+    chinese: string;
+    source: string;
+  }>;
+  pages: Array<{
+    id: number;
+    pageIndex: number;
+    sentenceStartIndex: number;
+    sentenceEndIndex: number;
+    paragraphText: string;
+    imagePath?: string;
+    imageCacheKey?: string;
+    status: string;
+  }>;
+  chapter: {
+    id: number;
+    seriesId: number;
+    chapterOrder: number;
+    chapterTitle: string;
+    summary: JsonRecord;
+  };
+};
+
+type Reviewed = {
+  sentences: string[];
+  translations: Array<{ index: number; chinese: string }>;
+  sentenceSplitVersion: string;
+  source: string;
+  boundaries: Array<{
+    afterToken: number;
+    kind: string;
+    reason: string;
+  }>;
+  removedRedundantBoundaries: Array<{
+    afterToken: number;
+    kind: string;
+    reason: string;
+  }>;
+  comparison: JsonRecord;
+};
+
+type PageMapping = {
+  pageIndex: number;
+  imagePath: string;
+  oldSentenceStartIndex: number;
+  oldSentenceEndIndex: number;
+  newSentenceStartIndex: number;
+  newSentenceEndIndex: number;
+  oldEndToken: number;
+  newEndToken: number;
+  boundaryTokenDelta: number;
+  risk: boolean;
+};
+
+type ChapterReport = {
+  episode: string;
+  articleId: number;
+  title: string;
+  preparedId?: string;
+  snapshotHash: string;
+  oldSentenceSplitVersion: string;
+  newSentenceSplitVersion: string;
+  aiSource: string;
+  sourceEnglish: string;
+  originalSentenceEndTokens: number[];
+  oldSentences: string[];
+  newSentences: Array<{
+    index: number;
+    english: string;
+    chinese: string;
+    wordCount: number;
+    maxUnpunctuatedWords: number;
+    boundary: Reviewed['boundaries'][number];
+    oldBoundary: boolean;
+    risk: string[];
+  }>;
+  removedRedundantBoundaries: Reviewed['removedRedundantBoundaries'];
+  pageMappings: PageMapping[];
+  summary: {
+    oldSentenceCount: number;
+    newSentenceCount: number;
+    originalSentenceCount: number;
+    overflowOriginalSentenceCount: number;
+    oldOnlyBoundaryCount: number;
+    newOnlyBoundaryCount: number;
+    syntaxFallbackCount: number;
+    generatedUnder8Count: number;
+    over16UnpunctuatedCount: number;
+    highRiskPageBoundaryCount: number;
+  };
+};
+
+type MigrationReport = {
+  version: string;
+  generatedAt: string;
+  promptVersion: string;
+  approved: boolean;
+  approvalNote: string;
+  mode: string;
+  chapters: ChapterReport[];
+  totals: JsonRecord;
+};
+
+const promptVersion = 'article_split_v3_prompt_v14+article_split_translate_v3_translation_v11';
+const mode = valueAfter('--mode') ?? 'review';
+const port = Number(valueAfter('--port') ?? '39317');
+const willowsWork = path.resolve(
+  valueAfter('--willows-work') ?? 'F:/柳林风声/work',
+);
+const episodes = parseEpisodes(valueAfter('--episodes'));
+const outputArgument = valueAfter('--output');
+const reportArgument = valueAfter('--report');
+
+if (!['review', 'migrate', 'verify'].includes(mode)) {
+  throw new Error(`invalid --mode: ${mode}`);
+}
+if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+  throw new Error(`invalid --port: ${port}`);
+}
+
+function valueAfter(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+function parseEpisodes(raw?: string): string[] {
+  if (!raw?.trim()) {
+    return Array.from({ length: 62 }, (_, index) =>
+      `E${String(index + 1).padStart(2, '0')}`,
+    );
+  }
+  const output = raw
+    .split(/[\s,;]+/)
+    .filter(Boolean)
+    .map((item) => item.toUpperCase())
+    .map((item) => (/^\d{1,2}$/.test(item) ? `E${item.padStart(2, '0')}` : item));
+  for (const episode of output) {
+    if (!/^E(?:0[1-9]|[1-5][0-9]|6[0-2])$/.test(episode)) {
+      throw new Error(`invalid episode: ${episode}`);
+    }
+  }
+  return [...new Set(output)];
+}
+
+async function request(route: string, body?: JsonRecord): Promise<JsonRecord> {
+  const encoded = body == null ? undefined : JSON.stringify(body);
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: route,
+        method: encoded == null ? 'GET' : 'POST',
+        headers:
+          encoded == null
+            ? undefined
+            : {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(encoded),
+              },
+        timeout: 360_000,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (chunk: Buffer) => chunks.push(chunk));
+        res.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf8');
+          let decoded: unknown;
+          try {
+            decoded = JSON.parse(text);
+          } catch {
+            reject(new Error(`${route} returned non-JSON: ${text.slice(0, 2000)}`));
+            return;
+          }
+          if ((res.statusCode ?? 500) >= 400) {
+            reject(new Error(`${route} failed: ${res.statusCode} ${text.slice(0, 5000)}`));
+            return;
+          }
+          if (decoded == null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+            reject(new Error(`${route} returned an invalid object`));
+            return;
+          }
+          resolve(decoded as JsonRecord);
+        });
+      },
+    );
+    req.on('timeout', () => req.destroy(new Error(`${route} timed out`)));
+    req.on('error', reject);
+    if (encoded != null) req.write(encoded);
+    req.end();
+  });
+}
+
+function bridgePayload<T>(response: JsonRecord, command: string): T {
+  if (response.ok === false) {
+    throw new Error(`${command} failed: ${JSON.stringify(response.error ?? response)}`);
+  }
+  const payload = response.payload;
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error(`${command} returned no payload`);
+  }
+  return payload as T;
+}
+
+async function bridge<T>(type: string, payload: JsonRecord): Promise<T> {
+  return bridgePayload<T>(
+    await request('/bridge', { type, payload }),
+    type,
+  );
+}
+
+function cumulativeEnds(sentences: string[]): number[] {
+  let total = 0;
+  return sentences.map((sentence) => (total += wordCount(sentence)));
+}
+
+function computeOriginalEnds(
+  details: ReturnType<typeof splitSentencesDetailed>,
+): number[] {
+  let total = 0;
+  const output: number[] = [];
+  for (const detail of details) {
+    total += wordCount(detail.text);
+    if (detail.boundaryKind === 'original_sentence') output.push(total);
+  }
+  if (output.at(-1) !== total) output.push(total);
+  return output;
+}
+
+function countOverflowOriginalSentences(
+  sourceTokens: string[],
+  originalEnds: number[],
+): number {
+  let start = 0;
+  let count = 0;
+  for (const end of originalEnds) {
+    const text = sourceTokens.slice(start, end).join(' ');
+    if (end - start > 30 || maxUnpunctuatedWordCount(text) > 20) count += 1;
+    start = end;
+  }
+  return count;
+}
+
+function remapPages(
+  oldSentences: string[],
+  newSentences: string[],
+  pages: Snapshot['pages'],
+): PageMapping[] {
+  if (pages.length === 0) return [];
+  if (pages.length > newSentences.length) {
+    throw new Error(
+      `cannot map ${pages.length} pages onto ${newSentences.length} sentences`,
+    );
+  }
+  const oldEnds = cumulativeEnds(oldSentences);
+  const newEnds = cumulativeEnds(newSentences);
+  let expectedStart = 0;
+  for (const [position, page] of pages.entries()) {
+    if (
+      page.pageIndex !== position ||
+      page.sentenceStartIndex !== expectedStart ||
+      page.sentenceEndIndex < expectedStart ||
+      page.sentenceEndIndex >= oldSentences.length
+    ) {
+      throw new Error(`old page ranges are not contiguous at page ${position}`);
+    }
+    expectedStart = page.sentenceEndIndex + 1;
+  }
+  if (expectedStart !== oldSentences.length) {
+    throw new Error('old page ranges do not cover all sentences');
+  }
+
+  const boundaryCount = pages.length - 1;
+  const infinity = Number.POSITIVE_INFINITY;
+  const costs: number[][] = Array.from({ length: boundaryCount }, () =>
+    Array(newSentences.length - 1).fill(infinity),
+  );
+  const previous: number[][] = Array.from({ length: boundaryCount }, () =>
+    Array(newSentences.length - 1).fill(-1),
+  );
+  for (let boundary = 0; boundary < boundaryCount; boundary += 1) {
+    const targetToken = oldEnds[pages[boundary].sentenceEndIndex];
+    const minIndex = boundary;
+    const maxIndex = newSentences.length - pages.length + boundary;
+    for (let newIndex = minIndex; newIndex <= maxIndex; newIndex += 1) {
+      const distance = Math.abs(newEnds[newIndex] - targetToken);
+      if (boundary === 0) {
+        costs[boundary][newIndex] = distance;
+        continue;
+      }
+      for (let prior = boundary - 1; prior < newIndex; prior += 1) {
+        const candidate = costs[boundary - 1][prior] + distance;
+        if (candidate < costs[boundary][newIndex]) {
+          costs[boundary][newIndex] = candidate;
+          previous[boundary][newIndex] = prior;
+        }
+      }
+    }
+  }
+
+  const chosen = Array(boundaryCount).fill(-1);
+  if (boundaryCount > 0) {
+    const last = boundaryCount - 1;
+    let cursor = costs[last].reduce(
+      (best, value, index, array) => (value < array[best] ? index : best),
+      0,
+    );
+    if (!Number.isFinite(costs[last][cursor])) {
+      throw new Error('no complete page remapping path');
+    }
+    for (let boundary = last; boundary >= 0; boundary -= 1) {
+      chosen[boundary] = cursor;
+      cursor = previous[boundary][cursor];
+    }
+  }
+
+  const mappings: PageMapping[] = [];
+  let newStart = 0;
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const page = pages[pageIndex];
+    const newEnd = pageIndex < chosen.length ? chosen[pageIndex] : newSentences.length - 1;
+    const oldEndToken = oldEnds[page.sentenceEndIndex];
+    const newEndToken = newEnds[newEnd];
+    const delta = newEndToken - oldEndToken;
+    mappings.push({
+      pageIndex,
+      imagePath: page.imagePath ?? '',
+      oldSentenceStartIndex: page.sentenceStartIndex,
+      oldSentenceEndIndex: page.sentenceEndIndex,
+      newSentenceStartIndex: newStart,
+      newSentenceEndIndex: newEnd,
+      oldEndToken,
+      newEndToken,
+      boundaryTokenDelta: delta,
+      risk: pageIndex < pages.length - 1 && Math.abs(delta) > 8,
+    });
+    newStart = newEnd + 1;
+  }
+  return mappings;
+}
+
+function assertE01Regression(sentences: string[]): void {
+  const expected = [
+    'The Mole had been working very hard all the morning, spring-cleaning his little home.',
+    'First with brooms, then with dusters; then on ladders and steps and chairs, with a brush and a pail of whitewash;',
+    'till he had dust in his throat and eyes, and splashes of whitewash all over his black fur, and an aching back and weary arms.',
+  ];
+  for (let index = 0; index < expected.length; index += 1) {
+    if (normalizeForRoundTrip(sentences[index] ?? '') !== normalizeForRoundTrip(expected[index])) {
+      throw new Error(`E01 regression failed at sentence ${index + 1}: ${sentences[index]}`);
+    }
+  }
+  const joined = sentences.join(' ');
+  for (const prohibited of [
+    'dust | in',
+    'throat | and',
+    'to | the gravelled carriage-drive',
+    'to the | gravelled carriage-drive',
+    'to the gravelled | carriage-drive',
+  ]) {
+    const [left, right] = prohibited.split(' | ');
+    if (sentences.some((sentence, index) =>
+      sentence.trim().endsWith(left) && sentences[index + 1]?.trim().startsWith(right),
+    )) {
+      throw new Error(`E01 prohibited boundary remains: ${prohibited}`);
+    }
+  }
+  if (!joined.includes('gravelled carriage-drive')) {
+    throw new Error('E01 source no longer contains gravelled carriage-drive');
+  }
+}
+
+async function reviewChapter(episode: string): Promise<ChapterReport> {
+  const meta = JSON.parse(
+    await readFile(path.join(willowsWork, episode, 'import-meta.json'), 'utf8'),
+  ) as { articleId: number };
+  const snapshot = await bridge<Snapshot>('article.segmentationSnapshot', {
+    articleId: meta.articleId,
+  });
+  if (snapshot.article.sentenceSplitVersion !== 'reviewed_dp_v2') {
+    throw new Error(
+      `${episode} expected reviewed_dp_v2, got ${snapshot.article.sentenceSplitVersion}`,
+    );
+  }
+  if (snapshot.translations.length !== snapshot.article.sentences.length) {
+    throw new Error(`${episode} translation count does not match sentences`);
+  }
+  if (snapshot.pages.some((page) => page.status !== 'ready')) {
+    throw new Error(`${episode} has non-ready picture pages`);
+  }
+
+  const prepared = await bridge<{ preparedId: string; englishContent: string }>(
+    'article.prepareCreate',
+    { content: snapshot.article.canonicalSource },
+  );
+  if (
+    normalizeForRoundTrip(prepared.englishContent) !==
+    normalizeForRoundTrip(snapshot.article.canonicalSource)
+  ) {
+    throw new Error(`${episode} prepareCreate changed canonical English`);
+  }
+  const localDetails = splitSentencesDetailed(prepared.englishContent);
+  const originalEnds = computeOriginalEnds(localDetails);
+  const reviewed = await bridge<Reviewed>('article.reviewSplitTranslate', {
+    preparedId: prepared.preparedId,
+    englishContent: prepared.englishContent,
+    localSentences: localDetails.map((item) => item.text),
+    localDiagnostics: localDetails.map((item) => ({
+      boundaryKind: item.boundaryKind,
+      boundaryReason: item.boundaryReason,
+      parserHealthy: item.parserHealthy,
+      parserConfidence: item.parserConfidence,
+      parserIssues: item.parserIssues,
+      requiresAiReview: item.requiresAiReview,
+    })),
+  });
+  validateCanonicalReadAloudV3(prepared.englishContent, reviewed.sentences);
+  if (reviewed.sentenceSplitVersion !== 'reviewed_dp_v3') {
+    throw new Error(`${episode} returned ${reviewed.sentenceSplitVersion}`);
+  }
+  if (reviewed.translations.length !== reviewed.sentences.length) {
+    throw new Error(`${episode} AI translation count is incomplete`);
+  }
+  for (let index = 0; index < reviewed.translations.length; index += 1) {
+    if (
+      reviewed.translations[index].index !== index ||
+      !reviewed.translations[index].chinese?.trim()
+    ) {
+      throw new Error(`${episode} invalid translation at ${index}`);
+    }
+  }
+  if (episode === 'E01') assertE01Regression(reviewed.sentences);
+
+  const oldEnds = cumulativeEnds(snapshot.article.sentences);
+  const newEnds = cumulativeEnds(reviewed.sentences);
+  const oldEndSet = new Set(oldEnds);
+  const newEndSet = new Set(newEnds);
+  const originalEndSet = new Set(originalEnds);
+  const translations = new Map(
+    reviewed.translations.map((item) => [item.index, item.chinese]),
+  );
+  const boundaries = new Map(
+    reviewed.boundaries.map((boundary) => [boundary.afterToken, boundary]),
+  );
+  const newSentences = reviewed.sentences.map((english, index) => {
+    const endToken = newEnds[index];
+    const count = wordCount(english);
+    const unpunctuated = maxUnpunctuatedWordCount(english);
+    const risk: string[] = [];
+    if (!oldEndSet.has(endToken) && count < 8) risk.push('generated_under_8');
+    if (unpunctuated > 16) risk.push('unpunctuated_over_16');
+    const boundary = boundaries.get(endToken);
+    if (!boundary) throw new Error(`${episode} missing boundary metadata at ${endToken}`);
+    if (boundary.kind === 'syntax_fallback') risk.push('syntax_fallback');
+    if (originalEndSet.has(endToken) && boundary.kind !== 'original_sentence') {
+      throw new Error(`${episode} original end ${endToken} has ${boundary.kind}`);
+    }
+    return {
+      index,
+      english,
+      chinese: translations.get(index) ?? '',
+      wordCount: count,
+      maxUnpunctuatedWords: unpunctuated,
+      boundary,
+      oldBoundary: oldEndSet.has(endToken),
+      risk,
+    };
+  });
+  const pageMappings = remapPages(
+    snapshot.article.sentences,
+    reviewed.sentences,
+    snapshot.pages,
+  );
+  const sourceTokens = prepared.englishContent.trim().split(/\s+/);
+  return {
+    episode,
+    articleId: snapshot.article.id,
+    title: snapshot.article.title,
+    preparedId: prepared.preparedId,
+    snapshotHash: snapshot.article.sentencesSha256,
+    oldSentenceSplitVersion: snapshot.article.sentenceSplitVersion,
+    newSentenceSplitVersion: reviewed.sentenceSplitVersion,
+    aiSource: reviewed.source,
+    sourceEnglish: prepared.englishContent,
+    originalSentenceEndTokens: originalEnds,
+    oldSentences: snapshot.article.sentences,
+    newSentences,
+    removedRedundantBoundaries: reviewed.removedRedundantBoundaries,
+    pageMappings,
+    summary: {
+      oldSentenceCount: snapshot.article.sentences.length,
+      newSentenceCount: reviewed.sentences.length,
+      originalSentenceCount: originalEnds.length,
+      overflowOriginalSentenceCount: countOverflowOriginalSentences(
+        sourceTokens,
+        originalEnds,
+      ),
+      oldOnlyBoundaryCount: oldEnds.filter((end) => !newEndSet.has(end)).length,
+      newOnlyBoundaryCount: newEnds.filter((end) => !oldEndSet.has(end)).length,
+      syntaxFallbackCount: newSentences.filter((item) =>
+        item.risk.includes('syntax_fallback'),
+      ).length,
+      generatedUnder8Count: newSentences.filter((item) =>
+        item.risk.includes('generated_under_8'),
+      ).length,
+      over16UnpunctuatedCount: newSentences.filter((item) =>
+        item.risk.includes('unpunctuated_over_16'),
+      ).length,
+      highRiskPageBoundaryCount: pageMappings.filter((item) => item.risk).length,
+    },
+  };
+}
+
+function aggregate(chapters: ChapterReport[]): JsonRecord {
+  return {
+    chapters: chapters.length,
+    oldSentences: chapters.reduce((sum, item) => sum + item.summary.oldSentenceCount, 0),
+    newSentences: chapters.reduce((sum, item) => sum + item.summary.newSentenceCount, 0),
+    originalSentences: chapters.reduce((sum, item) => sum + item.summary.originalSentenceCount, 0),
+    overflowOriginalSentences: chapters.reduce(
+      (sum, item) => sum + item.summary.overflowOriginalSentenceCount,
+      0,
+    ),
+    syntaxFallbacks: chapters.reduce((sum, item) => sum + item.summary.syntaxFallbackCount, 0),
+    generatedUnder8: chapters.reduce((sum, item) => sum + item.summary.generatedUnder8Count, 0),
+    over16Unpunctuated: chapters.reduce(
+      (sum, item) => sum + item.summary.over16UnpunctuatedCount,
+      0,
+    ),
+    pages: chapters.reduce((sum, item) => sum + item.pageMappings.length, 0),
+    highRiskPageBoundaries: chapters.reduce(
+      (sum, item) => sum + item.summary.highRiskPageBoundaryCount,
+      0,
+    ),
+    remote: chapters.filter((item) => item.aiSource === 'remote').length,
+    cached: chapters.filter((item) => item.aiSource === 'cached').length,
+  };
+}
+
+function markdown(report: MigrationReport): string {
+  const lines = [
+    '# 柳林风声 AI v3 分句迁移审核',
+    '',
+    `- 生成时间：${report.generatedAt}`,
+    `- Prompt：${report.promptVersion}`,
+    `- 已批准迁移：${report.approved ? '是' : '否'}`,
+    `- 汇总：\`${JSON.stringify(report.totals)}\``,
+    '',
+    '| 章节 | v2 | v3 | 原句 | 超限原句 | syntax fallback | 新短句 | >16 无标点 | 图片高风险 |',
+    '|---|---:|---:|---:|---:|---:|---:|---:|---:|',
+  ];
+  for (const chapter of report.chapters) {
+    const summary = chapter.summary;
+    lines.push(
+      `| ${chapter.episode} | ${summary.oldSentenceCount} | ${summary.newSentenceCount} | ${summary.originalSentenceCount} | ${summary.overflowOriginalSentenceCount} | ${summary.syntaxFallbackCount} | ${summary.generatedUnder8Count} | ${summary.over16UnpunctuatedCount} | ${summary.highRiskPageBoundaryCount} |`,
+    );
+  }
+  for (const chapter of report.chapters) {
+    lines.push('', `## ${chapter.episode} ${chapter.title}`, '');
+    lines.push('| # | 词数/无标点 | 边界 | 风险 | English | 中文 |');
+    lines.push('|---:|---:|---|---|---|---|');
+    for (const item of chapter.newSentences) {
+      lines.push(
+        `| ${item.index} | ${item.wordCount}/${item.maxUnpunctuatedWords} | ${item.boundary.kind}: ${escapeCell(item.boundary.reason)} | ${item.risk.join(', ')} | ${escapeCell(item.english)} | ${escapeCell(item.chinese)} |`,
+      );
+    }
+    lines.push('', '### 图片映射', '');
+    lines.push('| 页 | 旧范围 | 新范围 | token 移动 | 风险 | 图片 |');
+    lines.push('|---:|---|---|---:|---|---|');
+    for (const page of chapter.pageMappings) {
+      lines.push(
+        `| ${page.pageIndex} | ${page.oldSentenceStartIndex}-${page.oldSentenceEndIndex} | ${page.newSentenceStartIndex}-${page.newSentenceEndIndex} | ${page.boundaryTokenDelta} | ${page.risk ? 'REVIEW' : ''} | ${escapeCell(page.imagePath)} |`,
+      );
+    }
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+function html(report: MigrationReport): string {
+  const chapters = report.chapters
+    .map((chapter) => {
+      const sentenceRows = chapter.newSentences
+        .map(
+          (item) => `<tr class="${item.risk.length ? 'risk' : ''}"><td>${item.index}</td><td>${item.wordCount}/${item.maxUnpunctuatedWords}</td><td>${escapeHtml(item.boundary.kind)}<br>${escapeHtml(item.boundary.reason)}</td><td>${escapeHtml(item.english)}</td><td>${escapeHtml(item.chinese)}</td></tr>`,
+        )
+        .join('');
+      const pages = chapter.pageMappings
+        .map((page) => {
+          const url = page.imagePath ? pathToFileURL(page.imagePath).href : '';
+          return `<article class="page ${page.risk ? 'risk' : ''}"><img src="${escapeHtml(url)}"><div>页 ${page.pageIndex}: ${page.oldSentenceStartIndex}-${page.oldSentenceEndIndex} → ${page.newSentenceStartIndex}-${page.newSentenceEndIndex}; Δtoken=${page.boundaryTokenDelta}</div></article>`;
+        })
+        .join('');
+      return `<section><h2>${chapter.episode} ${escapeHtml(chapter.title)}</h2><p>${escapeHtml(JSON.stringify(chapter.summary))}</p><table><thead><tr><th>#</th><th>词数</th><th>边界</th><th>English</th><th>中文</th></tr></thead><tbody>${sentenceRows}</tbody></table><h3>图片映射</h3><div class="pages">${pages}</div></section>`;
+    })
+    .join('');
+  return `<!doctype html><meta charset="utf-8"><title>柳林风声 AI v3 分句审核</title><style>body{font:15px Arial,sans-serif;margin:24px;line-height:1.45}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:6px;vertical-align:top}.risk{background:#fff0e8}.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}.page{border:1px solid #ccc;padding:8px}.page img{width:100%;aspect-ratio:16/9;object-fit:cover;background:#eee}section{margin-bottom:60px}</style><h1>柳林风声 AI v3 分句审核</h1><p>${escapeHtml(JSON.stringify(report.totals))}</p>${chapters}`;
+}
+
+function escapeCell(text: string): string {
+  return text.replaceAll('|', '\\|').replaceAll(/\r?\n/g, ' ');
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;');
+}
+
+function reviewedContentHash(chapter: ChapterReport): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        snapshotHash: chapter.snapshotHash,
+        sentences: chapter.newSentences.map((item) => item.english),
+        translations: chapter.newSentences.map((item) => item.chinese),
+        boundaries: chapter.newSentences.map((item) => item.boundary),
+      }),
+    )
+    .digest('hex');
+}
+
+async function migrate(report: MigrationReport): Promise<void> {
+  if (!report.approved || !report.approvalNote.trim()) {
+    throw new Error('report is not approved; review every boundary and page mapping first');
+  }
+  for (const episode of episodes) {
+    const expected = report.chapters.find((item) => item.episode === episode);
+    if (!expected) throw new Error(`${episode} is missing from approved report`);
+    process.stdout.write(`[migrate] ${episode} review/cache verification\n`);
+    const fresh = await reviewChapter(episode);
+    if (
+      expected.snapshotHash !== fresh.snapshotHash ||
+      reviewedContentHash(expected) !== reviewedContentHash(fresh)
+    ) {
+      throw new Error(`${episode} current/cache result differs from approved report`);
+    }
+    const result = await bridge<JsonRecord>('article.replaceSegmentation', {
+      articleId: expected.articleId,
+      preparedId: fresh.preparedId,
+      expectedSentenceSplitVersion: expected.oldSentenceSplitVersion,
+      expectedSentencesSha256: expected.snapshotHash,
+      pageRanges: expected.pageMappings.map((page) => ({
+        pageIndex: page.pageIndex,
+        sentenceStartIndex: page.newSentenceStartIndex,
+        sentenceEndIndex: page.newSentenceEndIndex,
+      })),
+    });
+    process.stdout.write(`[migrate] ${episode} ${JSON.stringify(result)}\n`);
+  }
+}
+
+async function verify(report: MigrationReport): Promise<void> {
+  for (const episode of episodes) {
+    const expected = report.chapters.find((item) => item.episode === episode);
+    if (!expected) throw new Error(`${episode} is missing from report`);
+    const snapshot = await bridge<Snapshot>('article.segmentationSnapshot', {
+      articleId: expected.articleId,
+    });
+    const expectedSentences = expected.newSentences.map((item) => item.english);
+    if (
+      snapshot.article.sentenceSplitVersion !== 'reviewed_dp_v3' ||
+      JSON.stringify(snapshot.article.sentences) !== JSON.stringify(expectedSentences) ||
+      snapshot.translations.length !== expectedSentences.length ||
+      snapshot.pages.length !== expected.pageMappings.length
+    ) {
+      throw new Error(`${episode} database verification failed`);
+    }
+    for (const mapping of expected.pageMappings) {
+      const page = snapshot.pages[mapping.pageIndex];
+      if (
+        page.sentenceStartIndex !== mapping.newSentenceStartIndex ||
+        page.sentenceEndIndex !== mapping.newSentenceEndIndex
+      ) {
+        throw new Error(`${episode} page ${mapping.pageIndex} mapping mismatch`);
+      }
+    }
+    process.stdout.write(`[verify] ${episode} ok\n`);
+  }
+}
+
+const health = await request('/health');
+if (health.ok !== true || health.webReady !== true || health.usesDevServer !== false) {
+  throw new Error(`Release QA is not ready: ${JSON.stringify(health)}`);
+}
+
+if (mode === 'review') {
+  const chapters: ChapterReport[] = [];
+  for (const episode of episodes) {
+    process.stdout.write(`[review] ${episode} start\n`);
+    const chapter = await reviewChapter(episode);
+    chapters.push(chapter);
+    process.stdout.write(
+      `[review] ${episode} ${chapter.summary.oldSentenceCount} -> ${chapter.summary.newSentenceCount}, source=${chapter.aiSource}\n`,
+    );
+  }
+  const report: MigrationReport = {
+    version: 'willows_sentence_migration_v3',
+    generatedAt: new Date().toISOString(),
+    promptVersion,
+    approved: false,
+    approvalNote: '',
+    mode,
+    chapters,
+    totals: aggregate(chapters),
+  };
+  const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-');
+  const outputPath = path.resolve(
+    outputArgument ?? `../build/willows-v3-migration/${stamp}`,
+  );
+  await mkdir(outputPath, { recursive: true });
+  await Promise.all([
+    writeFile(
+      path.join(outputPath, 'willows-v3-review.json'),
+      `${JSON.stringify(report, null, 2)}\n`,
+      'utf8',
+    ),
+    writeFile(
+      path.join(outputPath, 'willows-v3-review.md'),
+      markdown(report),
+      'utf8',
+    ),
+    writeFile(
+      path.join(outputPath, 'willows-v3-review.html'),
+      html(report),
+      'utf8',
+    ),
+  ]);
+  process.stdout.write(`[review] report=${outputPath}\n`);
+} else {
+  if (!reportArgument) throw new Error('--report is required for migrate/verify');
+  const report = JSON.parse(await readFile(path.resolve(reportArgument), 'utf8')) as MigrationReport;
+  if (report.version !== 'willows_sentence_migration_v3') {
+    throw new Error(`unsupported report version: ${report.version}`);
+  }
+  if (mode === 'migrate') await migrate(report);
+  if (mode === 'verify') await verify(report);
+}

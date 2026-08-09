@@ -1,7 +1,12 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
+import '../core/config/app_config.dart';
+import '../core/logging/tomato_logger.dart';
+import 'read_aloud_splitter_v3.dart';
+import 'sentence_split_tuning_budget_v3.dart';
 import 'text_generation_service.dart';
 
 class PracticeWordLookup {
@@ -24,10 +29,46 @@ class PracticeSentenceTranslationBatch {
   const PracticeSentenceTranslationBatch({
     required this.translationsByIndex,
     required this.source,
+    this.usage = const TextGenerationUsage(),
   });
 
   final Map<int, String> translationsByIndex;
   final TextGenerationReplySource source;
+  final TextGenerationUsage usage;
+}
+
+class PracticeCandidatePathSelectionV3 {
+  const PracticeCandidatePathSelectionV3({
+    required this.selectedPathIds,
+    required this.source,
+    required this.remoteAttempts,
+    required this.usedLocalFallback,
+    required this.fallbackReason,
+    required this.usage,
+    this.provider,
+    this.model,
+    this.selectionTrace = const [],
+  });
+
+  final Map<int, String> selectedPathIds;
+  final TextGenerationReplySource source;
+  final int remoteAttempts;
+  final bool usedLocalFallback;
+  final String? fallbackReason;
+  final TextGenerationUsage usage;
+  final String? provider;
+  final String? model;
+  final List<Map<String, dynamic>> selectionTrace;
+}
+
+class _CandidatePathResponseV3 {
+  const _CandidatePathResponseV3({
+    required this.selectedPathIds,
+    required this.rejectedOriginalIndexes,
+  });
+
+  final Map<int, String> selectedPathIds;
+  final Set<int> rejectedOriginalIndexes;
 }
 
 class PracticeTextService {
@@ -36,6 +77,369 @@ class PracticeTextService {
   static const _titlePromptInputLimit = 1600;
   static const _sentenceTranslationCachePurpose =
       'article_sentence_translation_batch_v1';
+  static const candidatePathReviewCachePurpose =
+      'article_split_v3_candidate_path_p7';
+  static const _deepSeekCandidatePathReviewCachePurpose =
+      'article_split_v3_candidate_path_p8';
+  static const sentenceTranslationV3CachePurpose =
+      'article_split_translate_v3_translation_v12';
+  // Only provider/model pairs that passed the fixed candidate-path tuning gate
+  // may make automatic production decisions. Keep weaker models on the
+  // deterministic local path even when they are valid for other text tasks.
+  static const _validatedCandidateReviewModels = <String>{
+    'aliyun_bailian/qwen3.7-max',
+    'volcengine/deepseek-v4-flash-ga-260731',
+  };
+  static const _expandedCompactCandidateReviewModels = <String>{
+    'volcengine/deepseek-v4-flash-ga-260731',
+  };
+  static Set<String>? _validatedCandidateReviewModelsForTest;
+
+  @visibleForTesting
+  static void setValidatedCandidateReviewModelsForTest(
+    Set<String>? providerModels,
+  ) {
+    _validatedCandidateReviewModelsForTest = providerModels;
+  }
+
+  static Future<PracticeCandidatePathSelectionV3> reviewCandidatePathsV3({
+    required ReadAloudSplitPlanV3 plan,
+    int? articleId,
+    bool allowUnvalidatedModelForTuning = false,
+    bool forceRemoteForTuning = false,
+    bool forceExpandedCandidatesForTuning = false,
+    bool compactCandidatePayloadForTuning = false,
+    bool forceP8ProtocolForTuning = false,
+    SentenceSplitTuningBudgetV3? tuningBudget,
+  }) async {
+    final riskOriginals = plan.originals
+        .where((decision) => decision.requiresAiReview)
+        .toList(growable: false);
+    final localSelections = <int, String>{
+      for (final decision in plan.originals)
+        decision.originalIndex: decision.localPathId,
+    };
+    if (riskOriginals.isEmpty) {
+      return PracticeCandidatePathSelectionV3(
+        selectedPathIds: Map.unmodifiable(localSelections),
+        source: TextGenerationReplySource.stored,
+        remoteAttempts: 0,
+        usedLocalFallback: false,
+        fallbackReason: null,
+        usage: const TextGenerationUsage(),
+      );
+    }
+
+    final config = await AppConfig.openAiTextConfig;
+    final providerModel = '${config.provider}/${config.model}';
+    final validatedModels = _validatedCandidateReviewModelsForTest ??
+        _validatedCandidateReviewModels;
+    if (allowUnvalidatedModelForTuning && tuningBudget == null) {
+      throw const FormatException('未配置 50 元硬预算，不得调试未验收的分句模型');
+    }
+    if (forceRemoteForTuning && !allowUnvalidatedModelForTuning) {
+      throw const FormatException('只有受预算保护的调优调用可以跳过分句缓存');
+    }
+    if (forceExpandedCandidatesForTuning &&
+        (!allowUnvalidatedModelForTuning || !forceRemoteForTuning)) {
+      throw const FormatException('只有受预算保护的远程调优可以强制首轮使用扩展候选');
+    }
+    if (compactCandidatePayloadForTuning &&
+        (!allowUnvalidatedModelForTuning || !forceRemoteForTuning)) {
+      throw const FormatException('只有受预算保护的远程调优可以使用精简候选载荷');
+    }
+    if (forceP8ProtocolForTuning &&
+        (!allowUnvalidatedModelForTuning ||
+            !forceRemoteForTuning ||
+            tuningBudget == null)) {
+      throw const FormatException('只有受预算保护的远程调优可以强制使用 P8 协议');
+    }
+    if (!validatedModels.contains(providerModel) &&
+        !allowUnvalidatedModelForTuning) {
+      TomatoLogger.warn(
+        category: 'sentence_split',
+        event: 'candidate_review.local_fallback',
+        articleId: articleId,
+        status: 'unvalidated_model',
+        data: {
+          'provider': config.provider,
+          'model': config.model,
+          'riskOriginalCount': riskOriginals.length,
+        },
+      );
+      return PracticeCandidatePathSelectionV3(
+        selectedPathIds: Map.unmodifiable(localSelections),
+        source: TextGenerationReplySource.stored,
+        remoteAttempts: 0,
+        usedLocalFallback: true,
+        fallbackReason: 'unvalidated_provider_model',
+        usage: const TextGenerationUsage(),
+        provider: config.provider,
+        model: config.model,
+      );
+    }
+    final usesProductionP8Protocol =
+        _expandedCompactCandidateReviewModels.contains(providerModel);
+    final usesP8Protocol = usesProductionP8Protocol || forceP8ProtocolForTuning;
+    final candidatePathReviewPurpose = usesP8Protocol
+        ? _deepSeekCandidatePathReviewCachePurpose
+        : candidatePathReviewCachePurpose;
+
+    return _reviewCandidatePathChunkV3(
+      plan: plan,
+      riskOriginals: riskOriginals,
+      localSelections: localSelections,
+      provider: config.provider,
+      model: config.model,
+      articleId: articleId,
+      forceRemoteForTuning: forceRemoteForTuning,
+      startWithExpandedCandidates:
+          usesP8Protocol || forceExpandedCandidatesForTuning,
+      compactCandidatePayload:
+          usesP8Protocol || compactCandidatePayloadForTuning,
+      candidatePathReviewPurpose: candidatePathReviewPurpose,
+      useEnhancedClauseTransitionRule: usesP8Protocol,
+      tuningBudget: tuningBudget,
+    );
+  }
+
+  static Future<PracticeCandidatePathSelectionV3> _reviewCandidatePathChunkV3({
+    required ReadAloudSplitPlanV3 plan,
+    required List<ReadAloudOriginalDecisionV3> riskOriginals,
+    required Map<int, String> localSelections,
+    required String provider,
+    required String model,
+    required int? articleId,
+    required bool forceRemoteForTuning,
+    required bool startWithExpandedCandidates,
+    required bool compactCandidatePayload,
+    required String candidatePathReviewPurpose,
+    required bool useEnhancedClauseTransitionRule,
+    required SentenceSplitTuningBudgetV3? tuningBudget,
+  }) async {
+    Object? lastError;
+    final reviewMaxTokens = math.max(256, riskOriginals.length * 64);
+    final trace = <Map<String, dynamic>>[];
+    var remoteAttempts = 0;
+    var combinedUsage = const TextGenerationUsage();
+
+    if (!forceRemoteForTuning) {
+      _CandidatePathResponseV3? cachedParsed;
+      final cachedTurns = _candidatePathReviewTurns(
+        plan,
+        riskOriginals,
+        expanded: true,
+        compactCandidates: compactCandidatePayload,
+        contract: candidatePathReviewPurpose,
+        useEnhancedClauseTransitionRule: useEnhancedClauseTransitionRule,
+      );
+      final cachedReply = await TextGenerationService.readStrictCache(
+        turns: cachedTurns,
+        cachePurpose: candidatePathReviewPurpose,
+        articleId: articleId,
+        maxTokens: reviewMaxTokens,
+        jsonResponse: true,
+        temperature: 0,
+        disableThinking: true,
+        validateText: (text) {
+          cachedParsed = _parseCandidatePathSelection(
+            text,
+            riskOriginals: riskOriginals,
+            expanded: true,
+          );
+          if (cachedParsed!.rejectedOriginalIndexes.isNotEmpty) {
+            throw const TextGenerationException(
+              'V3.3 扩展候选缓存不能包含 REJECT。',
+            );
+          }
+        },
+      );
+      if (cachedReply != null && cachedParsed != null) {
+        final completed = <int, String>{
+          ...localSelections,
+          ...cachedParsed!.selectedPathIds,
+        };
+        ReadAloudSplitterV3.validateSelectedPathIds(plan, completed);
+        trace.add({
+          'originalIndexes': riskOriginals
+              .map((value) => value.originalIndex)
+              .toList(growable: false),
+          'request': 0,
+          'round': 'expanded',
+          'source': 'cached',
+          'decision': 'selected',
+        });
+        return PracticeCandidatePathSelectionV3(
+          selectedPathIds: Map.unmodifiable(completed),
+          source: TextGenerationReplySource.cached,
+          remoteAttempts: 0,
+          usedLocalFallback: false,
+          fallbackReason: null,
+          usage: const TextGenerationUsage(),
+          provider: cachedReply.provider ?? provider,
+          model: cachedReply.model ?? model,
+          selectionTrace: List.unmodifiable(trace),
+        );
+      }
+    }
+
+    var expanded = startWithExpandedCandidates;
+    for (var requestNumber = 1; requestNumber <= 2; requestNumber += 1) {
+      final reviewTurns = _candidatePathReviewTurns(
+        plan,
+        riskOriginals,
+        expanded: expanded,
+        compactCandidates: compactCandidatePayload,
+        contract: candidatePathReviewPurpose,
+        useEnhancedClauseTransitionRule: useEnhancedClauseTransitionRule,
+      );
+      final reservation = tuningBudget?.reserve(
+        provider: provider,
+        model: model,
+        turns: reviewTurns,
+        maxOutputTokens: reviewMaxTokens,
+      );
+      try {
+        _CandidatePathResponseV3? parsed;
+        final reply = await TextGenerationService.generateStrict(
+          turns: reviewTurns,
+          cachePurpose: candidatePathReviewPurpose,
+          articleId: articleId,
+          maxTokens: reviewMaxTokens,
+          receiveTimeout: Duration(
+            seconds: math.min(120, 30 + riskOriginals.length * 4),
+          ),
+          jsonResponse: true,
+          temperature: 0,
+          disableThinking: true,
+          skipCacheRead: forceRemoteForTuning,
+          skipCacheWrite: forceRemoteForTuning,
+          validateText: (text) {
+            parsed = _parseCandidatePathSelection(
+              text,
+              riskOriginals: riskOriginals,
+              expanded: expanded,
+            );
+          },
+          shouldCacheText: (_) =>
+              parsed?.rejectedOriginalIndexes.isEmpty ?? false,
+        );
+        final response = parsed ??
+            _parseCandidatePathSelection(
+              reply.text,
+              riskOriginals: riskOriginals,
+              expanded: expanded,
+            );
+        if (reply.source == TextGenerationReplySource.remote) {
+          remoteAttempts += 1;
+        }
+        combinedUsage = _combineUsage(combinedUsage, reply.usage);
+        reservation?.complete(reply);
+        trace.add({
+          'originalIndexes': riskOriginals
+              .map((value) => value.originalIndex)
+              .toList(growable: false),
+          'request': requestNumber,
+          'round': expanded ? 'expanded' : 'initial',
+          'source': reply.source.name,
+          'decision': response.rejectedOriginalIndexes.isEmpty
+              ? 'selected'
+              : 'rejected',
+          'rejectedOriginalIndexes':
+              response.rejectedOriginalIndexes.toList(growable: false)..sort(),
+        });
+        if (response.rejectedOriginalIndexes.isNotEmpty) {
+          if (requestNumber == 1) {
+            expanded = true;
+            continue;
+          }
+          lastError = const TextGenerationException(
+            'AI 拒绝了 V3.3 扩展候选。',
+          );
+          break;
+        }
+        final completed = <int, String>{
+          ...localSelections,
+          ...response.selectedPathIds,
+        };
+        ReadAloudSplitterV3.validateSelectedPathIds(plan, completed);
+        return PracticeCandidatePathSelectionV3(
+          selectedPathIds: Map.unmodifiable(completed),
+          source: reply.source,
+          remoteAttempts: remoteAttempts,
+          usedLocalFallback: false,
+          fallbackReason: null,
+          usage: combinedUsage,
+          provider: reply.provider ?? provider,
+          model: reply.model ?? model,
+          selectionTrace: List.unmodifiable(trace),
+        );
+      } catch (error) {
+        reservation?.fail();
+        remoteAttempts += 1;
+        lastError = error;
+        trace.add({
+          'originalIndexes': riskOriginals
+              .map((value) => value.originalIndex)
+              .toList(growable: false),
+          'request': requestNumber,
+          'round': expanded ? 'expanded' : 'initial',
+          'source': 'remote_error',
+          'decision': 'invalid_or_failed',
+          'errorType': error.runtimeType.toString(),
+        });
+      }
+    }
+
+    final lastDecision = trace.isEmpty ? null : trace.last['decision'];
+    final fallbackReason = expanded
+        ? lastDecision == 'rejected'
+            ? 'expanded_candidates_rejected'
+            : 'expanded_remote_failed'
+        : 'remote_failed_twice';
+    TomatoLogger.warn(
+      category: 'sentence_split',
+      event: 'candidate_review.local_fallback',
+      articleId: articleId,
+      status: fallbackReason,
+      error: lastError?.runtimeType.toString(),
+      data: {
+        'provider': provider,
+        'model': model,
+        'riskOriginalCount': riskOriginals.length,
+        'attempts': remoteAttempts,
+        'message': lastError.toString(),
+      },
+    );
+    return PracticeCandidatePathSelectionV3(
+      selectedPathIds: Map.unmodifiable(localSelections),
+      source: TextGenerationReplySource.stored,
+      remoteAttempts: remoteAttempts,
+      usedLocalFallback: true,
+      fallbackReason: fallbackReason,
+      usage: combinedUsage,
+      provider: provider,
+      model: model,
+      selectionTrace: List.unmodifiable(trace),
+    );
+  }
+
+  static TextGenerationUsage _combineUsage(
+    TextGenerationUsage left,
+    TextGenerationUsage right,
+  ) {
+    final costs = [left.estimatedCostCny, right.estimatedCostCny]
+        .whereType<double>()
+        .toList(growable: false);
+    return TextGenerationUsage(
+      inputTokens: left.inputTokens + right.inputTokens,
+      outputTokens: left.outputTokens + right.outputTokens,
+      totalTokens: left.totalTokens + right.totalTokens,
+      estimatedCostCny: costs.isEmpty
+          ? null
+          : costs.fold<double>(0, (sum, value) => sum + value),
+    );
+  }
 
   static Future<TextGenerationReply> translateToChinese({
     required String text,
@@ -93,6 +497,8 @@ class PracticeTextService {
       translateSentencesToChineseStrict({
     required Map<int, String> sentencesByIndex,
     int? articleId,
+    bool usePersistentCache = false,
+    String? cachePurpose,
   }) async {
     final entries = sentencesByIndex.entries
         .map((entry) => MapEntry(entry.key, entry.value.trim()))
@@ -111,18 +517,19 @@ class PracticeTextService {
     // must not fan out into one API call per sentence again.
     final reply = await TextGenerationService.generateStrict(
       turns: _sentenceTranslationPromptTurns(entries),
-      cachePurpose: _sentenceTranslationCachePurpose,
+      cachePurpose: cachePurpose ?? _sentenceTranslationCachePurpose,
       articleId: articleId,
       maxTokens: _sentenceTranslationMaxTokens(entries.length),
       receiveTimeout: _sentenceTranslationReceiveTimeout(entries.length),
       jsonResponse: true,
-      skipCacheRead: true,
-      skipCacheWrite: true,
+      skipCacheRead: !usePersistentCache,
+      skipCacheWrite: !usePersistentCache,
     );
     final translations = _parseSentenceTranslationBatch(reply.text, entries);
     return PracticeSentenceTranslationBatch(
       translationsByIndex: translations,
       source: reply.source,
+      usage: reply.usage,
     );
   }
 
@@ -300,6 +707,196 @@ class PracticeTextService {
             'Translate each English sentence into Simplified Chinese for subtitle display. Keep the same indexes, do not omit or merge items, and return JSON only.\n\n$payload',
       ),
     ];
+  }
+
+  static List<TextGenerationTurn> _candidatePathReviewTurns(
+    ReadAloudSplitPlanV3 plan,
+    List<ReadAloudOriginalDecisionV3> riskOriginals, {
+    required bool expanded,
+    bool compactCandidates = false,
+    required String contract,
+    required bool useEnhancedClauseTransitionRule,
+  }) {
+    final clauseTransitionRule = useEnhancedClauseTransitionRule
+        ? 'When the sentence starts with a dependent marker and later reaches the explicit subject of the main clause, the boundary at that clause transition dominates any later split inside the main clause. The fronted dependent unit must include all words attached to its predicate before the boundary. Do not leave a post-predicate time, frequency, degree, or complement phrase at the start of the main clause. Do not split a main-clause predicate or degree modifier from a following infinitival complement that completes its meaning.'
+        : 'When the sentence starts with a dependent marker and later reaches the explicit subject of the main clause, the fronted dependent unit must include all words attached to its predicate before the boundary. Do not leave a post-predicate time, frequency, degree, or complement phrase at the start of the main clause.';
+    final payload = {
+      'contract': contract,
+      'parserVersion': plan.parserVersion,
+      'parserModelSha256': plan.modelSha256,
+      'solverVersion': ReadAloudSplitterV3.solverVersion,
+      'originals': [
+        for (final decision in riskOriginals)
+          _candidateOriginalPayload(
+            decision,
+            expanded: expanded,
+            compact: compactCandidates,
+          ),
+      ],
+    };
+    return [
+      TextGenerationTurn(
+        role: 'system',
+        content:
+            '''You review English read-aloud segmentation for arbitrary books and article types.
+
+The program has already enforced every hard constraint and has supplied complete candidate paths. Select exactly one supplied candidatePathId for each originalIndex. You must not rewrite the original, invent a path, add a boundary, return token positions, merge original sentences, or translate text.
+
+Judge natural spoken syntax and meaning. Apply these priorities in order:
+1. Choose the fewest boundaries that produce complete, natural spoken units. Never add a second boundary when one natural boundary already satisfies the supplied path.
+2. Every unit must preserve subject-predicate and predicate-complement structure. Never put a subject or noun phrase at the end of one unit when its finite verb or auxiliary starts the next unit. Never detach a required object, complement, infinitive, or tightly attached modifier from its predicate.
+3. Keep each clause introducer with the clause it introduces. A boundary normally goes before a coordinator or subordinating marker, never after it or inside its clause. Prefer a boundary before a parallel coordinated predicate or adverbial clause over detaching a restrictive relative clause from the noun it identifies.
+4. $clauseTransitionRule
+5. Do not end a unit after an auxiliary, copula, transitive predicate awaiting its complement, infinitive marker, preposition, determiner, possessive, adjective modifying the next noun, compound/name part, phrasal particle, or fixed relation. Do not begin a unit with a stranded complement or modifier.
+6. The parser evidence is fallible. Treat stage, totalBoundaryRisk, and dependencyReasons only as soft evidence; they must never override the English text. Check every softWarnings entry explicitly. A path with surface_possible_subject_predicate_separation is unacceptable when the nominal at the end of the left unit is the subject of the verb or auxiliary starting the right unit. A path with surface_predicate_infinitive_separation is unacceptable when the right unit completes the predicate on the left.
+7. Among the paths that remain grammatically natural, choose minimumBoundaryCount first. Among equally grammatical paths with the same boundary count, a path with shortFragmentCount 0 strictly dominates a path with one or more fragments under 8 words. A short fragment is acceptable only when every natural path with that boundary count has one, or when grammar itself requires the short unit. This is a short-fragment guard, not a request to balance lengths.
+8. Do not split a predicate from an immediately following dependent clause when that clause supplies the endpoint, condition, or circumstance needed to complete the instruction or action. In a coordinated construction, prefer the boundary before the parallel coordinated predicate over a boundary between that predicate and its required condition. Prefer stage "syntax" over "emergency" only when their spoken syntax is equally natural. Do not detach a short restrictive relative clause merely to make lengths look balanced. Length balance is the last consideration.
+
+Return REJECT for an originalIndex when every supplied path violates any rule above or only offers a clearly inferior short fragment while a missing boundary would be required. REJECT is the correct answer in that case; the program will supply a broader second-round list.
+
+If none of the supplied paths is natural, return the exact reserved value "REJECT" as candidatePathId for that originalIndex. Do not use REJECT merely because multiple paths are acceptable.
+
+Return only compact JSON with this exact shape:
+{"items":[{"originalIndex":0,"candidatePathId":"provided-id"}]}
+Every requested originalIndex must appear exactly once. No other keys.''',
+      ),
+      TextGenerationTurn(
+        role: 'user',
+        content: jsonEncode(payload),
+      ),
+    ];
+  }
+
+  static Map<String, dynamic> _candidateOriginalPayload(
+    ReadAloudOriginalDecisionV3 decision, {
+    required bool expanded,
+    bool compact = false,
+  }) {
+    final paths = expanded
+        ? decision.expandedCandidatePaths
+        : decision.initialCandidatePaths;
+    final minimumBoundaryCount =
+        paths.map((path) => path.boundaries.length).reduce(math.min);
+    return {
+      'originalIndex': decision.originalIndex,
+      'original': decision.source,
+      'candidateRound': expanded ? 'expanded' : 'initial',
+      'candidateSetHash': expanded
+          ? decision.expandedCandidateSetHash
+          : decision.initialCandidateSetHash,
+      'minimumBoundaryCount': minimumBoundaryCount,
+      'candidatePaths': [
+        for (final path in paths)
+          {
+            'candidatePathId': path.pathId,
+            'segments': path.segments,
+            'segmentCount': path.segments.length,
+            'boundaryCount': path.boundaries.length,
+            'isMinimumBoundaryCount':
+                path.boundaries.length == minimumBoundaryCount,
+            'shortFragmentCount':
+                path.wordCounts.where((count) => count < 8).length,
+            'wordCounts': path.wordCounts,
+            if (!compact) ...{
+              'stage': path.stage.name,
+              'totalBoundaryRisk': path.boundaries.fold<int>(
+                0,
+                (sum, boundary) => sum + boundary.risk,
+              ),
+              'maxUnpunctuatedWordCounts': path.maxUnpunctuatedWordCounts,
+              'boundaries': [
+                for (final boundary in path.boundaries)
+                  {
+                    'kind': boundary.kind.name,
+                    'afterWord': boundary.afterWord,
+                    'dependencyReasons': boundary.reasons,
+                    'softWarnings': boundary.softWarnings,
+                    'risk': boundary.risk,
+                  },
+              ],
+            },
+          },
+      ],
+    };
+  }
+
+  static _CandidatePathResponseV3 _parseCandidatePathSelection(
+    String text, {
+    required List<ReadAloudOriginalDecisionV3> riskOriginals,
+    required bool expanded,
+  }) {
+    final decodedValue = _decodeJsonValue(text);
+    if (decodedValue is! Map) {
+      throw const TextGenerationException(
+        'AI 候选路径复核失败：响应不是 JSON object。',
+      );
+    }
+    final decoded = Map<String, dynamic>.from(decodedValue);
+    if (decoded.length != 1 || decoded['items'] is! List) {
+      throw const TextGenerationException(
+        'AI 候选路径复核失败：响应只能包含 items 数组。',
+      );
+    }
+    final items = decoded['items'] as List;
+    final requiredIndexes =
+        riskOriginals.map((decision) => decision.originalIndex).toSet();
+    final output = <int, String>{};
+    final rejected = <int>{};
+    for (var position = 0; position < items.length; position += 1) {
+      final raw = items[position];
+      if (raw is! Map) {
+        throw TextGenerationException(
+          'AI 候选路径复核失败：items 第 ${position + 1} 项不是 object。',
+        );
+      }
+      final item = Map<String, dynamic>.from(raw);
+      if (item.length != 2 ||
+          !item.containsKey('originalIndex') ||
+          !item.containsKey('candidatePathId')) {
+        throw TextGenerationException(
+          'AI 候选路径复核失败：items 第 ${position + 1} 项字段不符合固定协议。',
+        );
+      }
+      final originalIndex = item['originalIndex'];
+      final pathId = item['candidatePathId']?.toString().trim() ?? '';
+      if (originalIndex is! int ||
+          !requiredIndexes.contains(originalIndex) ||
+          pathId.isEmpty ||
+          output.containsKey(originalIndex)) {
+        throw TextGenerationException(
+          'AI 候选路径复核失败：items 第 ${position + 1} 项索引或 pathId 非法。',
+        );
+      }
+      output[originalIndex] = pathId;
+      if (pathId == 'REJECT') {
+        rejected.add(originalIndex);
+        continue;
+      }
+      final decision = riskOriginals.firstWhere(
+        (value) => value.originalIndex == originalIndex,
+      );
+      final allowed = expanded
+          ? decision.expandedCandidatePaths
+          : decision.initialCandidatePaths;
+      if (!allowed.any((path) => path.pathId == pathId)) {
+        throw TextGenerationException(
+          'AI 候选路径复核失败：originalIndex=$originalIndex 返回了未提供的 pathId。',
+        );
+      }
+    }
+    if (output.keys.toSet().length != requiredIndexes.length ||
+        !output.keys.toSet().containsAll(requiredIndexes)) {
+      throw const TextGenerationException(
+        'AI 候选路径复核失败：未逐一选择所有高风险原句。',
+      );
+    }
+    return _CandidatePathResponseV3(
+      selectedPathIds: Map.unmodifiable(
+        Map<int, String>.from(output)
+          ..removeWhere((_, value) => value == 'REJECT'),
+      ),
+      rejectedOriginalIndexes: Set.unmodifiable(rejected),
+    );
   }
 
   static int _sentenceTranslationMaxTokens(int sentenceCount) {

@@ -83,7 +83,7 @@ This document records the confirmed migration direction for replacing the curren
 - Ark Chat Completions text generation
   - header: `Authorization: Bearer <key>`
   - endpoint: `https://ark.cn-beijing.volces.com/api/v3/chat/completions`
-  - default model: `doubao-seed-2-0-lite-260215`
+  - default model: `deepseek-v4-flash-ga-260731`（2026-08-09 受约束分句三轮 30/30 验收）
   - runtime uses `volc_ark_api_key` / `TOMATO_VOLC_ARK_API_KEY` plus `volc_ark_text_model` / `TOMATO_VOLC_ARK_TEXT_MODEL`
 
 ### Required credential fields for the preferred target architecture

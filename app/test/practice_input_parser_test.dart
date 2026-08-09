@@ -83,7 +83,8 @@ They smile and walk home.
       expect(rows, hasLength(sentences.length));
       expect(rows.first.articleId, 7);
       expect(rows.first.sentenceIndex, 0);
-      expect(rows.first.chineseText, '汤姆发现了一个明亮的零食盒。他把它分享给自己的队友。');
+      expect(rows[0].chineseText, '汤姆发现了一个明亮的零食盒。');
+      expect(rows[1].chineseText, '他把它分享给自己的队友。');
       expect(rows.last.chineseText, '他们微笑着走回家。');
     });
 
@@ -175,7 +176,7 @@ The soldiers were silent, and looked at Alice, as the question was evidently mea
       expect(joinedRow.chineseText, isNot(contains('会！"爱丽丝大声回答')));
     });
 
-    test('keeps translations when phrase chunks merge across paragraphs', () {
+    test('keeps translations aligned across adjacent quote paragraphs', () {
       final parsed = PracticeInputParser.parse('''
 The Queen's Croquet - Ground
 
@@ -207,7 +208,7 @@ The Queen turned crimson with fury, and began screaming, "Off with her head! Off
       );
     });
 
-    test('fills imported translation for sentence spanning two paragraphs', () {
+    test('fills imported translations across consecutive story paragraphs', () {
       final parsed = PracticeInputParser.parse('''
 The Queen's Croquet - Ground
 

@@ -1,0 +1,528 @@
+// RETIRED REFERENCE ONLY: production V3 runs in Dart over UDPipe output.
+import {
+  analyzeEnglishGrammarV3,
+  splitOrthographicSentencesV3,
+  type GrammarAnalysis,
+  type GrammarConfidence,
+} from './grammarAnalyzerV3';
+import {
+  DEFAULT_FONT_SIZE_PX,
+  DEFAULT_MAX_LINE_WIDTH_PX,
+  fitsEnglishSubtitleLine,
+  isIncompleteShortChunk,
+  measureNunitoExtraBoldPx,
+} from './readAloudSplitterV2';
+
+export const READ_ALOUD_SPLIT_VERSION = 'read_aloud_dp_v3';
+export const REVIEWED_SPLIT_VERSION = 'reviewed_dp_v3';
+export const HARD_MAX_WORDS = 30;
+export const PREFERRED_MIN_UNPUNCTUATED_WORDS = 8;
+export const PREFERRED_MAX_UNPUNCTUATED_WORDS = 16;
+export const HARD_MAX_UNPUNCTUATED_WORDS = 20;
+
+export {
+  DEFAULT_FONT_SIZE_PX,
+  DEFAULT_MAX_LINE_WIDTH_PX,
+  fitsEnglishSubtitleLine,
+  isIncompleteShortChunk,
+  measureNunitoExtraBoldPx,
+};
+
+export type SplitOptions = {
+  maxWords?: number;
+  targetMinWords?: number;
+  targetMaxWords?: number;
+  maxUnpunctuatedWords?: number;
+  maxLineWidthPx?: number;
+  fontSizePx?: number;
+};
+
+export type SplitBoundaryKind =
+  | 'original_sentence'
+  | 'punctuation'
+  | 'grammar_clause'
+  | 'grammar_phrase'
+  | 'emergency';
+
+export type ReadAloudChunkDetail = {
+  text: string;
+  wordCount: number;
+  maxUnpunctuatedWords: number;
+  boundaryKind: SplitBoundaryKind;
+  boundaryReason: string;
+  wasSplit: boolean;
+  parserHealthy: boolean;
+  parserConfidence: GrammarConfidence;
+  parserIssues: string[];
+  requiresAiReview: boolean;
+};
+
+type ResolvedOptions = Required<SplitOptions>;
+type CandidateKind =
+  | 'final'
+  | 'strong'
+  | 'comma'
+  | 'grammar_clause'
+  | 'grammar_phrase'
+  | 'emergency';
+
+type Boundary = {
+  position: number;
+  kind: CandidateKind;
+  protected: boolean;
+  confidence: GrammarConfidence;
+  reasons: string[];
+};
+
+// Strict lexicographic order. Length balance is intentionally last. A more
+// even line must never outrank syntactic integrity or a stronger boundary.
+type Score = [number, number, number, number, number, number, number, number];
+
+type PathState = {
+  score: Score;
+  previous: number;
+  boundary: Boundary;
+};
+
+type Segment = {
+  start: number;
+  end: number;
+  boundary: Boundary;
+};
+
+const strongPunctuation = /[;:—–]["'”’)}\]]*$/u;
+const commaPunctuation = /,["'”’)}\]]*$/u;
+const visiblePause = /[.!?…;:—–,]/u;
+
+export function splitReadAloudV3(text: string, options: SplitOptions = {}): string[] {
+  return splitReadAloudV3Detailed(text, options).map((chunk) => chunk.text);
+}
+
+export function splitReadAloudV3Detailed(
+  text: string,
+  options: SplitOptions = {},
+): ReadAloudChunkDetail[] {
+  const resolved: ResolvedOptions = {
+    maxWords: options.maxWords ?? HARD_MAX_WORDS,
+    targetMinWords: options.targetMinWords ?? PREFERRED_MIN_UNPUNCTUATED_WORDS,
+    targetMaxWords: options.targetMaxWords ?? PREFERRED_MAX_UNPUNCTUATED_WORDS,
+    maxUnpunctuatedWords: options.maxUnpunctuatedWords ?? HARD_MAX_UNPUNCTUATED_WORDS,
+    maxLineWidthPx: options.maxLineWidthPx ?? DEFAULT_MAX_LINE_WIDTH_PX,
+    fontSizePx: options.fontSizePx ?? DEFAULT_FONT_SIZE_PX,
+  };
+  const output: ReadAloudChunkDetail[] = [];
+  for (const paragraph of normalizeArticleParagraphs(text)) {
+    for (const sentence of splitOrthographicSentencesV3(paragraph)) {
+      output.push(...splitOrthographicSentence(sentence, resolved));
+    }
+  }
+  return output;
+}
+
+export function splitOriginalSentencesV3(text: string): string[] {
+  return normalizeArticleParagraphs(text).flatMap(splitOrthographicSentencesV3);
+}
+
+export function normalizeForRoundTrip(text: string): string {
+  return splitOriginalSentencesV3(text)
+    .join(' ')
+    .replace(/\s+/gu, ' ')
+    .replace(/-\s+/gu, '-')
+    .replace(/([—–])\s+/gu, '$1')
+    .trim();
+}
+
+export function wordCount(text: string): number {
+  return text.trim() ? text.trim().split(/\s+/u).length : 0;
+}
+
+export function maxUnpunctuatedWordCount(text: string): number {
+  return maxUnpunctuatedTokens(text.trim().split(/\s+/u).filter(Boolean), 0, wordCount(text));
+}
+
+export function validateCanonicalReadAloudV3(source: string, chunks: string[]): void {
+  if (chunks.length === 0 || chunks.some((chunk) => !chunk.trim())) {
+    throw new Error('v3 分句不能为空');
+  }
+  if (normalizeForRoundTrip(chunks.join(' ')) !== normalizeForRoundTrip(source)) {
+    throw new Error('v3 分句无法无损回拼原文');
+  }
+  const originalBoundaryWordOffsets = cumulativeWordOffsets(
+    splitOriginalSentencesV3(source),
+  );
+  const chunkBoundaryWordOffsets = new Set(cumulativeWordOffsets(chunks));
+  for (const boundary of originalBoundaryWordOffsets) {
+    if (!chunkBoundaryWordOffsets.has(boundary)) {
+      throw new Error('v3 分句跨越了原文句号、问号或感叹号句界');
+    }
+  }
+  for (const chunk of chunks) {
+    if (wordCount(chunk) > HARD_MAX_WORDS) throw new Error('v3 分句超过 30 词硬上限');
+    if (maxUnpunctuatedWordCount(chunk) > HARD_MAX_UNPUNCTUATED_WORDS) {
+      throw new Error('v3 分句超过 20 词无标点硬上限');
+    }
+  }
+}
+
+function cumulativeWordOffsets(parts: string[]): number[] {
+  let total = 0;
+  const offsets: number[] = [];
+  for (const part of parts) {
+    total += wordCount(part);
+    if (total > 0) offsets.push(total);
+  }
+  return offsets;
+}
+
+function splitOrthographicSentence(
+  sentence: string,
+  options: ResolvedOptions,
+): ReadAloudChunkDetail[] {
+  const analysis = analyzeEnglishGrammarV3(sentence);
+  const tokens = analysis.tokens;
+  if (tokens.length === 0) return [];
+  if (tokens.length <= options.maxWords
+      && maxUnpunctuatedTokens(tokens.map((token) => token.raw), 0, tokens.length)
+        <= options.maxUnpunctuatedWords) {
+    return [detail(sentence.trim(), originalBoundary(tokens.length), analysis, false)];
+  }
+
+  const boundaries = buildBoundaries(analysis);
+  // Punctuation-only is a separate feasibility pass. Grammar or word cuts are
+  // not even considered while a legal punctuation solution exists.
+  const tiers: ReadonlyArray<ReadonlySet<CandidateKind>> = [
+    new Set(['strong', 'comma']),
+    new Set(['strong', 'comma', 'grammar_clause']),
+    new Set(['strong', 'comma', 'grammar_clause', 'grammar_phrase']),
+    new Set(['strong', 'comma', 'grammar_clause', 'grammar_phrase', 'emergency']),
+  ];
+  for (const allowed of tiers) {
+    const segments = findPath(sentence, analysis, boundaries, allowed, options, false);
+    if (segments) return segmentsToDetails(sentence, analysis, segments);
+  }
+  const forced = findPath(
+    sentence,
+    analysis,
+    boundaries,
+    new Set(['strong', 'comma', 'grammar_clause', 'grammar_phrase', 'emergency']),
+    options,
+    true,
+  );
+  if (forced) return segmentsToDetails(sentence, analysis, forced);
+  throw new Error('正文无法同时满足 30 词句长和 20 词无标点跨度硬上限');
+}
+
+function buildBoundaries(analysis: GrammarAnalysis): Boundary[] {
+  const grammarByPosition = new Map(
+    analysis.boundaries.map((boundary) => [boundary.position, boundary]),
+  );
+  const output: Boundary[] = [];
+  for (let position = 1; position < analysis.tokens.length; position += 1) {
+    const left = analysis.tokens[position - 1];
+    const grammar = grammarByPosition.get(position);
+    if (strongPunctuation.test(left.raw)) {
+      output.push({
+        position,
+        kind: 'strong',
+        protected: false,
+        confidence: 'high',
+        reasons: ['visible_strong_punctuation'],
+      });
+    } else if (commaPunctuation.test(left.raw) && grammar?.clauseBoundary) {
+      output.push({
+        position,
+        kind: 'comma',
+        protected: false,
+        confidence: grammar.confidence,
+        reasons: ['parser_qualified_clause_comma', ...grammar.reasons],
+      });
+    } else if (grammar?.clauseBoundary) {
+      output.push({
+        position,
+        kind: 'grammar_clause',
+        protected: false,
+        confidence: grammar.confidence,
+        reasons: grammar.reasons,
+      });
+    } else if (grammar?.phraseBoundary && !grammar.protectedByPhrase) {
+      output.push({
+        position,
+        kind: 'grammar_phrase',
+        protected: false,
+        confidence: grammar.confidence,
+        reasons: grammar.reasons,
+      });
+    } else {
+      output.push({
+        position,
+        kind: 'emergency',
+        protected: grammar?.protectedByPhrase ?? true,
+        confidence: grammar?.confidence ?? 'low',
+        reasons: grammar?.reasons ?? ['parser_boundary_missing'],
+      });
+    }
+  }
+  return output;
+}
+
+function findPath(
+  sentence: string,
+  analysis: GrammarAnalysis,
+  boundaries: Boundary[],
+  allowed: ReadonlySet<CandidateKind>,
+  options: ResolvedOptions,
+  allowProtectedEmergency: boolean,
+): Segment[] | null {
+  void sentence;
+  const tokens = analysis.tokens;
+  const byPosition = new Map(boundaries.map((boundary) => [boundary.position, boundary]));
+  const states: Array<PathState | null> = Array.from({ length: tokens.length + 1 }, () => null);
+  states[0] = {
+    score: [0, 0, 0, 0, 0, 0, 0, 0],
+    previous: -1,
+    boundary: originalBoundary(0),
+  };
+
+  for (let start = 0; start < tokens.length; start += 1) {
+    const previous = states[start];
+    if (!previous) continue;
+    for (let end = start + 1; end <= Math.min(tokens.length, start + options.maxWords); end += 1) {
+      const unpunctuated = maxUnpunctuatedTokens(
+        tokens.map((token) => token.raw),
+        start,
+        end,
+      );
+      if (unpunctuated > options.maxUnpunctuatedWords) continue;
+      const isFinal = end === tokens.length;
+      const boundary = isFinal ? originalBoundary(end) : byPosition.get(end);
+      if (!boundary) continue;
+      if (!isFinal && !allowed.has(boundary.kind)) continue;
+      if (!isFinal && boundary.protected
+          && !(allowProtectedEmergency && boundary.kind === 'emergency')) continue;
+
+      const length = end - start;
+      const increment = boundaryScore(
+        boundary,
+        isFinal,
+        length,
+        unpunctuated,
+        options,
+      );
+      const candidate: PathState = {
+        score: addScore(previous.score, increment),
+        previous: start,
+        boundary,
+      };
+      const existing = states[end];
+      if (!existing || compareScore(candidate.score, existing.score) < 0) {
+        states[end] = candidate;
+      }
+    }
+  }
+
+  if (!states[tokens.length]) return null;
+  const result: Segment[] = [];
+  let cursor = tokens.length;
+  while (cursor > 0) {
+    const state = states[cursor];
+    if (!state || state.previous < 0) return null;
+    result.push({ start: state.previous, end: cursor, boundary: state.boundary });
+    cursor = state.previous;
+  }
+  return result.reverse();
+}
+
+function boundaryScore(
+  boundary: Boundary,
+  isFinal: boolean,
+  length: number,
+  unpunctuated: number,
+  options: ResolvedOptions,
+): Score {
+  if (isFinal) {
+    const finalShortFragment = length < options.targetMinWords
+      ? (options.targetMinWords - length) ** 2
+      : 0;
+    return [
+      0,
+      0,
+      0,
+      0,
+      finalShortFragment,
+      0,
+      preferredPenalty(unpunctuated, options),
+      (length - 15) ** 2,
+    ];
+  }
+  const fallbackSeverity = boundary.kind === 'strong' || boundary.kind === 'comma'
+    ? 0
+    : boundary.kind === 'grammar_clause'
+      ? 1
+      : boundary.kind === 'grammar_phrase'
+        ? 2
+        : 3;
+  const grammarRisk = boundary.confidence === 'high'
+    ? 0
+    : boundary.confidence === 'medium'
+      ? 1
+      : 2;
+  const punctuationStrength = boundary.kind === 'strong'
+    ? 0
+    : boundary.kind === 'comma'
+      ? 1
+      : 0;
+  const shortFragment = length < options.targetMinWords
+    ? (options.targetMinWords - length) ** 2
+    : 0;
+  return [
+    boundary.protected ? 1 : 0,
+    fallbackSeverity,
+    grammarRisk,
+    punctuationStrength,
+    shortFragment,
+    1,
+    preferredPenalty(unpunctuated, options),
+    (length - 15) ** 2,
+  ];
+}
+
+function preferredPenalty(unpunctuated: number, options: ResolvedOptions): number {
+  if (unpunctuated < options.targetMinWords) {
+    return (options.targetMinWords - unpunctuated) ** 2;
+  }
+  if (unpunctuated > options.targetMaxWords) {
+    return (unpunctuated - options.targetMaxWords) ** 2;
+  }
+  return 0;
+}
+
+function segmentsToDetails(
+  sentence: string,
+  analysis: GrammarAnalysis,
+  segments: Segment[],
+): ReadAloudChunkDetail[] {
+  return segments.map((segment) => {
+    const first = analysis.tokens[segment.start];
+    const last = analysis.tokens[segment.end - 1];
+    const text = sentence.slice(first.start, last.end).trim();
+    return detail(text, segment.boundary, analysis, true);
+  });
+}
+
+function detail(
+  text: string,
+  boundary: Boundary,
+  analysis: GrammarAnalysis,
+  wasSplit: boolean,
+): ReadAloudChunkDetail {
+  const boundaryKind = publicBoundaryKind(boundary.kind);
+  const requiresAiReview = boundaryKind === 'emergency'
+    || boundaryKind === 'grammar_phrase'
+    || (boundaryKind === 'grammar_clause' && boundary.confidence !== 'high')
+    || (!analysis.healthy && boundaryKind !== 'punctuation');
+  return {
+    text,
+    wordCount: wordCount(text),
+    maxUnpunctuatedWords: maxUnpunctuatedWordCount(text),
+    boundaryKind,
+    boundaryReason: boundary.reasons.join(',') || 'original_orthographic_sentence',
+    wasSplit,
+    parserHealthy: analysis.healthy,
+    parserConfidence: analysis.confidence,
+    parserIssues: analysis.issues,
+    requiresAiReview,
+  };
+}
+
+function publicBoundaryKind(kind: CandidateKind): SplitBoundaryKind {
+  if (kind === 'strong' || kind === 'comma') return 'punctuation';
+  if (kind === 'grammar_clause') return 'grammar_clause';
+  if (kind === 'grammar_phrase') return 'grammar_phrase';
+  if (kind === 'emergency') return 'emergency';
+  return 'original_sentence';
+}
+
+function originalBoundary(position: number): Boundary {
+  return {
+    position,
+    kind: 'final',
+    protected: false,
+    confidence: 'high',
+    reasons: ['original_orthographic_sentence'],
+  };
+}
+
+function addScore(left: Score, right: Score): Score {
+  return left.map((value, index) => value + right[index]) as Score;
+}
+
+function compareScore(left: Score, right: Score): number {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+function maxUnpunctuatedTokens(
+  tokens: string[],
+  start: number,
+  end: number,
+): number {
+  let run = 0;
+  let maximum = 0;
+  for (let index = start; index < end; index += 1) {
+    run += 1;
+    maximum = Math.max(maximum, run);
+    if (visiblePause.test(tokens[index])) run = 0;
+  }
+  return maximum;
+}
+
+function normalizeArticleParagraphs(text: string): string[] {
+  const normalized = text
+    .replace(/\r\n?/gu, '\n')
+    .replace(/[‐‑‒]/gu, '-')
+    .replace(/([A-Za-z])\s+-\s+(?=[A-Za-z])/gu, '$1-')
+    .replace(/([—–])(?=[^\s"'”’])/gu, '$1 ')
+    .replace(/[ \t]+/gu, ' ')
+    .trim();
+  if (!normalized) return [];
+  const paragraphs: string[] = [];
+  let current: string[] = [];
+  const flush = () => {
+    const value = current.join(' ').replace(/\s+/gu, ' ').trim();
+    if (value && !isImportedHeadingLine(value)) paragraphs.push(value);
+    current = [];
+  };
+  for (const rawLine of normalized.split('\n')) {
+    const line = stripCjkPrefix(rawLine.trim());
+    if (!line || isImportedHeadingLine(line)) flush();
+    else current.push(line);
+  }
+  flush();
+  return paragraphs;
+}
+
+function stripCjkPrefix(line: string): string {
+  const firstLatin = line.search(/[A-Za-z"“'‘]/u);
+  if (firstLatin > 0 && /[\p{Script=Han}]/u.test(line.slice(0, firstLatin))) {
+    return line.slice(firstLatin).trim();
+  }
+  return line;
+}
+
+function isImportedHeadingLine(line: string): boolean {
+  const value = line.trim();
+  if (/^[A-Z][A-Za-z'’ -]{1,90}\s*-\s*episod(?:e)?\s+\d+\s*$/iu.test(value)) return true;
+  if (/^chapter\s+(?:[ivxlcdm]+|\d+)\s*[:：.-]?\s+.{1,90}$/iu.test(value)) return true;
+  if (/^e\d{1,3}$/iu.test(value)) return true;
+  if (/^[A-Z][A-Z '\-–—]{2,50}$/u.test(value)) return true;
+  if (/^(?:chapter|book)\s+(?:[ivxlcdm]+|\d+)\s*[:：.-]?\s*$/iu.test(value)) return true;
+  if (/^(?:chapter\s+)?\d+\s*[:：.-]\s*[^.!?]{1,90}$/iu.test(value)) return true;
+  const words = value.split(/\s+/u);
+  if (words.length <= 8 && !/[.!?]["”’)]*$/u.test(value)) {
+    const titleWords = words.filter((word) => /^[A-Z][A-Za-z'’-]*$/u.test(word));
+    if (titleWords.length >= Math.max(2, Math.ceil(words.length * 0.7))) return true;
+  }
+  return false;
+}

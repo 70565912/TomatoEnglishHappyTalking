@@ -1,0 +1,3482 @@
+{
+  "version": "read_aloud_dp_v3",
+  "source": "sentence-split-gold-v2.json",
+  "policy": "only_split_no_merge_punctuation_first_20_unpunctuated_30_total",
+  "itemCount": 243,
+  "changedItemCount": 150,
+  "items": [
+    {
+      "id": "explicit_regression:0",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "He was bowled over in an instant by the impatient and contemptuous Mole, who trotted along the side of the hedge chaffing the other rabbits as they peeped hurriedly from their holes to see what the row was about.",
+      "legacyExpectedChunks": [
+        "He was bowled over in an instant by the impatient and contemptuous Mole,",
+        "who trotted along the side of the hedge chaffing the other rabbits",
+        "as they peeped hurriedly from their holes to see what the row was about."
+      ],
+      "expectedChunks": [
+        "He was bowled over in an instant by the impatient and contemptuous Mole, who trotted along the side of the hedge chaffing the other rabbits",
+        "as they peeped hurriedly from their holes to see what the row was about."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "explicit_regression:2",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "And instead of having an uneasy conscience pricking him and whispering \"whitewash!\" he somehow could only feel how jolly it was to be the only idle dog among all these busy citizens.",
+      "legacyExpectedChunks": [
+        "And instead of having an uneasy conscience pricking him and whispering \"whitewash!\"",
+        "he somehow could only feel how jolly it was",
+        "to be the only idle dog among all these busy citizens."
+      ],
+      "expectedChunks": [
+        "And instead of having an uneasy conscience pricking him and whispering \"whitewash!\" he somehow could only feel",
+        "how jolly it was to be the only idle dog among all these busy citizens."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "explicit_regression:3",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "The sunshine struck hot on his fur, soft breezes caressed his heated brow, and after the seclusion of the cellarage he had lived in so long the carol of happy birds fell on his dulled hearing almost like a shout.",
+      "legacyExpectedChunks": [
+        "The sunshine struck hot on his fur, soft breezes caressed his heated brow,",
+        "and after the seclusion of the cellarage he had lived in so long",
+        "the carol of happy birds fell on his dulled hearing almost like a shout."
+      ],
+    "expectedChunks": [
+      "The sunshine struck hot on his fur, soft breezes caressed his heated brow,",
+      "and after the seclusion of the cellarage he had lived in so long",
+      "the carol of happy birds fell on his dulled hearing almost like a shout."
+    ],
+    "approvedChunks": [
+      [
+        "The sunshine struck hot on his fur, soft breezes caressed his heated brow,",
+        "and after the seclusion of the cellarage he had lived in so long",
+        "the carol of happy birds fell on his dulled hearing almost like a shout."
+      ],
+      [
+        "The sunshine struck hot on his fur, soft breezes caressed his heated brow, and after the seclusion of the cellarage he had lived in so long",
+        "the carol of happy birds fell on his dulled hearing almost like a shout."
+      ]
+    ],
+    "changeReason": "v3_3_review_rejects_the_unnatural_he_had_lived_in_pipe_so_long_boundary_and_restores_complete_clause_units"
+    },
+    {
+      "id": "manual_e01_e08:E01:18",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "till he reached the hedge on the further side. \"Hold up!\" said an elderly rabbit at the gap. \"Sixpence for the privilege of passing by the private road!\"",
+      "legacyExpectedChunks": [
+        "till he reached the hedge on the further side. \"Hold up!\" said an elderly rabbit at the gap. \"Sixpence for the privilege of passing by the private road!\""
+      ],
+      "expectedChunks": [
+        "till he reached the hedge on the further side.",
+        "\"Hold up!\" said an elderly rabbit at the gap.",
+        "\"Sixpence for the privilege of passing by the private road!\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E01:20",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "who trotted along the side of the hedge chaffing the other rabbits as they peeped hurriedly from their holes to see what the row",
+      "legacyExpectedChunks": [
+        "who trotted along the side of the hedge chaffing the other rabbits as they peeped hurriedly from their holes to see what the row"
+      ],
+      "expectedChunks": [
+        "who trotted along the side of the hedge chaffing the other rabbits",
+        "as they peeped hurriedly from their holes to see what the row"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E01:24",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "but, of course, it was then much too late, as is always the case. It all seemed too good to be true.",
+      "legacyExpectedChunks": [
+        "but, of course, it was then much too late, as is always the case. It all seemed too good to be true."
+      ],
+      "expectedChunks": [
+        "but, of course, it was then much too late, as is always the case.",
+        "It all seemed too good to be true."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E01:3",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "and splashes of whitewash all over his black fur, and an aching back and weary arms. Spring was moving in the air above",
+      "legacyExpectedChunks": [
+        "and splashes of whitewash all over his black fur, and an aching back and weary arms. Spring was moving in the air above"
+      ],
+    "expectedChunks": [
+      "and splashes of whitewash all over his black fur, and an aching back and weary arms.",
+      "Spring was moving in the air above"
+    ],
+    "changeReason": "v3_3_policy_review_removes_a_legacy_cross_terminal_sentence_merge"
+    },
+    {
+      "id": "manual_e01_e08:E01:4",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "and in the earth below and around him, penetrating even his dark and lowly little house with its spirit of divine discontent and longing.",
+      "legacyExpectedChunks": [
+        "and in the earth below and around him, penetrating even his dark and lowly little house with its spirit of divine discontent and longing."
+      ],
+      "expectedChunks": [
+        "and in the earth below and around him, penetrating even his dark and lowly little house with its spirit of divine discontent and longing."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E01:6",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "and \"O blow!\" and also \"Hang spring-cleaning!\" and bolted out of the house without even waiting to put on his coat.",
+      "legacyExpectedChunks": [
+        "and \"O blow!\" and also \"Hang spring-cleaning!\" and bolted out of the house without even waiting to put on his coat."
+      ],
+      "expectedChunks": [
+        "and \"O blow!\" and also \"Hang spring-cleaning!\" and bolted out of the house without even waiting to put on his coat."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E01:65",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Lean on that!\" he said. \"Now then, step lively!\" and the Mole to his surprise and rapture found himself actually seated in the stern of a real boat.",
+      "legacyExpectedChunks": [
+        "\"Lean on that!\" he said. \"Now then, step lively!\" and the Mole to his surprise and rapture found himself actually seated in the stern of a real boat."
+      ],
+      "expectedChunks": [
+        "\"Lean on that!\" he said.",
+        "\"Now then, step lively!\" and the Mole to his surprise and rapture found himself actually seated in the stern of a real boat."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E01:8",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "which answered in his case to the gravelled carriage-drive owned by animals whose residences are nearer to the sun and air.",
+      "legacyExpectedChunks": [
+        "which answered in his case to the gravelled carriage-drive owned by animals whose residences are nearer to the sun and air."
+      ],
+    "expectedChunks": [
+      "which answered in his case to the gravelled carriage-drive",
+      "owned by animals whose residences are nearer to the sun and air."
+    ],
+    "changeReason": "v3_3_policy_review_requires_a_cut_for_the_twenty_one_word_unpunctuated_span_and_uses_the_complete_reduced_relative_clause_boundary"
+    },
+    {
+      "id": "reviewed_v2:E01:22",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "till he reached the hedge on the further side. \"Hold up!\" said an elderly rabbit at the gap. \"Sixpence for the privilege of passing by the private road!\"",
+      "legacyExpectedChunks": [
+        "till he reached the hedge on the further side.",
+        "\"Hold up!\" said an elderly rabbit at the gap. \"Sixpence for the privilege of passing by the private road!\""
+      ],
+      "expectedChunks": [
+        "till he reached the hedge on the further side.",
+        "\"Hold up!\" said an elderly rabbit at the gap.",
+        "\"Sixpence for the privilege of passing by the private road!\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E01:73",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Lean on that!\" he said. \"Now then, step lively!\" and the Mole to his surprise and rapture found himself actually seated in the stern of a real boat.",
+      "legacyExpectedChunks": [
+        "\"Lean on that!\" he said. \"Now then, step lively!\"",
+        "and the Mole to his surprise and rapture found himself actually seated in the stern of a real boat."
+      ],
+      "expectedChunks": [
+        "\"Lean on that!\" he said.",
+        "\"Now then, step lively!\" and the Mole to his surprise and rapture found himself actually seated in the stern of a real boat."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E01:8",
+      "episode": "E01",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Bother!\" and \"O blow!\" and also \"Hang spring-cleaning!\" and bolted out of the house without even waiting to put on his coat.",
+      "legacyExpectedChunks": [
+        "\"Bother!\" and \"O blow!\" and also \"Hang spring-cleaning!\" and bolted out of the house without even waiting to put on his coat."
+      ],
+      "expectedChunks": [
+        "\"Bother!\" and \"O blow!\" and also \"Hang spring-cleaning!\" and bolted out of the house without even waiting to put on his coat."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E02:28",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "The Mole never heard a word he was saying. Absorbed in the new life he was entering upon, intoxicated with the sparkle,",
+      "legacyExpectedChunks": [
+        "The Mole never heard a word he was saying. Absorbed in the new life he was entering upon, intoxicated with the sparkle,"
+      ],
+      "expectedChunks": [
+        "The Mole never heard a word he was saying.",
+        "Absorbed in the new life he was entering upon, intoxicated with the sparkle,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E02:4",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "though he was quite prepared to believe it as he leant back in his seat and surveyed the cushions, the oars, the rowlocks,",
+      "legacyExpectedChunks": [
+        "though he was quite prepared to believe it as he leant back in his seat and surveyed the cushions, the oars, the rowlocks,"
+      ],
+      "expectedChunks": [
+        "though he was quite prepared to believe it as he leant back in his seat and surveyed the cushions, the oars, the rowlocks,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E02:42",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "When the floods are on in February, and my cellars and basement are brimming with drink that's no good to me,",
+      "legacyExpectedChunks": [
+        "When the floods are on in February, and my cellars and basement are brimming with drink that's no good to me,"
+      ],
+      "expectedChunks": [
+        "When the floods are on in February, and my cellars and basement are brimming with drink that's no good to me,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E02:45",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "and the rushes and weed clog the channels, and I can potter about dry shod over most of the bed of it and find fresh food to eat,",
+      "legacyExpectedChunks": [
+        "and the rushes and weed clog the channels, and I can potter about dry shod over most of the bed of it and find fresh food to eat,"
+      ],
+      "expectedChunks": [
+        "and the rushes and weed clog the channels, and I can potter about dry shod over most of the bed of it and find fresh food to eat,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E02:49",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "\"You're new to it, and of course you don't know. The bank is so crowded nowadays that many people are moving away altogether.",
+      "legacyExpectedChunks": [
+        "\"You're new to it, and of course you don't know. The bank is so crowded nowadays that many people are moving away altogether."
+      ],
+      "expectedChunks": [
+        "\"You're new to it, and of course you don't know.",
+        "The bank is so crowded nowadays that many people are moving away altogether."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E02:53",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "\"What lies over there?\" asked the Mole, waving a paw towards a background of woodland that darkly framed the water-meadows on one side of the river.",
+      "legacyExpectedChunks": [
+        "\"What lies over there?\" asked the Mole, waving a paw towards a background of woodland that darkly framed the water-meadows on one side of the river."
+      ],
+      "expectedChunks": [
+        "\"What lies over there?\" asked the Mole, waving a paw towards a background of woodland that darkly framed the water-meadows on one side of the river."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E02:59",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "Dear old Badger! Nobody interferes with him. They'd better not,\" he added significantly. \"Why, who should interfere with him?\" asked the Mole.",
+      "legacyExpectedChunks": [
+        "Dear old Badger! Nobody interferes with him. They'd better not,\" he added significantly. \"Why, who should interfere with him?\" asked the Mole."
+      ],
+      "expectedChunks": [
+        "Dear old Badger!",
+        "Nobody interferes with him.",
+        "They'd better not,\" he added significantly.",
+        "\"Why, who should interfere with him?\" asked the Mole."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E02:7",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Believe me, my young friend, there is nothing-absolute nothing-half so much worth doing as simply messing about in boats. Simply messing,\" he went on dreamily:",
+      "legacyExpectedChunks": [
+        "\"Believe me, my young friend, there is nothing-absolute nothing-half so much worth doing as simply messing about in boats. Simply messing,\" he went on dreamily:"
+      ],
+      "expectedChunks": [
+        "\"Believe me, my young friend, there is nothing-absolute nothing-half so much worth doing as simply messing about in boats.",
+        "Simply messing,\" he went on dreamily:"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E02:47",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "and the rushes and weed clog the channels, and I can potter about dry shod over most of the bed of it and find fresh food to eat,",
+      "legacyExpectedChunks": [
+        "and the rushes and weed clog the channels,",
+        "and I can potter about dry shod over most of the bed of it and find fresh food to eat,"
+      ],
+      "expectedChunks": [
+        "and the rushes and weed clog the channels, and I can potter about dry shod over most of the bed of it and find fresh food to eat,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E02:56",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "\"What lies over there?\" asked the Mole, waving a paw towards a background of woodland that darkly framed the water-meadows on one side of the river.",
+      "legacyExpectedChunks": [
+        "\"What lies over there?\" asked the Mole,",
+        "waving a paw towards a background of woodland that darkly framed the water-meadows on one side of the river."
+      ],
+      "expectedChunks": [
+        "\"What lies over there?\" asked the Mole, waving a paw towards a background of woodland that darkly framed the water-meadows on one side of the river."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E02:64",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "Dear old Badger! Nobody interferes with him. They'd better not,\" he added significantly. \"Why, who should interfere with him?\" asked the Mole.",
+      "legacyExpectedChunks": [
+        "Dear old Badger! Nobody interferes with him. They'd better not,\" he added significantly.",
+        "\"Why, who should interfere with him?\" asked the Mole."
+      ],
+      "expectedChunks": [
+        "Dear old Badger!",
+        "Nobody interferes with him.",
+        "They'd better not,\" he added significantly.",
+        "\"Why, who should interfere with him?\" asked the Mole."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E02:7",
+      "episode": "E02",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Believe me, my young friend, there is nothing-absolute nothing-half so much worth doing as simply messing about in boats. Simply messing,\" he went on dreamily:",
+      "legacyExpectedChunks": [
+        "\"Believe me, my young friend, there is nothing-absolute nothing-half so much worth doing as simply messing about in boats.",
+        "Simply messing,\" he went on dreamily:"
+      ],
+      "expectedChunks": [
+        "\"Believe me, my young friend, there is nothing-absolute nothing-half so much worth doing as simply messing about in boats.",
+        "Simply messing,\" he went on dreamily:"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E03:13",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "and the Mole was indeed very glad to obey, for he had started his spring-cleaning at a very early hour that morning, as people will do,",
+      "legacyExpectedChunks": [
+        "and the Mole was indeed very glad to obey,",
+        "for he had started his spring-cleaning at a very early hour that morning, as people will do,"
+      ],
+      "expectedChunks": [
+        "and the Mole was indeed very glad to obey, for he had started his spring-cleaning at a very early hour that morning, as people will do,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E03:14",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "and had not paused for bite or sup; and he had been through a very great deal since that distant time which now seemed so many days ago.",
+      "legacyExpectedChunks": [
+        "and had not paused for bite or sup;",
+        "and he had been through a very great deal since that distant time which now seemed so many days ago."
+      ],
+      "expectedChunks": [
+        "and had not paused for bite or sup; and he had been through a very great deal since that distant time which now seemed so many days ago."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E03:17",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "\"I am looking,\" said the Mole, \"at a streak of bubbles that I see travelling along the surface of the water.",
+      "legacyExpectedChunks": [
+        "\"I am looking,\" said the Mole, \"at a streak of bubbles that I see travelling along the surface of the water."
+      ],
+      "expectedChunks": [
+        "\"I am looking,\" said the Mole, \"at a streak of bubbles that I see travelling along the surface of the water."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E03:26",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "backwater to try and get a moment's peace, and then stumble upon you fellows!-At least-I beg pardon-I don't exactly mean that, you know.\"",
+      "legacyExpectedChunks": [
+        "backwater to try and get a moment's peace,",
+        "and then stumble upon you fellows!-At least-I beg pardon-I don't exactly mean that, you know.\""
+      ],
+      "expectedChunks": [
+        "backwater to try and get a moment's peace, and then stumble upon you fellows!",
+        "-At least-I beg pardon-I don't exactly mean that, you know.\""
+      ],
+      "changeReason": "v3_3_policy_review_keeps_the_emphatic_terminal_boundary_before_the_following_capitalized_dash_clause"
+    },
+    {
+      "id": "manual_e01_e08:E03:3",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "that held up in its turn a grey-gabled mill-house, filled the air with a soothing murmur of sound, dull and smothery,",
+      "legacyExpectedChunks": [
+        "that held up in its turn a grey-gabled mill-house,",
+        "filled the air with a soothing murmur of sound, dull and smothery,"
+      ],
+      "expectedChunks": [
+        "that held up in its turn a grey-gabled mill-house, filled the air with a soothing murmur of sound, dull and smothery,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E03:35",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Then he tired of that and took to punting. Nothing would please him but to punt all day and every day, and a nice mess he made of it.",
+      "legacyExpectedChunks": [
+        "\"Then he tired of that and took to punting.",
+        "Nothing would please him but to punt all day and every day, and a nice mess he made of it."
+      ],
+      "expectedChunks": [
+        "\"Then he tired of that and took to punting.",
+        "Nothing would please him but to punt all day and every day, and a nice mess he made of it."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E03:46",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "It happened this way. Toad ...\" An errant May-fly swerved unsteadily athwart the current in the intoxicated fashion affected by young bloods of May-flies seeing life. A swirl of water",
+      "legacyExpectedChunks": [
+        "It happened this way. Toad ...\"",
+        "An errant May-fly swerved unsteadily athwart the current in the intoxicated fashion affected by young bloods of May-flies seeing life. A swirl of water"
+      ],
+      "expectedChunks": [
+        "It happened this way.",
+        "Toad ...\"",
+        "An errant May-fly swerved unsteadily athwart the current in the intoxicated fashion affected by young bloods of May-flies seeing life.",
+        "A swirl of water"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E03:59",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "when he had got the basket packed and strapped up tightly he saw a plate staring up at him from the grass,",
+      "legacyExpectedChunks": [
+        "when he had got the basket packed and strapped up tightly he saw a plate staring up at him from the grass,"
+      ],
+      "expectedChunks": [
+        "when he had got the basket packed and strapped up tightly",
+        "he saw a plate staring up at him from the grass,"
+      ],
+      "changeReason": "v3_3_policy_review_keeps_packed_and_strapped_together_and_splits_at_the_complete_fronted_clause_boundary"
+    },
+    {
+      "id": "manual_e01_e08:E03:60",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "and when the job had been done again the Rat pointed out a fork which anybody ought to have seen, and last of all,",
+      "legacyExpectedChunks": [
+        "and when the job had been done again the Rat pointed out a fork which anybody ought to have seen, and last of all,"
+      ],
+      "expectedChunks": [
+        "and when the job had been done again the Rat pointed out a fork which anybody ought to have seen, and last of all,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E03:61",
+      "episode": "E03",
+      "reviewStatus": "human_reviewed",
+      "source": "and the Mole recollected that animal-etiquette forbade any sort of comment on the sudden disappearance of one's friends at any moment,",
+      "legacyExpectedChunks": [
+        "and the Mole recollected that animal-etiquette forbade any sort of comment on the sudden disappearance of one's friends at any moment,"
+      ],
+      "expectedChunks": [
+        "and the Mole recollected that animal-etiquette",
+        "forbade any sort of comment on the sudden disappearance of one's friends at any moment,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E04:30",
+      "episode": "E04",
+      "reviewStatus": "human_reviewed",
+      "source": "and wrung some of the wet out of him, he said, \"Now then, old fellow! Trot up and down the towing-path as hard as you can,",
+      "legacyExpectedChunks": [
+        "and wrung some of the wet out of him, he said,",
+        "\"Now then, old fellow! Trot up and down the towing-path as hard as you can,"
+      ],
+      "expectedChunks": [
+        "and wrung some of the wet out of him, he said, \"Now then, old fellow!",
+        "Trot up and down the towing-path as hard as you can,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E04:50",
+      "episode": "E04",
+      "reviewStatus": "human_reviewed",
+      "source": "that he could find no voice to answer him; and he had to brush away a tear or two with the back of his paw.",
+      "legacyExpectedChunks": [
+        "that he could find no voice to answer him;",
+        "and he had to brush away a tear or two with the back of his paw."
+      ],
+      "expectedChunks": [
+        "that he could find no voice to answer him; and he had to brush away a tear or two with the back of his paw."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E04:52",
+      "episode": "E04",
+      "reviewStatus": "human_reviewed",
+      "source": "and he was even able to give some straight back-talk to a couple of moorhens who were sniggering to each other about his bedraggled appearance.",
+      "legacyExpectedChunks": [
+        "and he was even able to give some straight back-talk to a couple of moorhens",
+        "who were sniggering to each other about his bedraggled appearance."
+      ],
+      "expectedChunks": [
+        "and he was even able to give some straight back-talk to a couple of moorhens",
+        "who were sniggering to each other about his bedraggled appearance."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E04:61",
+      "episode": "E04",
+      "reviewStatus": "human_reviewed",
+      "source": "Supper was a most cheerful meal; but very shortly afterwards a terribly sleepy Mole had to be escorted upstairs by his considerate host,",
+      "legacyExpectedChunks": [
+        "Supper was a most cheerful meal;",
+        "but very shortly afterwards a terribly sleepy Mole had to be escorted upstairs by his considerate host,"
+      ],
+      "expectedChunks": [
+        "Supper was a most cheerful meal; but very shortly afterwards a terribly sleepy Mole had to be escorted upstairs by his considerate host,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E04:63",
+      "episode": "E04",
+      "reviewStatus": "human_reviewed",
+      "source": "knowing that his new-found friend, the River, was lapping the sill of his window. This day was only the first of many similar ones for the emancipated Mole,",
+      "legacyExpectedChunks": [
+        "knowing that his new-found friend, the River, was lapping the sill of his window.",
+        "This day was only the first of many similar ones for the emancipated Mole,"
+      ],
+      "expectedChunks": [
+        "knowing that his new-found friend, the River, was lapping the sill of his window.",
+        "This day was only the first of many similar ones for the emancipated Mole,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E04:8",
+      "episode": "E04",
+      "reviewStatus": "human_reviewed",
+      "source": "sculling so strongly and so easily along, and his pride began to whisper that he could do it every bit as well.",
+      "legacyExpectedChunks": [
+        "sculling so strongly and so easily along, and his pride began to whisper that he could do it every bit as well."
+      ],
+      "expectedChunks": [
+        "sculling so strongly and so easily along, and his pride began to whisper that he could do it every bit as well."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E05:37",
+      "episode": "E05",
+      "reviewStatus": "human_reviewed",
+      "source": "with well-kept lawns reaching down to the water's edge. \"There's Toad Hall,\" said the Rat; \"and that creek on the left, where the notice-board says, 'Private.",
+      "legacyExpectedChunks": [
+        "with well-kept lawns reaching down to the water's edge.",
+        "\"There's Toad Hall,\" said the Rat; \"and that creek on the left, where the notice-board says, 'Private."
+      ],
+      "expectedChunks": [
+        "with well-kept lawns reaching down to the water's edge.",
+        "\"There's Toad Hall,\" said the Rat; \"and that creek on the left, where the notice-board says, 'Private."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E05:70",
+      "episode": "E05",
+      "reviewStatus": "human_reviewed",
+      "source": "\"O, pooh! boating!\" interrupted the Toad, in great disgust. \"Silly boyish amusement. I've given that up long ago. Sheer waste of time, that's what it is.",
+      "legacyExpectedChunks": [
+        "\"O, pooh! boating!\" interrupted the Toad, in great disgust.",
+        "\"Silly boyish amusement. I've given that up long ago. Sheer waste of time, that's what it is."
+      ],
+      "expectedChunks": [
+        "\"O, pooh! boating!\" interrupted the Toad, in great disgust.",
+        "\"Silly boyish amusement.",
+        "I've given that up long ago.",
+        "Sheer waste of time, that's what it is."
+      ],
+      "changeReason": "v3_3_policy_review_preserves_the_terminal_boundary_between_the_attribution_sentence_and_the_next_quoted_sentence"
+    },
+    {
+      "id": "manual_e01_e08:E05:9",
+      "episode": "E05",
+      "reviewStatus": "human_reviewed",
+      "source": "when your head is under water. At last they implored him to go away and attend to his own affairs and leave them to mind theirs.",
+      "legacyExpectedChunks": [
+        "when your head is under water.",
+        "At last they implored him to go away and attend to his own affairs and leave them to mind theirs."
+      ],
+      "expectedChunks": [
+        "when your head is under water.",
+        "At last they implored him to go away and attend to his own affairs and leave them to mind theirs."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "explicit_regression:1",
+      "episode": "E06",
+      "reviewStatus": "human_reviewed",
+      "source": "During luncheon-which was excellent, of course, as everything at Toad Hall always was-the Toad simply let himself go. Disregarding the Rat, he proceeded to play upon the inexperienced Mole as on a harp. Naturally a voluble animal, and always mastered by his imagination, he painted the prospects of the trip and the joys of the open life and the roadside in such glowing colours that the Mole could hardly sit in his chair for excitement.",
+      "legacyExpectedChunks": [
+        "During luncheon-which was excellent, of course, as everything at Toad Hall always was-the Toad simply let himself go.",
+        "Disregarding the Rat, he proceeded to play upon the inexperienced Mole as on a harp.",
+        "Naturally a voluble animal, and always mastered by his imagination,",
+        "he painted the prospects of the trip and the joys of the open life",
+        "and the roadside in such glowing colours that the Mole could hardly sit in his chair for excitement."
+      ],
+      "expectedChunks": [
+        "During luncheon-which was excellent, of course, as everything at Toad Hall always was-the Toad simply let himself go.",
+        "Disregarding the Rat, he proceeded to play upon the inexperienced Mole as on a harp.",
+        "Naturally a voluble animal, and always mastered by his imagination, he painted the prospects of the trip and the joys of the open life",
+        "and the roadside in such glowing colours that the Mole could hardly sit in his chair for excitement."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E06:11",
+      "episode": "E06",
+      "reviewStatus": "human_reviewed",
+      "source": "and into the interior of the caravan. The Rat only snorted and thrust his hands deep into his pockets, remaining where he was.",
+      "legacyExpectedChunks": [
+        "and into the interior of the caravan.",
+        "The Rat only snorted and thrust his hands deep into his pockets, remaining where he was."
+      ],
+      "expectedChunks": [
+        "and into the interior of the caravan.",
+        "The Rat only snorted and thrust his hands deep into his pockets, remaining where he was."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E06:45",
+      "episode": "E06",
+      "reviewStatus": "human_reviewed",
+      "source": "he painted the prospects of the trip and the joys of the open life and the roadside in such glowing colours that the Mole",
+      "legacyExpectedChunks": [
+        "he painted the prospects of the trip",
+        "and the joys of the open life",
+        "and the roadside in such glowing colours that the Mole"
+      ],
+      "expectedChunks": [
+        "he painted the prospects of the trip and the joys of the open life",
+        "and the roadside in such glowing colours that the Mole"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E06:46",
+      "episode": "E06",
+      "reviewStatus": "human_reviewed",
+      "source": "could hardly sit in his chair for excitement. Somehow, it soon seemed taken for granted by all three of them that the trip was a settled thing;",
+      "legacyExpectedChunks": [
+        "could hardly sit in his chair for excitement.",
+        "Somehow, it soon seemed taken for granted by all three of them that the trip was a settled thing;"
+      ],
+      "expectedChunks": [
+        "could hardly sit in his chair for excitement.",
+        "Somehow, it soon seemed taken for granted by all three of them that the trip was a settled thing;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E06:65",
+      "episode": "E06",
+      "reviewStatus": "human_reviewed",
+      "source": "turned the horse loose to graze, and ate their simple supper sitting on the grass by the side of the cart.",
+      "legacyExpectedChunks": [
+        "turned the horse loose to graze, and ate their simple supper sitting on the grass by the side of the cart."
+      ],
+      "expectedChunks": [
+        "turned the horse loose to graze, and ate their simple supper sitting on the grass by the side of the cart."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E07:12",
+      "episode": "E07",
+      "reviewStatus": "human_reviewed",
+      "source": "and camped, as before, on a common, only this time the two guests took care that Toad should do his fair share of work.",
+      "legacyExpectedChunks": [
+        "and camped, as before, on a common,",
+        "only this time the two guests took care that Toad should do his fair share of work."
+      ],
+      "expectedChunks": [
+        "and camped, as before, on a common, only this time the two guests took care that Toad should do his fair share of work."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E07:22",
+      "episode": "E07",
+      "reviewStatus": "human_reviewed",
+      "source": "and nobody considered him in the least; the Toad and the Water Rat walking behind the cart talking together-at least Toad was talking,",
+      "legacyExpectedChunks": [
+        "and nobody considered him in the least;",
+        "the Toad and the Water Rat walking behind the cart talking together-at least Toad was talking,"
+      ],
+      "expectedChunks": [
+        "and nobody considered him in the least; the Toad and the Water Rat walking behind the cart talking together-at least Toad was talking,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E07:23",
+      "episode": "E07",
+      "reviewStatus": "human_reviewed",
+      "source": "and Rat was saying at intervals, \"Yes, precisely; and what did you say to him?\" -and thinking all the time of something very different,",
+      "legacyExpectedChunks": [
+        "and Rat was saying at intervals, \"Yes, precisely; and what did you say to him?\"",
+        "-and thinking all the time of something very different,"
+      ],
+      "expectedChunks": [
+        "and Rat was saying at intervals, \"Yes, precisely; and what did you say to him?\" -and thinking all the time of something very different,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E07:46",
+      "episode": "E07",
+      "reviewStatus": "human_reviewed",
+      "source": "and for the moment he was the skipper of the canary-coloured vessel driven on a shoal by the reckless jockeying of rival mariners,",
+      "legacyExpectedChunks": [
+        "and for the moment he was the skipper of the canary-coloured vessel driven on a shoal by the reckless jockeying of rival mariners,"
+      ],
+      "expectedChunks": [
+        "and for the moment he was the skipper of the canary-coloured vessel",
+        "driven on a shoal by the reckless jockeying of rival mariners,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E07:47",
+      "episode": "E07",
+      "reviewStatus": "human_reviewed",
+      "source": "and he was trying to recollect all the fine and biting things he used to say to masters of steam-launches when their wash,",
+      "legacyExpectedChunks": [
+        "and he was trying to recollect all the fine and biting things he used to say to masters of steam-launches when their wash,"
+      ],
+      "expectedChunks": [
+        "and he was trying to recollect all the fine and",
+        "biting things he used to say to masters of steam-launches when their wash,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E08:12",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "quite useless for all practical purposes. Never mind him. Let's go and see what there is to be done about the cart.\"",
+      "legacyExpectedChunks": [
+        "quite useless for all practical purposes.",
+        "Never mind him. Let's go and see what there is to be done about the cart.\""
+      ],
+      "expectedChunks": [
+        "quite useless for all practical purposes.",
+        "Never mind him.",
+        "Let's go and see what there is to be done about the cart.\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E08:15",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "and the missing wheel was shattered into pieces. The Rat knotted the horse's reins over his back and took him by the head,",
+      "legacyExpectedChunks": [
+        "and the missing wheel was shattered into pieces.",
+        "The Rat knotted the horse's reins over his back and took him by the head,"
+      ],
+      "expectedChunks": [
+        "and the missing wheel was shattered into pieces.",
+        "The Rat knotted the horse's reins over his back and took him by the head,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E08:18",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "and we shall just have to walk it. The sooner we make a start the better.\" \"But what about Toad?\" asked the Mole anxiously, as they set off together.",
+      "legacyExpectedChunks": [
+        "and we shall just have to walk it.",
+        "The sooner we make a start the better.\"",
+        "\"But what about Toad?\" asked the Mole anxiously, as they set off together."
+      ],
+      "expectedChunks": [
+        "and we shall just have to walk it.",
+        "The sooner we make a start the better.\"",
+        "\"But what about Toad?\" asked the Mole anxiously, as they set off together."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E08:19",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "\"We can't leave him here, sitting in the middle of the road by himself, in the distracted state he's in! It's not safe.",
+      "legacyExpectedChunks": [
+        "\"We can't leave him here,",
+        "sitting in the middle of the road by himself,",
+        "in the distracted state he's in! It's not safe."
+      ],
+      "expectedChunks": [
+        "\"We can't leave him here, sitting in the middle of the road by himself, in the distracted state he's in!",
+        "It's not safe."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E08:23",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "still breathing short and staring into vacancy. \"Now, look here, Toad!\" said the Rat sharply: \"as soon as we get to the town,",
+      "legacyExpectedChunks": [
+        "still breathing short and staring into vacancy.",
+        "\"Now, look here, Toad!\" said the Rat sharply: \"as soon as we get to the town,"
+      ],
+      "expectedChunks": [
+        "still breathing short and staring into vacancy.",
+        "\"Now, look here, Toad!\" said the Rat sharply: \"as soon as we get to the town,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E08:24",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "you'll have to go straight to the police-station and see if they know anything about that motor-car and who it belongs to, and lodge a complaint against it.",
+      "legacyExpectedChunks": [
+        "you'll have to go straight to the police-station and see if they know anything about that motor-car and who it belongs to,",
+        "and lodge a complaint against it."
+      ],
+      "expectedChunks": [
+        "you'll have to go straight to the police-station and see if they know",
+        "anything about that motor-car and who it belongs to, and lodge a complaint against it."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E08:25",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "And then you'll have to go to a blacksmith's or a wheelwright's and arrange for the cart to be fetched and mended and put to rights.",
+      "legacyExpectedChunks": [
+        "And then you'll have to go to a blacksmith's or a wheelwright's",
+        "and arrange for the cart to be fetched and mended and put to rights."
+      ],
+      "expectedChunks": [
+        "And then you'll have to go to a blacksmith's or a wheelwright's",
+        "and arrange for the cart to be fetched and mended and put to rights."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "manual_e01_e08:E08:27",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "Meanwhile, the Mole and I will go to an inn and find comfortable rooms where we can stay till the cart's ready, and till your nerves have recovered their shock.\"",
+      "legacyExpectedChunks": [
+        "Meanwhile, the Mole and I will go to an inn and find comfortable rooms where we can stay till the cart's ready,",
+        "and till your nerves have recovered their shock.\""
+      ],
+      "expectedChunks": [
+        "Meanwhile, the Mole and I will go to an inn and find comfortable rooms",
+        "where we can stay till the cart's ready, and till your nerves have recovered their shock.\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E08:28",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Police-station! Complaint!\" murmured Toad dreamily. \"Me complain of that beautiful, that heavenly vision that has been vouchsafed me! Mend the cart!",
+      "legacyExpectedChunks": [
+        "\"Police-station! Complaint!\" murmured Toad dreamily.",
+        "\"Me complain of that beautiful, that heavenly vision that has been vouchsafed me! Mend the cart!"
+      ],
+      "expectedChunks": [
+        "\"Police-station!",
+        "Complaint!\" murmured Toad dreamily.",
+        "\"Me complain of that beautiful, that heavenly vision that has been vouchsafed me!",
+        "Mend the cart!"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E08:42",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "They then left the horse at an inn stable, and gave what directions they could about the cart and its contents.",
+      "legacyExpectedChunks": [
+        "They then left the horse at an inn stable,",
+        "and gave what directions they could about the cart and its contents."
+      ],
+      "expectedChunks": [
+        "They then left the horse at an inn stable, and gave what directions they could about the cart and its contents."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "manual_e01_e08:E08:46",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "sculled down the river home, and at a very late hour sat down to supper in their own cosy riverside parlour,",
+      "legacyExpectedChunks": [
+        "sculled down the river home,",
+        "and at a very late hour sat down to supper in their own cosy riverside parlour,"
+      ],
+      "expectedChunks": [
+        "sculled down the river home, and at a very late hour sat down to supper in their own cosy riverside parlour,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E08:12",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "He'll continue like that for days now, like an animal walking in a happy dream, quite useless for all practical purposes.",
+      "legacyExpectedChunks": [
+        "He'll continue like that for days now, like an animal walking in a happy dream, quite useless for all practical purposes."
+      ],
+      "expectedChunks": [
+        "He'll continue like that for days now, like an animal walking in a happy dream, quite useless for all practical purposes."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E08:14",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "A careful inspection showed them that, even if they succeeded in righting it by themselves, the cart would travel no longer.",
+      "legacyExpectedChunks": [
+        "A careful inspection showed them that, even if they succeeded in righting it by themselves, the cart would travel no longer."
+      ],
+      "expectedChunks": [
+        "A careful inspection showed them that, even if they succeeded in righting it by themselves, the cart would travel no longer."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E08:30",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "you'll have to go straight to the police-station and see if they know anything about that motor-car and who it belongs to,",
+      "legacyExpectedChunks": [
+        "you'll have to go straight to the police-station and see if they know anything about that motor-car and who it belongs to,"
+      ],
+      "expectedChunks": [
+        "you'll have to go straight to the police-station and see",
+        "if they know anything about that motor-car and who it belongs to,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E08:35",
+      "episode": "E08",
+      "reviewStatus": "human_reviewed",
+      "source": "Meanwhile, the Mole and I will go to an inn and find comfortable rooms where we can stay till the cart's ready,",
+      "legacyExpectedChunks": [
+        "Meanwhile, the Mole and I will go to an inn and find comfortable rooms where we can stay till the cart's ready,"
+      ],
+      "expectedChunks": [
+        "Meanwhile, the Mole and I will go to an inn",
+        "and find comfortable rooms where we can stay till the cart's ready,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E09:33",
+      "episode": "E09",
+      "reviewStatus": "human_reviewed",
+      "source": "Purple loosestrife arrived early, shaking luxuriant tangled locks along the edge of the mirror whence its own face laughed back at it.",
+      "legacyExpectedChunks": [
+        "Purple loosestrife arrived early, shaking luxuriant tangled locks along the edge of the mirror whence its own face laughed back at it."
+      ],
+      "expectedChunks": [
+        "Purple loosestrife arrived early, shaking luxuriant tangled locks along the edge of the mirror whence its own face laughed back at it."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E09:0",
+      "episode": "E09",
+      "reviewStatus": "reviewed_reference",
+      "source": "and the swollen river raced past outside their windows with a speed that mocked at boating of any sort or kind,",
+      "legacyExpectedChunks": [
+        "and the swollen river raced past outside their windows with a speed that mocked at boating of any sort or kind,"
+      ],
+      "expectedChunks": [
+        "and the swollen river raced past outside their windows with a",
+        "speed that mocked at boating of any sort or kind,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E09:0",
+      "episode": "E09",
+      "reviewStatus": "reviewed_reference",
+      "source": "he formed the resolution to go out by himself and explore the Wild Wood, and perhaps strike up an acquaintance with Mr. Badger.",
+      "legacyExpectedChunks": [
+        "he formed the resolution to go out by himself and explore the Wild Wood,",
+        "and perhaps strike up an acquaintance with Mr. Badger."
+      ],
+      "expectedChunks": [
+        "he formed the resolution to go out by himself and explore the Wild Wood, and perhaps strike up an acquaintance with Mr. Badger."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E09:0",
+      "episode": "E09",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"It's all right,\" the Rat would say. \"Badger'll turn up some day or other-he's always turning up-and then I'll introduce you. The best of fellows!",
+      "legacyExpectedChunks": [
+        "\"It's all right,\" the Rat would say.",
+        "\"Badger'll turn up some day or other-he's always turning up-and then I'll introduce you. The best of fellows!"
+      ],
+      "expectedChunks": [
+        "\"It's all right,\" the Rat would say.",
+        "\"Badger'll turn up some day or other-he's always turning up-and then I'll introduce you.",
+        "The best of fellows!"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E09:2",
+      "episode": "E09",
+      "reviewStatus": "reviewed_reference",
+      "source": "and so one afternoon, when the Rat in his arm-chair before the blaze was alternately dozing and trying over rhymes that wouldn't fit,",
+      "legacyExpectedChunks": [
+        "and so one afternoon, when the Rat in his arm-chair",
+        "before the blaze was alternately dozing and trying over rhymes that wouldn't fit,"
+      ],
+      "expectedChunks": [
+        "and so one afternoon, when the Rat in his arm-chair before the blaze was alternately dozing and trying over rhymes that wouldn't fit,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E10:27",
+      "episode": "E10",
+      "reviewStatus": "human_reviewed",
+      "source": "He quickened his pace, telling himself cheerfully not to begin imagining things or there would be simply no end to it.",
+      "legacyExpectedChunks": [
+        "He quickened his pace, telling himself cheerfully not to begin imagining things or there would be simply no end to it."
+      ],
+      "expectedChunks": [
+        "He quickened his pace, telling himself cheerfully not to begin imagining things or there would be simply no end to it."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E10:0",
+      "episode": "E10",
+      "reviewStatus": "reviewed_reference",
+      "source": "and so intimately into the insides of things as on that winter day when Nature was deep in her annual slumber and seemed to have kicked the clothes off.",
+      "legacyExpectedChunks": [
+        "and so intimately into the insides of things as on that winter day when Nature was deep in her annual slumber and seemed to have kicked the clothes off."
+      ],
+      "expectedChunks": [
+        "and so intimately into the insides of things as on that winter day",
+        "when Nature was deep in her annual slumber and seemed to have kicked the clothes off."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E10:1",
+      "episode": "E10",
+      "reviewStatus": "reviewed_reference",
+      "source": "yes!-no!-yes! certainly a little, narrow face, with hard eyes, had flashed up for an instant from a hole, and was gone.",
+      "legacyExpectedChunks": [
+        "yes!-no!-yes! certainly a little, narrow face, with hard eyes, had flashed up for an instant from a hole, and was gone."
+      ],
+      "expectedChunks": [
+        "yes!-no!-yes! certainly a little, narrow face, with hard eyes, had flashed up for an instant from a hole, and was gone."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E10:1",
+      "episode": "E10",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Get out of this, you fool, get out!\" the Mole heard him mutter as he swung round a stump and disappeared down a friendly burrow.",
+      "legacyExpectedChunks": [
+        "\"Get out of this, you fool, get out!\"",
+        "the Mole heard him mutter as he swung round a stump and disappeared down a friendly burrow."
+      ],
+      "expectedChunks": [
+        "\"Get out of this, you fool, get out!\" the Mole heard him mutter as he swung round a stump and disappeared down a friendly burrow."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E11:0",
+      "episode": "E11",
+      "reviewStatus": "reviewed_reference",
+      "source": "died away and ceased, and all was very still. He made his way manfully through the length of the wood, to its furthest edge;",
+      "legacyExpectedChunks": [
+        "died away and ceased, and all was very still.",
+        "He made his way manfully through the length of the wood, to its furthest edge;"
+      ],
+      "expectedChunks": [
+        "died away and ceased, and all was very still.",
+        "He made his way manfully through the length of the wood, to its furthest edge;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E11:2",
+      "episode": "E11",
+      "reviewStatus": "reviewed_reference",
+      "source": "pored over them for a minute, and then looked round for the Mole to ask him if he knew a good rhyme for something or other.",
+      "legacyExpectedChunks": [
+        "pored over them for a minute,",
+        "and then looked round for the Mole to ask him if he knew a good rhyme for something or other."
+      ],
+      "expectedChunks": [
+        "pored over them for a minute, and then looked round for the Mole to ask him if he knew a good rhyme for something or other."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E11:2",
+      "episode": "E11",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Ratty! Is that really you?\" The Rat crept into the hollow, and there he found the Mole, exhausted and still trembling.",
+      "legacyExpectedChunks": [
+        "\"Ratty! Is that really you?\"",
+        "The Rat crept into the hollow, and there he found the Mole, exhausted and still trembling."
+      ],
+      "expectedChunks": [
+        "\"Ratty!",
+        "Is that really you?\"",
+        "The Rat crept into the hollow, and there he found the Mole, exhausted and still trembling."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E11:3",
+      "episode": "E11",
+      "reviewStatus": "reviewed_reference",
+      "source": "Guiding himself by the sound, he made his way through the gathering darkness to the foot of an old beech tree,",
+      "legacyExpectedChunks": [
+        "Guiding himself by the sound,",
+        "he made his way through the gathering darkness to the foot of an old beech tree,"
+      ],
+      "expectedChunks": [
+        "Guiding himself by the sound, he made his way through the gathering darkness to the foot of an old beech tree,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E12:21",
+      "episode": "E12",
+      "reviewStatus": "human_reviewed",
+      "source": "or paths with a familiar turn in them, in the monotony of white space and black tree-trunks that refused to vary.",
+      "legacyExpectedChunks": [
+        "or paths with a familiar turn in them, in the monotony of white space and black tree-trunks that refused to vary."
+      ],
+      "expectedChunks": [
+        "or paths with a familiar turn in them, in the monotony of white space and black tree-trunks that refused to vary."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E12:1",
+      "episode": "E12",
+      "reviewStatus": "reviewed_reference",
+      "source": "where they hunted about for a cave or some corner that was dry and a protection from the keen wind and the whirling snow.",
+      "legacyExpectedChunks": [
+        "where they hunted about for a cave or some corner that was dry and a protection from the keen wind and the whirling snow."
+      ],
+      "expectedChunks": [
+        "where they hunted about for a cave or some corner that was dry",
+        "and a protection from the keen wind and the whirling snow."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E12:3",
+      "episode": "E12",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"That was never done by a branch or a stump. Looks as if it was made by a sharp edge of something in metal. Funny!\"",
+      "legacyExpectedChunks": [
+        "\"That was never done by a branch or a stump.",
+        "Looks as if it was made by a sharp edge of something in metal. Funny!\""
+      ],
+      "expectedChunks": [
+        "\"That was never done by a branch or a stump.",
+        "Looks as if it was made by a sharp edge of something in metal.",
+        "Funny!\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E13:4",
+      "episode": "E13",
+      "reviewStatus": "reviewed_reference",
+      "source": "Hard at it went the two animals, till at last the result of their labours stood full in view of the astonished and hitherto incredulous Mole.",
+      "legacyExpectedChunks": [
+        "Hard at it went the two animals, till at last the result of their labours stood full in view of the astonished and hitherto incredulous Mole."
+      ],
+      "expectedChunks": [
+        "Hard at it went the two animals, till at last the result of their labours stood full in view of the astonished and hitherto incredulous Mole."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E13:4",
+      "episode": "E13",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Here, stop arguing and come and scrape!\" And he set to work again and made the snow fly in all directions around him.",
+      "legacyExpectedChunks": [
+        "\"Here, stop arguing and come and scrape!\"",
+        "And he set to work again and made the snow fly in all directions around him."
+      ],
+      "expectedChunks": [
+        "\"Here, stop arguing and come and scrape!\"",
+        "And he set to work again and made the snow fly in all directions around him."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E13:5",
+      "episode": "E13",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"It simply means that some very careless and forgetful person has left his door-scraper lying about in the middle of the Wild Wood,",
+      "legacyExpectedChunks": [
+        "\"It simply means that some very careless",
+        "and forgetful person has left his door-scraper lying about in the middle of the Wild Wood,"
+      ],
+      "expectedChunks": [
+        "\"It simply means that some very careless and forgetful person has left his door-scraper",
+        "lying about in the middle of the Wild Wood,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E14:25",
+      "episode": "E14",
+      "reviewStatus": "human_reviewed",
+      "source": "into a sort of a central hall, out of which they could dimly see other long tunnel-like passages branching, passages mysterious and without apparent end.",
+      "legacyExpectedChunks": [
+        "into a sort of a central hall, out of which they could dimly see other long tunnel-like passages branching,",
+        "passages mysterious and without apparent end."
+      ],
+      "expectedChunks": [
+        "into a sort of a central hall, out of which they could dimly see other long tunnel-like passages branching, passages mysterious and without apparent end."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E14:1",
+      "episode": "E14",
+      "reviewStatus": "reviewed_reference",
+      "source": "It seemed, as the Mole remarked to the Rat, like some one walking in carpet slippers that were too large for him and down at heel;",
+      "legacyExpectedChunks": [
+        "It seemed, as the Mole remarked to the Rat, like some one walking in carpet slippers that were too large",
+        "for him and down at heel;"
+      ],
+      "expectedChunks": [
+        "It seemed, as the Mole remarked to the Rat, like some one walking in carpet slippers that were too large for him and down at heel;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E14:2",
+      "episode": "E14",
+      "reviewStatus": "reviewed_reference",
+      "source": "or where two or three friends of simple tastes could sit about as they pleased and eat and smoke and talk in comfort and contentment.",
+      "legacyExpectedChunks": [
+        "or where two or three friends of simple tastes could sit about",
+        "as they pleased and eat and smoke and talk in comfort and contentment."
+      ],
+      "expectedChunks": [
+        "or where two or three friends of simple tastes could sit about",
+        "as they pleased and eat and smoke and talk in comfort and contentment."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E14:5",
+      "episode": "E14",
+      "reviewStatus": "reviewed_reference",
+      "source": "gave further sitting accommodations for the sociably disposed. In the middle of the room stood a long table of plain boards placed on trestles,",
+      "legacyExpectedChunks": [
+        "gave further sitting accommodations for the sociably disposed.",
+        "In the middle of the room stood a long table of plain boards placed on trestles,"
+      ],
+      "expectedChunks": [
+        "gave further sitting accommodations for the sociably disposed.",
+        "In the middle of the room stood a long table of plain boards placed on trestles,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E14:6",
+      "episode": "E14",
+      "reviewStatus": "reviewed_reference",
+      "source": "and himself bathed the Mole's shin with warm water and mended the cut with sticking-plaster, till the whole thing was just as good as new, if not better.",
+      "legacyExpectedChunks": [
+        "and himself bathed the Mole's shin with warm water and mended the cut with sticking-plaster,",
+        "till the whole thing was just as good as new, if not better."
+      ],
+      "expectedChunks": [
+        "and himself bathed the Mole's shin with warm water and mended the cut with sticking-plaster, till the whole thing was just as good as new, if not better."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E15:7",
+      "episode": "E15",
+      "reviewStatus": "reviewed_reference",
+      "source": "As he did not go into Society himself, he had got an idea that these things belonged to the things that didn't really matter.",
+      "legacyExpectedChunks": [
+        "As he did not go into Society himself,",
+        "he had got an idea that these things belonged to the things that didn't really matter."
+      ],
+      "expectedChunks": [
+        "As he did not go into Society himself, he had got an idea that these things belonged to the things that didn't really matter."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E16:27",
+      "episode": "E16",
+      "reviewStatus": "human_reviewed",
+      "source": "\"Me and little Billy here, we was trying to find our way to school-mother would have us go, was the weather ever so-",
+      "legacyExpectedChunks": [
+        "\"Me and little Billy here, we was trying to find our way to school-mother would have us go, was the weather ever so-"
+      ],
+      "expectedChunks": [
+        "\"Me and little Billy here, we was trying to find our way to school-mother would have us go, was the weather ever so-"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E16:9",
+      "episode": "E16",
+      "reviewStatus": "human_reviewed",
+      "source": "while the Rat, who slept every night in a bedroom the windows of which opened on a breezy river, naturally felt the atmosphere still and oppressive.",
+      "legacyExpectedChunks": [
+        "while the Rat, who slept every night in a bedroom the windows of which opened on a breezy river,",
+        "naturally felt the atmosphere still and oppressive."
+      ],
+      "expectedChunks": [
+        "while the Rat, who slept every night in a bedroom the windows of which opened on a breezy river, naturally felt the atmosphere still and oppressive."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E16:6",
+      "episode": "E16",
+      "reviewStatus": "reviewed_reference",
+      "source": "who threw himself on the Rat with an embrace and a shout of affectionate greeting. \"Get off!\" spluttered the Rat, with his mouth full.",
+      "legacyExpectedChunks": [
+        "who threw himself on the Rat with an embrace and a shout of affectionate greeting.",
+        "\"Get off!\" spluttered the Rat, with his mouth full."
+      ],
+      "expectedChunks": [
+        "who threw himself on the Rat with an embrace and a shout of affectionate greeting.",
+        "\"Get off!\" spluttered the Rat, with his mouth full."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E16:8",
+      "episode": "E16",
+      "reviewStatus": "reviewed_reference",
+      "source": "and the Mole and the Water Rat, shaking off their garments in some thirty seconds, tumbled in between the sheets in great joy and contentment.",
+      "legacyExpectedChunks": [
+        "and the Mole and the Water Rat, shaking off their garments in some thirty seconds,",
+        "tumbled in between the sheets in great joy and contentment."
+      ],
+      "expectedChunks": [
+        "and the Mole and the Water Rat, shaking off their garments in some thirty seconds, tumbled in between the sheets in great joy and contentment."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E17:3",
+      "episode": "E17",
+      "reviewStatus": "reviewed_reference",
+      "source": "At last I managed to extract from him that Mole had been seen in the Wild Wood last night by one of them.",
+      "legacyExpectedChunks": [
+        "At last I managed to extract from him that Mole had been seen in the Wild Wood last",
+        "night by one of them."
+      ],
+      "expectedChunks": [
+        "At last I managed to extract from him that Mole had been",
+        "seen in the Wild Wood last night by one of them."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E17:7",
+      "episode": "E17",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Weren't you at all-er-nervous?\" asked the Mole, some of yesterday's terror coming back to him at the mention of the Wild Wood.",
+      "legacyExpectedChunks": [
+        "\"Weren't you at all-er-nervous?\" asked the Mole,",
+        "some of yesterday's terror coming back to him at the mention of the Wild Wood."
+      ],
+      "expectedChunks": [
+        "\"Weren't you at all-er-nervous?\" asked the Mole, some of yesterday's terror coming back to him at the mention of the Wild Wood."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E17:9",
+      "episode": "E17",
+      "reviewStatus": "reviewed_reference",
+      "source": "As you went along in the stillness, every now and then masses of snow slid off the branches suddenly with a flop! making you jump and run for cover.",
+      "legacyExpectedChunks": [
+        "As you went along in the stillness,",
+        "every now and then masses of snow slid off the branches suddenly with a flop!",
+        "making you jump and run for cover."
+      ],
+      "expectedChunks": [
+        "As you went along in the stillness, every now and then masses of snow slid off the branches suddenly with a flop! making you jump and run for cover."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E18:10",
+      "episode": "E18",
+      "reviewStatus": "reviewed_reference",
+      "source": "After luncheon, accordingly, when the other two had settled themselves into the chimney-corner and had started a heated argument on the subject of eels,",
+      "legacyExpectedChunks": [
+        "After luncheon, accordingly, when the other two had settled themselves into the chimney-corner",
+        "and had started a heated argument on the subject of eels,"
+      ],
+      "expectedChunks": [
+        "After luncheon, accordingly, when the other two had settled themselves into the chimney-corner",
+        "and had started a heated argument on the subject of eels,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E19:11",
+      "episode": "E19",
+      "reviewStatus": "reviewed_reference",
+      "source": "he must be wise, must keep to the pleasant places in which his lines were laid and which held adventure enough, in their way, to last for a lifetime.",
+      "legacyExpectedChunks": [
+        "he must be wise, must keep to the pleasant places in",
+        "which his lines were laid and which held adventure enough, in their way, to last for a lifetime."
+      ],
+      "expectedChunks": [
+        "he must be wise, must keep to the pleasant places in which his lines were laid and which held adventure enough, in their way, to last for a lifetime."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E20:2",
+      "episode": "E20",
+      "reviewStatus": "reviewed_reference",
+      "source": "Once beyond the village, where the cottages ceased abruptly, on either side of the road they could smell through the darkness the friendly fields again;",
+      "legacyExpectedChunks": [
+        "Once beyond the village, where the cottages ceased abruptly,",
+        "on either side of the road they could smell through the darkness the friendly fields again;"
+      ],
+      "expectedChunks": [
+        "Once beyond the village, where the cottages ceased abruptly, on either side of the road they could smell through the darkness the friendly fields again;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E20:4",
+      "episode": "E20",
+      "reviewStatus": "reviewed_reference",
+      "source": "The rapid nightfall of mid-December had quite beset the little village as they approached it on soft feet over a first thin fall of powdery snow.",
+      "legacyExpectedChunks": [
+        "The rapid nightfall of mid-December had quite beset the little village",
+        "as they approached it on soft feet over a first thin fall of powdery snow."
+      ],
+      "expectedChunks": [
+        "The rapid nightfall of mid-December had quite beset the little village as they",
+        "approached it on soft feet over a first thin fall of powdery snow."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E20:8",
+      "episode": "E20",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Yes, quite right; this leads home!\" \"It looks as if we were coming to a village,\" said the Mole somewhat dubiously,",
+      "legacyExpectedChunks": [
+        "\"Yes, quite right; this leads home!\"",
+        "\"It looks as if we were coming to a village,\" said the Mole somewhat dubiously,"
+      ],
+      "expectedChunks": [
+        "\"Yes, quite right; this leads home!\"",
+        "\"It looks as if we were coming to a village,\" said the Mole somewhat dubiously,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E22:29",
+      "episode": "E22",
+      "reviewStatus": "human_reviewed",
+      "source": "And-and I never meant to let you know I was feeling that way about it-it was all an accident and a mistake!",
+      "legacyExpectedChunks": [
+        "And-and I never meant to let you know I was feeling that way about it-it was all an accident and a mistake!"
+      ],
+      "expectedChunks": [
+        "And-and I never meant to let you know I was feeling",
+        "that way about it-it was all an accident and a mistake!"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E22:34",
+      "episode": "E22",
+      "reviewStatus": "human_reviewed",
+      "source": "who by a flow of cheerful talk and anecdote endeavoured to beguile his spirits back and make the weary way seem shorter.",
+      "legacyExpectedChunks": [
+        "who by a flow of cheerful talk and anecdote endeavoured to beguile his spirits back and make the weary way seem shorter."
+      ],
+      "expectedChunks": [
+        "who by a flow of cheerful talk and anecdote endeavoured to beguile his spirits back",
+        "and make the weary way seem shorter."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E22:51",
+      "episode": "E22",
+      "reviewStatus": "human_reviewed",
+      "source": "and it seemed a long time to Rat ere the passage ended and he could stand erect and stretch and shake himself.",
+      "legacyExpectedChunks": [
+        "and it seemed a long time to Rat ere the passage ended and he could stand erect and stretch and shake himself."
+      ],
+      "expectedChunks": [
+        "and it seemed a long time to Rat ere the passage",
+        "ended and he could stand erect and stretch and shake himself."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E22:12",
+      "episode": "E22",
+      "reviewStatus": "reviewed_reference",
+      "source": "The Rat, much excited, kept close to his heels as the Mole, with something of the air of a sleep-walker, crossed a dry ditch,",
+      "legacyExpectedChunks": [
+        "The Rat, much excited, kept close to his heels as the Mole,",
+        "with something of the air of a sleep-walker, crossed a dry ditch,"
+      ],
+      "expectedChunks": [
+        "The Rat, much excited, kept close to his heels as the Mole, with something of the air of a sleep-walker, crossed a dry ditch,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E23:10",
+      "episode": "E23",
+      "reviewStatus": "reviewed_reference",
+      "source": "Bustle about, old chap!\" Encouraged by his inspiriting companion, the Mole roused himself and dusted and polished with energy and heartiness, while the Rat,",
+      "legacyExpectedChunks": [
+        "Bustle about, old chap!\" Encouraged by his inspiriting companion, the Mole roused himself",
+        "and dusted and polished with energy and heartiness, while the Rat,"
+      ],
+      "expectedChunks": [
+        "Bustle about, old chap!\"",
+        "Encouraged by his inspiriting companion, the Mole roused himself and dusted and polished with energy and heartiness, while the Rat,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E23:9",
+      "episode": "E23",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Self-indulgent beggar you seem to be, Mole,\" he observed. \"Deny yourself nothing. This is really the jolliest little place I ever was in.",
+      "legacyExpectedChunks": [
+        "\"Self-indulgent beggar you seem to be, Mole,\" he observed.",
+        "\"Deny yourself nothing. This is really the jolliest little place I ever was in."
+      ],
+      "expectedChunks": [
+        "\"Self-indulgent beggar you seem to be, Mole,\" he observed.",
+        "\"Deny yourself nothing.",
+        "This is really the jolliest little place I ever was in."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E24:11",
+      "episode": "E24",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Why, certainly, sir,\" replied the field-mouse respectfully. \"At this time of the year our shops keep open to all sorts of hours.\"",
+      "legacyExpectedChunks": [
+        "\"Why, certainly, sir,\" replied the field-mouse respectfully.",
+        "\"At this time of the year our shops keep open to all sorts of hours.\""
+      ],
+      "expectedChunks": [
+        "\"Why, certainly, sir,\" replied the field-mouse respectfully.",
+        "\"At this time of the year our shops keep open to all sorts of hours.\""
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E24:3",
+      "episode": "E24",
+      "reviewStatus": "reviewed_reference",
+      "source": "or when snow-bound in chimney corners, and handed down to be sung in the miry street to lamp-lit windows at Yule-time.",
+      "legacyExpectedChunks": [
+        "or when snow-bound in chimney corners,",
+        "and handed down to be sung in the miry street to lamp-lit windows at Yule-time."
+      ],
+      "expectedChunks": [
+        "or when snow-bound in chimney corners, and handed down to be sung in the miry street to lamp-lit windows at Yule-time."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E24:6",
+      "episode": "E24",
+      "reviewStatus": "reviewed_reference",
+      "source": "and had just got seriously to work with the sardine-opener when sounds were heard from the fore-court without-sounds like the scuffling of small feet in the gravel",
+      "legacyExpectedChunks": [
+        "and had just got seriously to work with the sardine-opener when sounds were heard from the fore-court without-sounds like the scuffling of small feet in the gravel"
+      ],
+      "expectedChunks": [
+        "and had just got seriously to work with the sardine-opener",
+        "when sounds were heard from the fore-court without-sounds like the scuffling of small feet in the gravel"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E25:10",
+      "episode": "E25",
+      "reviewStatus": "human_reviewed",
+      "source": "It did not take long to prepare the brew and thrust the tin heater well into the red heart of the fire;",
+      "legacyExpectedChunks": [
+        "It did not take long to prepare the brew and thrust the tin heater well into the red heart of the fire;"
+      ],
+      "expectedChunks": [
+        "It did not take long to prepare the brew",
+        "and thrust the tin heater well into the red heart of the fire;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E25:21",
+      "episode": "E25",
+      "reviewStatus": "human_reviewed",
+      "source": "and the Rat went so far as to take him by the shoulders and shake him; but nothing could overcome his stage-fright.",
+      "legacyExpectedChunks": [
+        "and the Rat went so far as to take him by the shoulders and shake him; but nothing could overcome his stage-fright."
+      ],
+      "expectedChunks": [
+        "and the Rat went so far as to take him by the shoulders and shake him; but nothing could overcome his stage-fright."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E25:22",
+      "episode": "E25",
+      "reviewStatus": "human_reviewed",
+      "source": "They were all busily engaged on him like watermen applying the Royal Humane Society's regulations to a case of long submersion,",
+      "legacyExpectedChunks": [
+        "They were all busily engaged on him like watermen applying the Royal Humane Society's regulations to a case of long submersion,"
+      ],
+      "expectedChunks": [
+        "They were all busily engaged on him like watermen",
+        "applying the Royal Humane Society's regulations to a case of long submersion,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E25:54",
+      "episode": "E25",
+      "reviewStatus": "human_reviewed",
+      "source": "He was now in just the frame of mind that the tactful Rat had quietly worked to bring about in him.",
+      "legacyExpectedChunks": [
+        "He was now in just the frame of mind that the tactful Rat had quietly worked to bring about in him."
+      ],
+      "expectedChunks": [
+        "He was now in just the frame of mind",
+        "that the tactful Rat had quietly worked to bring about in him."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E25:13",
+      "episode": "E25",
+      "reviewStatus": "reviewed_reference",
+      "source": "But it was good to think he had this to come back to, this place which was all his own, these things which were so glad to see him again",
+      "legacyExpectedChunks": [
+        "But it was good to think he had this to come back to, this place",
+        "which was all his own, these things which were so glad to see him again"
+      ],
+      "expectedChunks": [
+        "But it was good to think he had this to come back to, this place which was all his own, these things which were so glad to see him again"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E26:14",
+      "episode": "E26",
+      "reviewStatus": "reviewed_reference",
+      "source": "and a hot sun seemed to be pulling everything green and bushy and spiky up out of the earth towards him, as if by strings.",
+      "legacyExpectedChunks": [
+        "and a hot sun seemed to be pulling everything green",
+        "and bushy and spiky up out of the earth towards him, as if by strings."
+      ],
+      "expectedChunks": [
+        "and a hot sun seemed to be pulling",
+        "everything green and bushy and spiky up out of the earth towards him, as if by strings."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E26:8",
+      "episode": "E26",
+      "reviewStatus": "reviewed_reference",
+      "source": "instead of sprawling all across the road and being of no use or support to each other in case of sudden trouble or danger.",
+      "legacyExpectedChunks": [
+        "instead of sprawling all across the road and being of no use",
+        "or support to each other in case of sudden trouble or danger."
+      ],
+      "expectedChunks": [
+        "instead of sprawling all across the road and",
+        "being of no use or support to each other in case of sudden trouble or danger."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E26:9",
+      "episode": "E26",
+      "reviewStatus": "reviewed_reference",
+      "source": "which transform him from a (comparatively) good-looking Toad into an Object which throws any decent-minded animal that comes across it into a violent fit.",
+      "legacyExpectedChunks": [
+        "which transform him from a (comparatively) good-looking Toad into an Object",
+        "which throws any decent-minded animal that comes across it into a violent fit."
+      ],
+      "expectedChunks": [
+        "which transform him from a (comparatively) good-looking Toad into an Object",
+        "which throws any decent-minded animal that comes across it into a violent fit."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E27:4",
+      "episode": "E27",
+      "reviewStatus": "human_reviewed",
+      "source": "Independence is all very well, but we animals never allow our friends to make fools of themselves beyond a certain limit; and that limit you've reached.",
+      "legacyExpectedChunks": [
+        "Independence is all very well, but we animals never allow our friends to make fools of themselves beyond a certain limit;",
+        "and that limit you've reached."
+      ],
+      "expectedChunks": [
+        "Independence is all very well, but we animals never allow our friends to make fools of themselves beyond a certain limit; and that limit you've reached."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E27:41",
+      "episode": "E27",
+      "reviewStatus": "human_reviewed",
+      "source": "and put all your points so frightfully well-you can do what you like with me in there, and you know it.",
+      "legacyExpectedChunks": [
+        "and put all your points so frightfully well-you can do what you like with me in there, and you know it."
+      ],
+      "expectedChunks": [
+        "and put all your points so frightfully well-you can do what you like with me in there, and you know it."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E27:51",
+      "episode": "E27",
+      "reviewStatus": "human_reviewed",
+      "source": "You've often asked us three to come and stay with you, Toad, in this handsome house of yours; well, now we're going to.",
+      "legacyExpectedChunks": [
+        "You've often asked us three to come and stay with you, Toad, in this handsome house of yours; well, now we're going to."
+      ],
+      "expectedChunks": [
+        "You've often asked us three to come and stay with you, Toad, in this handsome house of yours; well, now we're going to."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E27:12",
+      "episode": "E27",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Since you won't yield to persuasion, we'll try what force can do. I feared it would come to this all along.",
+      "legacyExpectedChunks": [
+        "\"Since you won't yield to persuasion, we'll try what force can do.",
+        "I feared it would come to this all along."
+      ],
+      "expectedChunks": [
+        "\"Since you won't yield to persuasion, we'll try what force can do.",
+        "I feared it would come to this all along."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E27:13",
+      "episode": "E27",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"My friends,\" he went on, \"I am pleased to inform you that Toad has at last seen the error of his ways.",
+      "legacyExpectedChunks": [
+        "\"My friends,\" he went on,",
+        "\"I am pleased to inform you that Toad has at last seen the error of his ways."
+      ],
+      "expectedChunks": [
+        "\"My friends,\" he went on, \"I am pleased to inform you that Toad has at last seen the error of his ways."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E27:14",
+      "episode": "E27",
+      "reviewStatus": "reviewed_reference",
+      "source": "and I find that I'm not a bit sorry or repentant really, so it's no earthly good saying I am; now, is it?\"",
+      "legacyExpectedChunks": [
+        "and I find that I'm not a bit sorry or repentant really,",
+        "so it's no earthly good saying I am; now, is it?\""
+      ],
+      "expectedChunks": [
+        "and I find that I'm not a bit sorry or repentant really, so it's no earthly good saying I am; now, is it?\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E27:4",
+      "episode": "E27",
+      "reviewStatus": "reviewed_reference",
+      "source": "His skin hung baggily about him, his legs wobbled, and his cheeks were furrowed by the tears so plentifully called forth by the Badger's moving discourse.",
+      "legacyExpectedChunks": [
+        "His skin hung baggily about him, his legs wobbled,",
+        "and his cheeks were furrowed by the tears so plentifully called forth by the Badger's moving discourse."
+      ],
+      "expectedChunks": [
+        "His skin hung baggily about him, his legs wobbled, and his cheeks were furrowed by the tears so plentifully called forth by the Badger's moving discourse."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E27:4",
+      "episode": "E27",
+      "reviewStatus": "reviewed_reference",
+      "source": "rising and falling in waves of oratory; and presently they noticed that the sermon began to be punctuated at intervals by long-drawn sobs,",
+      "legacyExpectedChunks": [
+        "rising and falling in waves of oratory;",
+        "and presently they noticed that the sermon began to be punctuated at intervals by long-drawn sobs,"
+      ],
+      "expectedChunks": [
+        "rising and falling in waves of oratory; and presently they noticed that the sermon began to be punctuated at intervals by long-drawn sobs,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E29:36",
+      "episode": "E29",
+      "reviewStatus": "human_reviewed",
+      "source": "and all Nature joining in a chorus of approval to the song of self-praise that his own heart was singing to him,",
+      "legacyExpectedChunks": [
+        "and all Nature joining in a chorus of approval to the song of self-praise that his own heart was singing to him,"
+      ],
+      "expectedChunks": [
+        "and all Nature joining in a chorus of approval to the song of self-praise",
+        "that his own heart was singing to him,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E29:51",
+      "episode": "E29",
+      "reviewStatus": "human_reviewed",
+      "source": "The poop-poop! drew nearer and nearer, the car could be heard to turn into the inn-yard and come to a stop,",
+      "legacyExpectedChunks": [
+        "The poop-poop! drew nearer and nearer, the car could be heard to turn into the inn-yard and come to a stop,"
+      ],
+      "expectedChunks": [
+        "The poop-poop! drew nearer and nearer, the car could be heard to turn into the inn-yard and come to a stop,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E29:15",
+      "episode": "E29",
+      "reviewStatus": "reviewed_reference",
+      "source": "Then, laughing heartily, he dressed as quickly as possible in the smartest suit he could lay hands on at the moment,",
+      "legacyExpectedChunks": [
+        "Then, laughing heartily, he dressed as quickly",
+        "as possible in the smartest suit he could lay hands on at the moment,"
+      ],
+      "expectedChunks": [
+        "Then, laughing heartily, he dressed as quickly as possible in the smartest suit he could lay hands on at the moment,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E29:17",
+      "episode": "E29",
+      "reviewStatus": "reviewed_reference",
+      "source": "and the worst of it is, he'll be so conceited with what he'll think is his cleverness that he may commit any folly.",
+      "legacyExpectedChunks": [
+        "and the worst of it is, he'll be so conceited with what he'll think is his cleverness that he may commit any folly."
+      ],
+      "expectedChunks": [
+        "and the worst of it is, he'll be so conceited with what he'll think is his cleverness that he may commit any folly."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E29:18",
+      "episode": "E29",
+      "reviewStatus": "reviewed_reference",
+      "source": "and sat down to eat it in the coffee-room. He was about half-way through his meal when an only too familiar sound, approaching down the street,",
+      "legacyExpectedChunks": [
+        "and sat down to eat it in the coffee-room.",
+        "He was about half-way through his meal when an only too familiar sound, approaching down the street,"
+      ],
+      "expectedChunks": [
+        "and sat down to eat it in the coffee-room.",
+        "He was about half-way through his meal when an only too familiar sound, approaching down the street,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E30:45",
+      "episode": "E30",
+      "reviewStatus": "human_reviewed",
+      "source": "across the hollow-sounding drawbridge, below the spiky portcullis, under the frowning archway of the grim old castle, whose ancient towers soared high overhead;",
+      "legacyExpectedChunks": [
+        "across the hollow-sounding drawbridge, below the spiky portcullis, under the frowning archway of the grim old castle, whose ancient towers soared high overhead;"
+      ],
+      "expectedChunks": [
+        "across the hollow-sounding drawbridge, below the spiky portcullis, under the frowning archway of the grim old castle, whose ancient towers soared high overhead;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E30:47",
+      "episode": "E30",
+      "reviewStatus": "human_reviewed",
+      "source": "because that is as much as a sentry on his post dare do to show his contempt and abhorrence of crime;",
+      "legacyExpectedChunks": [
+        "because that is as much as a sentry on his post dare do to show his contempt and abhorrence of crime;"
+      ],
+      "expectedChunks": [
+        "because that is as much",
+        "as a sentry on his post dare do to show his contempt and abhorrence of crime;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E30:7",
+      "episode": "E30",
+      "reviewStatus": "human_reviewed",
+      "source": "as if in a dream, he pulled the lever and swung the car round the yard and out through the archway;",
+      "legacyExpectedChunks": [
+        "as if in a dream, he pulled the lever and swung the car round the yard and out through the archway;"
+      ],
+      "expectedChunks": [
+        "as if in a dream, he pulled the lever and swung the car round the yard and out through the archway;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E30:9",
+      "episode": "E30",
+      "reviewStatus": "human_reviewed",
+      "source": "He increased his pace, and as the car devoured the street and leapt forth on the high road through the open country,",
+      "legacyExpectedChunks": [
+        "He increased his pace, and as the car devoured the street and leapt forth on the high road through the open country,"
+      ],
+      "expectedChunks": [
+        "He increased his pace, and as the car devoured the street and leapt forth on the high road through the open country,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E30:10",
+      "episode": "E30",
+      "reviewStatus": "reviewed_reference",
+      "source": "how we can possibly make it sufficiently hot for the incorrigible rogue and hardened ruffian whom we see cowering in the dock before us.",
+      "legacyExpectedChunks": [
+        "how we can possibly make it sufficiently hot for the incorrigible rogue",
+        "and hardened ruffian whom we see cowering in the dock before us."
+      ],
+      "expectedChunks": [
+        "how we can possibly make it sufficiently hot for the incorrigible rogue",
+        "and hardened ruffian whom we see cowering in the dock before us."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E30:11",
+      "episode": "E30",
+      "reviewStatus": "reviewed_reference",
+      "source": "and Toad was a helpless prisoner in the remotest dungeon of the best-guarded keep of the stoutest castle in all the length and breadth of Merry England.",
+      "legacyExpectedChunks": [
+        "and Toad was a helpless prisoner in the remotest dungeon of the best-guarded keep of the stoutest castle",
+        "in all the length and breadth of Merry England."
+      ],
+      "expectedChunks": [
+        "and Toad was a helpless prisoner in the remotest dungeon of the",
+        "best-guarded keep of the stoutest castle in all the length and breadth of Merry England."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E30:15",
+      "episode": "E30",
+      "reviewStatus": "reviewed_reference",
+      "source": "we shall have to deal with you very seriously!\" Then the brutal minions of the law fell upon the hapless Toad;",
+      "legacyExpectedChunks": [
+        "we shall have to deal with you very seriously!\"",
+        "Then the brutal minions of the law fell upon the hapless Toad;"
+      ],
+      "expectedChunks": [
+        "we shall have to deal with you very seriously!\"",
+        "Then the brutal minions of the law fell upon the hapless Toad;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E30:16",
+      "episode": "E30",
+      "reviewStatus": "reviewed_reference",
+      "source": "across the market-place, where the playful populace, always as severe upon detected crime as they are sympathetic and helpful when one is merely \"wanted,\"",
+      "legacyExpectedChunks": [
+        "across the market-place, where the playful populace, always as severe upon detected crime",
+        "as they are sympathetic and helpful when one is merely \"wanted,\""
+      ],
+      "expectedChunks": [
+        "across the market-place, where the playful populace, always as severe upon detected crime as they are sympathetic and helpful when one is merely \"wanted,\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E30:19",
+      "episode": "E30",
+      "reviewStatus": "reviewed_reference",
+      "source": "Mr. Clerk, will you tell us, please, what is the very stiffest penalty we can impose for each of these offences?",
+      "legacyExpectedChunks": [
+        "Mr. Clerk, will you tell us, please, what is the very stiffest penalty we can impose",
+        "for each of these offences?"
+      ],
+      "expectedChunks": [
+        "Mr. Clerk, will you tell us, please, what is the very stiffest penalty we can impose for each of these offences?"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E31:12",
+      "episode": "E31",
+      "reviewStatus": "reviewed_reference",
+      "source": "and the sullen heats of the torrid afternoon broke up and rolled away at the dispersing touch of the cool fingers of the short",
+      "legacyExpectedChunks": [
+        "and the sullen heats of the torrid afternoon broke up",
+        "and rolled away at the dispersing touch of the cool fingers of the short"
+      ],
+      "expectedChunks": [
+        "and the sullen heats of the torrid afternoon broke up and",
+        "rolled away at the dispersing touch of the cool fingers of the short"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E31:20",
+      "episode": "E31",
+      "reviewStatus": "reviewed_reference",
+      "source": "midsummer night. Mole lay stretched on the bank, still panting from the stress of the fierce day that had been cloudless from dawn to late sunset,",
+      "legacyExpectedChunks": [
+        "midsummer night. Mole lay stretched on the bank,",
+        "still panting from the stress of the fierce day that had been cloudless from dawn to late sunset,"
+      ],
+      "expectedChunks": [
+        "midsummer night.",
+        "Mole lay stretched on the bank, still panting from the stress of the fierce day that had been cloudless from dawn to late sunset,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E31:5",
+      "episode": "E31",
+      "reviewStatus": "reviewed_reference",
+      "source": "Though it was past ten o'clock at night, the sky still clung to and retained some lingering skirts of light from the departed day;",
+      "legacyExpectedChunks": [
+        "Though it was past ten o'clock at night,",
+        "the sky still clung to and retained some lingering skirts of light from the departed day;"
+      ],
+      "expectedChunks": [
+        "Though it was past ten o'clock at night, the sky still clung to and retained some lingering skirts of light from the departed day;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E32:17",
+      "episode": "E32",
+      "reviewStatus": "reviewed_reference",
+      "source": "The Mole, greatly wondering, obeyed. \"I hear nothing myself,\" he said, \"but the wind playing in the reeds and rushes and osiers.\" The Rat never answered, if indeed he heard.",
+      "legacyExpectedChunks": [
+        "The Mole, greatly wondering, obeyed.",
+        "\"I hear nothing myself,\" he said, \"but the wind playing in the reeds and rushes and osiers.\"",
+        "The Rat never answered, if indeed he heard."
+      ],
+      "expectedChunks": [
+        "The Mole, greatly wondering, obeyed.",
+        "\"I hear nothing myself,\" he said, \"but the wind playing in the reeds and rushes and osiers.\"",
+        "The Rat never answered, if indeed he heard."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E32:21",
+      "episode": "E32",
+      "reviewStatus": "reviewed_reference",
+      "source": "Breathless and transfixed, the Mole stopped rowing as the liquid run of that glad piping broke on him like a wave,",
+      "legacyExpectedChunks": [
+        "Breathless and transfixed, the Mole stopped rowing",
+        "as the liquid run of that glad piping broke on him like a wave,"
+      ],
+      "expectedChunks": [
+        "Breathless and transfixed, the Mole stopped rowing as the liquid run of that glad piping broke on him like a wave,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E32:22",
+      "episode": "E32",
+      "reviewStatus": "reviewed_reference",
+      "source": "Their old haunts greeted them again in other raiment, as if they had slipped away and put on this pure new apparel and come quietly back,",
+      "legacyExpectedChunks": [
+        "Their old haunts greeted them again in other raiment, as if they had slipped away and put on this pure new apparel and come quietly back,"
+      ],
+      "expectedChunks": [
+        "Their old haunts greeted them again in other raiment, as if they had slipped away and put on this pure new apparel and come quietly back,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E32:6",
+      "episode": "E32",
+      "reviewStatus": "reviewed_reference",
+      "source": "and once more they began to see surfaces-meadows wide-spread, and quiet gardens, and the river itself from bank to bank, all softly disclosed,",
+      "legacyExpectedChunks": [
+        "and once more they began to see surfaces-meadows wide-spread, and quiet gardens,",
+        "and the river itself from bank to bank, all softly disclosed,"
+      ],
+      "expectedChunks": [
+        "and once more they began to see surfaces-meadows wide-spread, and quiet gardens, and the river itself from bank to bank, all softly disclosed,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E32:6",
+      "episode": "E32",
+      "reviewStatus": "reviewed_reference",
+      "source": "At last, over the rim of the waiting earth the moon lifted with slow majesty till it swung clear of the horizon and rode off, free of moorings;",
+      "legacyExpectedChunks": [
+        "At last, over the rim of the waiting earth the moon lifted with slow majesty till it swung clear of the horizon and rode off, free of moorings;"
+      ],
+      "expectedChunks": [
+        "At last, over the rim of the waiting earth the moon lifted with slow majesty",
+        "till it swung clear of the horizon and rode off, free of moorings;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E33:16",
+      "episode": "E33",
+      "reviewStatus": "human_reviewed",
+      "source": "In silence they landed, and pushed through the blossom and scented herbage and undergrowth that led up to the level ground,",
+      "legacyExpectedChunks": [
+        "In silence they landed, and pushed through the blossom and scented herbage and undergrowth that led up to the level ground,"
+      ],
+      "expectedChunks": [
+        "In silence they landed, and pushed through the blossom and scented herbage and undergrowth that led up to the level ground,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E33:19",
+      "episode": "E33",
+      "reviewStatus": "human_reviewed",
+      "source": "\"This is the place of my song-dream, the place the music played to me,\" whispered the Rat, as if in a trance.",
+      "legacyExpectedChunks": [
+        "\"This is the place of my song-dream, the place the music played to me,\" whispered the Rat, as if in a trance."
+      ],
+      "expectedChunks": [
+        "\"This is the place of my song-dream, the place the music played to me,\" whispered the Rat, as if in a trance."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E33:57",
+      "episode": "E33",
+      "reviewStatus": "human_reviewed",
+      "source": "For this is the last best gift that the kindly demi-god is careful to bestow on those to whom he has revealed himself in their helping: the gift of forgetfulness.",
+      "legacyExpectedChunks": [
+        "For this is the last best gift that the kindly demi-god is careful to bestow on those to whom he has revealed himself in their helping:",
+        "the gift of forgetfulness."
+      ],
+      "expectedChunks": [
+        "For this is the last best gift that the kindly demi-god is careful to bestow on those to",
+        "whom he has revealed himself in their helping: the gift of forgetfulness."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E33:23",
+      "episode": "E33",
+      "reviewStatus": "reviewed_reference",
+      "source": "On either side of them, as they glided onwards, the rich meadow-grass seemed that morning of a freshness and a greenness unsurpassable.",
+      "legacyExpectedChunks": [
+        "On either side of them, as they glided onwards, the rich meadow-grass seemed that morning of a freshness and a greenness unsurpassable."
+      ],
+      "expectedChunks": [
+        "On either side of them, as they glided onwards, the rich meadow-grass seemed that morning of a freshness and a greenness unsurpassable."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E33:7",
+      "episode": "E33",
+      "reviewStatus": "reviewed_reference",
+      "source": "tossed the aspens, shook the dewy roses, and blew lightly and caressingly in their faces; and with its soft touch came instant oblivion.",
+      "legacyExpectedChunks": [
+        "tossed the aspens, shook the dewy roses, and blew lightly and caressingly in their faces;",
+        "and with its soft touch came instant oblivion."
+      ],
+      "expectedChunks": [
+        "tossed the aspens, shook the dewy roses, and blew lightly and caressingly in their faces; and with its soft touch came instant oblivion."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E34:36",
+      "episode": "E34",
+      "reviewStatus": "human_reviewed",
+      "source": "swung the boat round and let the full stream bear them down again whither it would, their quest now happily ended.",
+      "legacyExpectedChunks": [
+        "swung the boat round and let the full stream bear them down again whither it would, their quest now happily ended."
+      ],
+      "expectedChunks": [
+        "swung the boat round and let the full stream bear them down again whither it would, their quest now happily ended."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E34:64",
+      "episode": "E34",
+      "reviewStatus": "human_reviewed",
+      "source": "\"I passed them on to you as they reached me. Ah! now they return again, and this time full and clear!",
+      "legacyExpectedChunks": [
+        "\"I passed them on to you as they reached me. Ah! now they return again, and this time full and clear!"
+      ],
+      "expectedChunks": [
+        "\"I passed them on to you as they reached me.",
+        "Ah! now they return again, and this time full and clear!"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E34:18",
+      "episode": "E34",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Helper and healer, I cheer-Small waifs in the woodland wet-Strays I find in it, wounds I bind in it- Bidding them all forget!",
+      "legacyExpectedChunks": [
+        "\"Helper and healer, I cheer-Small waifs in the woodland wet-Strays I find in it,",
+        "wounds I bind in it- Bidding them all forget!"
+      ],
+      "expectedChunks": [
+        "\"Helper and healer, I cheer-Small waifs in the woodland wet-Strays I find in it, wounds I bind in it- Bidding them all forget!"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E34:7",
+      "episode": "E34",
+      "reviewStatus": "reviewed_reference",
+      "source": "With a smile of much happiness on his face, and something of a listening look still lingering there, the weary Rat was fast asleep.",
+      "legacyExpectedChunks": [
+        "With a smile of much happiness on his face,",
+        "and something of a listening look still lingering there, the weary Rat was fast asleep."
+      ],
+      "expectedChunks": [
+        "With a smile of much happiness on his face, and something of a listening look still lingering there, the weary Rat was fast asleep."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E35:57",
+      "episode": "E35",
+      "reviewStatus": "human_reviewed",
+      "source": "and all that he was capable of if he only gave his great mind to it; and the cure was almost complete.",
+      "legacyExpectedChunks": [
+        "and all that he was capable of if he only gave his great mind to it; and the cure was almost complete."
+      ],
+      "expectedChunks": [
+        "and all that he was capable of if he only gave his great mind to it; and the cure was almost complete."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E35:13",
+      "episode": "E35",
+      "reviewStatus": "reviewed_reference",
+      "source": "and knew that all the grim darkness of a medieval fortress lay between him and the outer world of sunshine and well-metalled high roads",
+      "legacyExpectedChunks": [
+        "and knew that all the grim darkness of a medieval fortress lay between him",
+        "and the outer world of sunshine and well-metalled high roads"
+      ],
+      "expectedChunks": [
+        "and knew that all the grim darkness of a medieval fortress lay between him",
+        "and the outer world of sunshine and well-metalled high roads"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E35:19",
+      "episode": "E35",
+      "reviewStatus": "reviewed_reference",
+      "source": "(he said), \"O clever, intelligent Rat and sensible Mole! What sound judgments, what a knowledge of men and matters you possess!",
+      "legacyExpectedChunks": [
+        "(he said), \"O clever, intelligent Rat and sensible Mole!",
+        "What sound judgments, what a knowledge of men and matters you possess!"
+      ],
+      "expectedChunks": [
+        "(he said), \"O clever, intelligent Rat and sensible Mole!",
+        "What sound judgments, what a knowledge of men and matters you possess!"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E36:58",
+      "episode": "E36",
+      "reviewStatus": "human_reviewed",
+      "source": "and I have no doubt that the excellent lady and I will be able to arrange terms satisfactory to both parties.\"",
+      "legacyExpectedChunks": [
+        "and I have no doubt that the excellent lady and I will be able to arrange terms satisfactory to both parties.\""
+      ],
+      "expectedChunks": [
+        "and I have no doubt that the excellent lady",
+        "and I will be able to arrange terms satisfactory to both parties.\""
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E36:9",
+      "episode": "E36",
+      "reviewStatus": "reviewed_reference",
+      "source": "They had many interesting talks together, after that, as the dreary days went on; and the gaoler's daughter grew very sorry for Toad,",
+      "legacyExpectedChunks": [
+        "They had many interesting talks together, after that, as the dreary days went on;",
+        "and the gaoler's daughter grew very sorry for Toad,"
+      ],
+      "expectedChunks": [
+        "They had many interesting talks together, after that, as the dreary days went on; and the gaoler's daughter grew very sorry for Toad,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E37:43",
+      "episode": "E37",
+      "reviewStatus": "human_reviewed",
+      "source": "that he must remove himself as quickly as possible from the neighbourhood where the lady he was forced to represent was so well-known",
+      "legacyExpectedChunks": [
+        "that he must remove himself as quickly as possible from the neighbourhood where the lady he was forced to represent was so well-known"
+      ],
+      "expectedChunks": [
+        "that he must remove himself as quickly as possible from the neighbourhood",
+        "where the lady he was forced to represent was so well-known"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E37:5",
+      "episode": "E37",
+      "reviewStatus": "human_reviewed",
+      "source": "the only stipulation the old lady made being that she should be gagged and bound and dumped down in a corner.",
+      "legacyExpectedChunks": [
+        "the only stipulation the old lady made being that she should be gagged and bound and dumped down in a corner."
+      ],
+      "expectedChunks": [
+        "the only stipulation the old lady made being that she should be",
+        "gagged and bound and dumped down in a corner."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E37:56",
+      "episode": "E37",
+      "reviewStatus": "human_reviewed",
+      "source": "He gave the name of the station that he knew to be nearest to the village of which Toad Hall was the principal feature,",
+      "legacyExpectedChunks": [
+        "He gave the name of the station that he knew to be nearest to the village of which Toad Hall was the principal feature,"
+      ],
+      "expectedChunks": [
+        "He gave the name of the station",
+        "that he knew to be nearest to the village of which Toad Hall was the principal feature,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E37:14",
+      "episode": "E37",
+      "reviewStatus": "reviewed_reference",
+      "source": "and he readily helped the gaoler's daughter to make her aunt appear as much as possible the victim of circumstances over which she had no control.",
+      "legacyExpectedChunks": [
+        "and he readily helped the gaoler's daughter to make her aunt appear",
+        "as much as possible the victim of circumstances over which she had no control."
+      ],
+      "expectedChunks": [
+        "and he readily helped the gaoler's daughter to make her aunt appear",
+        "as much as possible the victim of circumstances over which she had no control."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E37:15",
+      "episode": "E37",
+      "reviewStatus": "reviewed_reference",
+      "source": "that he must remove himself as quickly as possible from the neighbourhood where the lady he was forced to represent was so well-known and so popular a character.",
+      "legacyExpectedChunks": [
+        "that he must remove himself as quickly as possible from the neighbourhood",
+        "where the lady he was forced to represent was so well-known and so popular a character."
+      ],
+      "expectedChunks": [
+        "that he must remove himself as quickly as possible from the neighbourhood",
+        "where the lady he was forced to represent was so well-known and so popular a character."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E37:21",
+      "episode": "E37",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"You're the very image of her,\" she giggled, \"only I'm sure you never looked half so respectable in all your life before.",
+      "legacyExpectedChunks": [
+        "\"You're the very image of her,\" she giggled,",
+        "\"only I'm sure you never looked half so respectable in all your life before."
+      ],
+      "expectedChunks": [
+        "\"You're the very image of her,\" she giggled, \"only I'm sure you never looked half so respectable in all your life before."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E37:22",
+      "episode": "E37",
+      "reviewStatus": "reviewed_reference",
+      "source": "\"Aha!\" he thought, \"this is a piece of luck! A railway station is the thing I want most in the whole world at this moment;",
+      "legacyExpectedChunks": [
+        "\"Aha!\" he thought, \"this is a piece of luck!",
+        "A railway station is the thing I want most in the whole world at this moment;"
+      ],
+      "expectedChunks": [
+        "\"Aha!\" he thought, \"this is a piece of luck!",
+        "A railway station is the thing I want most in the whole world at this moment;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E37:8",
+      "episode": "E37",
+      "reviewStatus": "reviewed_reference",
+      "source": "and a little humbled at the thought that both his popularity, and the sex that seemed to inspire it, were really another's.",
+      "legacyExpectedChunks": [
+        "and a little humbled at the thought that both his popularity,",
+        "and the sex that seemed to inspire it, were really another's."
+      ],
+      "expectedChunks": [
+        "and a little humbled at the thought that both his popularity, and the sex that seemed to inspire it, were really another's."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E38:12",
+      "episode": "E38",
+      "reviewStatus": "human_reviewed",
+      "source": "An old gentleman who had been prodding him in the back for some moments here thrust him away, and, what was worse,",
+      "legacyExpectedChunks": [
+        "An old gentleman who had been prodding him in the back for some moments here thrust him away, and, what was worse,"
+      ],
+      "expectedChunks": [
+        "An old gentleman who had been prodding him in the back for some moments here thrust him away, and, what was worse,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E38:23",
+      "episode": "E38",
+      "reviewStatus": "reviewed_reference",
+      "source": "It is an engine, on our rails, coming along at a great pace! It looks as if we were being pursued!\"",
+      "legacyExpectedChunks": [
+        "It is an engine, on our rails, coming along at a great pace!",
+        "It looks as if we were being pursued!\""
+      ],
+      "expectedChunks": [
+        "It is an engine, on our rails, coming along at a great pace!",
+        "It looks as if we were being pursued!\""
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E38:24",
+      "episode": "E38",
+      "reviewStatus": "reviewed_reference",
+      "source": "He had seen this method adopted by schoolboys, when the journey-money provided by thoughtful parents had been diverted to other and better ends.",
+      "legacyExpectedChunks": [
+        "He had seen this method adopted by schoolboys,",
+        "when the journey-money provided by thoughtful parents had been diverted to other and better ends."
+      ],
+      "expectedChunks": [
+        "He had seen this method adopted by schoolboys, when the journey-money provided by thoughtful parents had been diverted to other and better ends."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E38:9",
+      "episode": "E38",
+      "reviewStatus": "reviewed_reference",
+      "source": "I find I've left my purse behind. Just give me that ticket, will you, and I'll send the money on to-morrow?",
+      "legacyExpectedChunks": [
+        "I find I've left my purse behind.",
+        "Just give me that ticket, will you, and I'll send the money on to-morrow?"
+      ],
+      "expectedChunks": [
+        "I find I've left my purse behind.",
+        "Just give me that ticket, will you, and I'll send the money on to-morrow?"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E39:5",
+      "episode": "E39",
+      "reviewStatus": "human_reviewed",
+      "source": "Then Toad fell on his knees among the coals, and, raising his clasped paws in supplication, cried, \"Save me, only save me, dear kind Mr.",
+      "legacyExpectedChunks": [
+        "Then Toad fell on his knees among the coals,",
+        "and, raising his clasped paws in supplication, cried, \"Save me, only save me, dear kind Mr."
+      ],
+      "expectedChunks": [
+        "Then Toad fell on his knees among the coals, and, raising his clasped paws in supplication, cried, \"Save me, only save me, dear kind Mr."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E39:68",
+      "episode": "E39",
+      "reviewStatus": "human_reviewed",
+      "source": "where with branches and dead leaves he made himself as comfortable a bed as he could, and slept soundly till the morning.",
+      "legacyExpectedChunks": [
+        "where with branches and dead leaves he made himself as comfortable a bed as he could, and slept soundly till the morning."
+      ],
+      "expectedChunks": [
+        "where with branches and dead leaves he made himself as comfortable a bed as he could, and slept soundly till the morning."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E39:10",
+      "episode": "E39",
+      "reviewStatus": "reviewed_reference",
+      "source": "I don't hold with motor-cars, for one thing; and I don't hold with being ordered about by policemen when I'm on my own engine, for another.",
+      "legacyExpectedChunks": [
+        "I don't hold with motor-cars, for one thing;",
+        "and I don't hold with being ordered about by policemen when I'm on my own engine, for another."
+      ],
+      "expectedChunks": [
+        "I don't hold with motor-cars, for one thing; and I don't hold with being ordered about by policemen when I'm on my own engine, for another."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E40:6",
+      "episode": "E40",
+      "reviewStatus": "human_reviewed",
+      "source": "But the constant chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;",
+      "legacyExpectedChunks": [
+        "But the constant chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
+      ],
+      "expectedChunks": [
+        "But the constant",
+        "chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E40:11",
+      "episode": "E40",
+      "reviewStatus": "reviewed_reference",
+      "source": "the robin was beginning to assert himself once more; and there was a feeling in the air of change and departure.",
+      "legacyExpectedChunks": [
+        "the robin was beginning to assert himself once more;",
+        "and there was a feeling in the air of change and departure."
+      ],
+      "expectedChunks": [
+        "the robin was beginning to assert himself once more; and there was a feeling in the air of change and departure."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E40:12",
+      "episode": "E40",
+      "reviewStatus": "reviewed_reference",
+      "source": "clean of any chilly premonitions of the passing year. But the constant chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;",
+      "legacyExpectedChunks": [
+        "clean of any chilly premonitions of the passing year.",
+        "But the constant chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
+      ],
+      "expectedChunks": [
+        "clean of any chilly premonitions of the passing year.",
+        "But the constant",
+        "chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E41:39",
+      "episode": "E41",
+      "reviewStatus": "human_reviewed",
+      "source": "O, do you remember-\" and, forgetting the Rat, they slid into passionate reminiscence, while he listened fascinated, and his heart burned within him.",
+      "legacyExpectedChunks": [
+        "O, do you remember-\" and, forgetting the Rat,",
+        "they slid into passionate reminiscence, while he listened fascinated, and his heart burned within him."
+      ],
+      "expectedChunks": [
+        "O, do you remember-\" and, forgetting the Rat, they slid into passionate reminiscence, while he listened fascinated, and his heart burned within him."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E41:13",
+      "episode": "E41",
+      "reviewStatus": "reviewed_reference",
+      "source": "and I had a stiff fight to win through; but never shall I forget the blissful feeling of the hot sun again on my back",
+      "legacyExpectedChunks": [
+        "and I had a stiff fight to win through;",
+        "but never shall I forget the blissful feeling of the hot sun again on my back"
+      ],
+      "expectedChunks": [
+        "and I had a stiff fight to win through; but never shall I forget the blissful feeling of the hot sun again on my back"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E42:11",
+      "episode": "E42",
+      "reviewStatus": "human_reviewed",
+      "source": "What quiet harbours, thronged with gallant shipping bound for purple islands of wine and spice, islands set low in languorous waters!",
+      "legacyExpectedChunks": [
+        "What quiet harbours, thronged with gallant shipping bound for purple islands of wine and spice, islands set low in languorous waters!"
+      ],
+      "expectedChunks": [
+        "What quiet harbours, thronged with gallant shipping bound for purple islands of wine and spice, islands set low in languorous waters!"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E42:14",
+      "episode": "E42",
+      "reviewStatus": "human_reviewed",
+      "source": "he could muse on the metalled road and all the wondrous world that it led to; on all the wayfarers, too, that might have trodden it,",
+      "legacyExpectedChunks": [
+        "he could muse on the metalled road and all the wondrous world that it led to;",
+        "on all the wayfarers, too, that might have trodden it,"
+      ],
+      "expectedChunks": [
+        "he could muse on the metalled road and all the wondrous world that it led to; on all the wayfarers, too, that might have trodden it,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E42:12",
+      "episode": "E42",
+      "reviewStatus": "reviewed_reference",
+      "source": "His shining eyes held fast to the horizon, and he seemed to be listening for some sound that was wanting from that inland acreage,",
+      "legacyExpectedChunks": [
+        "His shining eyes held fast to the horizon,",
+        "and he seemed to be listening for some sound that was wanting from that inland acreage,"
+      ],
+      "expectedChunks": [
+        "His shining eyes held fast to the horizon, and he seemed to be listening for some sound that was wanting from that inland acreage,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E43:14",
+      "episode": "E43",
+      "reviewStatus": "reviewed_reference",
+      "source": "under great stars set in a velvet sky! Thence we turned and coasted up the Adriatic, its shores swimming in an atmosphere of amber, rose, and aquamarine;",
+      "legacyExpectedChunks": [
+        "under great stars set in a velvet sky!",
+        "Thence we turned and coasted up the Adriatic, its shores swimming in an atmosphere of amber, rose, and aquamarine;"
+      ],
+      "expectedChunks": [
+        "under great stars set in a velvet sky!",
+        "Thence we turned and coasted up the Adriatic, its shores swimming in an atmosphere of amber, rose, and aquamarine;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E43:16",
+      "episode": "E43",
+      "reviewStatus": "reviewed_reference",
+      "source": "Those were golden days and balmy nights! In and out of harbour all the time-old friends everywhere-sleeping in some cool temple",
+      "legacyExpectedChunks": [
+        "Those were golden days and balmy nights!",
+        "In and out of harbour all the time-old friends everywhere-sleeping in some cool temple"
+      ],
+      "expectedChunks": [
+        "Those were golden days and balmy nights!",
+        "In and out of harbour all the time-old friends everywhere-sleeping in some cool temple"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E44:10",
+      "episode": "E44",
+      "reviewStatus": "human_reviewed",
+      "source": "he took care to include a yard of long French bread, a sausage out of which the garlic sang, some cheese which lay down and cried,",
+      "legacyExpectedChunks": [
+        "he took care to include a yard of long French bread,",
+        "a sausage out of which the garlic sang, some cheese which lay down and cried,"
+      ],
+      "expectedChunks": [
+        "he took care to include a yard of long French bread, a sausage out of which the garlic sang, some cheese which lay down and cried,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E44:19",
+      "episode": "E44",
+      "reviewStatus": "human_reviewed",
+      "source": "where, landing after winds long contrary, storm-driven and weather-beaten, he had caught the first magical hints and heraldings of another Spring,",
+      "legacyExpectedChunks": [
+        "where, landing after winds long contrary, storm-driven and weather-beaten, he had caught the first magical hints and heraldings of another Spring,"
+      ],
+      "expectedChunks": [
+        "where, landing after winds long contrary, storm-driven and weather-beaten, he had caught the first magical hints and heraldings of another Spring,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E44:13",
+      "episode": "E44",
+      "reviewStatus": "reviewed_reference",
+      "source": "All these sounds the spellbound listener seemed to hear, and with them the hungry complaint of the gulls and the sea-mews,",
+      "legacyExpectedChunks": [
+        "All these sounds the spellbound listener seemed to hear,",
+        "and with them the hungry complaint of the gulls and the sea-mews,"
+      ],
+      "expectedChunks": [
+        "All these sounds the spellbound listener seemed to hear, and with them the hungry complaint of the gulls and the sea-mews,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E44:14",
+      "episode": "E44",
+      "reviewStatus": "reviewed_reference",
+      "source": "Back into speech again it passed, and with beating heart he was following the adventures of a dozen seaports, the fights, the escapes,",
+      "legacyExpectedChunks": [
+        "Back into speech again it passed,",
+        "and with beating heart he was following the adventures of a dozen seaports, the fights, the escapes,"
+      ],
+      "expectedChunks": [
+        "Back into speech again it passed, and with beating heart he was following the adventures of a dozen seaports, the fights, the escapes,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E44:15",
+      "episode": "E44",
+      "reviewStatus": "reviewed_reference",
+      "source": "The little boats that lie tethered to the rings and stanchions of the old sea-wall are gaily painted as those I clambered in and out of in my own childhood;",
+      "legacyExpectedChunks": [
+        "The little boats that lie tethered to the rings and stanchions of the old sea-wall are gaily painted",
+        "as those I clambered in and out of in my own childhood;"
+      ],
+      "expectedChunks": [
+        "The little boats that lie tethered to the rings and stanchions of the old sea-wall are gaily",
+        "painted as those I clambered in and out of in my own childhood;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E45:12",
+      "episode": "E45",
+      "reviewStatus": "human_reviewed",
+      "source": "and the Water Rat, paralysed and staring, saw at last but a distant speck on the white surface of the road.",
+      "legacyExpectedChunks": [
+        "and the Water Rat, paralysed and staring, saw at last but a distant speck on the white surface of the road."
+      ],
+      "expectedChunks": [
+        "and the Water Rat, paralysed and staring, saw at last but a distant speck on the white surface of the road."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E45:48",
+      "episode": "E45",
+      "reviewStatus": "human_reviewed",
+      "source": "It is not surprising, then, that he failed to convey to the Mole any clear idea of what he had been through that day.",
+      "legacyExpectedChunks": [
+        "It is not surprising, then,",
+        "that he failed to convey to the Mole any clear idea of what he had been through that day."
+      ],
+      "expectedChunks": [
+        "It is not surprising, then, that he failed to convey to the Mole any clear idea of what he had been through that day."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E45:16",
+      "episode": "E45",
+      "reviewStatus": "reviewed_reference",
+      "source": "alternately scribbling and sucking the top of his pencil. It is true that he sucked a good deal more than he scribbled;",
+      "legacyExpectedChunks": [
+        "alternately scribbling and sucking the top of his pencil.",
+        "It is true that he sucked a good deal more than he scribbled;"
+      ],
+      "expectedChunks": [
+        "alternately scribbling and sucking the top of his pencil.",
+        "It is true that he sucked a good deal more than he scribbled;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E45:17",
+      "episode": "E45",
+      "reviewStatus": "reviewed_reference",
+      "source": "Gradually the Rat sank into a troubled doze, broken by starts and confused murmurings of things strange and wild and foreign to the unenlightened Mole;",
+      "legacyExpectedChunks": [
+        "Gradually the Rat sank into a troubled doze, broken by starts",
+        "and confused murmurings of things strange and wild and foreign to the unenlightened Mole;"
+      ],
+      "expectedChunks": [
+        "Gradually the Rat sank into a troubled doze, broken by starts and confused murmurings of things strange and wild and foreign to the unenlightened Mole;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E46:24",
+      "episode": "E46",
+      "reviewStatus": "human_reviewed",
+      "source": "the green fields that succeeded the trees were his own to do as he liked with; the road itself, when he reached it, in that loneliness that was everywhere,",
+      "legacyExpectedChunks": [
+        "the green fields that succeeded the trees were his own to do as he liked with;",
+        "the road itself, when he reached it, in that loneliness that was everywhere,"
+      ],
+      "expectedChunks": [
+        "the green fields that succeeded the trees were his own to do as he liked with; the road itself, when he reached it, in that loneliness that was everywhere,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E47:12",
+      "episode": "E47",
+      "reviewStatus": "human_reviewed",
+      "source": "and for that matter, whether I like it or not I have got to do all my own, naturally, moving about as I do.",
+      "legacyExpectedChunks": [
+        "and for that matter, whether I like it or not I have got to do all my own,",
+        "naturally, moving about as I do."
+      ],
+      "expectedChunks": [
+        "and for that matter, whether I like it or not I have got to do all my own, naturally, moving about as I do."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E47:15",
+      "episode": "E47",
+      "reviewStatus": "reviewed_reference",
+      "source": "absorbed in her steering. His back ached badly, and he noticed with dismay that his paws were beginning to get all crinkly. Now Toad was very proud of his paws.",
+      "legacyExpectedChunks": [
+        "absorbed in her steering. His back ached badly,",
+        "and he noticed with dismay that his paws were beginning to get all crinkly.",
+        "Now Toad was very proud of his paws."
+      ],
+      "expectedChunks": [
+        "absorbed in her steering.",
+        "His back ached badly, and he noticed with dismay that his paws were beginning to get all crinkly.",
+        "Now Toad was very proud of his paws."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E48:46",
+      "episode": "E48",
+      "reviewStatus": "human_reviewed",
+      "source": "and beside it a man was sitting on a bucket turned upside down, very busy smoking and staring into the wide world.",
+      "legacyExpectedChunks": [
+        "and beside it a man was sitting on a bucket turned upside down, very busy smoking and staring into the wide world."
+      ],
+      "expectedChunks": [
+        "and beside it a man was sitting on a bucket turned upside down, very busy smoking and staring into the wide world."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E48:64",
+      "episode": "E48",
+      "reviewStatus": "human_reviewed",
+      "source": "but the gipsy's suggestion seemed to smooth the way towards the two things he wanted so badly-ready money, and a solid breakfast.",
+      "legacyExpectedChunks": [
+        "but the gipsy's suggestion seemed to smooth the way towards the two things he wanted so badly-ready money, and a solid breakfast."
+      ],
+      "expectedChunks": [
+        "but the gipsy's suggestion seemed to smooth the way towards the two things he wanted so badly-ready money, and a solid breakfast."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E48:16",
+      "episode": "E48",
+      "reviewStatus": "reviewed_reference",
+      "source": "He had travelled some miles, his horse and he, and he was feeling drowsy in the hot sunshine, when the horse stopped,",
+      "legacyExpectedChunks": [
+        "He had travelled some miles, his horse and he,",
+        "and he was feeling drowsy in the hot sunshine, when the horse stopped,"
+      ],
+      "expectedChunks": [
+        "He had travelled some miles, his horse and he, and he was feeling drowsy in the hot sunshine, when the horse stopped,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E49:29",
+      "episode": "E49",
+      "reviewStatus": "human_reviewed",
+      "source": "and further, in addition thereto, you shall give me as much breakfast as I can possibly eat, at one sitting of course,",
+      "legacyExpectedChunks": [
+        "and further, in addition thereto, you shall give me as much breakfast as I can possibly eat, at one sitting of course,"
+      ],
+      "expectedChunks": [
+        "and further, in addition thereto, you shall give me as much breakfast as I can possibly eat, at one sitting of course,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E49:18",
+      "episode": "E49",
+      "reviewStatus": "reviewed_reference",
+      "source": "Then he disappeared into the caravan for an instant, and returned with a large iron plate and a knife, fork, and spoon.",
+      "legacyExpectedChunks": [
+        "Then he disappeared into the caravan for an instant, and returned with a large iron plate",
+        "and a knife, fork, and spoon."
+      ],
+      "expectedChunks": [
+        "Then he disappeared into the caravan for an instant, and returned with a large iron plate and a knife, fork, and spoon."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E50:19",
+      "episode": "E50",
+      "reviewStatus": "human_reviewed",
+      "source": "he saw approaching him a speck that turned into a dot and then into a blob, and then into something very familiar;",
+      "legacyExpectedChunks": [
+        "he saw approaching him a speck that turned into a dot and then into a blob, and then into something very familiar;"
+      ],
+      "expectedChunks": [
+        "he saw approaching him a speck that turned into a dot and then into a blob, and then into something very familiar;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E50:17",
+      "episode": "E50",
+      "reviewStatus": "reviewed_reference",
+      "source": "on that fatal day when all his troubles began! And the people in it were the very same people he had sat and watched at luncheon in the coffee-room!",
+      "legacyExpectedChunks": [
+        "on that fatal day when all his troubles began!",
+        "And the people in it were the very same people he had sat and watched at luncheon in the coffee-room!"
+      ],
+      "expectedChunks": [
+        "on that fatal day when all his troubles began!",
+        "And the people in it were the very same people he had sat and watched at luncheon in the coffee-room!"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E50:18",
+      "episode": "E50",
+      "reviewStatus": "reviewed_reference",
+      "source": "And well he might, the unhappy animal; for the approaching car was the very one he had stolen out of the yard of the Red Lion Hotel",
+      "legacyExpectedChunks": [
+        "And well he might, the unhappy animal; for the approaching car was the very one he had stolen out of the yard of the Red Lion Hotel"
+      ],
+      "expectedChunks": [
+        "And well he might, the unhappy animal; for the approaching car was the very one he had stolen out of the yard of the Red Lion Hotel"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E51:22",
+      "episode": "E51",
+      "reviewStatus": "human_reviewed",
+      "source": "With a half-turn of the wheel the Toad sent the car crashing through the low hedge that ran along the roadside.",
+      "legacyExpectedChunks": [
+        "With a half-turn of the wheel the Toad sent the car crashing through the low hedge that ran along the roadside."
+      ],
+      "expectedChunks": [
+        "With a half-turn of the wheel the Toad sent the car crashing through the low hedge",
+        "that ran along the roadside."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E51:19",
+      "episode": "E51",
+      "reviewStatus": "reviewed_reference",
+      "source": "One mighty bound, a violent shock, and the wheels of the car were churning up the thick mud of a horse-pond.",
+      "legacyExpectedChunks": [
+        "One mighty bound, a violent shock,",
+        "and the wheels of the car were churning up the thick mud of a horse-pond."
+      ],
+      "expectedChunks": [
+        "One mighty bound, a violent shock, and the wheels of the car were churning up the thick mud of a horse-pond."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E51:19",
+      "episode": "E51",
+      "reviewStatus": "reviewed_reference",
+      "source": "and as the stream bore him past he reached up with a paw and caught hold of the edge and held on.",
+      "legacyExpectedChunks": [
+        "and as the stream bore him past he reached up with a paw and caught hold of the edge and held on."
+      ],
+      "expectedChunks": [
+        "and as the stream bore him past he reached up with a paw",
+        "and caught hold of the edge and held on."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E51:19",
+      "episode": "E51",
+      "reviewStatus": "reviewed_reference",
+      "source": "in the soft, rich grass of a meadow. Sitting up, he could just see the motor-car in the pond, nearly submerged;",
+      "legacyExpectedChunks": [
+        "in the soft, rich grass of a meadow.",
+        "Sitting up, he could just see the motor-car in the pond, nearly submerged;"
+      ],
+      "expectedChunks": [
+        "in the soft, rich grass of a meadow.",
+        "Sitting up, he could just see the motor-car in the pond, nearly submerged;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E52:6",
+      "episode": "E52",
+      "reviewStatus": "human_reviewed",
+      "source": "and he could lay aside a disguise that was unworthy of his position and wanted such a lot of living up to.",
+      "legacyExpectedChunks": [
+        "and he could lay aside a disguise that was unworthy of his position and wanted such a lot of living up to."
+      ],
+      "expectedChunks": [
+        "and he could lay aside a disguise that was unworthy of his position",
+        "and wanted such a lot of living up to."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E52:61",
+      "episode": "E52",
+      "reviewStatus": "human_reviewed",
+      "source": "As for motor-cars, I've not been at all so keen about them since my last ducking in that river of yours.",
+      "legacyExpectedChunks": [
+        "As for motor-cars, I've not been at all so keen about them since my last ducking in that river of yours."
+      ],
+      "expectedChunks": [
+        "As for motor-cars, I've not been at all so keen about them since my last ducking in that river of yours."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E52:20",
+      "episode": "E52",
+      "reviewStatus": "reviewed_reference",
+      "source": "and take off that old cotton rag that looks as if it might formerly have belonged to some washerwoman, and clean yourself thoroughly,",
+      "legacyExpectedChunks": [
+        "and take off that old cotton rag that looks as if it might formerly have belonged to some washerwoman, and clean yourself thoroughly,"
+      ],
+      "expectedChunks": [
+        "and take off that old cotton rag that looks as if it might formerly have belonged to some washerwoman, and clean yourself thoroughly,"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E52:20",
+      "episode": "E52",
+      "reviewStatus": "reviewed_reference",
+      "source": "for he had been through some trying experiences and had taken much hard exercise since the excellent breakfast provided for him by the gipsy.",
+      "legacyExpectedChunks": [
+        "for he had been through some trying experiences",
+        "and had taken much hard exercise since the excellent breakfast provided for him by the gipsy."
+      ],
+      "expectedChunks": [
+        "for he had been through some trying experiences and had",
+        "taken much hard exercise since the excellent breakfast provided for him by the gipsy."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E52:20",
+      "episode": "E52",
+      "reviewStatus": "reviewed_reference",
+      "source": "I had a sudden idea-a really brilliant idea-connected with motor-boats-there, there! don't take on so, old chap, and stamp, and upset things;",
+      "legacyExpectedChunks": [
+        "I had a sudden idea-a really brilliant idea-connected with motor-boats-there, there!",
+        "don't take on so, old chap, and stamp, and upset things;"
+      ],
+      "expectedChunks": [
+        "I had a sudden idea-a really brilliant idea-connected with motor-boats-there, there! don't take on so, old chap, and stamp, and upset things;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E54:21",
+      "episode": "E54",
+      "reviewStatus": "reviewed_reference",
+      "source": "So he got out the boat, and set off rowing up the river to where the garden front of Toad Hall came down to the water-side.",
+      "legacyExpectedChunks": [
+        "So he got out the boat,",
+        "and set off rowing up the river to where the garden front of Toad Hall came down to the water-side."
+      ],
+      "expectedChunks": [
+        "So he got out the boat, and set off rowing up the river to where the garden front of Toad Hall came down to the water-side."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E55:34",
+      "episode": "E55",
+      "reviewStatus": "human_reviewed",
+      "source": "\"But I think I see now, in the depths of my mind, what Toad really ought to do. I will tell you.",
+      "legacyExpectedChunks": [
+        "\"But I think I see now, in the depths of my mind, what Toad really ought to do. I will tell you."
+      ],
+      "expectedChunks": [
+        "\"But I think I see now, in the depths of my mind, what Toad really ought to do.",
+        "I will tell you."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E55:42",
+      "episode": "E55",
+      "reviewStatus": "human_reviewed",
+      "source": "It was the Badger, who, having finished his pie, had turned round in his chair and was looking at them severely.",
+      "legacyExpectedChunks": [
+        "It was the Badger, who, having finished his pie, had turned round in his chair and was looking at them severely."
+      ],
+      "expectedChunks": [
+        "It was the Badger, who, having finished his pie, had turned round in his chair and was looking at them severely."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E56:22",
+      "episode": "E56",
+      "reviewStatus": "reviewed_reference",
+      "source": "The Badger sat in the arm-chair, reading the paper, and not concerning himself in the slightest about what was going to happen that very evening.",
+      "legacyExpectedChunks": [
+        "The Badger sat in the arm-chair, reading the paper,",
+        "and not concerning himself in the slightest about what was going to happen that very evening."
+      ],
+      "expectedChunks": [
+        "The Badger sat in the arm-chair, reading the paper, and not concerning himself in the slightest about what was going to happen that very evening."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E56:23",
+      "episode": "E56",
+      "reviewStatus": "reviewed_reference",
+      "source": "He slept till a late hour next morning, and by the time he got down he found that the other animals had finished their breakfast some time before.",
+      "legacyExpectedChunks": [
+        "He slept till a late hour next morning, and by the time he got down he found that the other animals had finished their breakfast some time before."
+      ],
+      "expectedChunks": [
+        "He slept till a late hour next morning, and by the time he got down he found that the other animals had finished their breakfast some time before."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E57:41",
+      "episode": "E57",
+      "reviewStatus": "human_reviewed",
+      "source": "A hundred bloodthirsty badgers, armed with rifles, are going to attack Toad Hall this very night, by way of the paddock.",
+      "legacyExpectedChunks": [
+        "A hundred bloodthirsty badgers, armed with rifles, are going to attack Toad Hall this very night, by way of the paddock."
+      ],
+      "expectedChunks": [
+        "A hundred bloodthirsty badgers, armed with rifles, are going to attack Toad Hall this very night, by way of the paddock."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E57:59",
+      "episode": "E57",
+      "reviewStatus": "human_reviewed",
+      "source": "\"I perceive you have more sense in your little finger than some other animals have in the whole of their fat bodies.",
+      "legacyExpectedChunks": [
+        "\"I perceive you have more sense in your little finger than some other animals have in the whole of their fat bodies."
+      ],
+      "expectedChunks": [
+        "\"I perceive you have more sense in your little finger",
+        "than some other animals have in the whole of their fat bodies."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E57:63",
+      "episode": "E57",
+      "reviewStatus": "human_reviewed",
+      "source": "but, fortunately for him, before he could show temper or expose himself to the Badger's sarcasm, the bell rang for luncheon.",
+      "legacyExpectedChunks": [
+        "but, fortunately for him, before he could show temper or expose himself to the Badger's sarcasm, the bell rang for luncheon."
+      ],
+      "expectedChunks": [
+        "but, fortunately for him, before he could show temper or expose himself to the Badger's sarcasm, the bell rang for luncheon."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E57:21",
+      "episode": "E57",
+      "reviewStatus": "reviewed_reference",
+      "source": "The Toad was simply wild with jealousy, more especially as he couldn't make out for the life of him what the Mole had done that was so particularly clever;",
+      "legacyExpectedChunks": [
+        "The Toad was simply wild with jealousy, more especially as he couldn't make out",
+        "for the life of him what the Mole had done that was so particularly clever;"
+      ],
+      "expectedChunks": [
+        "The Toad was simply wild with jealousy, more especially as he couldn't make out for the life of him",
+        "what the Mole had done that was so particularly clever;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E58:15",
+      "episode": "E58",
+      "reviewStatus": "human_reviewed",
+      "source": "The Toad was so anxious not to be left out that he took up the inferior position assigned to him without a murmur, and the animals set off.",
+      "legacyExpectedChunks": [
+        "The Toad was so anxious not to be left out that he took up the inferior position assigned to him without a murmur,",
+        "and the animals set off."
+      ],
+      "expectedChunks": [
+        "The Toad was so anxious not to be left out",
+        "that he took up the inferior position assigned to him without a murmur, and the animals set off."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E58:19",
+      "episode": "E58",
+      "reviewStatus": "human_reviewed",
+      "source": "but when it came to Toad's turn, of course he managed to slip and fall into the water with a loud splash",
+      "legacyExpectedChunks": [
+        "but when it came to Toad's turn, of course he managed to slip and fall into the water with a loud splash"
+      ],
+      "expectedChunks": [
+        "but when it came to Toad's turn, of course he managed to slip and fall into the water with a loud splash"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E58:23",
+      "episode": "E58",
+      "reviewStatus": "human_reviewed",
+      "source": "and told him that the very next time he made a fool of himself he would most certainly be left behind.",
+      "legacyExpectedChunks": [
+        "and told him that the very next time he made a fool of himself he would most certainly be left behind."
+      ],
+      "expectedChunks": [
+        "and told him that the very next time",
+        "he made a fool of himself he would most certainly be left behind."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E58:26",
+      "episode": "E58",
+      "reviewStatus": "human_reviewed",
+      "source": "and poor Toad began to shiver, partly from dread of what might be before him, partly because he was wet through.",
+      "legacyExpectedChunks": [
+        "and poor Toad began to shiver, partly from dread of what might be before him, partly because he was wet through."
+      ],
+      "expectedChunks": [
+        "and poor Toad began to shiver, partly from dread of what might be before him, partly because he was wet through."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E58:6",
+      "episode": "E58",
+      "reviewStatus": "human_reviewed",
+      "source": "Then a pair of pistols, a policeman's truncheon, several sets of handcuffs, some bandages and sticking-plaster, and a flask and a sandwich-case.",
+      "legacyExpectedChunks": [
+        "Then a pair of pistols, a policeman's truncheon, several sets of handcuffs, some bandages and sticking-plaster, and a flask and a sandwich-case."
+      ],
+      "expectedChunks": [
+        "Then a pair of pistols, a policeman's truncheon, several sets of handcuffs, some bandages and sticking-plaster, and a flask and a sandwich-case."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E58:24",
+      "episode": "E58",
+      "reviewStatus": "reviewed_reference",
+      "source": "The Badger thought they were being attacked from behind, and, as there was no room to use a stick or a cutlass,",
+      "legacyExpectedChunks": [
+        "The Badger thought they were being attacked from behind,",
+        "and, as there was no room to use a stick or a cutlass,"
+      ],
+      "expectedChunks": [
+        "The Badger thought they were being attacked from behind, and, as there was no room to use a stick or a cutlass,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E59:19",
+      "episode": "E59",
+      "reviewStatus": "human_reviewed",
+      "source": "but to the panic-stricken weasels the hall seemed full of monstrous animals, grey, black, brown and yellow, whooping and flourishing enormous cudgels;",
+      "legacyExpectedChunks": [
+        "but to the panic-stricken weasels the hall seemed full of monstrous animals, grey, black, brown and yellow, whooping and flourishing enormous cudgels;"
+      ],
+      "expectedChunks": [
+        "but to the panic-stricken weasels the hall seemed full of monstrous animals, grey, black, brown and yellow, whooping and flourishing enormous cudgels;"
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "stratified_e09_e62:E59:22",
+      "episode": "E59",
+      "reviewStatus": "reviewed_reference",
+      "source": "The Mole vanished promptly through a window; and the Badger bade the other two set a table on its legs again,",
+      "legacyExpectedChunks": [
+        "The Mole vanished promptly through a window;",
+        "and the Badger bade the other two set a table on its legs again,"
+      ],
+      "expectedChunks": [
+        "The Mole vanished promptly through a window; and the Badger bade the other two set a table on its legs again,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E60:21",
+      "episode": "E60",
+      "reviewStatus": "reviewed_reference",
+      "source": "SONG. . . . BY TOAD. (Composed by himself.) will be sung in the course of the evening by the. . . COMPOSER.",
+      "legacyExpectedChunks": [
+        "SONG. . . . BY TOAD.",
+        "(Composed by himself.) will be sung in the course of the evening by the. . . COMPOSER."
+      ],
+      "expectedChunks": [
+        "SONG. . . .",
+        "BY TOAD.",
+        "(Composed by himself.) will be sung in the course of the evening by the. . .",
+        "COMPOSER."
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "stratified_e09_e62:E60:23",
+      "episode": "E60",
+      "reviewStatus": "reviewed_reference",
+      "source": "He would write the invitations; and he would take care to mention the leading part he had taken in the fight,",
+      "legacyExpectedChunks": [
+        "He would write the invitations;",
+        "and he would take care to mention the leading part he had taken in the fight,"
+      ],
+      "expectedChunks": [
+        "He would write the invitations; and he would take care to mention the leading part he had taken in the fight,"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    },
+    {
+      "id": "reviewed_v2:E61:3",
+      "episode": "E61",
+      "reviewStatus": "human_reviewed",
+      "source": "Toad swaggered out and found it was one of the prisoners of the previous evening, very respectful and anxious to please.",
+      "legacyExpectedChunks": [
+        "Toad swaggered out and found it was one of the prisoners of the previous evening, very respectful and anxious to please."
+      ],
+      "expectedChunks": [
+        "Toad swaggered out and found it was one of the prisoners of the previous evening, very respectful and anxious to please."
+      ],
+      "changeReason": "unchanged_from_reviewed_v2"
+    },
+    {
+      "id": "reviewed_v2:E61:6",
+      "episode": "E61",
+      "reviewStatus": "human_reviewed",
+      "source": "and if he liked to come back again in the evening, perhaps there might be a shilling for him, or, again, perhaps there mightn't;",
+      "legacyExpectedChunks": [
+        "and if he liked to come back again in the evening,",
+        "perhaps there might be a shilling for him, or, again, perhaps there mightn't;"
+      ],
+      "expectedChunks": [
+        "and if he liked to come back again in the evening, perhaps there might be a shilling for him, or, again, perhaps there mightn't;"
+      ],
+      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+    }
+  ]
+}

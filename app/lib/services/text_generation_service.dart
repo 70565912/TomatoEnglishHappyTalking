@@ -31,11 +31,38 @@ class TextGenerationReply {
     required this.text,
     required this.source,
     this.errorMessage,
+    this.provider,
+    this.model,
+    this.usage = const TextGenerationUsage(),
   });
 
   final String text;
   final TextGenerationReplySource source;
   final String? errorMessage;
+  final String? provider;
+  final String? model;
+  final TextGenerationUsage usage;
+}
+
+class TextGenerationUsage {
+  const TextGenerationUsage({
+    this.inputTokens = 0,
+    this.outputTokens = 0,
+    this.totalTokens = 0,
+    this.estimatedCostCny,
+  });
+
+  final int inputTokens;
+  final int outputTokens;
+  final int totalTokens;
+  final double? estimatedCostCny;
+
+  Map<String, dynamic> toJson() => {
+        'inputTokens': inputTokens,
+        'outputTokens': outputTokens,
+        'totalTokens': totalTokens,
+        'estimatedCostCny': estimatedCostCny,
+      };
 }
 
 class TextGenerationException implements Exception {
@@ -53,6 +80,9 @@ typedef TextGenerationPostOverride = Future<Object?> Function({
   required Map<String, String> headers,
   required Map<String, dynamic> body,
 });
+
+typedef TextGenerationTextValidator = void Function(String text);
+typedef TextGenerationTextCachePredicate = bool Function(String text);
 
 class TextGenerationService {
   static const _cacheNamespace = 'openai_text';
@@ -80,6 +110,10 @@ class TextGenerationService {
     bool jsonResponse = false,
     bool skipCacheRead = false,
     bool skipCacheWrite = false,
+    double? temperature,
+    bool disableThinking = false,
+    TextGenerationTextValidator? validateText,
+    TextGenerationTextCachePredicate? shouldCacheText,
   }) async {
     final stopwatch = Stopwatch()..start();
     final preparedTurns = await _prepareTurnsForApi(
@@ -93,6 +127,8 @@ class TextGenerationService {
       purpose: cachePurpose,
       maxTokens: maxTokens,
       jsonResponse: jsonResponse,
+      temperature: temperature,
+      disableThinking: disableThinking,
     );
     final cacheKey = await ApiCacheService.keyForJson(
       _cacheNamespace,
@@ -105,22 +141,33 @@ class TextGenerationService {
         purpose: cachePurpose,
       );
       if (cachedText != null && cachedText.trim().isNotEmpty) {
-        _logCompletion(
-          event: 'chat.generateStrict',
-          config: config,
-          cachePurpose: cachePurpose,
-          articleId: articleId,
-          maxTokens: maxTokens,
-          durationMs: stopwatch.elapsedMilliseconds,
-          source: TextGenerationReplySource.cached,
-          jsonResponse: jsonResponse,
-          skipCacheRead: skipCacheRead,
-          skipCacheWrite: skipCacheWrite,
-        );
-        return TextGenerationReply(
-          text: cachedText,
-          source: TextGenerationReplySource.cached,
-        );
+        try {
+          validateText?.call(cachedText);
+          _logCompletion(
+            event: 'chat.generateStrict',
+            config: config,
+            cachePurpose: cachePurpose,
+            articleId: articleId,
+            maxTokens: maxTokens,
+            durationMs: stopwatch.elapsedMilliseconds,
+            source: TextGenerationReplySource.cached,
+            jsonResponse: jsonResponse,
+            skipCacheRead: skipCacheRead,
+            skipCacheWrite: skipCacheWrite,
+            usage: const TextGenerationUsage(),
+          );
+          return TextGenerationReply(
+            text: cachedText,
+            source: TextGenerationReplySource.cached,
+            provider: config.provider,
+            model: config.model,
+          );
+        } catch (error) {
+          debugPrint(
+            '[TextGenerationService] ignored invalid cached response '
+            'purpose=$cachePurpose error=${_errorSummary(error)}',
+          );
+        }
       }
     }
 
@@ -152,6 +199,13 @@ class TextGenerationService {
         'max_tokens': maxTokens,
         'stream': false,
         if (jsonResponse) 'response_format': {'type': 'json_object'},
+        if (temperature != null) 'temperature': temperature,
+        if (disableThinking &&
+            config.provider == AppConfig.aiProviderAliyunBailian)
+          'enable_thinking': false,
+        if (disableThinking &&
+            config.provider == AppConfig.aiProviderVolcengine)
+          'thinking': {'type': 'disabled'},
       };
       final responseData = await _postJson(
         config: config,
@@ -163,7 +217,8 @@ class TextGenerationService {
         throw const FormatException(
             'OpenAI-compatible response has no message content');
       }
-      if (!skipCacheWrite) {
+      validateText?.call(text);
+      if (!skipCacheWrite && (shouldCacheText?.call(text) ?? true)) {
         await ApiCacheService.putText(
           cacheKey: cacheKey,
           kind: _cacheNamespace,
@@ -179,6 +234,11 @@ class TextGenerationService {
         articleId: articleId,
         successfulText: _requestTranscript(preparedTurns),
       );
+      final usage = _extractUsage(
+        responseData,
+        provider: config.provider,
+        model: config.model,
+      );
       _logCompletion(
         event: 'chat.generateStrict',
         config: config,
@@ -190,10 +250,14 @@ class TextGenerationService {
         jsonResponse: jsonResponse,
         skipCacheRead: skipCacheRead,
         skipCacheWrite: skipCacheWrite,
+        usage: usage,
       );
       return TextGenerationReply(
         text: text,
         source: TextGenerationReplySource.remote,
+        provider: config.provider,
+        model: config.model,
+        usage: usage,
       );
     } catch (error) {
       final errorSummary = _errorSummary(error);
@@ -228,12 +292,68 @@ class TextGenerationService {
     }
   }
 
+  /// Reads and validates a strict-generation cache entry without performing a
+  /// remote request. This lets multi-round protocols reuse a successful
+  /// expanded-round decision before paying for the initial round again.
+  static Future<TextGenerationReply?> readStrictCache({
+    required List<TextGenerationTurn> turns,
+    required String cachePurpose,
+    int? articleId,
+    int maxTokens = 1024,
+    bool jsonResponse = false,
+    double? temperature,
+    bool disableThinking = false,
+    TextGenerationTextValidator? validateText,
+  }) async {
+    final preparedTurns = await _prepareTurnsForApi(
+      turns,
+      purpose: cachePurpose,
+    );
+    final config = await AppConfig.openAiTextConfig;
+    final request = _cacheRequest(
+      config: config,
+      turns: preparedTurns,
+      purpose: cachePurpose,
+      maxTokens: maxTokens,
+      jsonResponse: jsonResponse,
+      temperature: temperature,
+      disableThinking: disableThinking,
+    );
+    final cacheKey = await ApiCacheService.keyForJson(
+      _cacheNamespace,
+      request,
+    );
+    final cachedText = await ApiCacheService.getText(
+      cacheKey,
+      articleId: articleId,
+      purpose: cachePurpose,
+    );
+    if (cachedText == null || cachedText.trim().isEmpty) return null;
+    try {
+      validateText?.call(cachedText);
+      return TextGenerationReply(
+        text: cachedText,
+        source: TextGenerationReplySource.cached,
+        provider: config.provider,
+        model: config.model,
+      );
+    } catch (error) {
+      debugPrint(
+        '[TextGenerationService] ignored invalid cache-only response '
+        'purpose=$cachePurpose error=${_errorSummary(error)}',
+      );
+      return null;
+    }
+  }
+
   @visibleForTesting
   static Future<Map<String, dynamic>> cacheRequestForTest({
     required List<TextGenerationTurn> turns,
     required String purpose,
     int maxTokens = 1024,
     bool jsonResponse = false,
+    double? temperature,
+    bool disableThinking = false,
   }) async {
     final preparedTurns = await _prepareTurnsForApi(
       turns,
@@ -246,6 +366,8 @@ class TextGenerationService {
       purpose: purpose,
       maxTokens: maxTokens,
       jsonResponse: jsonResponse,
+      temperature: temperature,
+      disableThinking: disableThinking,
     );
   }
 
@@ -326,6 +448,8 @@ class TextGenerationService {
     required String purpose,
     required int maxTokens,
     bool jsonResponse = false,
+    double? temperature,
+    bool disableThinking = false,
   }) =>
       {
         'service': 'openai_chat_completions',
@@ -337,6 +461,8 @@ class TextGenerationService {
         'maxTokens': maxTokens,
         'stream': false,
         if (jsonResponse) 'responseFormat': 'json_object',
+        if (temperature != null) 'temperature': temperature,
+        if (disableThinking) 'thinkingMode': 'disabled',
         'messages': turns.map((turn) => turn.toJson()).toList(growable: false),
       };
 
@@ -351,6 +477,7 @@ class TextGenerationService {
     bool jsonResponse = false,
     bool skipCacheRead = false,
     bool skipCacheWrite = false,
+    TextGenerationUsage usage = const TextGenerationUsage(),
   }) {
     TomatoLogger.info(
       category: 'text_generation',
@@ -365,6 +492,7 @@ class TextGenerationService {
         jsonResponse: jsonResponse,
         skipCacheRead: skipCacheRead,
         skipCacheWrite: skipCacheWrite,
+        usage: usage,
       ),
     );
   }
@@ -412,6 +540,7 @@ class TextGenerationService {
     required bool jsonResponse,
     required bool skipCacheRead,
     required bool skipCacheWrite,
+    TextGenerationUsage usage = const TextGenerationUsage(),
   }) =>
       {
         'provider': config.provider,
@@ -421,6 +550,7 @@ class TextGenerationService {
         'jsonResponse': jsonResponse,
         'skipCacheRead': skipCacheRead,
         'skipCacheWrite': skipCacheWrite,
+        'usage': usage.toJson(),
       };
 
   static String _replySourceName(TextGenerationReplySource source) =>
@@ -467,6 +597,96 @@ class TextGenerationService {
           .join();
     }
     return '';
+  }
+
+  static TextGenerationUsage _extractUsage(
+    Object? responseData, {
+    required String provider,
+    required String model,
+  }) {
+    final decoded =
+        responseData is String ? jsonDecode(responseData) : responseData;
+    if (decoded is! Map || decoded['usage'] is! Map) {
+      return const TextGenerationUsage();
+    }
+    final usage = decoded['usage'] as Map;
+    final input = _usageInt(usage['prompt_tokens'] ?? usage['input_tokens']);
+    final output =
+        _usageInt(usage['completion_tokens'] ?? usage['output_tokens']);
+    final total = _usageInt(usage['total_tokens']);
+    return TextGenerationUsage(
+      inputTokens: input,
+      outputTokens: output,
+      totalTokens: total > 0 ? total : input + output,
+      estimatedCostCny: estimateCostCny(
+        provider: provider,
+        model: model,
+        inputTokens: input,
+        outputTokens: output,
+      ),
+    );
+  }
+
+  static int _usageInt(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  static double? estimateCostCny({
+    required String provider,
+    required String model,
+    required int inputTokens,
+    required int outputTokens,
+  }) {
+    final rates = _verifiedRates(
+      provider: provider,
+      model: model,
+      inputTokens: inputTokens,
+    );
+    if (rates == null) return null;
+    return inputTokens * rates.input / 1000000 +
+        outputTokens * rates.output / 1000000;
+  }
+
+  /// Conservative list prices verified from the official China-region price
+  /// pages on 2026-08-09. Promotional discounts and free grants are ignored so
+  /// a tuning budget can never be enlarged by a temporary offer.
+  static ({double input, double output})? _verifiedRates({
+    required String provider,
+    required String model,
+    required int inputTokens,
+  }) {
+    if (provider == AppConfig.aiProviderAliyunBailian) {
+      if (model == 'qwen3.7-max' ||
+          model == 'qwen3.7-max-2026-06-08' ||
+          model == 'qwen3.7-max-2026-05-20') {
+        return inputTokens <= 1000000 ? (input: 12, output: 36) : null;
+      }
+      if (model == 'qwen3.7-plus' || model == 'qwen3.7-plus-2026-05-26') {
+        if (inputTokens <= 256000) return (input: 2, output: 8);
+        if (inputTokens <= 1000000) return (input: 6, output: 24);
+        return null;
+      }
+    }
+    if (provider == AppConfig.aiProviderVolcengine &&
+        (model == 'doubao-seed-2-0-lite' ||
+            model.startsWith('doubao-seed-2-0-lite-'))) {
+      if (inputTokens <= 32000) return (input: 0.6, output: 3.6);
+      if (inputTokens <= 128000) return (input: 0.9, output: 5.4);
+      if (inputTokens <= 256000) return (input: 1.8, output: 10.8);
+    }
+    if (provider == AppConfig.aiProviderVolcengine &&
+        (model == 'doubao-seed-2-0-pro' ||
+            model.startsWith('doubao-seed-2-0-pro-'))) {
+      if (inputTokens <= 256000) return (input: 3.2, output: 16);
+    }
+    if (provider == AppConfig.aiProviderVolcengine &&
+        (model == 'deepseek-v4-flash' ||
+            model.startsWith('deepseek-v4-flash-'))) {
+      return (input: 1, output: 2);
+    }
+    return null;
   }
 
   static String _errorSummary(Object error) {

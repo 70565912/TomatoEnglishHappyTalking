@@ -1,0 +1,6 @@
+# Preserve vendored parser source and training-corpus formatting. Some upstream
+# generated tables intentionally contain trailing spaces, and the Parsito README
+# uses a line of equals signs as a Markdown heading rather than a conflict marker.
+app/packages/udpipe_parser_v3/** whitespace=-blank-at-eof
+app/packages/udpipe_parser_v3/third_party/** -whitespace conflict-marker-size=999
+tools/sentence_split_v3/training/** -whitespace

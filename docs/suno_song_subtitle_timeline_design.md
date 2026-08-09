@@ -6,10 +6,10 @@
 
 - `SongSubtitleTimelineService` 已负责生成和缓存 `song-subtitle-timelines/*.json`，缓存 key 包含 `audioHash`、`lyricsHash` 和 ASR 请求参数（含 `language`）。
 - ASR 语言由 `lyricsAsrLanguage` / `containsCjkText` 自动判定：歌词含 CJK 汉字时用 `zh-CN`，否则 `en-US`。中文歌词按字级 token（`[\u3400-\u9FFF\uF900-\uFAFF]`）与 ASR 字/词时间对齐；英文仍按词级与缩写展开规则。
-- 含 CJK 的时间轴必须走火山 BigASR（`show_utterances` 词级时间）；当前 `ai_provider` 为阿里云时直接失败并提示切换火山，不调用百炼 ASR。
+- 含 CJK 的时间轴必须走火山 ASR（`show_utterances` 词级时间）；当前 `asr_provider` 为阿里云时直接失败并提示切换火山，不调用百炼 ASR。
 - 行级对齐使用**单次全局单调 DP（Needleman–Wunsch）**：把全部歌词 token 拍平成一条序列，与 ASR 词流做一次全局最优对齐，再折回每行。相比旧的贪心逐行游标，重复短语（如 "said the Caterpillar"）不会再跳到远处的重复出现导致“弱锚级联”（某行拉长几十秒、尾部若干行塌缩成零点几秒）。
 - 已移除 `alignmentVersion` 版本位与“版本过旧”闸门。timeline 是否可用只看文件是否存在且含 cue（`timelineFileIsCurrent`）；算法升级后不再自动作废旧缓存，需要时由用户重新生成对应歌曲字幕。
-- `StreamingAsrService.recognizeWithTimeline` 接受 `language`，火山路径开启 `show_utterances=true` 获取词级时间；ASR 结果只作为时间锚点，前端展示文本仍来自原歌词。
+- `StreamingAsrService.recognizeWithTimeline` 接受 `language`，火山路径开启 `show_utterances=true` 获取词级时间；成功结果按音频、语言、厂家、配置模型和最终 Resource ID 持久缓存，ASR 结果只作为时间锚点，前端展示文本仍来自原歌词。
 - 听力页歌曲弹窗中，每个本地歌曲版本可触发“生成歌曲字幕”；生成完成后版本 payload 会带 `timelinePath`、`timelineStatus`、`timelineConfidence`。
 - 歌曲播放时 native 通过 `listening.song.position` 推送当前 cue，Web UI 用 cue 更新绘本字幕和当前句索引。
 - 歌曲版视频通过 `listening.songRecordVideo` 导出，复用歌曲音频、字幕时间轴和绘本页，未生成 `timelinePath` 时录制按钮保持不可用。
@@ -339,7 +339,7 @@ interface SongTimelineFromAsrSnapshotRequest {
 
 ## 缓存与成本
 
-BigASR 调用会产生费用，必须缓存成功结果。
+ASR 调用会产生费用，必须缓存成功结果。除了最终歌曲 timeline 缓存外，`recognizeWithTimeline` 自身也保存原始时间轴识别结果，因此歌词或对齐策略变化但音频与 ASR 配置未变时不重复扣费识别。
 
 建议缓存键包含：
 
@@ -351,6 +351,7 @@ BigASR 调用会产生费用，必须缓存成功结果。
 - `sampleRate: 16000`
 - `language: en-US` 或 `zh-CN`（与歌词语言一致，进入缓存 key）
 - `showUtterances: true`（火山路径；百炼路径对中文歌词直接拒绝）
+- `provider`、配置模型，以及火山最终连接成功的 `resourceId`
 
 缓存 key 不再包含 `alignmentVersion`。这意味着**升级对齐算法不会自动作废旧缓存**：同一 `audioHash` + `lyricsHash` 会命中旧结果。需要让已生成的歌曲用上新算法时，删除该歌曲的 `song-subtitle-timelines/*.json`（`ApiCacheService.getEntry` 会在文件缺失时自动清理对应 DB 记录）或在 App 内重新生成字幕即可。
 
@@ -380,7 +381,7 @@ Suno metadata 按当前歌词的 `lyricsHash` / `contentHash` 恢复缓存组；
 ## 失败处理
 
 - 没有 BigASR key：歌曲仍可播放，但不显示歌曲同步字幕；提示“未配置语音识别，无法生成歌曲字幕时间线”。
-- 中文歌词但当前 AI 平台为阿里云：直接失败，提示切换到火山引擎后再生成；不调用百炼 ASR。
+- 中文歌词但当前语音识别供应商为阿里云：直接失败，提示切换到火山引擎后再生成；不调用百炼 ASR。
 - ffmpeg 缺失或转码失败：歌曲仍可播放，timeline 生成失败，提示重新发布程序或补齐 `ffmpeg.exe`。
 - ASR 空结果：不缓存成功结果，可允许用户重试。
 - 对齐质量低：生成 fallback timeline，但 UI 应显示低置信提示；调试日志记录 ASR 文本、匹配率和低置信行号。

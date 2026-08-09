@@ -18,12 +18,14 @@ import '../../core/practice/listening_sentence_visibility.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/webview/webview_environment.dart';
 import '../../data/models/article_model.dart';
+import '../../data/models/article_segmentation_run_model.dart';
 import '../../data/models/article_sentence_translation_model.dart';
 import '../../data/models/article_song_model.dart';
 import '../../data/models/library_bridge_model.dart';
 import '../../data/models/picture_book_model.dart';
 import '../../services/api_cache_service.dart';
 import '../../services/article_song_cache_service.dart';
+import '../../services/article_segmentation_service_v3.dart';
 import '../../services/asset_path_service.dart';
 import '../../services/bailian_music_service.dart';
 import '../../services/book_transfer_service.dart';
@@ -32,11 +34,11 @@ import '../../services/content_safety_service.dart';
 import '../../services/eleven_labs_music_service.dart';
 import '../../services/external_song_import_service.dart';
 import '../../services/listening_audio_material_service.dart';
-import '../../services/nlp_service.dart';
 import '../../services/picture_book_service.dart';
 import '../../services/practice_input_parser.dart';
 import '../../services/practice_text_service.dart';
 import '../../services/read_aloud_splitter_v2.dart';
+import '../../services/read_aloud_splitter_v3.dart';
 import '../../services/recording_export_service.dart';
 import '../../services/scoring_service.dart';
 import '../../services/song_subtitle_timeline_service.dart';
@@ -55,11 +57,21 @@ class _PreparedArticleInput {
     required this.sourceHash,
     required this.englishContent,
     required this.expiresAt,
+    this.reviewedSentences,
+    this.reviewedTranslationsByIndex = const {},
+    this.splitReviewSource,
+    this.parsedInput,
+    this.segmentationRun,
   });
 
   final String sourceHash;
   final String englishContent;
   final DateTime expiresAt;
+  final List<String>? reviewedSentences;
+  final Map<int, String> reviewedTranslationsByIndex;
+  final TextGenerationReplySource? splitReviewSource;
+  final ParsedPracticeInput? parsedInput;
+  final ArticleSegmentationRunRecord? segmentationRun;
 }
 
 class WebShellScreen extends ConsumerStatefulWidget {
@@ -284,6 +296,9 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'article.translateToEnglish': _handleArticleTranslateToEnglish,
         'article.suggestTitle': _handleArticleSuggestTitle,
         'article.prepareCreate': _handleArticlePrepareCreate,
+        'article.reviewSplitTranslate': _handleArticleReviewSplitTranslate,
+        'article.segmentationSnapshot': _handleArticleSegmentationSnapshot,
+        'article.replaceSegmentation': _handleArticleReplaceSegmentation,
         'article.create': _handleArticleCreate,
         'article.rename': _handleArticleRename,
         'article.fullText': _handleArticleFullText,
@@ -712,11 +727,395 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       sourceHash: sourceHash,
       englishContent: englishContent,
       expiresAt: expiresAt,
+      parsedInput: parsedInput,
     );
     return {
       'preparedId': preparedId,
       'englishContent': englishContent,
       'expiresAt': expiresAt.toIso8601String(),
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleArticleReviewSplitTranslate(
+    BridgeMessage message,
+  ) async {
+    final preparedId = _payloadString(message.payload, 'preparedId').trim();
+    final englishContent =
+        _payloadString(message.payload, 'englishContent').trim();
+    final prepared = _preparedArticleInputs[preparedId];
+    final now = DateTime.now().toUtc();
+    if (preparedId.isEmpty ||
+        prepared == null ||
+        !prepared.expiresAt.isAfter(now)) {
+      _preparedArticleInputs.remove(preparedId);
+      throw const FormatException('preparedId 不存在或已过期，请重新预处理正文');
+    }
+    if (englishContent != prepared.englishContent.trim()) {
+      throw const FormatException('AI 分句复核正文与 preparedId 不匹配');
+    }
+    final segmentation = await const ArticleSegmentationServiceV3().split(
+      prepared.englishContent,
+    );
+    final reviewedSentences = segmentation.sentences;
+
+    final reviewedTranslations = <int, String>{};
+    final importedRows = prepared.parsedInput?.buildSentenceTranslations(
+          articleId: 0,
+          sentences: reviewedSentences,
+        ) ??
+        const <ArticleSentenceTranslation>[];
+    for (final row in importedRows) {
+      if (row.sentenceIndex >= 0 &&
+          row.sentenceIndex < reviewedSentences.length &&
+          row.englishSentence == reviewedSentences[row.sentenceIndex] &&
+          row.chineseText.trim().isNotEmpty) {
+        reviewedTranslations[row.sentenceIndex] = row.chineseText.trim();
+      }
+    }
+    final missingTranslations = <int, String>{
+      for (var index = 0; index < reviewedSentences.length; index += 1)
+        if (!reviewedTranslations.containsKey(index))
+          index: reviewedSentences[index],
+    };
+    PracticeSentenceTranslationBatch? translatedBatch;
+    if (missingTranslations.isNotEmpty) {
+      translatedBatch =
+          await PracticeTextService.translateSentencesToChineseStrict(
+        sentencesByIndex: missingTranslations,
+        usePersistentCache: true,
+        cachePurpose: PracticeTextService.sentenceTranslationV3CachePurpose,
+      );
+      reviewedTranslations.addAll(translatedBatch.translationsByIndex);
+    }
+    if (reviewedTranslations.length != reviewedSentences.length) {
+      throw const FormatException('V3 分句后的中文翻译数量与句子数量不一致');
+    }
+    final translationSource = importedRows.isNotEmpty
+        ? translatedBatch == null
+            ? 'imported_bilingual'
+            : 'imported_bilingual+${translatedBatch.source.name}'
+        : translatedBatch?.source.name ?? 'stored';
+    final translationUsage = translatedBatch?.usage;
+    final segmentationUsage = segmentation.selection.usage;
+    final segmentationRun = segmentation.audit.copyWith(
+      translationSource: translationSource,
+      inputTokens:
+          segmentationUsage.inputTokens + (translationUsage?.inputTokens ?? 0),
+      outputTokens: segmentationUsage.outputTokens +
+          (translationUsage?.outputTokens ?? 0),
+      totalTokens:
+          segmentationUsage.totalTokens + (translationUsage?.totalTokens ?? 0),
+      estimatedCostCny: _sumOptionalCosts(
+        segmentationUsage.estimatedCostCny,
+        translationUsage?.estimatedCostCny,
+      ),
+    );
+    _preparedArticleInputs[preparedId] = _PreparedArticleInput(
+      sourceHash: prepared.sourceHash,
+      englishContent: prepared.englishContent,
+      expiresAt: prepared.expiresAt,
+      reviewedSentences: reviewedSentences,
+      reviewedTranslationsByIndex: Map.unmodifiable(reviewedTranslations),
+      splitReviewSource: segmentation.selection.source,
+      parsedInput: prepared.parsedInput,
+      segmentationRun: segmentationRun,
+    );
+    TomatoLogger.info(
+      category: 'article',
+      event: 'split_translation.review_completed',
+      data: {
+        'source': segmentation.selection.source.name,
+        'parserVersion': segmentation.plan.parserVersion,
+        'modelSha256': segmentation.plan.modelSha256,
+        'parserHealthy': segmentation.plan.parserHealthy,
+        'originalSentenceCount': segmentation.plan.originals.length,
+        'reviewedSentenceCount': reviewedSentences.length,
+        'riskOriginalCount': segmentation.plan.originals
+            .where((item) => item.requiresAiReview)
+            .length,
+        'selectedPaths': segmentation.selection.selectedPathIds,
+        'usedLocalFallback': segmentation.selection.usedLocalFallback,
+        'fallbackReason': segmentationRun.fallbackReason,
+        'candidateCachePurpose':
+            PracticeTextService.candidatePathReviewCachePurpose,
+        'translationCachePurpose':
+            PracticeTextService.sentenceTranslationV3CachePurpose,
+        'translationSource': translationSource,
+        'totalTokens': segmentationRun.totalTokens,
+        'estimatedCostCny': segmentationRun.estimatedCostCny,
+      },
+    );
+    return {
+      'sentences': reviewedSentences,
+      'translations': [
+        for (var index = 0; index < reviewedSentences.length; index += 1)
+          {
+            'index': index,
+            'chinese': reviewedTranslations[index],
+          },
+      ],
+      'sentenceSplitVersion': ReadAloudSplitterV3.reviewedVersion,
+      'source': segmentation.selection.source.name,
+      'parser': {
+        'version': segmentation.plan.parserVersion,
+        'modelSha256': segmentation.plan.modelSha256,
+        'healthy': segmentation.plan.parserHealthy,
+        'issues': segmentation.plan.parserIssues,
+      },
+      'selectedPaths': segmentation.selection.selectedPathIds,
+      'usedLocalFallback': segmentation.selection.usedLocalFallback,
+      'fallbackReason': segmentationRun.fallbackReason,
+      'comparison': {
+        'originalSentenceCount': segmentation.plan.originals.length,
+        'reviewedSentenceCount': reviewedSentences.length,
+        'riskOriginalCount': segmentation.plan.originals
+            .where((item) => item.requiresAiReview)
+            .length,
+      },
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleArticleSegmentationSnapshot(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final article = await DatabaseService.getArticleById(articleId);
+    if (article == null) {
+      throw FormatException('文章不存在（id=$articleId）');
+    }
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    if (chapter == null) {
+      throw FormatException('文章未关联书籍章节（id=$articleId）');
+    }
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    final translations =
+        await DatabaseService.getArticleSentenceTranslationRows(articleId);
+    return {
+      'article': {
+        'id': articleId,
+        'title': article.title,
+        'content': article.content,
+        'canonicalSource': article.sentences.join(' '),
+        'sentences': article.sentences,
+        'sentenceSplitVersion': article.sentenceSplitVersion,
+        'sentencesSha256': await _articleSentencesHash(article.sentences),
+      },
+      'translations': translations
+          .map(
+            (translation) => {
+              'index': translation.sentenceIndex,
+              'english': translation.englishSentence,
+              'chinese': translation.chineseText,
+              'source': translation.source,
+              'createdAt': translation.createdAt.toIso8601String(),
+              'updatedAt': translation.updatedAt.toIso8601String(),
+            },
+          )
+          .toList(growable: false),
+      'pages': pages
+          .map(
+            (page) => {
+              'id': page.id,
+              'pageIndex': page.pageIndex,
+              'sentenceStartIndex': page.sentenceStartIndex,
+              'sentenceEndIndex': page.sentenceEndIndex,
+              'paragraphText': page.paragraphText,
+              'imagePath': page.imagePath,
+              'imageCacheKey': page.imageCacheKey,
+              'status': page.status,
+            },
+          )
+          .toList(growable: false),
+      'chapter': {
+        'id': chapter.id,
+        'seriesId': chapter.seriesId,
+        'chapterOrder': chapter.chapterOrder,
+        'chapterTitle': chapter.chapterTitle,
+        'summary': _decodeRequiredJsonObject(
+          chapter.summaryJson,
+          label: '章节分镜',
+        ),
+      },
+    };
+  }
+
+  Future<Map<String, dynamic>> _handleArticleReplaceSegmentation(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final preparedId = _payloadString(message.payload, 'preparedId').trim();
+    final expectedVersion =
+        _payloadString(message.payload, 'expectedSentenceSplitVersion').trim();
+    final expectedHash =
+        _payloadString(message.payload, 'expectedSentencesSha256').trim();
+    final prepared = _preparedArticleInputs[preparedId];
+    final nowUtc = DateTime.now().toUtc();
+    if (preparedId.isEmpty ||
+        prepared == null ||
+        !prepared.expiresAt.isAfter(nowUtc) ||
+        prepared.reviewedSentences == null ||
+        prepared.segmentationRun == null ||
+        prepared.reviewedTranslationsByIndex.isEmpty) {
+      _preparedArticleInputs.remove(preparedId);
+      throw const FormatException('preparedId 未包含有效的 AI 分句翻译结果');
+    }
+
+    final article = await DatabaseService.getArticleById(articleId);
+    if (article == null) {
+      throw FormatException('文章不存在（id=$articleId）');
+    }
+    final currentHash = await _articleSentencesHash(article.sentences);
+    if (expectedVersion.isEmpty ||
+        article.sentenceSplitVersion != expectedVersion ||
+        expectedHash.isEmpty ||
+        currentHash != expectedHash) {
+      throw const FormatException('文章分句版本或哈希已变化，拒绝迁移');
+    }
+    final canonicalCurrent = article.sentences.join(' ');
+    if (ReadAloudSplitterV3.normalizeForRoundTrip(canonicalCurrent) !=
+        ReadAloudSplitterV3.normalizeForRoundTrip(prepared.englishContent)) {
+      throw const FormatException('AI 审核正文与当前持久化句子不一致');
+    }
+
+    final reviewedSentences = prepared.reviewedSentences!;
+    final rawRanges = message.payload['pageRanges'];
+    if (rawRanges is! List || rawRanges.isEmpty) {
+      throw const FormatException('pageRanges 不能为空');
+    }
+    final existingPages = await DatabaseService.getPictureBookPages(articleId);
+    if (rawRanges.length != existingPages.length) {
+      throw const FormatException('pageRanges 数量与现有绘本页不一致');
+    }
+
+    final now = DateTime.now();
+    final updatedPages = <PictureBookPage>[];
+    final rangesByPage = <int, ({int start, int end})>{};
+    var expectedStart = 0;
+    for (var position = 0; position < rawRanges.length; position += 1) {
+      final raw = rawRanges[position];
+      if (raw is! Map) {
+        throw FormatException('pageRanges 第 ${position + 1} 项格式不正确');
+      }
+      final map = Map<String, dynamic>.from(raw);
+      final pageIndex = _intFromDynamic(map['pageIndex']);
+      final start = _intFromDynamic(map['sentenceStartIndex']);
+      final end = _intFromDynamic(map['sentenceEndIndex']);
+      if (pageIndex != position ||
+          start == null ||
+          end == null ||
+          start != expectedStart ||
+          end < start ||
+          end >= reviewedSentences.length) {
+        throw FormatException('pageRanges 第 ${position + 1} 项不连续或越界');
+      }
+      final page = existingPages[position];
+      if (page.pageIndex != pageIndex) {
+        throw const FormatException('现有绘本页顺序已变化');
+      }
+      rangesByPage[pageIndex!] = (start: start, end: end);
+      updatedPages.add(
+        page.copyWith(
+          sentenceStartIndex: start,
+          sentenceEndIndex: end,
+          paragraphText: reviewedSentences.sublist(start, end + 1).join(' '),
+          promptJson: _updatedPagePromptRange(
+            page.promptJson,
+            pageIndex: pageIndex,
+            start: start,
+            end: end,
+          ),
+          updatedAt: now,
+        ),
+      );
+      expectedStart = end + 1;
+    }
+    if (expectedStart != reviewedSentences.length) {
+      throw const FormatException('pageRanges 未完整覆盖迁移后的句子');
+    }
+
+    final chapter = await DatabaseService.getStoryChapterForArticle(articleId);
+    if (chapter == null) {
+      throw const FormatException('文章缺少章节分镜记录');
+    }
+    final updatedChapter = chapter.copyWith(
+      summaryJson: _updatedChapterSummaryRanges(
+        chapter.summaryJson,
+        rangesByPage: rangesByPage,
+        migrationMetadata: {
+          'sentenceSplitVersion': ReadAloudSplitterV3.reviewedVersion,
+          'promptVersion': PracticeTextService.candidatePathReviewCachePurpose,
+          'source': prepared.splitReviewSource?.name ?? 'unknown',
+          'previousSentencesSha256': currentHash,
+          'migratedAt': now.toUtc().toIso8601String(),
+        },
+      ),
+      updatedAt: now,
+    );
+
+    final oldTranslations =
+        await DatabaseService.getArticleSentenceTranslationRows(articleId);
+    final reusableByEnglish = <String, List<ArticleSentenceTranslation>>{};
+    for (final translation in oldTranslations) {
+      final key = _normalizedMigrationSentence(translation.englishSentence);
+      reusableByEnglish.putIfAbsent(key, () => []).add(translation);
+    }
+    final migratedTranslations = <ArticleSentenceTranslation>[];
+    var reusedTranslations = 0;
+    for (var index = 0; index < reviewedSentences.length; index += 1) {
+      final english = reviewedSentences[index];
+      final reusable = reusableByEnglish[_normalizedMigrationSentence(english)];
+      final old =
+          reusable != null && reusable.isNotEmpty ? reusable.removeAt(0) : null;
+      final chinese = old?.chineseText.trim() ??
+          prepared.reviewedTranslationsByIndex[index]?.trim() ??
+          '';
+      if (chinese.isEmpty) {
+        throw FormatException('迁移后的第 ${index + 1} 句缺少中文翻译');
+      }
+      if (old != null) reusedTranslations += 1;
+      migratedTranslations.add(
+        ArticleSentenceTranslation(
+          articleId: articleId,
+          sentenceIndex: index,
+          englishSentence: english,
+          chineseText: chinese,
+          source: old == null
+              ? 'generated_split_translate_migration_v3'
+              : 'migrated_exact_v2:${old.source}',
+          createdAt: old?.createdAt ?? now,
+          updatedAt: now,
+        ),
+      );
+    }
+
+    await _stopListeningPlayback();
+    await _stopSongPlayback();
+    await DatabaseService.replaceArticleSegmentation(
+      articleId: articleId,
+      expectedSentenceSplitVersion: expectedVersion,
+      expectedSentences: article.sentences,
+      content: prepared.englishContent,
+      sentences: reviewedSentences,
+      sentenceSplitVersion: ReadAloudSplitterV3.reviewedVersion,
+      translations: migratedTranslations,
+      pages: updatedPages,
+      chapter: updatedChapter,
+      segmentationRun: prepared.segmentationRun,
+    );
+    _preparedArticleInputs.remove(preparedId);
+    ref.invalidate(followReadProvider(articleId));
+    final patch = await _articleLibraryPatch(articleId);
+    unawaited(_pushLibraryPatch(patch));
+    return {
+      'articleId': articleId,
+      'sentenceSplitVersion': ReadAloudSplitterV3.reviewedVersion,
+      'previousSentenceCount': article.sentences.length,
+      'sentenceCount': reviewedSentences.length,
+      'translationCount': migratedTranslations.length,
+      'reusedTranslationCount': reusedTranslations,
+      'pageCount': updatedPages.length,
+      'previousSentencesSha256': currentHash,
+      'sentencesSha256': await _articleSentencesHash(reviewedSentences),
     };
   }
 
@@ -828,6 +1227,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     final rawSentences = message.payload['sentences'];
     late final List<String> sentences;
     late final String sentenceSplitVersion;
+    ArticleSegmentationResultV3? directSegmentation;
     if (rawSentences != null) {
       if (rawSentences is! List) {
         throw const FormatException('sentences 必须是字符串数组');
@@ -840,23 +1240,41 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       }).toList(growable: false);
       sentenceSplitVersion =
           _payloadString(message.payload, 'sentenceSplitVersion').trim();
-      if (sentenceSplitVersion != 'read_aloud_dp_v2' &&
-          sentenceSplitVersion != 'reviewed_dp_v2') {
+      const acceptedSplitVersions = {
+        'read_aloud_dp_v2',
+        'reviewed_dp_v2',
+        ReadAloudSplitterV3.version,
+        ReadAloudSplitterV3.reviewedVersion,
+      };
+      if (!acceptedSplitVersions.contains(sentenceSplitVersion)) {
         throw const FormatException(
-          '传入 sentences 时 sentenceSplitVersion 必须为 read_aloud_dp_v2 或 reviewed_dp_v2',
+          '传入 sentences 时 sentenceSplitVersion 必须为受支持的 read_aloud_dp/reviewed_dp 版本',
         );
       }
       // Reviewed / DP sentences are canonical: store joined blocks as content so
       // PracticeInputParser hyphen/quote normalization cannot diverge from the
       // validated sentence list (Willows QA import).
       englishContent = sentences.join(' ');
-      ReadAloudSplitterV2.validateReviewedSentences(
-        englishContent,
-        sentences,
-      );
+      if (sentenceSplitVersion == 'read_aloud_dp_v2' ||
+          sentenceSplitVersion == 'reviewed_dp_v2') {
+        ReadAloudSplitterV2.validateReviewedSentences(
+            englishContent, sentences);
+      } else {
+        ReadAloudSplitterV3.validateReviewedSentences(
+            englishContent, sentences);
+      }
+      final preparedReviewed = preparedInput?.reviewedSentences;
+      if (preparedReviewed != null &&
+          (sentenceSplitVersion != ReadAloudSplitterV3.reviewedVersion ||
+              !listEquals(preparedReviewed, sentences))) {
+        throw const FormatException('article.create 分句与已验收的 AI 复核结果不一致');
+      }
     } else {
-      sentences = NlpService.splitSentences(englishContent);
-      sentenceSplitVersion = ReadAloudSplitterV2.version;
+      directSegmentation = await const ArticleSegmentationServiceV3().split(
+        englishContent,
+      );
+      sentences = directSegmentation.sentences;
+      sentenceSplitVersion = ReadAloudSplitterV3.reviewedVersion;
     }
     if (sentences.isEmpty) {
       throw const FormatException('文章内容需要能转换为英文练习句子');
@@ -934,7 +1352,14 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         sentenceSplitVersion: sentenceSplitVersion,
         createdAt: DateTime.now(),
       );
-      final id = await DatabaseService.saveArticle(article);
+      final segmentationRun =
+          preparedInput?.segmentationRun ?? directSegmentation?.audit;
+      final id = segmentationRun == null
+          ? await DatabaseService.saveArticle(article)
+          : await DatabaseService.saveArticleWithSegmentationRun(
+              article: article,
+              segmentationRun: segmentationRun,
+            );
       if (preparedInput != null) {
         _preparedArticleInputs.remove(preparedId);
       }
@@ -953,6 +1378,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
           await _saveArticleTranslationsAtCreate(
             articleId: id,
             sentences: sentences,
+            precomputedTranslations:
+                preparedInput?.reviewedTranslationsByIndex ?? const {},
           );
         } else {
           await reportProgress(
@@ -1482,8 +1909,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         content,
         parsedInput: parsedInput,
       );
-      final sentences = NlpService.splitSentences(englishContent);
-      if (sentences.isEmpty) {
+      if (englishContent.trim().isEmpty) {
         throw const FormatException('文章内容需要能转换为英文练习句子');
       }
       final articleTitle = _firstNonEmptyString([
@@ -1494,7 +1920,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       article = Article(
         title: articleTitle,
         content: englishContent,
-        sentences: sentences,
+        // This transient article exists only to suggest a book description.
+        // It is never persisted and must not invoke either the legacy splitter
+        // or a paid V3 path review before the real article-save workflow.
+        sentences: [englishContent],
         createdAt: DateTime.now(),
       );
     }
@@ -5145,6 +5574,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         : null;
     await AppConfig.saveCloudSettings(
       aiProvider: optionalString('aiProvider'),
+      asrProvider: optionalString('asrProvider'),
       textProvider: optionalString('textProvider'),
       imageProvider: optionalString('imageProvider'),
       ttsProvider: optionalString('ttsProvider'),
@@ -5153,8 +5583,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         message.payload,
         'clearAliyunBailianApiKey',
       ),
-      aliyunBailianBaseUrl: optionalString('aliyunBailianBaseUrl'),
-      aliyunBailianApiBaseUrl: optionalString('aliyunBailianApiBaseUrl'),
       aliyunBailianTextModel: optionalString('aliyunBailianTextModel'),
       aliyunBailianMusicModel: optionalString('aliyunBailianMusicModel'),
       aliyunBailianImageModel: optionalString('aliyunBailianImageModel'),
@@ -5165,14 +5593,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       aliyunBailianAsrModel: optionalString('aliyunBailianAsrModel'),
       aliyunBailianRealtimeAsrModel:
           optionalString('aliyunBailianRealtimeAsrModel'),
-      aliyunBailianRealtimeAsrUrl:
-          optionalString('aliyunBailianRealtimeAsrUrl'),
       volcArkApiKey: optionalString('volcArkApiKey'),
       clearVolcArkApiKey: _payloadBool(
         message.payload,
         'clearVolcArkApiKey',
       ),
-      volcArkBaseUrl: optionalString('volcArkBaseUrl'),
+      volcAsrModel: optionalString('volcAsrModel'),
       volcArkTextModel: optionalString('volcArkTextModel'),
       volcArkImageModel: optionalString('volcArkImageModel'),
       elevenLabsApiKey: optionalString('elevenLabsApiKey'),
@@ -5180,7 +5606,6 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         message.payload,
         'clearElevenLabsApiKey',
       ),
-      elevenLabsBaseUrl: optionalString('elevenLabsBaseUrl'),
       elevenLabsTtsModel: optionalString('elevenLabsTtsModel'),
       elevenLabsTtsVoiceId: optionalString('elevenLabsTtsVoiceId'),
       elevenLabsTtsOutputFormat: optionalString('elevenLabsTtsOutputFormat'),
@@ -6549,6 +6974,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
   Future<void> _saveArticleTranslationsAtCreate({
     required int articleId,
     required List<String> sentences,
+    Map<int, String> precomputedTranslations = const {},
   }) async {
     if (sentences.isEmpty) {
       return;
@@ -6572,6 +6998,31 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
           updatedAt: createdAt,
         ),
     };
+    final precomputedRows = <ArticleSentenceTranslation>[];
+    for (final entry in precomputedTranslations.entries) {
+      if (entry.key < 0 ||
+          entry.key >= sentences.length ||
+          entry.value.trim().isEmpty) {
+        throw const FormatException('AI 分句复核返回的中文对照与句子索引不一致');
+      }
+      final row = ArticleSentenceTranslation(
+        articleId: articleId,
+        sentenceIndex: entry.key,
+        englishSentence: sentences[entry.key],
+        chineseText: entry.value.trim(),
+        source: 'generated_split_translate_review_at_create',
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+      rowsByIndex[entry.key] = row;
+      precomputedRows.add(row);
+    }
+    if (precomputedRows.isNotEmpty) {
+      await DatabaseService.upsertArticleSentenceTranslations(
+        articleId,
+        precomputedRows,
+      );
+    }
 
     final missingSentences = <int, String>{
       for (var index = 0; index < sentences.length; index += 1)
@@ -6606,6 +7057,99 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       generated,
     );
   }
+
+  double? _sumOptionalCosts(double? first, double? second) {
+    if (first == null && second == null) return null;
+    return (first ?? 0) + (second ?? 0);
+  }
+
+  Future<String> _articleSentencesHash(List<String> sentences) async {
+    final hash = await Sha256().hash(utf8.encode(jsonEncode(sentences)));
+    return hash.bytes
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+  }
+
+  Map<String, dynamic> _decodeRequiredJsonObject(
+    String text, {
+    required String label,
+  }) {
+    try {
+      final decoded = jsonDecode(text);
+      if (decoded is Map) {
+        return Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      // Fall through to the migration-specific error below.
+    }
+    throw FormatException('$label JSON 不完整，拒绝迁移');
+  }
+
+  String _updatedPagePromptRange(
+    String promptJson, {
+    required int pageIndex,
+    required int start,
+    required int end,
+  }) {
+    final prompt = _decodeRequiredJsonObject(
+      promptJson,
+      label: '绘本第 ${pageIndex + 1} 页 Prompt',
+    );
+    final rawScene = prompt['scene'];
+    if (rawScene is! Map) {
+      throw FormatException('绘本第 ${pageIndex + 1} 页缺少 scene');
+    }
+    final scene = Map<String, dynamic>.from(rawScene);
+    if (_intFromDynamic(scene['pageIndex']) != pageIndex) {
+      throw FormatException('绘本第 ${pageIndex + 1} 页 scene 序号不一致');
+    }
+    scene['sentenceStartIndex'] = start;
+    scene['sentenceEndIndex'] = end;
+    prompt['scene'] = scene;
+    prompt['sentenceSplitVersion'] = ReadAloudSplitterV3.reviewedVersion;
+    return jsonEncode(prompt);
+  }
+
+  String _updatedChapterSummaryRanges(
+    String summaryJson, {
+    required Map<int, ({int start, int end})> rangesByPage,
+    required Map<String, dynamic> migrationMetadata,
+  }) {
+    final summary = _decodeRequiredJsonObject(
+      summaryJson,
+      label: '章节分镜',
+    );
+    final rawScenes = summary['scenes'];
+    if (rawScenes is! List || rawScenes.length != rangesByPage.length) {
+      throw const FormatException('章节分镜数量与绘本页不一致');
+    }
+    final seen = <int>{};
+    final scenes = <Map<String, dynamic>>[];
+    for (final rawScene in rawScenes) {
+      if (rawScene is! Map) {
+        throw const FormatException('章节分镜 scene 格式不正确');
+      }
+      final scene = Map<String, dynamic>.from(rawScene);
+      final pageIndex = _intFromDynamic(scene['pageIndex']);
+      final range = pageIndex == null ? null : rangesByPage[pageIndex];
+      if (pageIndex == null || range == null || !seen.add(pageIndex)) {
+        throw const FormatException('章节分镜 pageIndex 不连续');
+      }
+      scene['sentenceStartIndex'] = range.start;
+      scene['sentenceEndIndex'] = range.end;
+      scenes.add(scene);
+    }
+    scenes.sort(
+      (first, second) => (_intFromDynamic(first['pageIndex']) ?? -1)
+          .compareTo(_intFromDynamic(second['pageIndex']) ?? -1),
+    );
+    summary['scenes'] = scenes;
+    summary['sentenceMigration'] = migrationMetadata;
+    return jsonEncode(summary);
+  }
+
+  String _normalizedMigrationSentence(String text) =>
+      text.replaceAll(RegExp(r'[ \t\r\n]+'), ' ').trim();
 
   Future<String> _articleContentHash(String content) async {
     final hash = await Sha256().hash(utf8.encode(content.trim()));

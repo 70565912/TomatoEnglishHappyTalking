@@ -1,0 +1,20 @@
+// RETIRED REFERENCE ONLY: Web no longer exposes a production splitter.
+export {
+  DEFAULT_FONT_SIZE_PX,
+  DEFAULT_MAX_LINE_WIDTH_PX,
+  HARD_MAX_UNPUNCTUATED_WORDS,
+  HARD_MAX_WORDS,
+  PREFERRED_MAX_UNPUNCTUATED_WORDS,
+  PREFERRED_MIN_UNPUNCTUATED_WORDS,
+  READ_ALOUD_SPLIT_VERSION,
+  REVIEWED_SPLIT_VERSION,
+  fitsEnglishSubtitleLine,
+  isIncompleteShortChunk,
+  maxUnpunctuatedWordCount,
+  measureNunitoExtraBoldPx,
+  normalizeForRoundTrip,
+  validateCanonicalReadAloudV3,
+  splitReadAloudV3 as splitSentences,
+  splitReadAloudV3Detailed as splitSentencesDetailed,
+  wordCount,
+} from './readAloudSplitterV3';

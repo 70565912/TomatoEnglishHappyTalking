@@ -73,6 +73,7 @@ void main() {
       turns: turns,
       cachePurpose: 'unit_ark_request',
       maxTokens: 42,
+      disableThinking: true,
     );
 
     expect(reply.text, 'OK from Bailian');
@@ -90,6 +91,8 @@ void main() {
     expect(seenBody, containsPair('model', 'qwen-unit-model'));
     expect(seenBody, containsPair('max_tokens', 42));
     expect(seenBody, containsPair('stream', false));
+    expect(seenBody, containsPair('enable_thinking', false));
+    expect(seenBody, isNot(contains('thinking')));
     expect(seenBody?['messages'], [
       {'role': 'system', 'content': 'Be brief.'},
       {'role': 'user', 'content': 'Reply OK only.'},
@@ -111,6 +114,7 @@ void main() {
       turns: turns,
       cachePurpose: 'unit_ark_request',
       maxTokens: 42,
+      disableThinking: true,
     );
 
     expect(cached.text, 'OK from Bailian');

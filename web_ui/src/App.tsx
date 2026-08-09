@@ -12,7 +12,6 @@ import {
   visiblePositionForSlotIndex,
   visibleSentenceCountFromItems,
 } from './listeningSentenceVisibility';
-import { READ_ALOUD_SPLIT_VERSION, splitSentences } from './sentenceSplitter';
 import {
   pictureBookGroupSubmitOverlay,
   pictureBookPromptRefreshOverlay,
@@ -62,6 +61,7 @@ import type {
   SongSource,
   AiProvider,
   TtsProvider,
+  VolcAsrModel,
   StorySeries,
 } from './types';
 
@@ -193,8 +193,7 @@ function saveStoredChapterOrder(order: ChapterOrder) {
 const ALIYUN_TEXT_MODEL_OPTIONS: SelectOption[] = [
   { value: 'qwen3.7-max', label: 'qwen3.7-max · 最高效果' },
   { value: 'qwen3.7-plus', label: 'qwen3.7-plus · 均衡效果' },
-  { value: 'qwen3.6-plus', label: 'qwen3.6-plus · 兼容示例' },
-  { value: 'qwen3.6-flash', label: 'qwen3.6-flash · 快速低成本' },
+  { value: 'qwen3.7-flash', label: 'qwen3.7-flash · 快速低成本' },
 ];
 
 const ALIYUN_IMAGE_MODEL_OPTIONS: SelectOption[] = [
@@ -218,19 +217,26 @@ const ALIYUN_MUSIC_MODEL_OPTIONS: SelectOption[] = [
 
 const ALIYUN_ASR_MODEL_OPTIONS: SelectOption[] = [
   { value: 'qwen3-asr-flash', label: 'qwen3-asr-flash · 当前默认' },
-  { value: 'fun-asr', label: 'fun-asr · 专业文件识别' },
-  { value: 'qwen3.5-omni-plus', label: 'qwen3.5-omni-plus · 大模型识别' },
+  { value: 'qwen3-asr-flash-2026-02-10', label: 'qwen3-asr-flash-2026-02-10 · 快照版' },
+  { value: 'qwen3-asr-flash-2025-09-08', label: 'qwen3-asr-flash-2025-09-08 · 旧快照' },
 ];
 
 const ALIYUN_REALTIME_ASR_MODEL_OPTIONS: SelectOption[] = [
-  { value: 'qwen3-asr-realtime', label: 'qwen3-asr-realtime · 当前默认' },
-  { value: 'fun-asr-realtime', label: 'fun-asr-realtime · 实时专业识别' },
-  { value: 'qwen3.5-omni-plus-realtime', label: 'qwen3.5-omni-plus-realtime · 实时大模型识别' },
+  { value: 'qwen3-asr-flash-realtime', label: 'qwen3-asr-flash-realtime · 当前默认' },
+  { value: 'qwen3-asr-flash-realtime-2026-02-10', label: 'qwen3-asr-flash-realtime-2026-02-10 · 快照版' },
+  { value: 'qwen3-asr-flash-realtime-2025-10-27', label: 'qwen3-asr-flash-realtime-2025-10-27 · 旧快照' },
+];
+
+const VOLC_ASR_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'auto', label: '自动兼容 · SeedASR 2.0 优先' },
+  { value: 'seedasr_v2', label: 'SeedASR 2.0' },
+  { value: 'bigasr_v1', label: 'BigASR 1.0' },
 ];
 
 const VOLC_TEXT_MODEL_OPTIONS: SelectOption[] = [
+  { value: 'deepseek-v4-flash-ga-260731', label: 'DeepSeek V4 Flash 正式版 · 推荐使用模型' },
   { value: 'doubao-seed-2-0-pro-250528', label: 'doubao-seed-2-0-pro-250528 · 更高效果' },
-  { value: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215 · 默认低成本' },
+  { value: 'doubao-seed-2-0-lite-260215', label: 'doubao-seed-2-0-lite-260215 · 低成本' },
 ];
 
 const VOLC_IMAGE_MODEL_OPTIONS: SelectOption[] = [
@@ -5664,7 +5670,6 @@ function ArticlePage({
   const [resumeArticleId, setResumeArticleId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const sentences = useMemo(() => splitSentences(content), [content]);
   const contentTooLong = content.length > ARTICLE_CONTENT_MAX_CHARS;
   const creatingNewSeries = selectedSeriesId === 'new' || series.length === 0;
   const newSeriesTitleReady = !creatingNewSeries || Boolean(newSeriesTitle.trim());
@@ -5846,9 +5851,30 @@ function ArticlePage({
             { content },
           )
         : null;
-      const preparedSentences = prepared == null
-        ? undefined
-        : splitSentences(prepared.englishContent);
+      let preparedSentences: string[] | undefined;
+      let sentenceSplitVersion: string | undefined;
+      if (prepared != null) {
+        setSaveProgress({
+          phase: 'sentences',
+          progress: 0.18,
+          message: '正在进行端侧句法分句与中文翻译',
+        });
+        const reviewed = await sendNative<{
+          sentences: string[];
+          sentenceSplitVersion: string;
+          source: 'remote' | 'cached' | 'stored';
+          comparison: {
+            originalSentenceCount: number;
+            reviewedSentenceCount: number;
+            riskOriginalCount: number;
+          };
+        }>('article.reviewSplitTranslate', {
+          preparedId: prepared.preparedId,
+          englishContent: prepared.englishContent,
+        });
+        preparedSentences = reviewed.sentences;
+        sentenceSplitVersion = reviewed.sentenceSplitVersion;
+      }
       const payload = await sendNative<{ article: Article; patch: LibraryPatch }>(
         'article.create',
         {
@@ -5863,7 +5889,7 @@ function ArticlePage({
             ? {
                 preparedId: prepared.preparedId,
                 sentences: preparedSentences,
-                sentenceSplitVersion: READ_ALOUD_SPLIT_VERSION,
+                sentenceSplitVersion,
               }
             : {}),
           ...(resumeArticleId != null ? { resumeArticleId } : {}),
@@ -6043,21 +6069,11 @@ function ArticlePage({
 
         <section className="sentence-board">
           <div className="section-heading">
-            <span>句子预览（本地分句）</span>
+            <span>端侧 V3 分句</span>
           </div>
-          {sentences.length > 0 ? (
-            <div className="sentence-grid">
-              {sentences.map((sentence, index) => (
-              <div className="sentence-pill" key={`${sentence}-${index}`}>
-                <b>{index + 1}</b>
-                <span>{sentence}</span>
-                <Icon name="drag" />
-              </div>
-              ))}
-            </div>
-          ) : (
-            <p className="sentence-empty">输入短文后，这里会自动切成适合跟读的英文短句。</p>
-          )}
+          <p className="sentence-empty">
+            保存时由 Windows / Android 共用的端侧依存句法器生成正式分句；此处不再用 Web 近似算法预切。
+          </p>
         </section>
 
         <footer className="form-footer">
@@ -10238,6 +10254,9 @@ function SettingsPage({
   const [textProvider, setTextProvider] = useState<AiProvider>(
     normalizeAiProvider(settings?.cloud?.textProvider ?? settings?.cloud?.aiProvider),
   );
+  const [asrProvider, setAsrProvider] = useState<AiProvider>(
+    normalizeAiProvider(settings?.cloud?.asrProvider ?? settings?.cloud?.aiProvider),
+  );
   const [imageProvider, setImageProvider] = useState<AiProvider>(
     normalizeAiProvider(settings?.cloud?.imageProvider ?? settings?.cloud?.aiProvider),
   );
@@ -10246,8 +10265,6 @@ function SettingsPage({
   );
   const [aliyunBailianApiKey, setAliyunBailianApiKey] = useState('');
   const [clearAliyunBailianApiKey, setClearAliyunBailianApiKey] = useState(false);
-  const [aliyunBailianBaseUrl, setAliyunBailianBaseUrl] = useState(settings?.cloud?.aliyunBailian.baseUrl ?? '');
-  const [aliyunBailianApiBaseUrl, setAliyunBailianApiBaseUrl] = useState(settings?.cloud?.aliyunBailian.apiBaseUrl ?? '');
   const [aliyunBailianTextModel, setAliyunBailianTextModel] = useState(settings?.cloud?.aliyunBailian.textModel ?? '');
   const [aliyunBailianMusicModel, setAliyunBailianMusicModel] = useState(settings?.cloud?.aliyunBailian.musicModel ?? '');
   const [aliyunBailianImageModel, setAliyunBailianImageModel] = useState(settings?.cloud?.aliyunBailian.imageModel ?? '');
@@ -10259,19 +10276,19 @@ function SettingsPage({
   );
   const [aliyunBailianAsrModel, setAliyunBailianAsrModel] = useState(settings?.cloud?.aliyunBailian.asrModel ?? '');
   const [aliyunBailianRealtimeAsrModel, setAliyunBailianRealtimeAsrModel] = useState(settings?.cloud?.aliyunBailian.realtimeAsrModel ?? '');
-  const [aliyunBailianRealtimeAsrUrl, setAliyunBailianRealtimeAsrUrl] = useState(settings?.cloud?.aliyunBailian.realtimeAsrUrl ?? '');
   const [volcArkApiKey, setVolcArkApiKey] = useState('');
   const [clearVolcArkApiKey, setClearVolcArkApiKey] = useState(false);
-  const [volcArkBaseUrl, setVolcArkBaseUrl] = useState(settings?.cloud?.volcengine.arkBaseUrl ?? '');
   const [volcArkTextModel, setVolcArkTextModel] = useState(settings?.cloud?.volcengine.arkTextModel ?? '');
   const [volcArkImageModel, setVolcArkImageModel] = useState(settings?.cloud?.volcengine.arkImageModel ?? '');
   const [volcSpeechApiKey, setVolcSpeechApiKey] = useState('');
   const [clearVolcSpeechApiKey, setClearVolcSpeechApiKey] = useState(false);
+  const [volcAsrModel, setVolcAsrModel] = useState<VolcAsrModel>(
+    normalizeVolcAsrModel(settings?.cloud?.volcengine.asrModel),
+  );
   const [volcTtsResourceId, setVolcTtsResourceId] = useState(settings?.cloud?.volcengine.ttsResourceId ?? '');
   const [volcTtsSpeakerId, setVolcTtsSpeakerId] = useState(settings?.cloud?.volcengine.ttsSpeakerId ?? '');
   const [elevenLabsApiKey, setElevenLabsApiKey] = useState('');
   const [clearElevenLabsApiKey, setClearElevenLabsApiKey] = useState(false);
-  const [elevenLabsBaseUrl, setElevenLabsBaseUrl] = useState(settings?.cloud?.elevenLabs?.baseUrl ?? '');
   const [elevenLabsTtsModel, setElevenLabsTtsModel] = useState(settings?.cloud?.elevenLabs?.ttsModel ?? '');
   const [elevenLabsTtsVoiceId, setElevenLabsTtsVoiceId] = useState(settings?.cloud?.elevenLabs?.ttsVoiceId ?? '');
   const [elevenLabsTtsOutputFormat, setElevenLabsTtsOutputFormat] = useState(
@@ -10296,12 +10313,11 @@ function SettingsPage({
     setSunoTimeoutMinutes(payload.song?.sunoTimeoutMinutes ?? 20);
     setSongProvider(normalizeSongGenerationSource(payload.song?.songProvider ?? 'suno'));
     setTextProvider(normalizeAiProvider(payload.cloud?.textProvider ?? payload.cloud?.aiProvider));
+    setAsrProvider(normalizeAiProvider(payload.cloud?.asrProvider ?? payload.cloud?.aiProvider));
     setImageProvider(normalizeAiProvider(payload.cloud?.imageProvider ?? payload.cloud?.aiProvider));
     setTtsProvider(normalizeTtsProvider(payload.cloud?.ttsProvider ?? payload.cloud?.aiProvider));
     setAliyunBailianApiKey('');
     setClearAliyunBailianApiKey(false);
-    setAliyunBailianBaseUrl(payload.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1');
-    setAliyunBailianApiBaseUrl(payload.cloud?.aliyunBailian.apiBaseUrl ?? 'https://dashscope.aliyuncs.com/api/v1');
     setAliyunBailianTextModel(payload.cloud?.aliyunBailian.textModel ?? 'qwen3.7-max');
     setAliyunBailianMusicModel(payload.cloud?.aliyunBailian.musicModel ?? 'fun-music-v1');
     setAliyunBailianImageModel(payload.cloud?.aliyunBailian.imageModel ?? 'wan2.7-image-pro');
@@ -10310,20 +10326,18 @@ function SettingsPage({
     setAliyunBailianTtsVoice(payload.cloud?.aliyunBailian.ttsVoice ?? 'loongabby_v3');
     setAliyunBailianTtsSampleRate(String(payload.cloud?.aliyunBailian.ttsSampleRate ?? 24000));
     setAliyunBailianAsrModel(payload.cloud?.aliyunBailian.asrModel ?? 'qwen3-asr-flash');
-    setAliyunBailianRealtimeAsrModel(payload.cloud?.aliyunBailian.realtimeAsrModel ?? 'qwen3-asr-realtime');
-    setAliyunBailianRealtimeAsrUrl(payload.cloud?.aliyunBailian.realtimeAsrUrl ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime');
+    setAliyunBailianRealtimeAsrModel(payload.cloud?.aliyunBailian.realtimeAsrModel ?? 'qwen3-asr-flash-realtime');
     setVolcArkApiKey('');
     setClearVolcArkApiKey(false);
-    setVolcArkBaseUrl(payload.cloud?.volcengine.arkBaseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3');
-    setVolcArkTextModel(payload.cloud?.volcengine.arkTextModel ?? 'doubao-seed-2-0-lite-260215');
+    setVolcArkTextModel(payload.cloud?.volcengine.arkTextModel ?? 'deepseek-v4-flash-ga-260731');
     setVolcArkImageModel(payload.cloud?.volcengine.arkImageModel ?? 'doubao-seedream-5-0-260128');
     setVolcSpeechApiKey('');
     setClearVolcSpeechApiKey(false);
+    setVolcAsrModel(normalizeVolcAsrModel(payload.cloud?.volcengine.asrModel));
     setVolcTtsResourceId(payload.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0');
     setVolcTtsSpeakerId(payload.cloud?.volcengine.ttsSpeakerId ?? payload.tts.speakerId);
     setElevenLabsApiKey('');
     setClearElevenLabsApiKey(false);
-    setElevenLabsBaseUrl(payload.cloud?.elevenLabs?.baseUrl ?? 'https://api.elevenlabs.io');
     setElevenLabsTtsModel(payload.cloud?.elevenLabs?.ttsModel ?? 'eleven_multilingual_v2');
     setElevenLabsTtsVoiceId(payload.cloud?.elevenLabs?.ttsVoiceId ?? payload.tts.speakerId);
     setElevenLabsTtsOutputFormat(payload.cloud?.elevenLabs?.ttsOutputFormat ?? 'mp3_44100_128');
@@ -10379,12 +10393,11 @@ function SettingsPage({
     songProvider === normalizeSongGenerationSource(current.song?.songProvider ?? 'suno');
   const cloudSettingsUnchanged =
     textProvider === normalizeAiProvider(current.cloud?.textProvider ?? current.cloud?.aiProvider) &&
+    asrProvider === normalizeAiProvider(current.cloud?.asrProvider ?? current.cloud?.aiProvider) &&
     imageProvider === normalizeAiProvider(current.cloud?.imageProvider ?? current.cloud?.aiProvider) &&
     ttsProvider === normalizeTtsProvider(current.cloud?.ttsProvider ?? current.cloud?.aiProvider) &&
     !aliyunBailianApiKey.trim() &&
     !clearAliyunBailianApiKey &&
-    aliyunBailianBaseUrl.trim() === (current.cloud?.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1') &&
-    aliyunBailianApiBaseUrl.trim() === (current.cloud?.aliyunBailian.apiBaseUrl ?? 'https://dashscope.aliyuncs.com/api/v1') &&
     aliyunBailianTextModel.trim() === (current.cloud?.aliyunBailian.textModel ?? 'qwen3.7-max') &&
     aliyunBailianMusicModel.trim() === (current.cloud?.aliyunBailian.musicModel ?? 'fun-music-v1') &&
     aliyunBailianImageModel.trim() === (current.cloud?.aliyunBailian.imageModel ?? 'wan2.7-image-pro') &&
@@ -10393,20 +10406,18 @@ function SettingsPage({
     aliyunBailianTtsVoice.trim() === (current.cloud?.aliyunBailian.ttsVoice ?? 'loongabby_v3') &&
     aliyunBailianTtsSampleRate.trim() === String(current.cloud?.aliyunBailian.ttsSampleRate ?? 24000) &&
     aliyunBailianAsrModel.trim() === (current.cloud?.aliyunBailian.asrModel ?? 'qwen3-asr-flash') &&
-    aliyunBailianRealtimeAsrModel.trim() === (current.cloud?.aliyunBailian.realtimeAsrModel ?? 'qwen3-asr-realtime') &&
-    aliyunBailianRealtimeAsrUrl.trim() === (current.cloud?.aliyunBailian.realtimeAsrUrl ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime') &&
+    aliyunBailianRealtimeAsrModel.trim() === (current.cloud?.aliyunBailian.realtimeAsrModel ?? 'qwen3-asr-flash-realtime') &&
     !volcArkApiKey.trim() &&
     !clearVolcArkApiKey &&
-    volcArkBaseUrl.trim() === (current.cloud?.volcengine.arkBaseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3') &&
-    volcArkTextModel.trim() === (current.cloud?.volcengine.arkTextModel ?? 'doubao-seed-2-0-lite-260215') &&
+    volcArkTextModel.trim() === (current.cloud?.volcengine.arkTextModel ?? 'deepseek-v4-flash-ga-260731') &&
     volcArkImageModel.trim() === (current.cloud?.volcengine.arkImageModel ?? 'doubao-seedream-5-0-260128') &&
     !volcSpeechApiKey.trim() &&
     !clearVolcSpeechApiKey &&
+    volcAsrModel === normalizeVolcAsrModel(current.cloud?.volcengine.asrModel) &&
     volcTtsResourceId.trim() === (current.cloud?.volcengine.ttsResourceId ?? 'seed-tts-2.0') &&
     volcTtsSpeakerId.trim() === (current.cloud?.volcengine.ttsSpeakerId ?? current.tts.speakerId) &&
     !elevenLabsApiKey.trim() &&
     !clearElevenLabsApiKey &&
-    elevenLabsBaseUrl.trim() === (current.cloud?.elevenLabs?.baseUrl ?? 'https://api.elevenlabs.io') &&
     elevenLabsTtsModel.trim() === (current.cloud?.elevenLabs?.ttsModel ?? 'eleven_multilingual_v2') &&
     elevenLabsTtsVoiceId.trim() === (current.cloud?.elevenLabs?.ttsVoiceId ?? current.tts.speakerId) &&
     elevenLabsTtsOutputFormat.trim() === (current.cloud?.elevenLabs?.ttsOutputFormat ?? 'mp3_44100_128') &&
@@ -10415,6 +10426,11 @@ function SettingsPage({
 
   const selectTextProvider = (provider: AiProvider) => {
     setTextProvider(provider);
+    setStatus(null);
+  };
+
+  const selectAsrProvider = (provider: AiProvider) => {
+    setAsrProvider(provider);
     setStatus(null);
   };
 
@@ -10510,14 +10526,13 @@ function SettingsPage({
     setStatus(null);
     try {
       const payload = await sendNative<SettingsState>('settings.saveCloud', {
-        aiProvider: textProvider,
+        aiProvider: asrProvider,
+        asrProvider,
         textProvider,
         imageProvider,
         ttsProvider,
         aliyunBailianApiKey: aliyunBailianApiKey.trim(),
         clearAliyunBailianApiKey,
-        aliyunBailianBaseUrl: aliyunBailianBaseUrl.trim(),
-        aliyunBailianApiBaseUrl: aliyunBailianApiBaseUrl.trim(),
         aliyunBailianTextModel: aliyunBailianTextModel.trim(),
         aliyunBailianMusicModel: aliyunBailianMusicModel.trim(),
         aliyunBailianImageModel: aliyunBailianImageModel.trim(),
@@ -10527,19 +10542,17 @@ function SettingsPage({
         aliyunBailianTtsSampleRate: aliyunBailianTtsSampleRate.trim(),
         aliyunBailianAsrModel: aliyunBailianAsrModel.trim(),
         aliyunBailianRealtimeAsrModel: aliyunBailianRealtimeAsrModel.trim(),
-        aliyunBailianRealtimeAsrUrl: aliyunBailianRealtimeAsrUrl.trim(),
         volcArkApiKey: volcArkApiKey.trim(),
         clearVolcArkApiKey,
-        volcArkBaseUrl: volcArkBaseUrl.trim(),
         volcArkTextModel: volcArkTextModel.trim(),
         volcArkImageModel: volcArkImageModel.trim(),
         volcSpeechApiKey: volcSpeechApiKey.trim(),
         clearVolcSpeechApiKey,
+        volcAsrModel,
         volcTtsResourceId: volcTtsResourceId.trim(),
         volcTtsSpeakerId: volcTtsSpeakerId.trim(),
         elevenLabsApiKey: elevenLabsApiKey.trim(),
         clearElevenLabsApiKey,
-        elevenLabsBaseUrl: elevenLabsBaseUrl.trim(),
         elevenLabsTtsModel: elevenLabsTtsModel.trim(),
         elevenLabsTtsVoiceId: elevenLabsTtsVoiceId.trim(),
         elevenLabsTtsOutputFormat: elevenLabsTtsOutputFormat.trim(),
@@ -10986,55 +10999,62 @@ function SettingsPage({
               </div>
 
               <div className="settings-subsection">
-                <h3>平台地址与识别</h3>
+                <h3>语音识别</h3>
+                <div className="settings-tabs compact-provider-tabs" role="tablist" aria-label="语音识别供应商">
+                  <button
+                    className={asrProvider === 'aliyun_bailian' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-label="阿里云 Qwen-ASR"
+                    aria-selected={asrProvider === 'aliyun_bailian'}
+                    onClick={() => selectAsrProvider('aliyun_bailian')}
+                  >
+                    阿里云百炼
+                  </button>
+                  <button
+                    className={asrProvider === 'volcengine' ? 'active' : ''}
+                    type="button"
+                    role="tab"
+                    aria-label="火山语音识别"
+                    aria-selected={asrProvider === 'volcengine'}
+                    onClick={() => selectAsrProvider('volcengine')}
+                  >
+                    火山引擎
+                  </button>
+                </div>
                 <div className="settings-grid model-settings-grid">
-                  <label className="settings-label">
-                    <span>百炼兼容模式 Base URL</span>
-                    <input
-                      value={aliyunBailianBaseUrl}
-                      onChange={(event) => setAliyunBailianBaseUrl(event.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
-                    <span>DashScope API Base URL</span>
-                    <input
-                      value={aliyunBailianApiBaseUrl}
-                      onChange={(event) => setAliyunBailianApiBaseUrl(event.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
-                    <span>方舟 Base URL</span>
-                    <input
-                      value={volcArkBaseUrl}
-                      onChange={(event) => setVolcArkBaseUrl(event.target.value)}
-                    />
-                  </label>
-                  <label className="settings-label">
-                    <span>ElevenLabs Base URL</span>
-                    <input
-                      value={elevenLabsBaseUrl}
-                      onChange={(event) => setElevenLabsBaseUrl(event.target.value)}
-                    />
-                  </label>
-                  <ModelSelectField
-                    label="Qwen-ASR 文件模型"
-                    value={aliyunBailianAsrModel}
-                    options={ALIYUN_ASR_MODEL_OPTIONS}
-                    onChange={setAliyunBailianAsrModel}
-                  />
-                  <ModelSelectField
-                    label="Qwen-ASR 实时模型"
-                    value={aliyunBailianRealtimeAsrModel}
-                    options={ALIYUN_REALTIME_ASR_MODEL_OPTIONS}
-                    onChange={setAliyunBailianRealtimeAsrModel}
-                  />
-                  <label className="settings-label wide-field">
-                    <span>Qwen-ASR 实时 WebSocket</span>
-                    <input
-                      value={aliyunBailianRealtimeAsrUrl}
-                      onChange={(event) => setAliyunBailianRealtimeAsrUrl(event.target.value)}
-                    />
-                  </label>
+                  {asrProvider === 'aliyun_bailian' ? (
+                    <>
+                      <ModelSelectField
+                        label="Qwen-ASR 文件模型"
+                        value={aliyunBailianAsrModel}
+                        options={ALIYUN_ASR_MODEL_OPTIONS}
+                        onChange={setAliyunBailianAsrModel}
+                      />
+                      <ModelSelectField
+                        label="Qwen-ASR 实时模型"
+                        value={aliyunBailianRealtimeAsrModel}
+                        options={ALIYUN_REALTIME_ASR_MODEL_OPTIONS}
+                        onChange={setAliyunBailianRealtimeAsrModel}
+                      />
+                      <p className="settings-hint wide-field">
+                        当前文件模型不返回词级时间戳；中文歌曲字幕时间轴请切换到火山引擎。
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <ModelSelectField
+                        label="火山 ASR 模型"
+                        value={volcAsrModel}
+                        options={VOLC_ASR_MODEL_OPTIONS}
+                        onChange={(value) => setVolcAsrModel(value as VolcAsrModel)}
+                        hint="自动兼容会优先尝试 SeedASR 2.0；明确选择后不会跨模型回退。"
+                      />
+                      <p className="settings-hint wide-field">
+                        火山 ASR 与语音合成是独立服务、分开计费；普通识别、字幕时间轴和实时识别统一使用这里的选择。
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -12313,6 +12333,11 @@ function normalizeAiProvider(provider?: string | null): AiProvider {
 function normalizeTtsProvider(provider?: string | null): TtsProvider {
   if (provider === 'elevenlabs') return 'elevenlabs';
   return normalizeAiProvider(provider);
+}
+
+function normalizeVolcAsrModel(model?: string | null): VolcAsrModel {
+  if (model === 'seedasr_v2' || model === 'bigasr_v1') return model;
+  return 'auto';
 }
 
 function songSourceLabel(source?: string | null): string {

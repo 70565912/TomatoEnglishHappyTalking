@@ -25,7 +25,7 @@ export interface AvatarState {
 export interface ArticleSummary {
   id: number;
   title: string;
-  sentenceSplitVersion?: 'legacy_v1' | 'read_aloud_dp_v2' | 'reviewed_dp_v2' | string;
+  sentenceSplitVersion?: 'legacy_v1' | 'read_aloud_dp_v2' | 'reviewed_dp_v2' | 'read_aloud_dp_v3' | 'reviewed_dp_v3' | string;
   sentenceCount: number;
   visibleSentenceCount?: number;
   createdAt: string;
@@ -256,6 +256,7 @@ export type SongSource =
   | 'external_audio';
 export type AiProvider = 'aliyun_bailian' | 'volcengine';
 export type TtsProvider = AiProvider | 'elevenlabs';
+export type VolcAsrModel = 'auto' | 'seedasr_v2' | 'bigasr_v1';
 
 export interface ListeningSongStatePayload {
   articleId: number;
@@ -518,14 +519,13 @@ export interface SettingsState {
   };
   cloud?: {
     aiProvider: AiProvider | string;
+    asrProvider?: AiProvider | string;
     textProvider?: AiProvider | string;
     imageProvider?: AiProvider | string;
     ttsProvider?: TtsProvider | string;
     aliyunBailian: {
       apiKeyConfigured: boolean;
       apiKeyMask?: string;
-      baseUrl: string;
-      apiBaseUrl?: string;
       textModel: string;
       musicModel: string;
       imageModel?: string;
@@ -535,14 +535,13 @@ export interface SettingsState {
       ttsSampleRate?: number | string;
       asrModel?: string;
       realtimeAsrModel?: string;
-      realtimeAsrUrl?: string;
     };
     volcengine: {
       arkApiKeyConfigured: boolean;
       arkApiKeyMask?: string;
-      arkBaseUrl: string;
       arkTextModel: string;
       arkImageModel: string;
+      asrModel?: VolcAsrModel | string;
       speechApiKeyConfigured: boolean;
       speechApiKeyMask?: string;
       ttsResourceId: string;
@@ -551,7 +550,6 @@ export interface SettingsState {
     elevenLabs?: {
       apiKeyConfigured: boolean;
       apiKeyMask?: string;
-      baseUrl: string;
       ttsModel: string;
       ttsVoiceId: string;
       ttsOutputFormat: string;

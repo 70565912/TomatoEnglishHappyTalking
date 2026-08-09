@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as path_lib;
 import '../data/models/article_model.dart';
+import '../data/models/article_segmentation_run_model.dart';
 import '../data/models/article_sentence_translation_model.dart';
 import '../data/models/learning_record_model.dart';
 import '../data/models/picture_book_model.dart';
@@ -59,7 +60,7 @@ class DatabaseService {
     await _copyCurrentLegacyDatabaseIfNeeded(dbPath);
     return openDatabase(
       dbPath,
-      version: 8,
+      version: 9,
       onCreate: (db, _) async {
         await _createCoreTables(db);
         await _createApiCacheTables(db);
@@ -67,11 +68,13 @@ class DatabaseService {
         await _createArticleSentenceTranslationTables(db);
         await _createArticleChatGuideTables(db);
         await _createContentSafetyTables(db);
+        await _createArticleSegmentationRunTables(db);
       },
       onOpen: (db) async {
         await _createArticleChatGuideTables(db);
         await _ensureLatestPictureBookSchema(db);
         await _removeLegacyBuiltInContentSafetyRules(db);
+        await _createArticleSegmentationRunTables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -101,6 +104,9 @@ class DatabaseService {
           await db.execute(
             "ALTER TABLE articles ADD COLUMN sentence_split_version TEXT NOT NULL DEFAULT 'legacy_v1'",
           );
+        }
+        if (oldVersion < 9) {
+          await _createArticleSegmentationRunTables(db);
         }
       },
     );
@@ -241,6 +247,41 @@ class DatabaseService {
         FOREIGN KEY (article_id) REFERENCES articles (id)
       )
     ''');
+  }
+
+  static Future<void> _createArticleSegmentationRunTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS article_segmentation_runs (
+        id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+        article_id             INTEGER NOT NULL,
+        source_hash            TEXT NOT NULL,
+        sentence_split_version TEXT NOT NULL,
+        solver_version         TEXT NOT NULL,
+        parser_version         TEXT NOT NULL,
+        model_sha256           TEXT NOT NULL,
+        parser_healthy         INTEGER NOT NULL,
+        parser_issues_json     TEXT NOT NULL,
+        candidate_paths_json   TEXT NOT NULL,
+        selected_paths_json    TEXT NOT NULL,
+        ai_source              TEXT NOT NULL,
+        ai_provider            TEXT,
+        ai_model               TEXT,
+        ai_remote_attempts     INTEGER NOT NULL,
+        used_local_fallback    INTEGER NOT NULL,
+        fallback_reason        TEXT,
+        translation_source     TEXT,
+        input_tokens           INTEGER NOT NULL DEFAULT 0,
+        output_tokens          INTEGER NOT NULL DEFAULT 0,
+        total_tokens           INTEGER NOT NULL DEFAULT 0,
+        estimated_cost_cny     REAL,
+        created_at             TEXT NOT NULL,
+        FOREIGN KEY (article_id) REFERENCES articles (id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_article_segmentation_runs_article '
+      'ON article_segmentation_runs (article_id, created_at)',
+    );
   }
 
   static Future<void> _createApiCacheTables(Database db) async {
@@ -536,6 +577,33 @@ class DatabaseService {
     return db.insert('articles', article.toMap());
   }
 
+  static Future<int> saveArticleWithSegmentationRun({
+    required Article article,
+    required ArticleSegmentationRunRecord segmentationRun,
+  }) async {
+    final db = await _database;
+    return db.transaction((txn) async {
+      final articleId = await txn.insert('articles', article.toMap());
+      await txn.insert(
+        'article_segmentation_runs',
+        segmentationRun.toDatabaseMap(articleId: articleId),
+      );
+      return articleId;
+    });
+  }
+
+  static Future<List<Map<String, Object?>>> getArticleSegmentationRuns(
+    int articleId,
+  ) async {
+    final db = await _database;
+    return db.query(
+      'article_segmentation_runs',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+      orderBy: 'created_at ASC, id ASC',
+    );
+  }
+
   static Future<void> updateArticleSentences(
     int id,
     List<String> sentences,
@@ -564,6 +632,200 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  /// Atomically replaces a persisted article segmentation and every
+  /// sentence-indexed picture/translation reference that must move with it.
+  ///
+  /// This is intentionally guarded by the exact old sentence payload and split
+  /// version. It is a migration primitive, not an ordinary article editor.
+  static Future<void> replaceArticleSegmentation({
+    required int articleId,
+    required String expectedSentenceSplitVersion,
+    required List<String> expectedSentences,
+    required String content,
+    required List<String> sentences,
+    required String sentenceSplitVersion,
+    required List<ArticleSentenceTranslation> translations,
+    required List<PictureBookPage> pages,
+    required StoryChapter chapter,
+    ArticleSegmentationRunRecord? segmentationRun,
+  }) async {
+    if (sentences.isEmpty ||
+        sentences.any((sentence) => sentence.trim().isEmpty)) {
+      throw const FormatException('迁移后的分句不能为空');
+    }
+    if (translations.length != sentences.length) {
+      throw const FormatException('迁移译文数量必须与分句数量一致');
+    }
+    for (var index = 0; index < translations.length; index += 1) {
+      final translation = translations[index];
+      if (translation.articleId != articleId ||
+          translation.sentenceIndex != index ||
+          translation.englishSentence != sentences[index] ||
+          translation.chineseText.trim().isEmpty) {
+        throw FormatException('迁移译文第 ${index + 1} 项与分句不一致');
+      }
+    }
+    if (chapter.articleId != articleId || chapter.id == null) {
+      throw const FormatException('迁移章节记录与文章不一致');
+    }
+
+    final db = await _database;
+    await db.transaction((txn) async {
+      final articleRows = await txn.query(
+        'articles',
+        columns: ['sentences', 'sentence_split_version'],
+        where: 'id = ?',
+        whereArgs: [articleId],
+        limit: 1,
+      );
+      if (articleRows.isEmpty) {
+        throw StateError('文章不存在（id=$articleId）');
+      }
+      final currentVersion =
+          articleRows.first['sentence_split_version']?.toString() ?? '';
+      final currentSentencesJson =
+          articleRows.first['sentences']?.toString() ?? '[]';
+      final decodedCurrent = jsonDecode(currentSentencesJson);
+      final currentSentences = decodedCurrent is List
+          ? decodedCurrent.map((value) => value.toString()).toList()
+          : const <String>[];
+      if (currentVersion != expectedSentenceSplitVersion ||
+          !_sameStrings(currentSentences, expectedSentences)) {
+        throw StateError('文章分句已变化，拒绝覆盖（id=$articleId）');
+      }
+
+      final learningCount = Sqflite.firstIntValue(
+            await txn.rawQuery(
+              'SELECT COUNT(*) FROM learning_records WHERE article_id = ?',
+              [articleId],
+            ),
+          ) ??
+          0;
+      final recordingCount = Sqflite.firstIntValue(
+            await txn.rawQuery(
+              'SELECT COUNT(*) FROM latest_sentence_recordings '
+              'WHERE article_id = ?',
+              [articleId],
+            ),
+          ) ??
+          0;
+      if (learningCount > 0 || recordingCount > 0) {
+        throw StateError(
+          '文章存在旧分句绑定的练习记录或录音，拒绝迁移（id=$articleId）',
+        );
+      }
+
+      final existingPageRows = await txn.query(
+        'picture_book_pages',
+        columns: ['id', 'page_index'],
+        where: 'article_id = ?',
+        whereArgs: [articleId],
+        orderBy: 'page_index ASC',
+      );
+      if (existingPageRows.length != pages.length) {
+        throw StateError('绘本页数量已变化，拒绝迁移（id=$articleId）');
+      }
+      for (var index = 0; index < pages.length; index += 1) {
+        final page = pages[index];
+        final existing = existingPageRows[index];
+        if (page.articleId != articleId ||
+            page.id == null ||
+            page.id != (existing['id'] as num?)?.toInt() ||
+            page.pageIndex != (existing['page_index'] as num?)?.toInt()) {
+          throw StateError('绘本页身份已变化，拒绝迁移（page=$index）');
+        }
+      }
+
+      final chapterRows = await txn.query(
+        'story_chapters',
+        columns: ['id'],
+        where: 'article_id = ?',
+        whereArgs: [articleId],
+        limit: 1,
+      );
+      if (chapterRows.length != 1 ||
+          chapter.id != (chapterRows.first['id'] as num?)?.toInt()) {
+        throw StateError('章节记录已变化，拒绝迁移（id=$articleId）');
+      }
+
+      final updated = await txn.update(
+        'articles',
+        {
+          'content': content,
+          'sentences': jsonEncode(sentences),
+          'sentence_split_version': sentenceSplitVersion,
+        },
+        where: 'id = ? AND sentence_split_version = ? AND sentences = ?',
+        whereArgs: [
+          articleId,
+          expectedSentenceSplitVersion,
+          currentSentencesJson,
+        ],
+      );
+      if (updated != 1) {
+        throw StateError('文章分句并发变化，迁移已取消（id=$articleId）');
+      }
+
+      await txn.delete(
+        'article_sentence_translations',
+        where: 'article_id = ?',
+        whereArgs: [articleId],
+      );
+      for (final translation in translations) {
+        await txn.insert(
+          'article_sentence_translations',
+          translation.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+
+      for (final page in pages) {
+        final changed = await txn.update(
+          'picture_book_pages',
+          {
+            'sentence_start_index': page.sentenceStartIndex,
+            'sentence_end_index': page.sentenceEndIndex,
+            'paragraph_text': page.paragraphText,
+            'prompt_json': page.promptJson,
+            'updated_at': page.updatedAt.toIso8601String(),
+          },
+          where: 'id = ? AND article_id = ? AND page_index = ?',
+          whereArgs: [page.id, articleId, page.pageIndex],
+        );
+        if (changed != 1) {
+          throw StateError('绘本页迁移失败（page=${page.pageIndex}）');
+        }
+      }
+
+      final changedChapter = await txn.update(
+        'story_chapters',
+        {
+          'summary_json': chapter.summaryJson,
+          'updated_at': chapter.updatedAt.toIso8601String(),
+        },
+        where: 'id = ? AND article_id = ?',
+        whereArgs: [chapter.id, articleId],
+      );
+      if (changedChapter != 1) {
+        throw StateError('章节分镜迁移失败（id=$articleId）');
+      }
+      if (segmentationRun != null) {
+        await txn.insert(
+          'article_segmentation_runs',
+          segmentationRun.toDatabaseMap(articleId: articleId),
+        );
+      }
+    });
+  }
+
+  static bool _sameStrings(List<String> first, List<String> second) {
+    if (first.length != second.length) return false;
+    for (var index = 0; index < first.length; index += 1) {
+      if (first[index] != second[index]) return false;
+    }
+    return true;
   }
 
   static Future<void> updateArticleTitle(int id, String title) async {
@@ -650,6 +912,11 @@ class DatabaseService {
     );
     await db.delete(
       'api_cache_article_refs',
+      where: 'article_id = ?',
+      whereArgs: [id],
+    );
+    await db.delete(
+      'article_segmentation_runs',
       where: 'article_id = ?',
       whereArgs: [id],
     );
@@ -848,6 +1115,18 @@ class DatabaseService {
       }
     }
     return translations;
+  }
+
+  static Future<List<ArticleSentenceTranslation>>
+      getArticleSentenceTranslationRows(int articleId) async {
+    final db = await _database;
+    final maps = await db.query(
+      'article_sentence_translations',
+      where: 'article_id = ?',
+      whereArgs: [articleId],
+      orderBy: 'sentence_index ASC',
+    );
+    return maps.map(ArticleSentenceTranslation.fromMap).toList(growable: false);
   }
 
   static Future<void> upsertArticleSentenceTranslation({

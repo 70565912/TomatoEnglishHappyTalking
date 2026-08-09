@@ -30,11 +30,15 @@ class AppConfig {
   static const aiProviderAliyunBailian = 'aliyun_bailian';
   static const aiProviderVolcengine = 'volcengine';
   static const aiProviderElevenLabs = 'elevenlabs';
+  static const volcAsrModelAuto = 'auto';
+  static const volcAsrModelSeedAsrV2 = 'seedasr_v2';
+  static const volcAsrModelBigAsrV1 = 'bigasr_v1';
   static const songProviderSuno = 'suno';
   static const songProviderBailianFunMusic = 'bailian_fun_music';
   static const songProviderElevenLabsMusic = 'elevenlabs_music';
 
   static const defaultAiProvider = aiProviderAliyunBailian;
+  static const defaultVolcAsrModel = volcAsrModelAuto;
   static const defaultSongProvider = songProviderSuno;
   static const defaultAliyunBailianBaseUrl =
       'https://dashscope.aliyuncs.com/compatible-mode/v1';
@@ -48,12 +52,13 @@ class AppConfig {
   static const defaultAliyunBailianTtsVoice = 'loongabby_v3';
   static const defaultAliyunBailianTtsSampleRate = '24000';
   static const defaultAliyunBailianAsrModel = 'qwen3-asr-flash';
-  static const defaultAliyunBailianRealtimeAsrModel = 'qwen3-asr-realtime';
+  static const defaultAliyunBailianRealtimeAsrModel =
+      'qwen3-asr-flash-realtime';
   static const defaultAliyunBailianRealtimeAsrUrl =
       'wss://dashscope.aliyuncs.com/api-ws/v1/realtime';
   static const defaultVolcArkBaseUrl =
       'https://ark.cn-beijing.volces.com/api/v3';
-  static const defaultVolcArkTextModel = 'doubao-seed-2-0-lite-260215';
+  static const defaultVolcArkTextModel = 'deepseek-v4-flash-ga-260731';
   static const defaultVolcArkImageModel = 'doubao-seedream-5-0-260128';
   static const defaultElevenLabsBaseUrl = 'https://api.elevenlabs.io';
   static const defaultElevenLabsTtsModel = 'eleven_multilingual_v2';
@@ -74,6 +79,7 @@ class AppConfig {
 
   // ===== 实时语音与 BigASR =====
   static const _aiProvider = 'ai_provider';
+  static const _asrProvider = 'asr_provider';
   static const _textProvider = 'text_provider';
   static const _imageProvider = 'image_provider';
   static const _ttsProvider = 'tts_provider';
@@ -92,6 +98,7 @@ class AppConfig {
       'aliyun_bailian_realtime_asr_model';
   static const _aliyunBailianRealtimeAsrUrl = 'aliyun_bailian_realtime_asr_url';
   static const _volcSpeechApiKey = 'volc_speech_api_key';
+  static const _volcAsrModel = 'volc_asr_model';
   static const _volcArkApiKey = 'volc_ark_api_key';
   static const _volcArkBaseUrl = 'volc_ark_base_url';
   static const _volcArkTextModel = 'volc_ark_text_model';
@@ -122,12 +129,21 @@ class AppConfig {
     return _runtimeSecrets[_volcTtsSpeakerId]?.trim() ?? '';
   }
 
-  static Future<String> get aiProvider async => _normalizeAiProvider(
-        await _readSecret(
-          key: _aiProvider,
-          defaultValue: defaultAiProvider,
-        ),
-      );
+  /// Legacy compatibility alias. New code should use [asrProvider].
+  static Future<String> get aiProvider async => asrProvider;
+
+  static Future<String> get asrProvider async {
+    final stored = await _readSecret(key: _asrProvider);
+    if (stored.trim().isNotEmpty) {
+      return _normalizeAiProvider(stored);
+    }
+    return _normalizeAiProvider(
+      await _readSecret(
+        key: _aiProvider,
+        defaultValue: defaultAiProvider,
+      ),
+    );
+  }
 
   static Future<String> get textProvider async {
     final stored = await _readSecret(key: _textProvider);
@@ -165,12 +181,16 @@ class AppConfig {
   static Future<String> get volcArkTextApiKey async =>
       _stripBearerPrefix(await _readSecret(key: _volcArkApiKey));
 
-  static Future<String> get volcArkBaseUrl async => _normalizeBaseUrl(
+  static Future<String> get volcArkBaseUrl async => _fixedEndpoint(
+        key: _volcArkBaseUrl,
+        defaultValue: defaultVolcArkBaseUrl,
+      );
+
+  static Future<String> get volcAsrModel async => _normalizeVolcAsrModel(
         await _readSecret(
-          key: _volcArkBaseUrl,
-          defaultValue: defaultVolcArkBaseUrl,
+          key: _volcAsrModel,
+          defaultValue: defaultVolcAsrModel,
         ),
-        defaultVolcArkBaseUrl,
       );
 
   static Future<String> get volcArkTextModel async {
@@ -189,12 +209,9 @@ class AppConfig {
   static Future<String> get elevenLabsApiKey async =>
       _stripBearerPrefix(await _readSecret(key: _elevenLabsApiKey));
 
-  static Future<String> get elevenLabsBaseUrl async => _normalizeBaseUrl(
-        await _readSecret(
-          key: _elevenLabsBaseUrl,
-          defaultValue: defaultElevenLabsBaseUrl,
-        ),
-        defaultElevenLabsBaseUrl,
+  static Future<String> get elevenLabsBaseUrl async => _fixedEndpoint(
+        key: _elevenLabsBaseUrl,
+        defaultValue: defaultElevenLabsBaseUrl,
       );
 
   static Future<String> get elevenLabsTtsModel async {
@@ -228,20 +245,14 @@ class AppConfig {
   static Future<String> get aliyunBailianApiKey async =>
       _stripBearerPrefix(await _readSecret(key: _aliyunBailianApiKey));
 
-  static Future<String> get aliyunBailianBaseUrl async => _normalizeBaseUrl(
-        await _readSecret(
-          key: _aliyunBailianBaseUrl,
-          defaultValue: defaultAliyunBailianBaseUrl,
-        ),
-        defaultAliyunBailianBaseUrl,
+  static Future<String> get aliyunBailianBaseUrl async => _fixedEndpoint(
+        key: _aliyunBailianBaseUrl,
+        defaultValue: defaultAliyunBailianBaseUrl,
       );
 
-  static Future<String> get aliyunBailianApiBaseUrl async => _normalizeBaseUrl(
-        await _readSecret(
-          key: _aliyunBailianApiBaseUrl,
-          defaultValue: defaultAliyunBailianApiBaseUrl,
-        ),
-        defaultAliyunBailianApiBaseUrl,
+  static Future<String> get aliyunBailianApiBaseUrl async => _fixedEndpoint(
+        key: _aliyunBailianApiBaseUrl,
+        defaultValue: defaultAliyunBailianApiBaseUrl,
       );
 
   static Future<String> get aliyunBailianTextModel async {
@@ -285,21 +296,17 @@ class AppConfig {
 
   static Future<String> get aliyunBailianAsrModel async {
     final stored = await _readSecret(key: _aliyunBailianAsrModel);
-    return stored.isNotEmpty ? stored : defaultAliyunBailianAsrModel;
+    return _normalizeAliyunAsrModel(stored);
   }
 
   static Future<String> get aliyunBailianRealtimeAsrModel async {
     final stored = await _readSecret(key: _aliyunBailianRealtimeAsrModel);
-    return stored.isNotEmpty ? stored : defaultAliyunBailianRealtimeAsrModel;
+    return _normalizeAliyunRealtimeAsrModel(stored);
   }
 
-  static Future<String> get aliyunBailianRealtimeAsrUrl async =>
-      _normalizeBaseUrl(
-        await _readSecret(
-          key: _aliyunBailianRealtimeAsrUrl,
-          defaultValue: defaultAliyunBailianRealtimeAsrUrl,
-        ),
-        defaultAliyunBailianRealtimeAsrUrl,
+  static Future<String> get aliyunBailianRealtimeAsrUrl async => _fixedEndpoint(
+        key: _aliyunBailianRealtimeAsrUrl,
+        defaultValue: defaultAliyunBailianRealtimeAsrUrl,
       );
 
   static Future<String> get aliyunWanxImageGenerationEndpoint async =>
@@ -352,6 +359,8 @@ class AppConfig {
 
   static Future<void> seedSecureStorageFromEnvironment() async {
     try {
+      await _migrateAsrSettings();
+      await _clearLegacyEndpointOverrides();
       await _writeIfProvided(
           key: _volcTtsResourceId, value: _envVolcTtsResourceId);
       await _writeIfProvided(
@@ -460,13 +469,12 @@ class AppConfig {
 
   static Future<void> saveCloudSettings({
     String? aiProvider,
+    String? asrProvider,
     String? textProvider,
     String? imageProvider,
     String? ttsProvider,
     String? aliyunBailianApiKey,
     bool clearAliyunBailianApiKey = false,
-    String? aliyunBailianBaseUrl,
-    String? aliyunBailianApiBaseUrl,
     String? aliyunBailianTextModel,
     String? aliyunBailianMusicModel,
     String? aliyunBailianImageModel,
@@ -476,15 +484,13 @@ class AppConfig {
     String? aliyunBailianTtsSampleRate,
     String? aliyunBailianAsrModel,
     String? aliyunBailianRealtimeAsrModel,
-    String? aliyunBailianRealtimeAsrUrl,
     String? volcArkApiKey,
     bool clearVolcArkApiKey = false,
-    String? volcArkBaseUrl,
+    String? volcAsrModel,
     String? volcArkTextModel,
     String? volcArkImageModel,
     String? elevenLabsApiKey,
     bool clearElevenLabsApiKey = false,
-    String? elevenLabsBaseUrl,
     String? elevenLabsTtsModel,
     String? elevenLabsTtsVoiceId,
     String? elevenLabsTtsOutputFormat,
@@ -495,8 +501,11 @@ class AppConfig {
     String? volcTtsResourceId,
     String? volcTtsSpeakerId,
   }) async {
-    if (aiProvider != null) {
-      final provider = _normalizeAiProvider(aiProvider);
+    final requestedAsrProvider = asrProvider ?? aiProvider;
+    if (requestedAsrProvider != null) {
+      final provider = _normalizeAiProvider(requestedAsrProvider);
+      await _storage.write(key: _asrProvider, value: provider);
+      _runtimeSecrets[_asrProvider] = provider;
       await _storage.write(key: _aiProvider, value: provider);
       _runtimeSecrets[_aiProvider] = provider;
     }
@@ -545,16 +554,6 @@ class AppConfig {
       );
     }
     await _writeConfigValue(
-      key: _aliyunBailianBaseUrl,
-      value: aliyunBailianBaseUrl,
-      defaultValue: defaultAliyunBailianBaseUrl,
-    );
-    await _writeConfigValue(
-      key: _aliyunBailianApiBaseUrl,
-      value: aliyunBailianApiBaseUrl,
-      defaultValue: defaultAliyunBailianApiBaseUrl,
-    );
-    await _writeConfigValue(
       key: _aliyunBailianTextModel,
       value: aliyunBailianTextModel,
       defaultValue: defaultAliyunBailianTextModel,
@@ -591,23 +590,24 @@ class AppConfig {
     );
     await _writeConfigValue(
       key: _aliyunBailianAsrModel,
-      value: aliyunBailianAsrModel,
+      value: aliyunBailianAsrModel == null
+          ? null
+          : _normalizeAliyunAsrModel(aliyunBailianAsrModel),
       defaultValue: defaultAliyunBailianAsrModel,
     );
     await _writeConfigValue(
       key: _aliyunBailianRealtimeAsrModel,
-      value: aliyunBailianRealtimeAsrModel,
+      value: aliyunBailianRealtimeAsrModel == null
+          ? null
+          : _normalizeAliyunRealtimeAsrModel(
+              aliyunBailianRealtimeAsrModel,
+            ),
       defaultValue: defaultAliyunBailianRealtimeAsrModel,
     );
     await _writeConfigValue(
-      key: _aliyunBailianRealtimeAsrUrl,
-      value: aliyunBailianRealtimeAsrUrl,
-      defaultValue: defaultAliyunBailianRealtimeAsrUrl,
-    );
-    await _writeConfigValue(
-      key: _volcArkBaseUrl,
-      value: volcArkBaseUrl,
-      defaultValue: defaultVolcArkBaseUrl,
+      key: _volcAsrModel,
+      value: volcAsrModel == null ? null : _normalizeVolcAsrModel(volcAsrModel),
+      defaultValue: defaultVolcAsrModel,
     );
     await _writeConfigValue(
       key: _volcArkTextModel,
@@ -618,11 +618,6 @@ class AppConfig {
       key: _volcArkImageModel,
       value: volcArkImageModel,
       defaultValue: defaultVolcArkImageModel,
-    );
-    await _writeConfigValue(
-      key: _elevenLabsBaseUrl,
-      value: elevenLabsBaseUrl,
-      defaultValue: defaultElevenLabsBaseUrl,
     );
     await _writeConfigValue(
       key: _elevenLabsTtsModel,
@@ -668,14 +663,13 @@ class AppConfig {
     final elevenLabsKey = await elevenLabsApiKey;
     return {
       'aiProvider': await aiProvider,
+      'asrProvider': await asrProvider,
       'textProvider': await textProvider,
       'imageProvider': await imageProvider,
       'ttsProvider': await ttsProvider,
       'aliyunBailian': {
         'apiKeyConfigured': aliyunKey.isNotEmpty,
         'apiKeyMask': maskSecret(aliyunKey),
-        'baseUrl': await aliyunBailianBaseUrl,
-        'apiBaseUrl': await aliyunBailianApiBaseUrl,
         'textModel': await aliyunBailianTextModel,
         'musicModel': await aliyunBailianMusicModel,
         'imageModel': await aliyunBailianImageModel,
@@ -685,14 +679,13 @@ class AppConfig {
         'ttsSampleRate': await aliyunBailianTtsSampleRate,
         'asrModel': await aliyunBailianAsrModel,
         'realtimeAsrModel': await aliyunBailianRealtimeAsrModel,
-        'realtimeAsrUrl': await aliyunBailianRealtimeAsrUrl,
       },
       'volcengine': {
         'arkApiKeyConfigured': volcArkKey.isNotEmpty,
         'arkApiKeyMask': maskSecret(volcArkKey),
-        'arkBaseUrl': await volcArkBaseUrl,
         'arkTextModel': await volcArkTextModel,
         'arkImageModel': await volcArkImageModel,
+        'asrModel': await volcAsrModel,
         'speechApiKeyConfigured': volcSpeechKey.isNotEmpty,
         'speechApiKeyMask': maskSecret(volcSpeechKey),
         'ttsResourceId': await volcTtsResourceId,
@@ -701,7 +694,6 @@ class AppConfig {
       'elevenLabs': {
         'apiKeyConfigured': elevenLabsKey.isNotEmpty,
         'apiKeyMask': maskSecret(elevenLabsKey),
-        'baseUrl': await elevenLabsBaseUrl,
         'ttsModel': await elevenLabsTtsModel,
         'ttsVoiceId': await elevenLabsTtsVoiceId,
         'ttsOutputFormat': await elevenLabsTtsOutputFormat,
@@ -805,6 +797,44 @@ class AppConfig {
     return _normalizeAiProvider(normalized);
   }
 
+  static String _normalizeVolcAsrModel(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == volcAsrModelSeedAsrV2) {
+      return volcAsrModelSeedAsrV2;
+    }
+    if (normalized == volcAsrModelBigAsrV1) {
+      return volcAsrModelBigAsrV1;
+    }
+    return volcAsrModelAuto;
+  }
+
+  static String _normalizeAliyunAsrModel(String value) {
+    const supported = {
+      'qwen3-asr-flash',
+      'qwen3-asr-flash-2026-02-10',
+      'qwen3-asr-flash-2025-09-08',
+    };
+    final normalized = value.trim().toLowerCase();
+    return supported.contains(normalized)
+        ? normalized
+        : defaultAliyunBailianAsrModel;
+  }
+
+  static String _normalizeAliyunRealtimeAsrModel(String value) {
+    const supported = {
+      'qwen3-asr-flash-realtime',
+      'qwen3-asr-flash-realtime-2026-02-10',
+      'qwen3-asr-flash-realtime-2025-10-27',
+    };
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'qwen3-asr-realtime') {
+      return defaultAliyunBailianRealtimeAsrModel;
+    }
+    return supported.contains(normalized)
+        ? normalized
+        : defaultAliyunBailianRealtimeAsrModel;
+  }
+
   static String _normalizeSongProvider(String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized == songProviderBailianFunMusic) {
@@ -823,6 +853,69 @@ class AppConfig {
 
   static String _trimTrailingSlash(String value) =>
       value.trim().replaceFirst(RegExp(r'/+$'), '');
+
+  static Future<String> _fixedEndpoint({
+    required String key,
+    required String defaultValue,
+  }) async {
+    final testOverride = _runtimeSecrets[key]?.trim() ?? '';
+    return _normalizeBaseUrl(testOverride, defaultValue);
+  }
+
+  static Future<void> _migrateAsrSettings() async {
+    final storedAsrProvider = await _readStorageSecret(key: _asrProvider);
+    final legacyProvider = await _readStorageSecret(key: _aiProvider);
+    if (storedAsrProvider.isEmpty) {
+      if (legacyProvider.isNotEmpty) {
+        await _storage.write(
+          key: _asrProvider,
+          value: _normalizeAiProvider(legacyProvider),
+        );
+      }
+    }
+
+    if (legacyProvider.isNotEmpty) {
+      final legacyAiProvider = _normalizeAiProvider(legacyProvider);
+      for (final key in const [
+        _textProvider,
+        _imageProvider,
+        _ttsProvider,
+      ]) {
+        if ((await _readStorageSecret(key: key)).isEmpty) {
+          await _storage.write(key: key, value: legacyAiProvider);
+        }
+      }
+    }
+
+    final legacyRealtimeModel =
+        await _readStorageSecret(key: _aliyunBailianRealtimeAsrModel);
+    if (legacyRealtimeModel.toLowerCase() == 'qwen3-asr-realtime') {
+      await _storage.write(
+        key: _aliyunBailianRealtimeAsrModel,
+        value: defaultAliyunBailianRealtimeAsrModel,
+      );
+    }
+  }
+
+  static Future<void> _clearLegacyEndpointOverrides() async {
+    const endpointKeys = {
+      _aliyunBailianBaseUrl,
+      _aliyunBailianApiBaseUrl,
+      _aliyunBailianRealtimeAsrUrl,
+      _volcArkBaseUrl,
+      _elevenLabsBaseUrl,
+    };
+    for (final key in endpointKeys) {
+      try {
+        await _storage.delete(key: key);
+      } catch (e) {
+        final message = e.toString().split('\n').first;
+        debugPrint(
+          '[AppConfig] legacy endpoint cleanup failed for $key: $message',
+        );
+      }
+    }
+  }
 
   static Future<void> _seedElevenLabsKeyFromFile() async {
     final apiKey = await _readElevenLabsKeyFile();
@@ -907,6 +1000,7 @@ class AppConfig {
   @visibleForTesting
   static void setRuntimeConfigForTest({
     String? aiProvider,
+    String? asrProvider,
     String? textProvider,
     String? imageProvider,
     String? ttsProvider,
@@ -924,6 +1018,7 @@ class AppConfig {
     String? aliyunBailianRealtimeAsrModel,
     String? aliyunBailianRealtimeAsrUrl,
     String? volcSpeechApiKey,
+    String? volcAsrModel,
     String? volcArkApiKey,
     String? volcArkBaseUrl,
     String? volcArkTextModel,
@@ -954,6 +1049,7 @@ class AppConfig {
     }
 
     put(_aiProvider, aiProvider);
+    put(_asrProvider, asrProvider);
     put(_textProvider, textProvider);
     put(_imageProvider, imageProvider);
     put(_ttsProvider, ttsProvider);
@@ -971,6 +1067,7 @@ class AppConfig {
     put(_aliyunBailianRealtimeAsrModel, aliyunBailianRealtimeAsrModel);
     put(_aliyunBailianRealtimeAsrUrl, aliyunBailianRealtimeAsrUrl);
     put(_volcSpeechApiKey, volcSpeechApiKey);
+    put(_volcAsrModel, volcAsrModel);
     put(_volcArkApiKey, volcArkApiKey);
     put(_volcArkBaseUrl, volcArkBaseUrl);
     put(_volcArkTextModel, volcArkTextModel);

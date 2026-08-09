@@ -16,10 +16,10 @@ import type {
   SettingsState,
   SongSource,
   StorySeries,
+  VolcAsrModel,
   VoiceOption,
 } from './types';
 import { NativeCommandError } from './types';
-import { splitSentences } from './sentenceSplitter';
 
 type NativeListener<T = unknown> = (payload: T) => void;
 type AiProvider = 'aliyun_bailian' | 'volcengine';
@@ -30,6 +30,15 @@ type MockArticle = Article & {
   seriesDescription?: string;
   chapterDescription?: string;
 };
+
+function mockSentenceSplit(content: string): string[] {
+  const normalized = normalizePracticeContent(content);
+  if (!normalized) return [];
+  return normalized
+    .split(/(?<=[.!?]["'”’)}\]])\s+|(?<=[.!?])\s+/u)
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
 
 function mockArticleSummary(article: MockArticle): Article {
   return {
@@ -497,6 +506,20 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
     };
   }
+  if (type === 'article.reviewSplitTranslate') {
+    const source = normalizePracticeContent(String(payload.englishContent ?? ''));
+    const sentences = mockSentenceSplit(source);
+    return {
+      sentences,
+      sentenceSplitVersion: 'reviewed_dp_v3',
+      source: 'stored',
+      comparison: {
+        originalSentenceCount: sentences.length,
+        reviewedSentenceCount: sentences.length,
+        riskOriginalCount: 0,
+      },
+    };
+  }
   if (type === 'article.create') {
     const resumeArticleId = payload.resumeArticleId === undefined || payload.resumeArticleId === null
       ? null
@@ -504,7 +527,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     const content = normalizePracticeContent(String(payload.content ?? ''));
     const sentences = Array.isArray(payload.sentences)
       ? payload.sentences.map((value) => String(value))
-      : splitSentences(content);
+      : mockSentenceSplit(content);
     const pictureBookEnabled = payload.pictureBookEnabled !== false;
     const requestedTitle = String(payload.title ?? '').trim();
     const resolvedTitle = requestedTitle || mockSuggestTitle(content);
@@ -531,7 +554,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       content,
       sentences,
       sentenceCount: sentences.length,
-      sentenceSplitVersion: String(payload.sentenceSplitVersion ?? 'read_aloud_dp_v2'),
+      sentenceSplitVersion: String(payload.sentenceSplitVersion ?? 'read_aloud_dp_v3'),
       createdAt: new Date().toISOString(),
       averageScore: 0,
       pictureBookEnabled,
@@ -1630,8 +1653,11 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
   }
   if (type === 'settings.saveCloud') {
     const currentCloud = mockSettings.cloud!;
+    const asrProvider = normalizeAiProvider(
+      String(payload.asrProvider ?? payload.aiProvider ?? currentCloud.asrProvider ?? currentCloud.aiProvider),
+    );
     const textProvider = normalizeAiProvider(
-      String(payload.textProvider ?? payload.aiProvider ?? currentCloud.textProvider ?? currentCloud.aiProvider),
+      String(payload.textProvider ?? currentCloud.textProvider ?? currentCloud.aiProvider),
     );
     const imageProvider = normalizeAiProvider(
       String(payload.imageProvider ?? currentCloud.imageProvider ?? currentCloud.aiProvider),
@@ -1649,8 +1675,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         : payload.aliyunBailianApiKey
           ? '****MOCK'
           : currentCloud.aliyunBailian.apiKeyMask ?? '',
-      baseUrl: String(payload.aliyunBailianBaseUrl ?? currentCloud.aliyunBailian.baseUrl ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1'),
-      apiBaseUrl: String(payload.aliyunBailianApiBaseUrl ?? currentCloud.aliyunBailian.apiBaseUrl ?? 'https://dashscope.aliyuncs.com/api/v1'),
       textModel: String(payload.aliyunBailianTextModel ?? currentCloud.aliyunBailian.textModel ?? 'qwen3.7-max'),
       musicModel: String(payload.aliyunBailianMusicModel ?? currentCloud.aliyunBailian.musicModel ?? 'fun-music-v1'),
       imageModel: String(payload.aliyunBailianImageModel ?? currentCloud.aliyunBailian.imageModel ?? 'wan2.7-image-pro'),
@@ -1659,8 +1683,9 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       ttsVoice: String(payload.aliyunBailianTtsVoice ?? currentCloud.aliyunBailian.ttsVoice ?? 'loongabby_v3'),
       ttsSampleRate: Number(payload.aliyunBailianTtsSampleRate ?? currentCloud.aliyunBailian.ttsSampleRate ?? 24000),
       asrModel: String(payload.aliyunBailianAsrModel ?? currentCloud.aliyunBailian.asrModel ?? 'qwen3-asr-flash'),
-      realtimeAsrModel: String(payload.aliyunBailianRealtimeAsrModel ?? currentCloud.aliyunBailian.realtimeAsrModel ?? 'qwen3-asr-realtime'),
-      realtimeAsrUrl: String(payload.aliyunBailianRealtimeAsrUrl ?? currentCloud.aliyunBailian.realtimeAsrUrl ?? 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'),
+      realtimeAsrModel: normalizeAliyunRealtimeAsrModel(
+        String(payload.aliyunBailianRealtimeAsrModel ?? currentCloud.aliyunBailian.realtimeAsrModel ?? 'qwen3-asr-flash-realtime'),
+      ),
     };
     const volcengine = {
       arkApiKeyConfigured: Boolean(payload.clearVolcArkApiKey)
@@ -1672,8 +1697,7 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         : payload.volcArkApiKey
           ? '****MOCK'
           : currentCloud.volcengine.arkApiKeyMask ?? '',
-      arkBaseUrl: String(payload.volcArkBaseUrl ?? currentCloud.volcengine.arkBaseUrl ?? 'https://ark.cn-beijing.volces.com/api/v3'),
-      arkTextModel: String(payload.volcArkTextModel ?? currentCloud.volcengine.arkTextModel ?? 'doubao-seed-2-0-lite-260215'),
+      arkTextModel: String(payload.volcArkTextModel ?? currentCloud.volcengine.arkTextModel ?? 'deepseek-v4-flash-ga-260731'),
       arkImageModel: String(payload.volcArkImageModel ?? currentCloud.volcengine.arkImageModel ?? 'doubao-seedream-5-0-260128'),
       speechApiKeyConfigured: Boolean(payload.clearVolcSpeechApiKey)
         ? false
@@ -1684,6 +1708,9 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         : payload.volcSpeechApiKey
           ? '****MOCK'
           : currentCloud.volcengine.speechApiKeyMask ?? '',
+      asrModel: normalizeVolcAsrModel(
+        String(payload.volcAsrModel ?? currentCloud.volcengine.asrModel ?? 'auto'),
+      ),
       ttsResourceId: String(payload.volcTtsResourceId ?? currentCloud.volcengine.ttsResourceId ?? 'seed-tts-2.0'),
       ttsSpeakerId: String(payload.volcTtsSpeakerId ?? currentCloud.volcengine.ttsSpeakerId ?? mockSettings.tts.speakerId),
     };
@@ -1697,7 +1724,6 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
         : payload.elevenLabsApiKey
           ? '****MOCK'
           : currentCloud.elevenLabs?.apiKeyMask ?? '',
-      baseUrl: String(payload.elevenLabsBaseUrl ?? currentCloud.elevenLabs?.baseUrl ?? 'https://api.elevenlabs.io'),
       ttsModel: String(payload.elevenLabsTtsModel ?? currentCloud.elevenLabs?.ttsModel ?? 'eleven_multilingual_v2'),
       ttsVoiceId: String(payload.elevenLabsTtsVoiceId ?? currentCloud.elevenLabs?.ttsVoiceId ?? 'JBFqnCBsd6RMkjVDRZzb'),
       ttsOutputFormat: String(payload.elevenLabsTtsOutputFormat ?? currentCloud.elevenLabs?.ttsOutputFormat ?? 'mp3_44100_128'),
@@ -1707,7 +1733,8 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
     mockSettings = {
       ...mockSettings,
       cloud: {
-        aiProvider: textProvider,
+        aiProvider: asrProvider,
+        asrProvider,
         textProvider,
         imageProvider,
         ttsProvider,
@@ -2339,6 +2366,15 @@ function normalizeTtsProvider(provider?: string | null): TtsProvider {
   return normalizeAiProvider(provider);
 }
 
+function normalizeVolcAsrModel(model?: string | null): VolcAsrModel {
+  if (model === 'seedasr_v2' || model === 'bigasr_v1') return model;
+  return 'auto';
+}
+
+function normalizeAliyunRealtimeAsrModel(model?: string | null): string {
+  return model === 'qwen3-asr-realtime' ? 'qwen3-asr-flash-realtime' : (model ?? 'qwen3-asr-flash-realtime');
+}
+
 function normalizeSongProvider(provider?: string | null): SongSource {
   if (provider === 'bailian_fun_music') return 'bailian_fun_music';
   if (provider === 'elevenlabs_music') return 'elevenlabs_music';
@@ -2370,14 +2406,13 @@ let mockSettings: SettingsState = {
   },
   cloud: {
     aiProvider: 'aliyun_bailian',
+    asrProvider: 'aliyun_bailian',
     textProvider: 'aliyun_bailian',
     imageProvider: 'aliyun_bailian',
     ttsProvider: 'aliyun_bailian',
     aliyunBailian: {
       apiKeyConfigured: false,
       apiKeyMask: '',
-      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      apiBaseUrl: 'https://dashscope.aliyuncs.com/api/v1',
       textModel: 'qwen3.7-max',
       musicModel: 'fun-music-v1',
       imageModel: 'wan2.7-image-pro',
@@ -2386,24 +2421,22 @@ let mockSettings: SettingsState = {
       ttsVoice: 'loongabby_v3',
       ttsSampleRate: 24000,
       asrModel: 'qwen3-asr-flash',
-      realtimeAsrModel: 'qwen3-asr-realtime',
-      realtimeAsrUrl: 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+      realtimeAsrModel: 'qwen3-asr-flash-realtime',
     },
     volcengine: {
       arkApiKeyConfigured: false,
       arkApiKeyMask: '',
-      arkBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-      arkTextModel: 'doubao-seed-2-0-lite-260215',
+      arkTextModel: 'deepseek-v4-flash-ga-260731',
       arkImageModel: 'doubao-seedream-5-0-260128',
       speechApiKeyConfigured: false,
       speechApiKeyMask: '',
+      asrModel: 'auto',
       ttsResourceId: 'seed-tts-2.0',
       ttsSpeakerId: 'en_female_dacey_uranus_bigtts',
     },
     elevenLabs: {
       apiKeyConfigured: false,
       apiKeyMask: '',
-      baseUrl: 'https://api.elevenlabs.io',
       ttsModel: 'eleven_multilingual_v2',
       ttsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
       ttsOutputFormat: 'mp3_44100_128',

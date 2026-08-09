@@ -10,6 +10,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   record_windows
   rive_native
   sqlite3_flutter_libs
+  udpipe_parser_v3
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

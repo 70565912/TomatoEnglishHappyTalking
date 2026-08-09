@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "sentence_split_ai_tuning_cases_v3_1",
+  "description": "Generic, book-independent dependency-boundary cases for constrained path-ID AI tuning.",
+  "items": [
+    {
+      "id": "news_investigation",
+      "genre": "news",
+      "source": "The committee released the report after investigators had reviewed every interview and checked the records that witnesses submitted during the final week.",
+      "approvedChunks": [[
+        "The committee released the report after investigators had reviewed every interview",
+        "and checked the records that witnesses submitted during the final week."
+      ]]
+    },
+    {
+      "id": "academic_longitudinal_trial",
+      "genre": "academic",
+      "source": "Because earlier studies measured only short term effects the researchers designed a longer trial that followed participants throughout an entire academic year.",
+      "approvedChunks": [[
+        "Because earlier studies measured only short term effects",
+        "the researchers designed a longer trial that followed participants throughout an entire academic year."
+      ]]
+    },
+    {
+      "id": "technical_gateway_retry",
+      "genre": "technical",
+      "source": "The client retries the request when the gateway closes the connection before the server has returned a complete response to the original operation.",
+      "approvedChunks": [[
+        "The client retries the request when the gateway closes the connection",
+        "before the server has returned a complete response to the original operation."
+      ]]
+    },
+    {
+      "id": "legal_tenant_hearing",
+      "genre": "legal",
+      "source": "A tenant who receives a written notice may request a hearing before the authority begins any action that could terminate the tenancy.",
+      "approvedChunks": [[
+        "A tenant who receives a written notice may request a hearing",
+        "before the authority begins any action that could terminate the tenancy."
+      ]]
+    },
+    {
+      "id": "learner_presentation",
+      "genre": "learner_english",
+      "source": "Although Maria had practiced the presentation several times she spoke slowly enough for every student in the crowded room to understand her main argument.",
+      "approvedChunks": [[
+        "Although Maria had practiced the presentation several times",
+        "she spoke slowly enough for every student in the crowded room to understand her main argument."
+      ]]
+    },
+    {
+      "id": "fiction_flooded_road",
+      "genre": "fiction",
+      "source": "The lantern in the upstairs window continued to burn after the travelers reached the bridge where the flooded road disappeared into darkness.",
+      "approvedRationale": "The original retained path and the 9/13-word pause before the complete after-adverbial are both natural. This generic review adds an equivalent path without changing production rules.",
+      "approvedChunks": [
+        [
+          "The lantern in the upstairs window continued to burn after the travelers reached the bridge",
+          "where the flooded road disappeared into darkness."
+        ],
+        [
+          "The lantern in the upstairs window continued to burn",
+          "after the travelers reached the bridge where the flooded road disappeared into darkness."
+        ]
+      ]
+    },
+    {
+      "id": "instructions_filter_replacement",
+      "genre": "instructions",
+      "source": "Before replacing the filter disconnect the machine from its power supply and wait until every moving component has come to a complete stop.",
+      "approvedChunks": [[
+        "Before replacing the filter disconnect the machine from its power supply",
+        "and wait until every moving component has come to a complete stop."
+      ]]
+    },
+    {
+      "id": "software_backup_restore",
+      "genre": "software",
+      "source": "Users who enable automatic backups can restore earlier versions of a document when an accidental edit has already synchronized across their devices.",
+      "approvedChunks": [[
+        "Users who enable automatic backups can restore earlier versions of a document",
+        "when an accidental edit has already synchronized across their devices."
+      ]]
+    },
+    {
+      "id": "policy_confidential_records",
+      "genre": "policy",
+      "source": "The policy applies to contractors whose work requires access to confidential records even when they perform those duties outside the company offices.",
+      "approvedChunks": [[
+        "The policy applies to contractors whose work requires access to confidential records",
+        "even when they perform those duties outside the company offices."
+      ]]
+    },
+    {
+      "id": "equipment_overheat_control",
+      "genre": "technical_instruction",
+      "source": "If the temperature rises above the specified limit the controller shuts down the motor before excessive heat can damage the surrounding equipment.",
+      "approvedChunks": [[
+        "If the temperature rises above the specified limit",
+        "the controller shuts down the motor before excessive heat can damage the surrounding equipment."
+      ]]
+    }
+  ]
+}

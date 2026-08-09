@@ -1,0 +1,91 @@
+// RETIRED REFERENCE TEST: gold inputs remain in the canonical V3 inventory.
+import { describe, expect, it } from 'vitest';
+import fixtureJson from '../../app/test/fixtures/read_aloud_splitter_v3_cases.json';
+import {
+  HARD_MAX_UNPUNCTUATED_WORDS,
+  HARD_MAX_WORDS,
+  maxUnpunctuatedWordCount,
+  normalizeForRoundTrip,
+  splitReadAloudV3,
+  splitReadAloudV3Detailed,
+  validateCanonicalReadAloudV3,
+  wordCount,
+} from './readAloudSplitterV3';
+
+type Fixture = { id: string; input: string; expected: string[] };
+
+const fixtures = (fixtureJson as { cases: Fixture[] }).cases;
+
+function fixture(id: string): Fixture {
+  const value = fixtures.find((candidate) => candidate.id === id);
+  if (!value) throw new Error(`Missing shared splitter fixture: ${id}`);
+  return value;
+}
+
+function assertCoreGates(source: string, chunks: string[]): void {
+  expect(chunks.join(' ').replace(/\s+/gu, ' ').trim()).toBe(normalizeForRoundTrip(source));
+  expect(chunks.every((chunk) => wordCount(chunk) <= HARD_MAX_WORDS)).toBe(true);
+  expect(chunks.every(
+    (chunk) => maxUnpunctuatedWordCount(chunk) <= HARD_MAX_UNPUNCTUATED_WORDS,
+  )).toBe(true);
+}
+
+describe('read-aloud splitter v3 shared fixtures', () => {
+  for (const fixture of fixtures) {
+    it(fixture.id, () => {
+      const actual = splitReadAloudV3(fixture.input);
+      expect(actual).toEqual(fixture.expected);
+      assertCoreGates(fixture.input, actual);
+    });
+  }
+});
+
+describe('read-aloud splitter v3 punctuation-first policy', () => {
+  it('rejects an otherwise lossless result that merges original sentence boundaries', () => {
+    const source = 'Mole looked up. Rat waved back. Toad laughed loudly.';
+    expect(() => validateCanonicalReadAloudV3(source, [
+      'Mole looked up. Rat waved back.',
+      'Toad laughed loudly.',
+    ])).toThrow(/跨越了原文/);
+    expect(() => validateCanonicalReadAloudV3(source, [
+      'Mole looked up.',
+      'Rat waved back.',
+      'Toad laughed loudly.',
+    ])).not.toThrow();
+  });
+
+  it('uses punctuation exclusively when a punctuation-only path is feasible', () => {
+    const details = splitReadAloudV3Detailed(fixture('willows-e01-semicolon-priority').input);
+    expect(details.some((chunk) => chunk.boundaryKind === 'punctuation')).toBe(true);
+    expect(details.some((chunk) => chunk.boundaryKind === 'grammar_clause')).toBe(false);
+    expect(details.some((chunk) => chunk.boundaryKind === 'grammar_phrase')).toBe(false);
+    expect(details.some((chunk) => chunk.boundaryKind === 'emergency')).toBe(false);
+  });
+
+  it('uses grammar and emergency boundaries only for unpunctuated hard overflow', () => {
+    const grammar = splitReadAloudV3Detailed(
+      fixture('semantic-fallback-before-subordinator').input,
+    );
+    expect(grammar.some((chunk) => chunk.boundaryKind === 'grammar_clause')).toBe(true);
+    expect(grammar.some((chunk) => chunk.boundaryKind === 'emergency')).toBe(false);
+
+    const emergency = splitReadAloudV3Detailed(
+      fixture('twenty-one-unpunctuated-words-use-emergency-cut').input,
+    );
+    expect(emergency.some((chunk) => chunk.boundaryKind === 'emergency')).toBe(true);
+  });
+
+  it('does not cut protected structural phrases in historical Willows cases', () => {
+    const sources = [
+      'He was bowled over in an instant by the impatient and contemptuous Mole, who trotted along the side of the hedge chaffing the other rabbits as they peeped hurriedly from their holes to see what the row was about.',
+      'Naturally a voluble animal, and always mastered by his imagination, he painted the prospects of the trip and the joys of the open life and the roadside in such glowing colours that the Mole could hardly sit in his chair for excitement.',
+      'And instead of having an uneasy conscience pricking him and whispering "whitewash!" he somehow could only feel how jolly it was to be the only idle dog among all these busy citizens.',
+      'Something up above was calling him imperiously, and he made for the steep little tunnel which answered in his case to the gravelled carriage-drive owned by animals whose residences are nearer to the sun and air.',
+    ];
+    for (const source of sources) {
+      const joined = splitReadAloudV3(source).join('\n');
+      assertCoreGates(source, splitReadAloudV3(source));
+      expect(joined).not.toMatch(/what the row\nwas about|the Mole\ncould hardly|could hardly\nsit|to be the\nonly idle dog|to the\ngravelled/);
+    }
+  });
+});
