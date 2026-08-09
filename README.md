@@ -64,8 +64,6 @@ Tomato 不是预置固定课程的闯关 App。它围绕你自己的文章建立
 - 导出听力或歌曲视频，支持 SRT 和内嵌字幕。
 - Windows 可使用随包提供的 Real-ESRGAN NCNN Vulkan 进行本地 2x/4x 绘本超分。
 
-![Windows 本地 Real-ESRGAN 超分对比](docs/readme/upscale-comparison.webp)
-
 ## 平台支持
 
 | 能力 | Windows | Android |
@@ -126,12 +124,47 @@ Tomato 不是预置固定课程的闯关 App。它围绕你自己的文章建立
 | Suno 歌曲 | 系统浏览器手动流程后导入本地文件 |
 | 导出与诊断 | 本机文件系统 |
 
+## 公开评测与技术选型
+
+Tomato 不只保存“测试通过”的结论，也公开失败样本、淘汰方案、重复测试和适用边界，供英语
+NLP、Flutter 端侧 AI、字幕对齐和内容生成方向的研发人员复现与选型。
+
+| 评测 | 有参考价值的结论 | 报告 |
+| --- | --- | --- |
+| 文本模型受约束句法任务 | 阿里 `qwen3.7-max`（P7）和火山 `DeepSeek V4 Flash`（P8）均连续三轮 30/30；豆包 Lite/Pro 未达到生产门槛，Lite 的 5 种争议路径经人工审核全部判错 | [分句 V3.3 验收](docs/read_aloud_sentence_split_v3_3_implementation_report.md) · [Lite 人工审核](docs/volcengine_doubao_lite_sentence_split_human_review.md) |
+| UDPipe / Stanza / spaCy | 10 个困难主谓 root probe 中 Stanza 10/10、官方 UDPipe 参考模型 8/10、spaCy 7/10；生产 UDPipe 用作软结构证据而非唯一裁判 | [句法器对比评测](docs/parser-comparison-evaluation.md) |
+| 绘本章节规划 Prompt | 四类文章最终 12 次响应结构失败为 0；说明文 scene 数标准差由 2.49 降至 0.47，但措辞和边界仍需人工审核 | [分镜调优报告](docs/picture_book_chapter_plan_scene_split_tuning.md) |
+| 本地字幕对齐 / BigASR | MMS CTC 在英文 3/4 样本上是可替代候选，平均 CPU RTF 约 0.88；长 Suno 难例仍需 BigASR 兜底 | [评测总览](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/README.md) · [Round 1](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary.md) · [Round 2](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary_round2.md) |
+| 真实 ASR 快照回归 | E03/E07/E13/E16 固化缺词、重复词和弱锚点故障，离线复测字幕 DP，不重复调用收费 ASR | [方法与证据索引](docs/testing-and-evaluation.md#5-真实-asr-时间轴快照回归) |
+| Windows/WebView/Bridge QA | App 内 Suno Lexical 键盘输入故障被隔离到 WebView2 链路；`article.list` 从 62,752,595 B 降到 64,485 B | [Suno 隔离报告](docs/suno_lexical_lyrics_editor.md) · [Bridge/Release QA](docs/bridge-payload-release-qa-evaluation.md) |
+
+**[查看全部测试与评测报告、方法、过程、局限和复现入口](docs/testing-and-evaluation.md)**
+
+分句成绩可反映英文结构理解和严格指令遵循能力，对翻译与分镜模型选型有参考意义；但它不是
+翻译忠实度或视觉叙事质量的直接替代指标。所有排名只适用于报告中的模型 ID、协议和样本。
+
+### 可直接观察的超分 A/B
+
+同一张 E07 绘本画面：上方完整画面标出两个检查区域，下方分别放大爱丽丝面部/发丝和
+鳄鱼眼睛/牙齿。左右使用完全相同的画面范围；输入侧以最近邻显示原始像素，右侧是 Windows
+发布包随附 `Real-ESRGAN NCNN Vulkan` 4x 模型的真实输出。点击图片可查看 1800px 原图。
+
+[![Windows 本地 Real-ESRGAN 4x 同区域细节放大对比](docs/readme/upscale-comparison.webp)](docs/readme/upscale-comparison.webp)
+
+[原始 320×180 输入 PNG](docs/readme/upscale-evidence/input-320x180.png) ·
+[真实 1280×720 输出 PNG](docs/readme/upscale-evidence/output-1280x720.png)
+
+这是直观效果与链路验证，不是多模型感知质量排名。
+
 ## 文档
 
 - [用户指南与截图](docs/user-guide/)
 - [云服务配置](docs/cloud-service-setup.md)
 - [开发与构建指南](docs/development-guide.md)
 - [AI CLI / QA 远程调用指南](docs/ai_cli_qa_remote_guide.md)
+- [测试与评测报告](docs/testing-and-evaluation.md)
+- [英文依存句法器对比评测](docs/parser-comparison-evaluation.md)
+- [Flutter/Web Bridge 负载与 Release QA 评测](docs/bridge-payload-release-qa-evaluation.md)
 - [变更记录](docs/change_log.md)
 - [路线图](ROADMAP.md)
 - [贡献说明](CONTRIBUTING.md)

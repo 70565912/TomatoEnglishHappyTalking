@@ -8,6 +8,96 @@ import 'package:tomato_english_happy_talking/services/udpipe_syntax_parser_v3.da
 
 void main() {
   final enabled = Platform.environment['TOMATO_RUN_SENTENCE_V3_EVAL'] == '1';
+
+  test('keeps all five human-reviewed Doubao Lite paths rejected', () {
+    const reviewedApprovedReferences = <String, List<String>>{
+      'technical_gateway_retry': [
+        'The client retries the request when the gateway closes the connection',
+        'before the server has returned a complete response to the original operation.',
+      ],
+      'legal_tenant_hearing': [
+        'A tenant who receives a written notice may request a hearing',
+        'before the authority begins any action that could terminate the tenancy.',
+      ],
+      'learner_presentation': [
+        'Although Maria had practiced the presentation several times',
+        'she spoke slowly enough for every student in the crowded room to understand her main argument.',
+      ],
+      'instructions_filter_replacement': [
+        'Before replacing the filter disconnect the machine from its power supply',
+        'and wait until every moving component has come to a complete stop.',
+      ],
+    };
+    final fixture = jsonDecode(
+      File(
+        'test/fixtures/sentence_split_v3_ai_tuning_cases.json',
+      ).readAsStringSync(),
+    ) as Map<String, dynamic>;
+    expect(fixture['schemaVersion'], 'sentence_split_ai_tuning_cases_v3_2');
+    final review = Map<String, dynamic>.from(fixture['humanReview'] as Map);
+    expect(
+      review['decision'],
+      'keep_existing_approved_references_and_reject_all_five_disputed_doubao_lite_paths',
+    );
+    expect(review['rejectedPathCount'], 5);
+
+    var rejectedPathCount = 0;
+    final items = (fixture['items'] as List)
+        .map((value) => Map<String, dynamic>.from(value as Map))
+        .toList(growable: false);
+    for (final item in items) {
+      final approved = (item['approvedChunks'] as List)
+          .map(
+            (path) => (path as List)
+                .map((chunk) => chunk.toString())
+                .toList(growable: false),
+          )
+          .toList(growable: false);
+      final reviewedApproved = reviewedApprovedReferences[item['id']];
+      if (reviewedApproved != null) {
+        expect(
+          approved,
+          hasLength(1),
+          reason: '${item['id']} must not gain another approved alternative',
+        );
+        expect(
+          _sameNormalized(approved.single, reviewedApproved),
+          isTrue,
+          reason: '${item['id']} must retain the confirmed approved reference',
+        );
+      }
+      final rejectedValue = item['humanRejectedChunks'];
+      if (rejectedValue is! List) continue;
+      expect(
+        item['humanReviewRationale'].toString().trim(),
+        isNotEmpty,
+        reason: '${item['id']} must retain the human-review rationale',
+      );
+      for (final pathValue in rejectedValue) {
+        final rejected = (pathValue as List)
+            .map((chunk) => chunk.toString())
+            .toList(growable: false);
+        rejectedPathCount += 1;
+        expect(
+          rejected.every((chunk) => chunk.trim().isNotEmpty),
+          isTrue,
+          reason: '${item['id']} contains an empty rejected chunk',
+        );
+        expect(
+          approved.any((path) => _sameNormalized(path, rejected)),
+          isFalse,
+          reason: '${item['id']} rejected path must not become approved',
+        );
+        expect(
+          ReadAloudSplitterV3.normalizeForRoundTrip(rejected.join(' ')),
+          ReadAloudSplitterV3.normalizeForRoundTrip(item['source'].toString()),
+          reason: '${item['id']} rejected path must still preserve the source',
+        );
+      }
+    }
+    expect(rejectedPathCount, 5);
+  });
+
   test(
     'evaluates the native V3 pipeline against all retained gold inputs',
     () async {

@@ -1,6 +1,13 @@
 {
-  "schemaVersion": "sentence_split_ai_tuning_cases_v3_1",
-  "description": "Generic, book-independent dependency-boundary cases for constrained path-ID AI tuning.",
+  "schemaVersion": "sentence_split_ai_tuning_cases_v3_2",
+  "description": "Generic, book-independent dependency-boundary cases for constrained path-ID AI tuning. Human-reviewed rejected paths are negative regression evidence and must never be treated as approved alternatives.",
+  "humanReview": {
+    "date": "2026-08-09",
+    "reviewer": "project_owner",
+    "decision": "keep_existing_approved_references_and_reject_all_five_disputed_doubao_lite_paths",
+    "rejectedPathCount": 5,
+    "note": "The five disputed Doubao Lite choices are model errors. No approved path was added or relaxed after human review."
+  },
   "items": [
     {
       "id": "news_investigation",
@@ -27,7 +34,12 @@
       "approvedChunks": [[
         "The client retries the request when the gateway closes the connection",
         "before the server has returned a complete response to the original operation."
-      ]]
+      ]],
+      "humanRejectedChunks": [[
+        "The client retries the request when the gateway closes the connection before the server has returned",
+        "a complete response to the original operation."
+      ]],
+      "humanReviewRationale": "Reject: separates the predicate has returned from its required object a complete response."
     },
     {
       "id": "legal_tenant_hearing",
@@ -36,7 +48,12 @@
       "approvedChunks": [[
         "A tenant who receives a written notice may request a hearing",
         "before the authority begins any action that could terminate the tenancy."
-      ]]
+      ]],
+      "humanRejectedChunks": [[
+        "A tenant who receives a written notice may request a hearing before the authority begins any action",
+        "that could terminate the tenancy."
+      ]],
+      "humanReviewRationale": "Reject: separates the noun action from its restrictive relative clause and is less natural than the approved complete before-clause boundary."
     },
     {
       "id": "learner_presentation",
@@ -45,7 +62,12 @@
       "approvedChunks": [[
         "Although Maria had practiced the presentation several times",
         "she spoke slowly enough for every student in the crowded room to understand her main argument."
-      ]]
+      ]],
+      "humanRejectedChunks": [[
+        "Although Maria had practiced the presentation",
+        "several times she spoke slowly enough for every student in the crowded room to understand her main argument."
+      ]],
+      "humanReviewRationale": "Reject: changes the apparent attachment of several times from practiced to spoke."
     },
     {
       "id": "fiction_flooded_road",
@@ -70,7 +92,19 @@
       "approvedChunks": [[
         "Before replacing the filter disconnect the machine from its power supply",
         "and wait until every moving component has come to a complete stop."
-      ]]
+      ]],
+      "humanRejectedChunks": [
+        [
+          "Before replacing the filter disconnect the machine from its power supply and wait",
+          "until every moving component has come to a complete stop."
+        ],
+        [
+          "Before replacing the filter",
+          "disconnect the machine from its power supply and wait",
+          "until every moving component has come to a complete stop."
+        ]
+      ],
+      "humanReviewRationale": "Reject both: wait must remain with its until condition. The three-fragment choice also creates an unnecessary four-word fragment; the existing approved reference remains authoritative."
     },
     {
       "id": "software_backup_restore",

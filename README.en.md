@@ -32,6 +32,42 @@
 
 [Ask a question](https://github.com/70565912/TomatoEnglishHappyTalking/discussions) · [Suggest a feature](https://github.com/70565912/TomatoEnglishHappyTalking/issues/new/choose) · [View the roadmap](ROADMAP.md)
 
+## Public engineering evaluations
+
+Tomato publishes failed cases, rejected approaches, repeated trials, and scope limits—not only passing
+test counts. These reports may help engineers choosing tools for English NLP, on-device Flutter AI,
+subtitle alignment, and generative content workflows.
+
+| Evaluation | Useful finding | Report |
+| --- | --- | --- |
+| Constrained syntax task for text LLMs | Aliyun `qwen3.7-max` (P7) and Volcengine `DeepSeek V4 Flash` (P8) each reached 30/30 across three runs; Doubao Lite/Pro did not meet the production gate, and all five disputed Lite paths were rejected by human review | [V3.3 acceptance report](docs/read_aloud_sentence_split_v3_3_implementation_report.md) · [Lite human review](docs/volcengine_doubao_lite_sentence_split_human_review.md) |
+| UDPipe / Stanza / spaCy | On 10 difficult main-predicate-root probes: Stanza 10/10, official UDPipe reference 8/10, spaCy 7/10; production UDPipe is soft structural evidence, not the sole judge | [Parser comparison](docs/parser-comparison-evaluation.md) |
+| Picture-book chapter planning prompt | The final 12 responses across four article structures had zero structural failures; expository scene-count standard deviation fell from 2.49 to 0.47, while wording and boundaries still require review | [Scene-planning tuning report](docs/picture_book_chapter_plan_scene_split_tuning.md) |
+| Local subtitle alignment / BigASR | MMS CTC was a replacement candidate on 3/4 English samples at mean CPU RTF about 0.88; the hard long-Suno case still requires BigASR fallback | [Overview](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/README.md) · [Round 1](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary.md) · [Round 2](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary_round2.md) |
+| Real ASR snapshot regression | E03/E07/E13/E16 preserve missing-word, repeated-word, and weak-anchor failures for offline subtitle-DP regression without another paid ASR call | [Method and evidence index](docs/testing-and-evaluation.md#5-真实-asr-时间轴快照回归) |
+| Windows/WebView/Bridge QA | In-app Suno Lexical keyboard failures were isolated to WebView2; `article.list` fell from 62,752,595 B to 64,485 B | [Suno isolation report](docs/suno_lexical_lyrics_editor.md) · [Bridge/Release QA](docs/bridge-payload-release-qa-evaluation.md) |
+
+**[Open the complete testing and evaluation index, including methods, process, limitations, and reproduction entry points](docs/testing-and-evaluation.md)**
+
+Sentence-segmentation performance is useful proxy evidence for English structural understanding and strict
+instruction following, which also matter in translation and scene planning. It is not a direct substitute
+for translation-fidelity or visual-storytelling benchmarks. Rankings apply only to the named model IDs,
+protocols, and samples.
+
+### Visual super-resolution A/B
+
+The full E07 illustration locates two inspection regions. The rows below enlarge Alice's face/hair and the
+crocodile's eye/teeth using exactly the same field of view. The input uses nearest-neighbor zoom so its source
+pixels remain visible; the right side is the real output of the Windows bundle's `Real-ESRGAN NCNN Vulkan`
+4x model. Click the comparison to open the 1800px original.
+
+[![Windows local Real-ESRGAN 4x same-region detail comparison](docs/readme/upscale-comparison.webp)](docs/readme/upscale-comparison.webp)
+
+[Raw 320×180 input PNG](docs/readme/upscale-evidence/input-320x180.png) ·
+[Real 1280×720 output PNG](docs/readme/upscale-evidence/output-1280x720.png)
+
+This is visual and pipeline evidence, not a multi-model perceptual-quality ranking.
+
 ## Public showcase
 
 The frame below comes from Tomato's real local 1080p export of E07, *Am I Still Alice*, with burned-in English and Chinese subtitles. Click it to open the complete *Alice's Adventures in Wonderland* collection.
@@ -63,8 +99,6 @@ Tomato is not a level-based app with a fixed course catalog. It builds a complet
 - Generate or import songs and create lyric timelines from ASR timing.
 - Export listening or song videos with SRT or burned-in subtitles.
 - Run bundled Real-ESRGAN NCNN Vulkan 2x/4x picture-book upscaling locally on Windows.
-
-![Windows local Real-ESRGAN comparison](docs/readme/upscale-comparison.webp)
 
 ## Platform support
 
@@ -132,6 +166,9 @@ The app began as an AI-assisted English practice tool that Ryan built for his ch
 - [Cloud service setup](docs/cloud-service-setup.md)
 - [Development and build guide](docs/development-guide.md)
 - [AI CLI / remote QA guide](docs/ai_cli_qa_remote_guide.md)
+- [Testing and evaluation reports](docs/testing-and-evaluation.md)
+- [English dependency-parser comparison](docs/parser-comparison-evaluation.md)
+- [Flutter/Web bridge payload and Release QA evaluation](docs/bridge-payload-release-qa-evaluation.md)
 - [Change log](docs/change_log.md)
 - [Roadmap](ROADMAP.md)
 - [Contributing](CONTRIBUTING.md)

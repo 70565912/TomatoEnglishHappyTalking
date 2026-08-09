@@ -2,6 +2,20 @@
 
 ## 2026-08-09
 
+- **发布 v1.4.0**：`app/pubspec.yaml` → `1.4.0+6`。相对 v1.3.0 主要包含：英文朗读分句
+  Syntax V3、Windows/Android 共用 UDPipe 依存句法链路、只允许选择候选路径 ID 的受约束 AI、
+  阿里云/火山 ASR 厂家与模型独立设置、火山 DeepSeek V4 Flash 默认文本模型，以及公开测试评测
+  中心、句法器对比、豆包 Lite 人工审核和 Real-ESRGAN 同区域细节 A/B 证据。
+- **豆包 Lite 5 项争议切法人工定案**：项目所有者确认现有 approved references 全部正确，
+  5 个 Lite 模型选择全部判错，不新增或放宽认可路径；新增独立人工审核报告、5 条
+  `humanRejectedChunks` 和离线负向回归测试，未来复测不得以“可接受多解”提高 Lite 分数。
+- **公开测试与评测中心**：新增 `docs/testing-and-evaluation.md`，统一整理文本模型受约束句法、
+  UDPipe/Stanza/spaCy、绘本章节规划、CTC/BigASR 字幕对齐、真实 ASR 快照、Suno/WebView2、
+  GPU 等已完成评测，逐项说明目的、方法、过程、结论、局限和复现入口；计划/草案与实测分开。
+- **历史评测转为公开研发资料**：从本地评测输出、Git 历史和会话验收记录中整理独立的
+  `parser-comparison-evaluation.md` 与 `bridge-payload-release-qa-evaluation.md`。README 中英文首页
+  增加精选评测入口，并把 Real-ESRGAN 320×180→1280×720 真实输出制作成同坐标细节放大 A/B；
+  公开原始输入、真实输出和可复现排版脚本，避免整图缩放掩盖差异。
 - **火山 DeepSeek V4 Flash 分句验收**：账号可见正式模型 ID 为
   `deepseek-v4-flash-ga-260731`。在十类通用困难样本上，P8 通用句法提示词配合首轮精简扩展
   候选连续三次达到 10/10，JSON/path 协议合法率与重复一致性均为 100%；生产分句白名单新增

@@ -68,7 +68,9 @@ App 打包；项目模型使用固定版 UD English EWT 通用树库训练，不
   火山 `volcengine/deepseek-v4-flash-ga-260731` 使用 `article_split_v3_candidate_path_p8` 和首轮精简
   扩展候选。两者均通过 30/30 approved、协议合法率与重复一致性门槛；火山 Lite/Pro 仍使用
   本地确定性路径且不发送分句 AI 请求。Lite 在同一 P8 精简扩展协议下复测三轮仍为协议失败、
-  9/10、8/10，未达到生产门槛。
+  9/10、8/10，未达到生产门槛；P6 归纳的 5 种争议选择经项目所有者人工审核全部判错，
+  不增加 approved alternatives。详见
+  [火山 Doubao Lite 英文分句人工审核报告](volcengine_doubao_lite_sentence_split_human_review.md)。
 - 调优调用必须显式启用 50 元硬预算。预算器在下一次请求可能越限前停止，失败请求也按最坏预留
   计费，报告记录厂家、模型、调用数、token、缓存来源和估算费用。
 

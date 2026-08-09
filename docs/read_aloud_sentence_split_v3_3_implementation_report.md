@@ -60,6 +60,12 @@ bridge 及 Windows/Android 原生集成已经完成。通用候选召回、留�
 因此不能进入自动分句白名单。完整报告：
 `output/sentence-split-v3/live-ai-path-tuning-v3-3-p8-doubao-seed-2-0-lite-260215-expanded-compact.json`。
 
+项目所有者随后对 P6 中归纳出的 5 种争议路径完成逐项人工审核：现有 approved references
+全部确认，5 个 Lite 模型选择全部判错，不新增或放宽任何认可路径；此前关于过滤器句 4/19
+短片段“可作次选”的建议在该固定评测中撤回。结论已写入 fixture 的 5 条
+`humanRejectedChunks` 并由离线测试锁定。详见
+[火山 Doubao Lite 英文分句人工审核报告](volcengine_doubao_lite_sentence_split_human_review.md)。
+
 ## 工程验证
 
 - Web：101/101 测试通过，生产构建通过。
