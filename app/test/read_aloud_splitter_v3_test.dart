@@ -62,8 +62,17 @@ void main() {
 
     test('enforces word, unpunctuated, round-trip, and original boundaries',
         () {
-      final overSpan =
+      final reviewableSpan =
           List.generate(21, (index) => 'word${index + 1}').join(' ');
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          reviewableSpan,
+          [reviewableSpan],
+        ),
+        returnsNormally,
+      );
+      final overSpan =
+          List.generate(31, (index) => 'word${index + 1}').join(' ');
       expect(
         () =>
             ReadAloudSplitterV3.validateReviewedSentences(overSpan, [overSpan]),
@@ -84,6 +93,99 @@ void main() {
           requiredBoundaryWordOffsets: const [3, 6, 9],
         ),
         returnsNormally,
+      );
+    });
+
+    test('treats whitespace inserted only at sentence boundaries as equal', () {
+      expect(
+        ReadAloudSplitterV3.isRoundTripEquivalent(
+          englishContent:
+              'The Rat cried, "You fellows!—At least—I beg pardon."',
+          sentences: const [
+            'The Rat cried, "You fellows!',
+            '—At least—I beg pardon."',
+          ],
+        ),
+        isTrue,
+      );
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          'The Rat cried, "You fellows!—At least—I beg pardon."',
+          const [
+            'The Rat cried, "You fellows!',
+            '—At least—I beg pardon."',
+          ],
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          'They answered, \'Mr. Toad.\'" There was more.',
+          const [
+            "They answered, 'Mr. Toad.'",
+            '"',
+            'There was more.',
+          ],
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('still rejects changed text and boundaries inside lexical words', () {
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          'The Mole waited.',
+          const ['The Mole waved.'],
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          'The Mole waited.',
+          const ['The Mo', 'le waited.'],
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          "The Mole didn't wait.",
+          const ["The Mole didn", "'t wait."],
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('punctuation-only tokens do not consume the English word budget', () {
+      expect(ReadAloudSplitterV3.wordCount('"'), 0);
+      expect(ReadAloudSplitterV3.wordCount('... — "'), 0);
+      expect(ReadAloudSplitterV3.wordCount('Mole said, "Hello!"'), 3);
+
+      const source = 'Mole called, \'Stop!\' " Then Rat turned around.';
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          source,
+          const [
+            'Mole called, \'Stop!\' "',
+            'Then Rat turned around.',
+          ],
+          requiredBoundaryWordOffsets: const [3, 7],
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('glued em dashes remain punctuation boundaries, not one word', () {
+      expect(ReadAloudSplitterV3.wordCount('one—two three'), 3);
+      expect(
+        ReadAloudSplitterV3.maxUnpunctuatedWordCount('one—two three'),
+        2,
+      );
+      expect(
+        ReadAloudSplitterV3.isRoundTripEquivalent(
+          englishContent: 'one—two three.',
+          sentences: const ['one—', 'two three.'],
+        ),
+        isTrue,
       );
     });
   });

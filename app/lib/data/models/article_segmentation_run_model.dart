@@ -92,7 +92,7 @@ class ArticleSegmentationRunRecord {
         'parser_healthy': parserHealthy ? 1 : 0,
         'parser_issues_json': jsonEncode(parserIssues),
         'candidate_paths_json': jsonEncode({
-          'schemaVersion': 'article_segmentation_candidate_audit_v3_3',
+          'schemaVersion': 'article_segmentation_candidate_audit_v3_6',
           'originals': candidatePaths,
           'selectionTrace': selectionTrace,
         }),

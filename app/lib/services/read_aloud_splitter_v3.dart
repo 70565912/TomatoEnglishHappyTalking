@@ -7,6 +7,7 @@ enum ReadAloudBoundaryKindV3 {
   originalSentence,
   strongPunctuation,
   clauseComma,
+  phraseComma,
   ambiguousComma,
   dependencyClause,
   dependencyPhrase,
@@ -112,6 +113,9 @@ class ReadAloudBoundaryCandidateV3 {
     this.softWarnings = const [],
     this.hardBlocked = false,
     this.hardBlockReasons = const [],
+    this.insideQuotedSpeech = false,
+    this.quoteSpanWordCount,
+    this.quoteEdge,
   });
 
   /// One-based count of source words on the left side of this boundary.
@@ -124,10 +128,25 @@ class ReadAloudBoundaryCandidateV3 {
   final List<String> softWarnings;
   final bool hardBlocked;
   final List<String> hardBlockReasons;
+  final bool insideQuotedSpeech;
+  final int? quoteSpanWordCount;
+  final String? quoteEdge;
 
   bool get isPunctuation =>
       kind == ReadAloudBoundaryKindV3.strongPunctuation ||
-      kind == ReadAloudBoundaryKindV3.clauseComma;
+      kind == ReadAloudBoundaryKindV3.clauseComma ||
+      kind == ReadAloudBoundaryKindV3.phraseComma ||
+      kind == ReadAloudBoundaryKindV3.ambiguousComma;
+
+  bool get hasActionableSoftWarnings => softWarnings.any(
+        (warning) =>
+            !isPunctuation ||
+            const {
+              'surface_possible_antecedent_possessive_separation',
+              'surface_parallel_list_item_separation',
+              'quote_edge_attribution_only_tail',
+            }.contains(warning),
+      );
 
   bool get isEmergency => kind == ReadAloudBoundaryKindV3.emergency;
 
@@ -141,6 +160,10 @@ class ReadAloudBoundaryCandidateV3 {
         'softWarnings': softWarnings,
         'hardBlocked': hardBlocked,
         'hardBlockReasons': hardBlockReasons,
+        'insideQuotedSpeech': insideQuotedSpeech,
+        if (quoteSpanWordCount != null)
+          'quoteSpanWordCount': quoteSpanWordCount,
+        if (quoteEdge != null) 'quoteEdge': quoteEdge,
       };
 }
 
@@ -205,6 +228,7 @@ class ReadAloudOriginalDecisionV3 {
     required this.parserIssues,
     required this.initialCandidatePaths,
     required this.expandedCandidatePaths,
+    required this.boundaryCandidates,
     required this.localPathId,
     this.parseCost,
     this.parseCostPerToken,
@@ -218,6 +242,7 @@ class ReadAloudOriginalDecisionV3 {
   final List<String> parserIssues;
   final List<ReadAloudCandidatePathV3> initialCandidatePaths;
   final List<ReadAloudCandidatePathV3> expandedCandidatePaths;
+  final List<ReadAloudBoundaryCandidateV3> boundaryCandidates;
   final String localPathId;
   final double? parseCost;
   final double? parseCostPerToken;
@@ -234,7 +259,14 @@ class ReadAloudOriginalDecisionV3 {
         (path) => path.pathId == localPathId,
       );
 
-  bool get requiresAiReview => localPath.usesNonPunctuation;
+  bool get requiresAiReview =>
+      localPath.usesNonPunctuation ||
+      localPath.boundaries.any(
+        (boundary) =>
+            boundary.protectedRelationCrossings > 0 ||
+            boundary.hasActionableSoftWarnings ||
+            boundary.kind == ReadAloudBoundaryKindV3.ambiguousComma,
+      );
 }
 
 class ReadAloudSplitPlanV3 {
@@ -261,11 +293,33 @@ class ReadAloudSplitPlanV3 {
 }
 
 class _SourceWordV3 {
-  const _SourceWordV3(this.text, this.start, this.end);
+  _SourceWordV3(this.text, this.start, this.end);
 
   final String text;
   final int start;
   final int end;
+  final Set<String> upos = <String>{};
+  final Set<String> dependencyRelations = <String>{};
+  int? quotedSpeechSpanIndex;
+  int? quotedSpeechWordCount;
+  int? quotedSpeechStartWord;
+  int? quotedSpeechEndWord;
+}
+
+class _QuoteSpanV3 {
+  const _QuoteSpanV3({
+    required this.index,
+    required this.start,
+    required this.end,
+    required this.wordCount,
+  });
+
+  final int index;
+  final int start;
+
+  /// Exclusive offset immediately after the matching closing quote.
+  final int end;
+  final int wordCount;
 }
 
 class _MappedDependencyV3 {
@@ -318,21 +372,32 @@ class _CandidatePathRoundsV3 {
 class ReadAloudSplitterV3 {
   static const version = 'read_aloud_dp_v3';
   static const reviewedVersion = 'reviewed_dp_v3';
-  static const solverVersion = 'syntax_solver_v3_3';
+  static const solverVersion = 'syntax_solver_v3_6';
   static const hardMaxWords = 30;
   static const preferredMinUnpunctuatedWords = 8;
   static const preferredMaxUnpunctuatedWords = 16;
-  static const hardMaxUnpunctuatedWords = 20;
+  static const targetMaxUnpunctuatedWords = 20;
+  static const hardMaxUnpunctuatedWords = 30;
   static const maxCandidatePaths = 8;
   static const maxExpandedCandidatePaths = 24;
   static const expandedBeamWidth = 64;
+  static const maxCoverageProbeCandidates = 24;
+  static const maxCandidateCountForCoverageProbes = hardMaxWords * 3;
   static const defaultFontSizePx = ReadAloudDisplayMetrics.defaultFontSizePx;
   static const defaultMaxLineWidthPx =
       ReadAloudDisplayMetrics.defaultMaxLineWidthPx;
 
   static final RegExp _visiblePause = RegExp(r'[.!?…;:—–,]');
+  static final RegExp _inlinePause = RegExp(r'[;:—–,]');
+  static final RegExp _boundaryPause = RegExp(r'''[.!?…;:—–,]["'”’)}\]]*$''');
   static final RegExp _strongPunctuation = RegExp(r'''[;:—–]["'”’)}\]]*$''');
+  static final RegExp _quotedTerminalPunctuation =
+      RegExp(r'''[.!?…]["'”’)}\]]*$''');
   static final RegExp _commaPunctuation = RegExp(r''',["'”’)}\]]*$''');
+  static final RegExp _nonTerminalTitleAbbreviation = RegExp(
+    r'''(?:^|[\s"'“‘])(?:Mr|Mrs|Ms|Dr|Prof|Rev|Capt|Col|Gen|Lt|Sgt|St)\.$''',
+    caseSensitive: false,
+  );
   static const _protectedRelations = <String>{
     'det',
     'case',
@@ -345,6 +410,12 @@ class ReadAloudSplitterV3 {
     'fixed',
     'flat',
     'amod',
+    'nsubj',
+    'csubj',
+    'obj',
+    'iobj',
+    'nummod',
+    'nmod:poss',
   };
   static const _clauseRelations = <String>{
     'conj',
@@ -362,6 +433,32 @@ class ReadAloudSplitterV3 {
     'obl',
     'vocative',
   };
+  static const _structuralSoftWarnings = <String>{
+    'surface_possible_antecedent_possessive_separation',
+    'surface_preposition_attachment_separation',
+    'surface_preposition_right_operand_separation',
+    'surface_nominal_coordinator_separation',
+    'surface_quantifier_numeral_separation',
+    'surface_predicate_possessive_object_separation',
+    'surface_relative_marker_subject_separation',
+    'surface_pronoun_predicate_separation',
+    'surface_predicate_complement_marker_separation',
+    'surface_predicate_determiner_object_separation',
+    'surface_coordinator_right_operand_separation',
+    'surface_parallel_list_item_separation',
+    'surface_determiner_head_separation',
+    'surface_object_relation_separation',
+    'surface_subject_predicate_relation_separation',
+    'surface_infinitive_marker_predicate_separation',
+    'surface_possessive_head_separation',
+    'surface_fixed_connector_separation',
+    'surface_modifier_head_separation',
+    'surface_nominal_relative_pronoun_separation',
+    'surface_adverb_attachment_separation',
+    'surface_xcomp_predicate_separation',
+    'surface_auxiliary_adverb_complement_separation',
+    'quote_edge_attribution_only_tail',
+  };
 
   static double measureNunitoExtraBoldPx(
     String text, {
@@ -375,18 +472,15 @@ class ReadAloudSplitterV3 {
   static bool fitsEnglishLine(String text) =>
       measureNunitoExtraBoldPx(text) <= defaultMaxLineWidthPx;
 
-  static int wordCount(String text) =>
-      text.trim().isEmpty ? 0 : text.trim().split(RegExp(r'\s+')).length;
+  static int wordCount(String text) => _sourceWords(text).length;
 
   static int maxUnpunctuatedWordCount(String text) {
-    final tokens =
-        text.trim().split(RegExp(r'\s+')).where((token) => token.isNotEmpty);
     var run = 0;
     var maximum = 0;
-    for (final token in tokens) {
+    for (final word in _sourceWords(text)) {
       run += 1;
       if (run > maximum) maximum = run;
-      if (_visiblePause.hasMatch(token)) run = 0;
+      if (_visiblePause.hasMatch(word.text)) run = 0;
     }
     return maximum;
   }
@@ -432,6 +526,75 @@ class ReadAloudSplitterV3 {
       .replaceAllMapped(RegExp(r'([—–])\s+'), (match) => match[1] ?? '')
       .trim();
 
+  /// Compares reviewed sentence blocks with their source while allowing only
+  /// whitespace that is introduced or removed at a sentence boundary.
+  /// Whitespace and text inside each sentence remain significant.
+  static bool isRoundTripEquivalent({
+    required String englishContent,
+    required List<String> sentences,
+  }) =>
+      _roundTripMismatch(
+        englishContent: englishContent,
+        sentences: sentences,
+      ) ==
+      null;
+
+  static String? _roundTripMismatch({
+    required String englishContent,
+    required List<String> sentences,
+  }) {
+    final source = normalizeForRoundTrip(englishContent);
+    var cursor = 0;
+    for (var index = 0; index < sentences.length; index += 1) {
+      final sentence = normalizeForRoundTrip(sentences[index]);
+      if (index > 0) {
+        final boundaryStart = cursor;
+        while (
+            cursor < source.length && RegExp(r'\s').hasMatch(source[cursor])) {
+          cursor += 1;
+        }
+        if (cursor == boundaryStart &&
+            _isLexicalRoundTripBoundary(source, cursor)) {
+          return '第 ${index + 1} 块的句界落在词或缩写内部（正文偏移 $cursor）';
+        }
+      }
+      if (!source.startsWith(sentence, cursor)) {
+        final sourceEnd = math.min(source.length, cursor + 120);
+        final expectedEnd = math.min(sentence.length, 120);
+        return '第 ${index + 1} 块从正文偏移 $cursor 开始不一致；'
+            '块=${jsonEncode(sentence.substring(0, expectedEnd))}；'
+            '正文=${jsonEncode(source.substring(cursor, sourceEnd))}';
+      }
+      cursor += sentence.length;
+    }
+    while (cursor < source.length && RegExp(r'\s').hasMatch(source[cursor])) {
+      cursor += 1;
+    }
+    if (cursor != source.length) {
+      final sourceEnd = math.min(source.length, cursor + 120);
+      return '末块后仍有正文（偏移 $cursor）；'
+          '正文=${jsonEncode(source.substring(cursor, sourceEnd))}';
+    }
+    return null;
+  }
+
+  static bool _isLexicalRoundTripBoundary(String source, int offset) {
+    if (offset <= 0 || offset >= source.length) return false;
+    bool isAlphaNumeric(String value) =>
+        RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(value);
+    bool isJoiner(String value) => const {"'", '’', '-'}.contains(value);
+
+    final left = source[offset - 1];
+    final right = source[offset];
+    final leftContinuesWord = isAlphaNumeric(left) ||
+        isJoiner(left) && offset >= 2 && isAlphaNumeric(source[offset - 2]);
+    final rightContinuesWord = isAlphaNumeric(right) ||
+        isJoiner(right) &&
+            offset + 1 < source.length &&
+            isAlphaNumeric(source[offset + 1]);
+    return leftContinuesWord && rightContinuesWord;
+  }
+
   static ReadAloudSplitPlanV3 plan({
     required String source,
     required DependencyDocumentV3 document,
@@ -440,20 +603,57 @@ class ReadAloudSplitterV3 {
       throw const FormatException('V3 分句正文不能为空');
     }
     _validateDocument(source, document);
+    final quoteSpans = _matchedQuoteSpans(source);
+    final parserSentences = _coalesceParserSentencesInsideMatchedQuotes(
+      source,
+      _coalesceNonTerminalAbbreviationSentences(
+        source,
+        document.sentences,
+      ),
+      quoteSpans,
+    );
     final originals = <ReadAloudOriginalDecisionV3>[];
-    for (var index = 0; index < document.sentences.length; index += 1) {
-      final parsedSentence = document.sentences[index];
-      final sentenceSource = source.substring(
+    for (var index = 0; index < parserSentences.length; index += 1) {
+      final parsedSentence = parserSentences[index];
+      final parsedSource = source.substring(
         parsedSentence.start,
         parsedSentence.end,
       );
+      if (_sourceWords(parsedSource).isEmpty) continue;
+
+      var sentenceStart = parsedSentence.start;
+      if (originals.isEmpty &&
+          source.substring(0, sentenceStart).trim().isNotEmpty) {
+        sentenceStart = 0;
+      }
+      var sentenceEnd = parsedSentence.end;
+      for (var trailingIndex = index + 1;
+          trailingIndex < parserSentences.length;
+          trailingIndex += 1) {
+        final trailing = parserSentences[trailingIndex];
+        final trailingSource = source.substring(trailing.start, trailing.end);
+        if (_sourceWords(trailingSource).isNotEmpty) break;
+        sentenceEnd = trailing.end;
+      }
+      final sentenceSource = source.substring(sentenceStart, sentenceEnd);
       final words = _sourceWords(sentenceSource);
-      if (words.isEmpty) continue;
+      _annotateQuotedSpeechWords(
+        words,
+        quoteSpans,
+        sentenceStart: sentenceStart,
+      );
       final mapped = _mapDependencies(
         parsedSentence,
         words,
-        sentenceStart: parsedSentence.start,
+        sentenceStart: sentenceStart,
       );
+      for (final dependency in mapped) {
+        words[dependency.wordIndex]
+          ..upos.add(dependency.token.upos)
+          ..dependencyRelations.add(
+            dependency.token.deprel.split(':').first,
+          );
+      }
       final mappingIssues = <String>[
         if (mapped.length != parsedSentence.tokens.length)
           'dependency_token_offset_mapping_incomplete',
@@ -462,8 +662,9 @@ class ReadAloudSplitterV3 {
         sentenceSource,
         words,
         mapped,
-        sentenceStart: parsedSentence.start,
+        sentenceStart: sentenceStart,
         parserTokens: parsedSentence.tokens,
+        quoteSpans: quoteSpans,
       );
       final pathRounds = _candidatePaths(
         originalIndex: index,
@@ -479,8 +680,8 @@ class ReadAloudSplitterV3 {
         ReadAloudOriginalDecisionV3(
           originalIndex: index,
           source: sentenceSource,
-          sourceStart: parsedSentence.start,
-          sourceEnd: parsedSentence.end,
+          sourceStart: sentenceStart,
+          sourceEnd: sentenceEnd,
           parserHealthy: document.healthy && mappingIssues.isEmpty,
           parserIssues: List.unmodifiable([
             ...document.issues,
@@ -488,6 +689,7 @@ class ReadAloudSplitterV3 {
           ]),
           initialCandidatePaths: List.unmodifiable(pathRounds.initial),
           expandedCandidatePaths: List.unmodifiable(pathRounds.expanded),
+          boundaryCandidates: List.unmodifiable(candidates),
           localPathId: pathRounds.initial.first.pathId,
           parseCost: parsedSentence.parseCost,
           parseCostPerToken: parsedSentence.parseCostPerToken,
@@ -593,10 +795,329 @@ class ReadAloudSplitterV3 {
     }
   }
 
-  static List<_SourceWordV3> _sourceWords(String sentence) => [
-        for (final match in RegExp(r'\S+').allMatches(sentence))
-          _SourceWordV3(match.group(0)!, match.start, match.end),
-      ];
+  /// UDPipe occasionally treats the period in an English title abbreviation
+  /// as an orthographic sentence end (for example `"Mr.` / `Toad ...`). Such
+  /// a boundary is inside the name, not a valid subtitle or read-aloud cut.
+  /// Rejoin only that parser false boundary. Quote-aware coalescing is applied
+  /// separately after this parser repair.
+  static List<DependencySentenceV3> _coalesceNonTerminalAbbreviationSentences(
+    String source,
+    List<DependencySentenceV3> sentences,
+  ) {
+    final output = <DependencySentenceV3>[];
+    var index = 0;
+    while (index < sentences.length) {
+      final group = <DependencySentenceV3>[sentences[index]];
+      while (index + 1 < sentences.length &&
+          _nonTerminalTitleAbbreviation.hasMatch(
+            source.substring(group.first.start, group.last.end).trimRight(),
+          )) {
+        index += 1;
+        group.add(sentences[index]);
+      }
+      output.add(_coalesceDependencySentenceGroup(group));
+      index += 1;
+    }
+    return List.unmodifiable(output);
+  }
+
+  static DependencySentenceV3 _coalesceDependencySentenceGroup(
+    List<DependencySentenceV3> group,
+  ) {
+    if (group.length == 1) return group.single;
+
+    final tokens = <DependencyTokenV3>[];
+    double? parseCost = 0;
+    for (final sentence in group) {
+      if (sentence.parseCost == null) parseCost = null;
+      if (parseCost != null) parseCost += sentence.parseCost!;
+
+      final nextIdByOldId = <int, int>{};
+      for (final token in sentence.tokens) {
+        nextIdByOldId[token.id] = tokens.length + nextIdByOldId.length + 1;
+      }
+      for (final token in sentence.tokens) {
+        tokens.add(
+          DependencyTokenV3(
+            id: nextIdByOldId[token.id]!,
+            text: token.text,
+            start: token.start,
+            end: token.end,
+            upos: token.upos,
+            head: token.head == 0 ? 0 : nextIdByOldId[token.head]!,
+            deprel: token.deprel,
+            sourceText: token.sourceText,
+          ),
+        );
+      }
+    }
+    final parseCostPerToken =
+        parseCost == null || tokens.isEmpty ? null : parseCost / tokens.length;
+    return DependencySentenceV3(
+      start: group.first.start,
+      end: group.last.end,
+      tokens: List.unmodifiable(tokens),
+      parseCost: parseCost,
+      parseCostPerToken: parseCostPerToken,
+    );
+  }
+
+  /// Keeps UDPipe's orthographic analysis intact while allowing the read-aloud
+  /// solver to compare quote-internal and quote-external cuts in one lattice.
+  /// Only parser boundaries strictly inside a fully matched quote are joined.
+  static List<DependencySentenceV3> _coalesceParserSentencesInsideMatchedQuotes(
+    String source,
+    List<DependencySentenceV3> sentences,
+    List<_QuoteSpanV3> quoteSpans,
+  ) {
+    final output = <DependencySentenceV3>[];
+    var index = 0;
+    while (index < sentences.length) {
+      final group = <DependencySentenceV3>[sentences[index]];
+      while (index + 1 < sentences.length) {
+        final boundary = group.last.end;
+        final liesInsideMatchedQuote = quoteSpans.any(
+          (span) => boundary > span.start && boundary < span.end - 1,
+        );
+        if (!liesInsideMatchedQuote) break;
+        index += 1;
+        group.add(sentences[index]);
+      }
+      output.add(_coalesceDependencySentenceGroup(group));
+      index += 1;
+    }
+    return List.unmodifiable(output);
+  }
+
+  /// Finds straight and curly double-quoted speech within each paragraph.
+  /// Unmatched quote state is deliberately discarded at paragraph breaks so a
+  /// malformed or poetic paragraph cannot absorb later parser sentences.
+  static List<_QuoteSpanV3> _matchedQuoteSpans(String source) {
+    final spans = <_QuoteSpanV3>[];
+    final paragraphBreak = RegExp(r'(?:\r?\n)[ \t]*(?:\r?\n)+');
+    var paragraphStart = 0;
+    final straightOpenings = <int>[];
+    final curlyOpenings = <int>[];
+
+    void scanParagraph(int start, int end) {
+      final carriedStraightOpening = straightOpenings.isNotEmpty;
+      final carriedCurlyOpening = curlyOpenings.isNotEmpty;
+      var sawStraightQuote = false;
+      var sawCurlyQuote = false;
+      for (var offset = start; offset < end; offset += 1) {
+        final character = source[offset];
+        if (character == '"') {
+          final opens = _straightQuoteOpens(
+            source,
+            offset,
+            paragraphStart: start,
+            paragraphEnd: end,
+            hasUnclosedQuote: straightOpenings.isNotEmpty,
+          );
+          if (!sawStraightQuote && carriedStraightOpening && opens) {
+            // A new paragraph that starts another quotation does not close an
+            // abandoned opening from earlier prose. A closing mark may still
+            // complete a quote whose visual layout spans blank lines.
+            straightOpenings.clear();
+          }
+          sawStraightQuote = true;
+          if (opens) {
+            straightOpenings.add(offset);
+          } else if (straightOpenings.isNotEmpty) {
+            final straightOpening = straightOpenings.removeLast();
+            spans.add(
+              _QuoteSpanV3(
+                index: spans.length,
+                start: straightOpening,
+                end: offset + 1,
+                wordCount:
+                    wordCount(source.substring(straightOpening, offset + 1)),
+              ),
+            );
+          }
+        } else if (character == '“') {
+          if (!sawCurlyQuote && carriedCurlyOpening) {
+            curlyOpenings.clear();
+          }
+          sawCurlyQuote = true;
+          curlyOpenings.add(offset);
+        } else if (character == '”' && curlyOpenings.isNotEmpty) {
+          sawCurlyQuote = true;
+          final curlyOpening = curlyOpenings.removeLast();
+          spans.add(
+            _QuoteSpanV3(
+              index: spans.length,
+              start: curlyOpening,
+              end: offset + 1,
+              wordCount: wordCount(source.substring(curlyOpening, offset + 1)),
+            ),
+          );
+        }
+      }
+    }
+
+    for (final match in paragraphBreak.allMatches(source)) {
+      scanParagraph(paragraphStart, match.start);
+      paragraphStart = match.end;
+    }
+    scanParagraph(paragraphStart, source.length);
+    spans.sort((left, right) => left.start.compareTo(right.start));
+    return List.unmodifiable([
+      for (var index = 0; index < spans.length; index += 1)
+        _QuoteSpanV3(
+          index: index,
+          start: spans[index].start,
+          end: spans[index].end,
+          wordCount: spans[index].wordCount,
+        ),
+    ]);
+  }
+
+  /// Classifies an ASCII double quote from its surface context instead of
+  /// blindly alternating open/close state. Gutenberg prose can begin with the
+  /// closing mark of speech started in an omitted paragraph, and can contain
+  /// same-mark nested song quotations such as `returns—"Lest ...`. Alternation
+  /// would shift every later quote in that paragraph and leave real short
+  /// speech unprotected.
+  static bool _straightQuoteOpens(
+    String source,
+    int offset, {
+    required int paragraphStart,
+    required int paragraphEnd,
+    required bool hasUnclosedQuote,
+  }) {
+    if (offset <= paragraphStart) return true;
+    if (offset + 1 >= paragraphEnd) return false;
+
+    final previous = source[offset - 1];
+    final next = source[offset + 1];
+    final previousIsSpace = previous.trim().isEmpty;
+    final nextIsSpace = next.trim().isEmpty;
+
+    // `...!"  "Next...` is a closing mark followed by an opening mark.
+    if (!previousIsSpace && nextIsSpace) return false;
+    if (previousIsSpace && !nextIsSpace) return true;
+    if (next == '"') return false;
+    if (previous == '"') return true;
+
+    // Narration commonly introduces speech after a colon or dash. A dash on
+    // the right, by contrast, normally continues narration after a closing
+    // quote: `song"—then`.
+    if ('([{<:—–'.contains(previous)) return true;
+    if (')]}>.。,!?;—–'.contains(next)) return false;
+    if ('.。,!?;'.contains(previous)) return false;
+
+    // Only genuinely ambiguous word-adjacent marks fall back to stack state.
+    return !hasUnclosedQuote;
+  }
+
+  static void _annotateQuotedSpeechWords(
+    List<_SourceWordV3> words,
+    List<_QuoteSpanV3> quoteSpans, {
+    required int sentenceStart,
+  }) {
+    final firstWordBySpan = <int, int>{};
+    final lastWordBySpan = <int, int>{};
+    final wordCountBySpan = <int, int>{};
+    for (var wordIndex = 0; wordIndex < words.length; wordIndex += 1) {
+      final word = words[wordIndex];
+      final lexical =
+          RegExp(r'[\p{L}\p{N}]', unicode: true).firstMatch(word.text);
+      if (lexical == null) continue;
+      final lexicalOffset = sentenceStart + word.start + lexical.start;
+      final span = _innermostQuoteSpanAtOffset(quoteSpans, lexicalOffset);
+      if (span == null) continue;
+      word.quotedSpeechSpanIndex = span.index;
+      firstWordBySpan.putIfAbsent(span.index, () => wordIndex);
+      lastWordBySpan[span.index] = wordIndex + 1;
+      wordCountBySpan.update(span.index, (count) => count + 1,
+          ifAbsent: () => 1);
+    }
+    for (final word in words) {
+      final spanIndex = word.quotedSpeechSpanIndex;
+      if (spanIndex == null) continue;
+      word.quotedSpeechWordCount = wordCountBySpan[spanIndex];
+      word.quotedSpeechStartWord = firstWordBySpan[spanIndex];
+      word.quotedSpeechEndWord = lastWordBySpan[spanIndex];
+    }
+  }
+
+  static _QuoteSpanV3? _innermostQuoteSpanAtOffset(
+    List<_QuoteSpanV3> quoteSpans,
+    int offset,
+  ) {
+    _QuoteSpanV3? result;
+    for (final span in quoteSpans) {
+      if (offset <= span.start || offset >= span.end - 1) continue;
+      if (result == null ||
+          span.start >= result.start && span.end <= result.end) {
+        result = span;
+      }
+    }
+    return result;
+  }
+
+  static List<_SourceWordV3> _sourceWords(String sentence) {
+    final words = <_SourceWordV3>[];
+    final lexical = RegExp(r'[\p{L}\p{N}]', unicode: true);
+    final startsLexical = RegExp(
+      r'''^["'“‘(\[]*[\p{L}\p{N}]''',
+      unicode: true,
+    );
+    int? pendingPunctuationStart;
+
+    void appendPart(int start, int end) {
+      if (start >= end) return;
+      final text = sentence.substring(start, end);
+      if (lexical.hasMatch(text)) {
+        final effectiveStart = pendingPunctuationStart ?? start;
+        pendingPunctuationStart = null;
+        words.add(
+          _SourceWordV3(
+            sentence.substring(effectiveStart, end),
+            effectiveStart,
+            end,
+          ),
+        );
+        return;
+      }
+      if (words.isNotEmpty) {
+        final previous = words.removeLast();
+        words.add(
+          _SourceWordV3(
+            sentence.substring(previous.start, end),
+            previous.start,
+            end,
+          ),
+        );
+      } else {
+        pendingPunctuationStart ??= start;
+      }
+    }
+
+    for (final match in RegExp(r'\S+').allMatches(sentence)) {
+      final token = match.group(0)!;
+      var partStart = 0;
+      for (var offset = 0; offset + 1 < token.length; offset += 1) {
+        final punctuation = token[offset];
+        if (!_inlinePause.hasMatch(punctuation) ||
+            !startsLexical.hasMatch(token.substring(offset + 1))) {
+          continue;
+        }
+        final previous = offset > 0 ? token[offset - 1] : '';
+        final next = token[offset + 1];
+        if (const {',', ':'}.contains(punctuation) &&
+            RegExp(r'\d').hasMatch(previous) &&
+            RegExp(r'\d').hasMatch(next)) {
+          continue;
+        }
+        appendPart(match.start + partStart, match.start + offset + 1);
+        partStart = offset + 1;
+      }
+      appendPart(match.start + partStart, match.end);
+    }
+    return words;
+  }
 
   static List<_MappedDependencyV3> _mapDependencies(
     DependencySentenceV3 sentence,
@@ -607,9 +1128,42 @@ class ReadAloudSplitterV3 {
     for (final token in sentence.tokens) {
       final relativeStart = token.start - sentenceStart;
       final relativeEnd = token.end - sentenceStart;
-      final wordIndex = words.indexWhere(
+      var wordIndex = words.indexWhere(
         (word) => relativeStart >= word.start && relativeEnd <= word.end,
       );
+      if (wordIndex < 0) {
+        // UDPipe can keep leading inline punctuation with the lexical token
+        // after it (for example `—everything`). The subtitle word lattice
+        // deliberately puts the dash on the left chunk, so that parser token
+        // spans two lattice words. Attribute it to the word with the greatest
+        // alphanumeric overlap; on a tie prefer the word after the pause.
+        var bestLexicalOverlap = -1;
+        var bestRawOverlap = 0;
+        for (var index = 0; index < words.length; index += 1) {
+          final word = words[index];
+          final overlapStart = math.max(relativeStart, word.start);
+          final overlapEnd = math.min(relativeEnd, word.end);
+          if (overlapStart >= overlapEnd) continue;
+          final overlap = word.text.substring(
+            overlapStart - word.start,
+            overlapEnd - word.start,
+          );
+          final lexicalOverlap = RegExp(
+            r'[\p{L}\p{N}]',
+            unicode: true,
+          ).allMatches(overlap).length;
+          if (lexicalOverlap > bestLexicalOverlap ||
+              lexicalOverlap == bestLexicalOverlap &&
+                  overlap.length > bestRawOverlap ||
+              lexicalOverlap == bestLexicalOverlap &&
+                  overlap.length == bestRawOverlap &&
+                  index > wordIndex) {
+            bestLexicalOverlap = lexicalOverlap;
+            bestRawOverlap = overlap.length;
+            wordIndex = index;
+          }
+        }
+      }
       if (wordIndex >= 0) wordByTokenId[token.id] = wordIndex;
     }
     return [
@@ -629,11 +1183,30 @@ class ReadAloudSplitterV3 {
     List<_MappedDependencyV3> dependencies, {
     required int sentenceStart,
     required List<DependencyTokenV3> parserTokens,
+    required List<_QuoteSpanV3> quoteSpans,
   }) {
     final output = <ReadAloudBoundaryCandidateV3>[];
     for (var afterWord = 1; afterWord < words.length; afterWord += 1) {
       final left = words[afterWord - 1].text;
+      final leftQuoteSpan = words[afterWord - 1].quotedSpeechSpanIndex;
+      final rightQuoteSpan = words[afterWord].quotedSpeechSpanIndex;
       final boundaryOffset = sentenceStart + words[afterWord - 1].end;
+      final containingQuoteSpan =
+          _innermostQuoteSpanAtOffset(quoteSpans, boundaryOffset);
+      final insideQuotedSpeech = containingQuoteSpan != null;
+      final quoteSpanWordCount = containingQuoteSpan?.wordCount ??
+          (leftQuoteSpan != null
+              ? words[afterWord - 1].quotedSpeechWordCount
+              : words[afterWord].quotedSpeechWordCount);
+      final quoteEdge = insideQuotedSpeech
+          ? null
+          : leftQuoteSpan != null && rightQuoteSpan != null
+              ? 'between_quotes'
+              : leftQuoteSpan != null
+                  ? 'after_closing'
+                  : rightQuoteSpan != null
+                      ? 'before_opening'
+                      : null;
       final spanningTokens = parserTokens
           .where(
             (token) =>
@@ -641,8 +1214,12 @@ class ReadAloudSplitterV3 {
           )
           .toList(growable: false);
       final hardBlockReasons = <String>[
-        if (spanningTokens.isNotEmpty)
+        if (spanningTokens.isNotEmpty && !_boundaryPause.hasMatch(left))
           'inside_parser_token:${spanningTokens.map((token) => token.id).join(',')}',
+        if (insideQuotedSpeech &&
+            quoteSpanWordCount != null &&
+            quoteSpanWordCount <= preferredMaxUnpunctuatedWords)
+          'inside_short_complete_quote',
       ];
       final crossings = dependencies.where((dependency) {
         if (dependency.token.deprel.split(':').first == 'punct') {
@@ -652,12 +1229,13 @@ class ReadAloudSplitterV3 {
         if (head == null || head == dependency.wordIndex) return false;
         return (dependency.wordIndex < afterWord) != (head < afterWord);
       }).toList(growable: false);
-      final protectedCrossings = crossings
-          .where(
-            (dependency) =>
-                _protectedRelations.contains(dependency.token.deprel),
-          )
-          .length;
+      final protectedCrossings = crossings.where(
+        (dependency) {
+          final relation = dependency.token.deprel;
+          return _protectedRelations.contains(relation) ||
+              _protectedRelations.contains(relation.split(':').first);
+        },
+      ).length;
       final subtreeRelations = crossings
           .map((dependency) => dependency.token.deprel)
           .where(
@@ -668,6 +1246,10 @@ class ReadAloudSplitterV3 {
           .toList(growable: false);
       final oneLegalSubtreeArc =
           crossings.length == 1 && subtreeRelations.length == 1;
+      final oneLegalClauseSubtreeArc = oneLegalSubtreeArc &&
+          _clauseRelations.contains(subtreeRelations.single) &&
+          (subtreeRelations.single != 'conj' ||
+              const {'VERB', 'AUX'}.contains(crossings.single.token.upos));
       final hasClauseSubtreeArc =
           subtreeRelations.any(_clauseRelations.contains);
       final hasPhraseSubtreeArc =
@@ -680,11 +1262,18 @@ class ReadAloudSplitterV3 {
       final rightDependencies = dependencies
           .where((dependency) => dependency.wordIndex == afterWord)
           .toList(growable: false);
+      final right = words[afterWord].text;
+      final leftLexeme = _edgeLexeme(left);
+      final rightLexeme = _edgeLexeme(right);
+      final nextDependencies = dependencies
+          .where((dependency) => dependency.wordIndex == afterWord + 1)
+          .toList(growable: false);
       final softWarnings = <String>[
         if (leftDependencies.any(
               (dependency) => const {'NOUN', 'PROPN', 'PRON'}
                   .contains(dependency.token.upos),
             ) &&
+            !_boundaryPause.hasMatch(left) &&
             rightDependencies.any(
               (dependency) =>
                   const {'VERB', 'AUX'}.contains(dependency.token.upos),
@@ -694,27 +1283,363 @@ class ReadAloudSplitterV3 {
               (dependency) =>
                   const {'VERB', 'AUX'}.contains(dependency.token.upos),
             ) &&
+            !_boundaryPause.hasMatch(left) &&
             rightDependencies.any(
               (dependency) =>
-                  dependency.token.upos == 'PART' &&
+                  const {'PART', 'SCONJ', 'ADP'}
+                      .contains(dependency.token.upos) &&
                   dependency.token.deprel.split(':').first == 'mark',
             ))
           'surface_predicate_infinitive_separation',
+        if (leftDependencies.any(
+              (dependency) =>
+                  const {'NOUN', 'PROPN'}.contains(dependency.token.upos),
+            ) &&
+            rightDependencies.any(
+              (dependency) =>
+                  const {'PRON', 'DET'}.contains(dependency.token.upos) &&
+                  dependency.token.deprel == 'nmod:poss',
+            ))
+          'surface_possible_antecedent_possessive_separation',
+        'surface_possible_subject_predicate_separation',
+        'surface_predicate_infinitive_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {
+              'of',
+              'in',
+              'on',
+              'at',
+              'by',
+              'with',
+              'from',
+              'to',
+              'for',
+              'between',
+              'beneath',
+              'under',
+              'over',
+              'round',
+              'through',
+              'into',
+              'upon',
+              'across',
+              'like',
+            }.contains(rightLexeme) &&
+            (rightLexeme == 'of' ||
+                leftDependencies.any(
+                  (dependency) => const {
+                    'VERB',
+                    'AUX',
+                    'ADJ',
+                    'PRON',
+                    'DET',
+                    'ADP',
+                    'ADV',
+                  }.contains(dependency.token.upos),
+                )))
+          'surface_preposition_attachment_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {
+              'of',
+              'in',
+              'on',
+              'at',
+              'by',
+              'with',
+              'from',
+              'to',
+              'for',
+              'between',
+              'beneath',
+              'under',
+              'over',
+              'round',
+              'through',
+              'into',
+              'upon',
+              'across',
+              'like',
+            }.contains(leftLexeme) &&
+            rightDependencies.any(
+              (dependency) => dependency.token.upos != 'PUNCT',
+            ))
+          'surface_preposition_right_operand_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {'and', 'or', 'nor', 'but'}.contains(leftLexeme) &&
+            rightDependencies.any(
+              (dependency) => const {
+                'NOUN',
+                'PROPN',
+                'PRON',
+                'DET',
+                'ADJ',
+                'VERB',
+                'AUX',
+              }.contains(dependency.token.upos),
+            ))
+          'surface_coordinator_right_operand_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) => dependency.token.upos == 'DET',
+            ) &&
+            rightDependencies.any(
+              (dependency) => const {
+                'NOUN',
+                'PROPN',
+                'PRON',
+                'DET',
+                'ADJ',
+                'VERB',
+                'AUX',
+              }.contains(dependency.token.upos),
+            ))
+          'surface_determiner_head_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) =>
+                  dependency.token.deprel == 'nmod:poss' &&
+                  dependency.headWordIndex != null &&
+                  dependency.headWordIndex! >= afterWord,
+            ))
+          'surface_possessive_head_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            rightDependencies.any(
+              (dependency) =>
+                  const {'obj', 'iobj'}
+                      .contains(dependency.token.deprel.split(':').first) &&
+                  dependency.headWordIndex != null &&
+                  dependency.headWordIndex! < afterWord,
+            ))
+          'surface_object_relation_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) =>
+                  const {'nsubj', 'csubj'}
+                      .contains(dependency.token.deprel.split(':').first) &&
+                  dependency.headWordIndex != null &&
+                  dependency.headWordIndex! >= afterWord,
+            ))
+          'surface_subject_predicate_relation_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftLexeme == 'to' &&
+            rightDependencies.any(
+              (dependency) => dependency.token.upos == 'VERB',
+            ))
+          'surface_infinitive_marker_predicate_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {
+              'as:if',
+              'as:though',
+              'even:if',
+              'even:though',
+              'rather:than',
+              'so:that',
+              'such:as',
+              'that:if',
+              'that:when',
+              'that:because',
+              'that:although',
+              'that:though',
+              'that:while',
+            }.contains('$leftLexeme:$rightLexeme'))
+          'surface_fixed_connector_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) =>
+                  dependency.token.upos == 'ADJ' ||
+                  (const {'amod', 'compound'}.contains(
+                        dependency.token.deprel.split(':').first,
+                      ) &&
+                      dependency.headWordIndex != null &&
+                      dependency.headWordIndex! >= afterWord),
+            ) &&
+            rightDependencies.any(
+              (dependency) =>
+                  const {'NOUN', 'PROPN'}.contains(dependency.token.upos),
+            ))
+          'surface_modifier_head_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) =>
+                  const {'NOUN', 'PROPN'}.contains(dependency.token.upos),
+            ) &&
+            rightDependencies.any(
+              (dependency) => dependency.token.upos == 'PRON',
+            ))
+          'surface_nominal_relative_pronoun_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            rightDependencies.any(
+              (dependency) =>
+                  dependency.token.deprel.split(':').first == 'advmod' &&
+                  dependency.headWordIndex != null &&
+                  dependency.headWordIndex! < afterWord,
+            ))
+          'surface_adverb_attachment_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            rightDependencies.any(
+              (dependency) =>
+                  dependency.token.deprel.split(':').first == 'xcomp' &&
+                  dependency.headWordIndex != null &&
+                  dependency.headWordIndex! < afterWord,
+            ))
+          'surface_xcomp_predicate_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) => dependency.token.upos == 'AUX',
+            ) &&
+            rightDependencies.any(
+              (dependency) => dependency.token.upos == 'ADV',
+            ))
+          'surface_auxiliary_adverb_complement_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) => const {'NOUN', 'PROPN', 'PRON'}
+                  .contains(dependency.token.upos),
+            ) &&
+            const {'and', 'or', 'nor'}.contains(rightLexeme) &&
+            nextDependencies.any(
+              (dependency) => const {'NOUN', 'PROPN', 'PRON', 'DET', 'ADJ'}
+                  .contains(dependency.token.upos),
+            ))
+          'surface_nominal_coordinator_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {'all', 'both', 'either', 'neither'}.contains(leftLexeme) &&
+            const {
+              'one',
+              'two',
+              'three',
+              'four',
+              'five',
+              'six',
+              'seven',
+              'eight',
+              'nine',
+              'ten',
+            }.contains(rightLexeme))
+          'surface_quantifier_numeral_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) =>
+                  const {'VERB', 'AUX'}.contains(dependency.token.upos),
+            ) &&
+            const {'my', 'your', 'his', 'her', 'its', 'our', 'their'}
+                .contains(rightLexeme))
+          'surface_predicate_possessive_object_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {
+              'where',
+              'wherever',
+              'when',
+              'whenever',
+              'while',
+              'which',
+              'whichever',
+              'who',
+              'whoever',
+              'whom',
+              'whose',
+              'whatever',
+              'that',
+              'if',
+              'unless',
+              'because',
+              'although',
+              'though',
+              'until',
+              'since',
+              'before',
+              'after',
+              'once',
+              'as',
+            }.contains(leftLexeme) &&
+            rightDependencies.any(
+              (dependency) => const {'PRON', 'DET', 'NOUN', 'PROPN'}
+                  .contains(dependency.token.upos),
+            ))
+          'surface_relative_marker_subject_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {
+              'i',
+              'you',
+              'he',
+              'she',
+              'it',
+              'we',
+              'they',
+              'me',
+              'him',
+              'her',
+              'us',
+              'them',
+            }.contains(leftLexeme) &&
+            rightDependencies.any(
+              (dependency) =>
+                  const {'VERB', 'AUX'}.contains(dependency.token.upos),
+            ))
+          'surface_pronoun_predicate_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) =>
+                  const {'VERB', 'AUX'}.contains(dependency.token.upos),
+            ) &&
+            const {'that', 'whether', 'if'}.contains(rightLexeme))
+          'surface_predicate_complement_marker_separation',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftDependencies.any(
+              (dependency) =>
+                  const {'VERB', 'AUX'}.contains(dependency.token.upos),
+            ) &&
+            rightDependencies.any(
+              (dependency) => dependency.token.upos == 'DET',
+            ))
+          'surface_predicate_determiner_object_separation',
+        if (_commaPunctuation.hasMatch(left) &&
+            !hasRightSubjectPredicateClause &&
+            (leftDependencies.any(
+                  (dependency) => dependency.token.upos == 'ADJ',
+                ) ||
+                RegExp(r'(?:ed|en|ful|ing|ive|less|ous)$')
+                    .hasMatch(leftLexeme)) &&
+            !const {
+              'a',
+              'an',
+              'the',
+              'this',
+              'that',
+              'these',
+              'those',
+              'and',
+              'or',
+              'but',
+            }.contains(rightLexeme) &&
+            nextDependencies.any(
+              (dependency) =>
+                  const {'NOUN', 'PROPN'}.contains(dependency.token.upos),
+            ))
+          'surface_parallel_list_item_separation',
+        if (quoteEdge == 'after_closing' &&
+            _isAttributionOnlyRightTail(afterWord, dependencies))
+          'quote_edge_attribution_only_tail',
       ];
       final protectsQuotedAttribution = _commaPunctuation.hasMatch(left) &&
-          RegExp(r'''^["'“‘]''').hasMatch(words[afterWord].text);
+              RegExp(r'''^["'“‘]''').hasMatch(right) ||
+          RegExp(r''',["'”’]$''').hasMatch(left) &&
+              RegExp(r'^[a-z]').hasMatch(right);
       ReadAloudBoundaryKindV3 kind;
-      final reasons = <String>[];
+      final reasons = <String>[
+        if (insideQuotedSpeech) 'inside_quoted_speech',
+        if (quoteEdge != null) 'quote_edge:$quoteEdge',
+      ];
       if (protectsQuotedAttribution) {
         kind = ReadAloudBoundaryKindV3.emergency;
         reasons.add('protected_quote_attribution_gap');
-      } else if (_strongPunctuation.hasMatch(left)) {
+      } else if (_strongPunctuation.hasMatch(left) ||
+          (insideQuotedSpeech || quoteEdge == 'after_closing') &&
+              _quotedTerminalPunctuation.hasMatch(left)) {
         kind = ReadAloudBoundaryKindV3.strongPunctuation;
         reasons.add('source_strong_punctuation');
       } else if (_commaPunctuation.hasMatch(left) &&
-          (oneLegalSubtreeArc &&
-                  _clauseRelations.contains(subtreeRelations.single) ||
-              hasRightSubjectPredicateClause) &&
+          (oneLegalClauseSubtreeArc || hasRightSubjectPredicateClause) &&
           protectedCrossings == 0) {
         kind = ReadAloudBoundaryKindV3.clauseComma;
         reasons.add(
@@ -722,6 +1647,11 @@ class ReadAloudSplitterV3 {
               ? 'dependency_confirmed_right_subject_predicate_clause_comma'
               : 'dependency_confirmed_clause_comma',
         );
+      } else if (_commaPunctuation.hasMatch(left) &&
+          hasPhraseSubtreeArc &&
+          protectedCrossings == 0) {
+        kind = ReadAloudBoundaryKindV3.phraseComma;
+        reasons.add('dependency_confirmed_phrase_comma');
       } else if (_commaPunctuation.hasMatch(left)) {
         kind = ReadAloudBoundaryKindV3.ambiguousComma;
         reasons.add('source_comma_without_confirmed_clause');
@@ -747,21 +1677,27 @@ class ReadAloudSplitterV3 {
               : 'ordinary_word_gap',
         );
       }
-      final risk = protectedCrossings * 1000 +
+      final rawRisk = protectedCrossings * 1000 +
           math.max(0, crossings.length - 1) * 100 +
           (kind == ReadAloudBoundaryKindV3.ambiguousComma
               ? 5
-              : kind == ReadAloudBoundaryKindV3.dependencyPhrase
-                  ? 10
-                  : kind == ReadAloudBoundaryKindV3.emergency
-                      ? 20
-                      : 0);
+              : kind == ReadAloudBoundaryKindV3.phraseComma
+                  ? 0
+                  : kind == ReadAloudBoundaryKindV3.dependencyPhrase
+                      ? 10
+                      : kind == ReadAloudBoundaryKindV3.emergency
+                          ? 20
+                          : 0);
+      final risk = quoteEdge == 'after_closing' && protectedCrossings == 0
+          ? math.max(0, rawRisk - 200)
+          : rawRisk;
       output.add(
         ReadAloudBoundaryCandidateV3(
           afterWord: afterWord,
           kind: kind,
           reasons: List.unmodifiable([
             ...reasons,
+            if (risk < rawRisk) 'quote_edge_priority',
             if (crossings.isNotEmpty)
               'crossing_relations:${crossings.map((value) => value.token.deprel).join(',')}',
           ]),
@@ -771,6 +1707,9 @@ class ReadAloudSplitterV3 {
           softWarnings: List.unmodifiable(softWarnings),
           hardBlocked: hardBlockReasons.isNotEmpty,
           hardBlockReasons: List.unmodifiable(hardBlockReasons),
+          insideQuotedSpeech: insideQuotedSpeech,
+          quoteSpanWordCount: quoteSpanWordCount,
+          quoteEdge: quoteEdge,
         ),
       );
     }
@@ -804,6 +1743,36 @@ class ReadAloudSplitterV3 {
     return false;
   }
 
+  static bool _isAttributionOnlyRightTail(
+    int afterWord,
+    List<_MappedDependencyV3> dependencies,
+  ) {
+    final rightPredicates = dependencies
+        .where(
+          (dependency) =>
+              dependency.wordIndex >= afterWord &&
+              dependency.token.upos == 'VERB' &&
+              !const {'acl', 'advcl', 'ccomp', 'xcomp'}
+                  .contains(dependency.token.deprel.split(':').first),
+        )
+        .map((dependency) => dependency.wordIndex)
+        .toSet();
+    if (rightPredicates.length != 1) return false;
+    return dependencies.any(
+      (dependency) =>
+          dependency.wordIndex >= afterWord &&
+          const {'nsubj', 'csubj', 'expl'}
+              .contains(dependency.token.deprel.split(':').first),
+    );
+  }
+
+  static String _edgeLexeme(String value) {
+    final matches = RegExp(r"[a-z]+(?:'[a-z]+)?")
+        .allMatches(value.toLowerCase())
+        .toList(growable: false);
+    return matches.isEmpty ? '' : matches.last.group(0)!;
+  }
+
   static _CandidatePathRoundsV3 _candidatePaths({
     required int originalIndex,
     required String sentence,
@@ -812,8 +1781,7 @@ class ReadAloudSplitterV3 {
     required bool parserHealthy,
   }) {
     final count = words.length;
-    if (count <= hardMaxWords &&
-        maxUnpunctuatedWordCount(sentence) <= hardMaxUnpunctuatedWords) {
+    if (count <= preferredMaxUnpunctuatedWords) {
       final path = _pathFromDraft(
         originalIndex: originalIndex,
         sentence: sentence,
@@ -830,30 +1798,55 @@ class ReadAloudSplitterV3 {
     final punctuation = candidates
         .where((candidate) => candidate.isPunctuation && !candidate.hardBlocked)
         .toList(growable: false);
-    final punctuationDrafts = _enumeratePaths(
-      sentence,
-      words,
-      punctuation,
-      limitPerState: maxCandidatePaths,
-    );
-    if (punctuationDrafts.isNotEmpty) {
-      final paths = punctuationDrafts
-          .take(maxCandidatePaths)
-          .map(
-            (draft) => _pathFromDraft(
-              originalIndex: originalIndex,
-              sentence: sentence,
-              words: words,
-              selection: _DraftSelectionV3(
-                draft: draft,
-                round: ReadAloudCandidateRoundV3.initial,
-                diversity: ReadAloudCandidateDiversityV3.score,
-              ),
+    final punctuationControlsReadingLoad = count > targetMaxUnpunctuatedWords &&
+        _hasFeasiblePunctuationControlPath(
+          sentence,
+          words,
+          punctuation,
+        );
+    if (count <= targetMaxUnpunctuatedWords || punctuationControlsReadingLoad) {
+      final punctuationDrafts = _enumeratePaths(
+        sentence,
+        words,
+        punctuation,
+        limitPerState: maxExpandedCandidatePaths,
+      );
+      final ranked = punctuationDrafts.toList(growable: false)
+        ..sort(
+          (left, right) => _compareLexicographic(
+            _draftScore(sentence, words, left),
+            _draftScore(sentence, words, right),
+          ),
+        );
+      if (ranked.isEmpty) {
+        throw StateError(
+          'V3.6 punctuation lattice has no feasible path '
+          '(parserHealthy=$parserHealthy)',
+        );
+      }
+      final expanded = <ReadAloudCandidatePathV3>[];
+      for (var index = 0;
+          index < ranked.length && index < maxExpandedCandidatePaths;
+          index += 1) {
+        expanded.add(
+          _pathFromDraft(
+            originalIndex: originalIndex,
+            sentence: sentence,
+            words: words,
+            selection: _DraftSelectionV3(
+              draft: ranked[index],
+              round: index < maxCandidatePaths
+                  ? ReadAloudCandidateRoundV3.initial
+                  : ReadAloudCandidateRoundV3.expanded,
+              diversity: ReadAloudCandidateDiversityV3.score,
             ),
-          )
-          .toList(growable: false)
-        ..sort(_comparePaths);
-      return _CandidatePathRoundsV3(initial: paths, expanded: paths);
+          ),
+        );
+      }
+      final initial = expanded
+          .where((path) => path.round == ReadAloudCandidateRoundV3.initial)
+          .toList(growable: false);
+      return _CandidatePathRoundsV3(initial: initial, expanded: expanded);
     }
 
     final safeCandidates = candidates
@@ -870,10 +1863,12 @@ class ReadAloudSplitterV3 {
       sentence,
       words,
       safeCandidates,
-      limitPerState: expandedBeamWidth,
+      limitPerState: count > maxCandidateCountForCoverageProbes
+          ? maxExpandedCandidatePaths
+          : expandedBeamWidth,
     );
     addDrafts(baseDrafts);
-    for (final candidate in safeCandidates) {
+    for (final candidate in _coverageProbeCandidates(safeCandidates)) {
       addDrafts(
         _enumeratePaths(
           sentence,
@@ -893,7 +1888,7 @@ class ReadAloudSplitterV3 {
       );
     if (ranked.isEmpty) {
       throw StateError(
-        'V3.3 candidate lattice has no feasible path '
+        'V3.6 candidate lattice has no feasible path '
         '(parserHealthy=$parserHealthy)',
       );
     }
@@ -1002,6 +1997,105 @@ class ReadAloudSplitterV3 {
     return _CandidatePathRoundsV3(initial: initial, expanded: expanded);
   }
 
+  /// Linear-size reachability check used before the expensive punctuation-only
+  /// path enumeration. The old implementation enumerated a full beam merely to
+  /// discover that punctuation could not keep a long quote at 20 words or
+  /// below, then discarded that beam and ran the syntax lattice again.
+  static bool _hasFeasiblePunctuationControlPath(
+    String sentence,
+    List<_SourceWordV3> words,
+    List<ReadAloudBoundaryCandidateV3> punctuation,
+  ) {
+    final byEnd = <int, ReadAloudBoundaryCandidateV3>{
+      for (final candidate in punctuation)
+        if (candidate.protectedRelationCrossings == 0)
+          candidate.afterWord: candidate,
+    };
+    final memo = <int, bool>{};
+
+    bool solve(int start) {
+      final cached = memo[start];
+      if (cached != null) return cached;
+      final maximumEnd = math.min(
+        words.length,
+        start + targetMaxUnpunctuatedWords,
+      );
+      for (var end = start + 1; end <= maximumEnd; end += 1) {
+        if (end < words.length && !byEnd.containsKey(end)) continue;
+        final oneSegment = _PathDraftV3(const [], [end]);
+        if (_unreadableShortFragmentPenalty(
+              sentence,
+              words,
+              oneSegment,
+              startWord: start,
+            ) !=
+            0) {
+          continue;
+        }
+        if (end == words.length || solve(end)) {
+          memo[start] = true;
+          return true;
+        }
+      }
+      memo[start] = false;
+      return false;
+    }
+
+    return solve(0);
+  }
+
+  /// Expanded review output is capped at 24 paths, so re-running the complete
+  /// DP once for every boundary in a hundreds-of-words quotation adds no useful
+  /// audit coverage. Keep every boundary in [boundaryCandidates], but probe a
+  /// bounded mix of quote edges, low-risk punctuation, and positions spread
+  /// across the full unit.
+  static List<ReadAloudBoundaryCandidateV3> _coverageProbeCandidates(
+    List<ReadAloudBoundaryCandidateV3> candidates,
+  ) {
+    if (candidates.length > maxCandidateCountForCoverageProbes) {
+      return const [];
+    }
+    if (candidates.length <= maxCoverageProbeCandidates) return candidates;
+
+    final selected = <int, ReadAloudBoundaryCandidateV3>{};
+    final prioritized = candidates.toList(growable: false)
+      ..sort((left, right) {
+        final quoteEdge = (left.quoteEdge == null ? 1 : 0)
+            .compareTo(right.quoteEdge == null ? 1 : 0);
+        if (quoteEdge != 0) return quoteEdge;
+        final punctuation =
+            (left.isPunctuation ? 0 : 1).compareTo(right.isPunctuation ? 0 : 1);
+        if (punctuation != 0) return punctuation;
+        final protected = left.protectedRelationCrossings
+            .compareTo(right.protectedRelationCrossings);
+        if (protected != 0) return protected;
+        final risk = left.risk.compareTo(right.risk);
+        if (risk != 0) return risk;
+        return left.afterWord.compareTo(right.afterWord);
+      });
+    for (final candidate in prioritized.take(maxCandidatePaths)) {
+      selected[candidate.afterWord] = candidate;
+    }
+
+    final ordered = candidates.toList(growable: false)
+      ..sort((left, right) => left.afterWord.compareTo(right.afterWord));
+    final spreadSlots = maxCoverageProbeCandidates - selected.length;
+    for (var slot = 0; slot < spreadSlots; slot += 1) {
+      final index = spreadSlots == 1
+          ? ordered.length ~/ 2
+          : (slot * (ordered.length - 1) / (spreadSlots - 1)).round();
+      selected[ordered[index].afterWord] = ordered[index];
+    }
+    for (final candidate in prioritized) {
+      if (selected.length >= maxCoverageProbeCandidates) break;
+      selected.putIfAbsent(candidate.afterWord, () => candidate);
+    }
+
+    final result = selected.values.toList(growable: false)
+      ..sort((left, right) => left.afterWord.compareTo(right.afterWord));
+    return result;
+  }
+
   static List<_PathDraftV3> _enumeratePaths(
     String sentence,
     List<_SourceWordV3> words,
@@ -1015,18 +2109,18 @@ class ReadAloudSplitterV3 {
     final memo = <String, List<_PathDraftV3>>{};
     final scoreCache = <String, List<int>>{};
 
-    List<int> score(_PathDraftV3 draft) => scoreCache.putIfAbsent(
-          _draftKey(draft),
-          () => _draftScore(sentence, words, draft),
+    List<int> score(int start, _PathDraftV3 draft) => scoreCache.putIfAbsent(
+          '$start:${_draftKey(draft)}',
+          () => _draftScore(sentence, words, draft, startWord: start),
         );
 
-    int compare(_PathDraftV3 left, _PathDraftV3 right) =>
-        _compareLexicographic(score(left), score(right));
+    int compare(int start, _PathDraftV3 left, _PathDraftV3 right) =>
+        _compareLexicographic(score(start, left), score(start, right));
 
-    void trimWorkingSet(List<_PathDraftV3> values) {
+    void trimWorkingSet(int start, List<_PathDraftV3> values) {
       final workingLimit = math.max(limitPerState * 4, limitPerState + 8);
       if (values.length <= workingLimit) return;
-      values.sort(compare);
+      values.sort((left, right) => compare(start, left, right));
       values.removeRange(limitPerState * 2, values.length);
     }
 
@@ -1058,9 +2152,9 @@ class ReadAloudSplitterV3 {
             ),
           );
         }
-        trimWorkingSet(result);
+        trimWorkingSet(start, result);
       }
-      result.sort(compare);
+      result.sort((left, right) => compare(start, left, right));
       final limited = result.take(limitPerState).toList(growable: false);
       memo[memoKey] = limited;
       return limited;
@@ -1150,19 +2244,62 @@ class ReadAloudSplitterV3 {
   static List<int> _draftScore(
     String sentence,
     List<_SourceWordV3> words,
-    _PathDraftV3 draft,
-  ) {
-    var dependencyRisk = 0;
+    _PathDraftV3 draft, {
+    int startWord = 0,
+  }) {
+    var nonPunctuationProtectedCrossings = 0;
+    var punctuationProtectedCrossings = 0;
+    var boundaryNaturalnessRisk = 0;
+    var structuralWarningRisk = 0;
+    var softWarningRisk = 0;
+    var insideQuotedSpeechBoundaryCount = 0;
     for (final boundary in draft.boundaries) {
-      dependencyRisk += boundary.risk;
+      if (boundary.insideQuotedSpeech) {
+        insideQuotedSpeechBoundaryCount += 1;
+      }
+      if (boundary.isPunctuation) {
+        punctuationProtectedCrossings += boundary.protectedRelationCrossings;
+      } else {
+        nonPunctuationProtectedCrossings += boundary.protectedRelationCrossings;
+      }
+      boundaryNaturalnessRisk += math.max(
+        0,
+        boundary.risk - boundary.protectedRelationCrossings * 1000,
+      );
+      if (!boundary.isPunctuation) boundaryNaturalnessRisk += 5;
+      for (final warning in boundary.softWarnings) {
+        if (boundary.isPunctuation &&
+            !const {
+              'surface_possible_antecedent_possessive_separation',
+              'surface_parallel_list_item_separation',
+              'quote_edge_attribution_only_tail',
+            }.contains(warning)) {
+          continue;
+        }
+        if (_structuralSoftWarnings.contains(warning)) {
+          structuralWarningRisk += 1;
+        } else {
+          softWarningRisk += 5;
+        }
+      }
     }
-    var start = 0;
+    var start = startWord;
+    var criticalLengthCount = 0;
+    var severeLengthCount = 0;
+    var overTwentyCount = 0;
+    var seventeenToTwentyCount = 0;
+    var readingLoadPenalty = 0;
     var shortFragmentPenalty = 0;
     var preferredSpanPenalty = 0;
     final lengths = <int>[];
     for (final end in draft.ends) {
       final length = end - start;
       lengths.add(length);
+      if (length >= 28) criticalLengthCount += 1;
+      if (length >= 25) severeLengthCount += 1;
+      if (length >= 21) overTwentyCount += 1;
+      if (length >= 17) seventeenToTwentyCount += 1;
+      readingLoadPenalty += _readingLoadPenalty(length);
       if (length < preferredMinUnpunctuatedWords) {
         final delta = preferredMinUnpunctuatedWords - length;
         shortFragmentPenalty += delta * delta;
@@ -1183,21 +2320,111 @@ class ReadAloudSplitterV3 {
     final maxLength = lengths.reduce(math.max);
     final balancePenalty = maxLength - minLength;
     return [
-      dependencyRisk,
-      draft.boundaries.length,
+      _unreadableShortFragmentPenalty(
+        sentence,
+        words,
+        draft,
+        startWord: startWord,
+      ),
+      criticalLengthCount,
+      severeLengthCount,
+      structuralWarningRisk,
+      nonPunctuationProtectedCrossings,
+      overTwentyCount,
+      boundaryNaturalnessRisk,
+      punctuationProtectedCrossings,
+      seventeenToTwentyCount,
+      insideQuotedSpeechBoundaryCount,
+      softWarningRisk,
+      maxLength,
+      readingLoadPenalty,
       shortFragmentPenalty,
       preferredSpanPenalty,
+      draft.boundaries.length,
       balancePenalty,
     ];
   }
 
-  static int _comparePaths(
-    ReadAloudCandidatePathV3 left,
-    ReadAloudCandidatePathV3 right,
+  static int _readingLoadPenalty(int length) {
+    if (length <= preferredMaxUnpunctuatedWords) return 0;
+    final excess = length - preferredMaxUnpunctuatedWords;
+    return excess * excess;
+  }
+
+  static int _unreadableShortFragmentPenalty(
+    String sentence,
+    List<_SourceWordV3> words,
+    _PathDraftV3 draft, {
+    int startWord = 0,
+  }) {
+    var start = startWord;
+    var penalty = 0;
+    for (final end in draft.ends) {
+      final length = end - start;
+      if (length <= 5) {
+        final text = _segmentText(sentence, words, start, end).trim();
+        final isCompleteShortQuotedSpeech =
+            _isCompleteShortQuotedSpeechSegment(words, start, end);
+        final hasSelfContainedPause =
+            RegExp(r'''[.!?…;:]["'”’)}\]]*$''').hasMatch(text);
+        final hasSelfContainedPredicate =
+            _hasSelfContainedShortPredicate(words, start, end);
+        if (!isCompleteShortQuotedSpeech &&
+            (length <= 3 ||
+                !hasSelfContainedPause ||
+                !hasSelfContainedPredicate)) {
+          final delta = 6 - length;
+          penalty += delta * delta;
+        }
+      }
+      start = end;
+    }
+    return penalty;
+  }
+
+  static bool _isCompleteShortQuotedSpeechSegment(
+    List<_SourceWordV3> words,
+    int start,
+    int end,
   ) {
-    final score = _compareLexicographic(left.score, right.score);
-    if (score != 0) return score;
-    return left.pathId.compareTo(right.pathId);
+    if (start < 0 || end <= start || end > words.length) return false;
+    final first = words[start];
+    final spanIndex = first.quotedSpeechSpanIndex;
+    final wordCount = first.quotedSpeechWordCount;
+    if (spanIndex == null ||
+        wordCount == null ||
+        wordCount > preferredMaxUnpunctuatedWords ||
+        first.quotedSpeechStartWord != start ||
+        first.quotedSpeechEndWord != end) {
+      return false;
+    }
+    return words
+        .sublist(start, end)
+        .every((word) => word.quotedSpeechSpanIndex == spanIndex);
+  }
+
+  static bool _hasSelfContainedShortPredicate(
+    List<_SourceWordV3> words,
+    int start,
+    int end,
+  ) {
+    final segmentWords = words.sublist(start, end);
+    final hasPredicate = segmentWords.any(
+      (word) => word.upos.any(const {'VERB', 'AUX'}.contains),
+    );
+    final hasSubject = segmentWords.any(
+      (word) => word.dependencyRelations.any(
+        const {'nsubj', 'csubj', 'expl'}.contains,
+      ),
+    );
+    if (hasPredicate && hasSubject) return true;
+
+    final first = segmentWords.first;
+    final startsWithImperativeVerb = first.upos.contains('VERB') &&
+        !first.dependencyRelations.any(
+          const {'acl', 'advcl', 'ccomp', 'xcomp'}.contains,
+        );
+    return startsWithImperativeVerb;
   }
 
   static int _compareLexicographic(List<int> left, List<int> right) {
@@ -1215,12 +2442,16 @@ class ReadAloudSplitterV3 {
     int start,
     int end,
   ) =>
-      sentence.substring(words[start].start, words[end - 1].end).trim();
+      sentence
+          .substring(words[start].start, words[end - 1].end)
+          .replaceAll(RegExp(r'\s+'), ' ')
+          .trim();
 
   static String _kindCode(ReadAloudBoundaryKindV3 kind) => switch (kind) {
         ReadAloudBoundaryKindV3.originalSentence => 'o',
         ReadAloudBoundaryKindV3.strongPunctuation => 'p',
         ReadAloudBoundaryKindV3.clauseComma => 'c',
+        ReadAloudBoundaryKindV3.phraseComma => 'm',
         ReadAloudBoundaryKindV3.ambiguousComma => 'a',
         ReadAloudBoundaryKindV3.dependencyClause => 'd',
         ReadAloudBoundaryKindV3.dependencyPhrase => 'f',
@@ -1264,19 +2495,22 @@ class ReadAloudSplitterV3 {
       final span = maxUnpunctuatedWordCount(sentence);
       if (span > hardMaxUnpunctuatedWords) {
         throw FormatException(
-          '审核分句第 ${index + 1} 块最长无标点连续段为 $span 词，超过 20 词硬上限',
+          '审核分句第 ${index + 1} 块最长无标点连续段为 $span 词，超过 30 词硬上限',
         );
       }
       cumulativeWords += count;
       actualBoundaries.add(cumulativeWords);
     }
-    if (normalizeForRoundTrip(sentences.join(' ')) !=
-        normalizeForRoundTrip(englishContent)) {
-      throw const FormatException('审核分句规范化拼接与最终英文正文不一致');
+    final roundTripMismatch = _roundTripMismatch(
+      englishContent: englishContent,
+      sentences: sentences,
+    );
+    if (roundTripMismatch != null) {
+      throw FormatException('审核分句规范化拼接与最终英文正文不一致：$roundTripMismatch');
     }
     for (final required in requiredBoundaryWordOffsets) {
       if (required > 0 && !actualBoundaries.contains(required)) {
-        throw const FormatException('审核分句跨越了原文句号、问号或感叹号句界');
+        throw const FormatException('审核分句跨越了朗读求解单元或段落硬边界');
       }
     }
   }

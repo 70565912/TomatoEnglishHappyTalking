@@ -5,7 +5,7 @@
     {
       "id": "locked-original-boundaries",
       "source": "Mole looked up. Rat waved back.",
-      "v3Invariant": "Never cross an original orthographic sentence boundary."
+      "v3Invariant": "Keep ordinary orthographic boundaries; only parser boundaries strictly inside a fully matched quote may be coalesced for read-aloud solving."
     },
     {
       "id": "safe-original-remains-whole",

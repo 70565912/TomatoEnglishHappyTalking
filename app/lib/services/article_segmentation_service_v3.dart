@@ -108,6 +108,9 @@ class ArticleSegmentationServiceV3 {
             'localPathId': decision.localPathId,
             'initialCandidateSetHash': decision.initialCandidateSetHash,
             'expandedCandidateSetHash': decision.expandedCandidateSetHash,
+            'boundaryCandidates': decision.boundaryCandidates
+                .map((candidate) => candidate.toJson())
+                .toList(growable: false),
             'initialCandidatePaths': decision.initialCandidatePaths
                 .map((path) => path.toJson())
                 .toList(growable: false),

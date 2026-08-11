@@ -16,8 +16,13 @@ The accepted model is `english-ewt-r2.18-udpipe-v1.4.0.model`, SHA-256
 `b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f`.
 On the untouched EWT r2.18 test split its raw-text evaluation is word F1
 98.96%, sentence F1 85.93%, UPOS 93.99%, UAS 81.16% and LAS 77.81%.
-Task-level V3.3 evaluation remains the acceptance authority: approved-path
-coverage is 243/243 and the frozen 60-case holdout is 60/60.
+Task-level acceptance is solver-versioned. The V3.6 fixed-validator suite accepts
+all 243 fixture constraints, and the V3.6 frozen 60-case holdout is 60/60; one
+17-word quotation is deliberately split 7/10 under the current length policy.
+The 2026-08-11 native UDPipe evaluation processed all 243 items with a healthy
+parser and no test failure: exact preferred-output match was 71/243 (29.218%),
+while an approved expected path was present for 233/243 (95.8848%). These
+figures must not be conflated with 243/243 exact output.
 
 No official UDPipe pretrained linguistic model is bundled or used. This
 notice documents provenance and redistribution terms; it is not legal advice.

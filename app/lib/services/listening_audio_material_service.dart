@@ -328,8 +328,24 @@ class ListeningAudioMaterialService {
     return '';
   }
 
-  static String _normalizeCacheText(String text) =>
-      text.trim().replaceAll(RegExp(r'\s+'), ' ');
+  @visibleForTesting
+  static String normalizeCacheTextForTest(String text) =>
+      _normalizeCacheText(text);
+
+  static String _normalizeCacheText(String text) {
+    // Existing narration remains reusable when a persisted sentence changes
+    // only surrounding punctuation or whitespace. Keep apostrophes and hyphens
+    // inside English words so genuinely different spoken tokens do not collide.
+    final tokens = RegExp(r"[A-Za-z0-9]+(?:['’\-][A-Za-z0-9]+)*")
+        .allMatches(text)
+        .map((match) => match.group(0) ?? '')
+        .where((token) => token.isNotEmpty)
+        .toList(growable: false);
+    if (tokens.isNotEmpty) {
+      return tokens.join('\u001f');
+    }
+    return text.trim().replaceAll(RegExp(r'\s+'), ' ');
+  }
 
   static Future<void> Function(
     List<TtsPreloadRequest> requests, {

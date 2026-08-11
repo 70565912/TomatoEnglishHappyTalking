@@ -11,7 +11,7 @@ void main() {
   final enabled = Platform.environment['TOMATO_RUN_SENTENCE_V3_HOLDOUT'] == '1';
 
   test(
-    'keeps sixty frozen EWT holdout sentences intact',
+    'matches sixty frozen EWT holdout expectations',
     () async {
       final repository = Directory.current.parent;
       final conllu = File(
@@ -30,7 +30,7 @@ void main() {
       final output = File(
         Platform.environment['TOMATO_SENTENCE_V3_HOLDOUT_OUTPUT'] ??
             '${repository.path}/output/sentence-split-v3/'
-                'holdout-ewt-v3-3.json',
+                'holdout-ewt-v3-6.json',
       );
       expect(conllu.existsSync(), isTrue, reason: conllu.path);
       expect(probe.existsSync(), isTrue, reason: probe.path);
@@ -85,14 +85,23 @@ void main() {
           final predicted = decisions
               .expand((decision) => decision.localPath.segments)
               .toList(growable: false);
-          final exact = predicted.length == 1 &&
-              ReadAloudSplitterV3.normalizeForRoundTrip(predicted.single) ==
-                  ReadAloudSplitterV3.normalizeForRoundTrip(sample.text);
+          final expected =
+              _v36ExpectedSegments[sample.text] ?? <String>[sample.text];
+          final exact = predicted.length == expected.length &&
+              List.generate(
+                predicted.length,
+                (index) =>
+                    ReadAloudSplitterV3.normalizeForRoundTrip(
+                      predicted[index],
+                    ) ==
+                    ReadAloudSplitterV3.normalizeForRoundTrip(expected[index]),
+              ).every((matches) => matches);
           if (exact) passed += 1;
           results.add({
             'genre': sample.genre,
             'documentId': sample.documentId,
             'source': sample.text,
+            'expected': expected,
             'predicted': predicted,
             'exact': exact,
           });
@@ -101,7 +110,7 @@ void main() {
         await output.parent.create(recursive: true);
         await output.writeAsString(
           '${const JsonEncoder.withIndent('  ').convert({
-                'schemaVersion': 'sentence_split_holdout_ewt_v3_1',
+                'schemaVersion': 'sentence_split_holdout_ewt_v3_2',
                 'selection': 'first_12_safe_sentences_per_ewt_genre',
                 'solverVersion': ReadAloudSplitterV3.solverVersion,
                 'parserVersion': document.parserVersion,
@@ -124,6 +133,14 @@ void main() {
     timeout: const Timeout(Duration(minutes: 5)),
   );
 }
+
+const _v36ExpectedSegments = <String, List<String>>{
+  '"...there is no companion quite so devoted, so communicative, so loving and so mesmerizing as a rat."':
+      [
+    '"...there is no companion quite so devoted,',
+    'so communicative, so loving and so mesmerizing as a rat."',
+  ],
+};
 
 class _HoldoutSampleV3 {
   const _HoldoutSampleV3({

@@ -4,6 +4,11 @@
 /// Run from app/ after the project model has passed its independent test:
 ///   dart run tool/split_willows_sentences.dart --work "F:/柳林风声/work"
 ///
+/// Re-score a previously parsed corpus without running UDPipe again:
+///   dart run tool/split_willows_sentences.dart \
+///     --work "F:/柳林风声/work" \
+///     --parsed-report "../output/sentence-split-v3/previous/willows-v3-report.json"
+///
 /// This tool never writes the source corpus, App database, TTS, subtitles,
 /// videos, or NAS. It emits only review reports under --output.
 library;
@@ -39,11 +44,22 @@ Future<void> main(List<String> args) async {
             'english-ewt-r2.18-udpipe-v1.4.0.model',
   );
   final inputName = _argValue(args, '--input-name') ?? 'english.txt';
+  final sourceFromSentences = args.contains('--source-from-sentences');
+  final sourceBundlePath = _argValue(args, '--source-bundle');
+  final sourceBundle = sourceBundlePath == null
+      ? const <String, Map<String, dynamic>>{}
+      : await _readSourceBundle(File(sourceBundlePath));
+  final parsedReportPath = _argValue(args, '--parsed-report');
   final selectedEpisode = _argValue(args, '--episode')?.toUpperCase();
-  if (!probe.existsSync()) {
+  final selectedEpisodes = (_argValue(args, '--episodes') ?? '')
+      .split(',')
+      .map((value) => value.trim().toUpperCase())
+      .where((value) => value.isNotEmpty)
+      .toSet();
+  if (parsedReportPath == null && !probe.existsSync()) {
     throw ArgumentError('UDPipe probe does not exist: ${probe.path}');
   }
-  if (!model.existsSync()) {
+  if (parsedReportPath == null && !model.existsSync()) {
     throw ArgumentError('UDPipe model does not exist: ${model.path}');
   }
 
@@ -56,8 +72,9 @@ Future<void> main(List<String> args) async {
       )
       .where(
         (directory) =>
-            selectedEpisode == null ||
-            _basename(directory.path).toUpperCase() == selectedEpisode,
+            (selectedEpisode == null && selectedEpisodes.isEmpty) ||
+            _basename(directory.path).toUpperCase() == selectedEpisode ||
+            selectedEpisodes.contains(_basename(directory.path).toUpperCase()),
       )
       .toList(growable: false)
     ..sort((left, right) => left.path.compareTo(right.path));
@@ -71,24 +88,41 @@ Future<void> main(List<String> args) async {
   for (final directory in chapterDirectories) {
     final episode = _basename(directory.path).toUpperCase();
     final input = File('${directory.path}/$inputName');
-    if (!input.existsSync()) {
+    final bundled = sourceBundle[episode];
+    final oldSentences = bundled == null
+        ? await _readOldSentences(directory)
+        : (bundled['sentences'] as List)
+            .map((value) => value.toString())
+            .toList(growable: false);
+    if (bundled == null && !sourceFromSentences && !input.existsSync()) {
       throw FormatException('$episode missing $inputName');
     }
-    final parsed = PracticeInputParser.parse(
-      await input.readAsString(encoding: utf8),
-    );
-    final content = _stripLeadingHeadingParagraph(parsed.englishContent);
+    if ((sourceFromSentences || bundled != null) && oldSentences.isEmpty) {
+      throw FormatException('$episode has no persisted sentences source');
+    }
+    final content = bundled != null
+        ? bundled['source'].toString()
+        : sourceFromSentences
+            ? oldSentences.join(' ')
+            : _stripLeadingHeadingParagraph(
+                PracticeInputParser.parse(
+                  await input.readAsString(encoding: utf8),
+                ).englishContent,
+              );
     if (content.isEmpty) {
       throw FormatException('$episode has no normalized English body');
     }
     if (combined.isNotEmpty) combined.write('\n\n');
     final start = combined.length;
     combined.write(content);
-    final oldSentences = await _readOldSentences(directory);
     chapters.add(
       _ChapterSourceV3(
         episode: episode,
-        sourcePath: input.path,
+        sourcePath: bundled != null
+            ? File(sourceBundlePath!).absolute.path
+            : sourceFromSentences
+                ? '${directory.path}/sentences.json'
+                : input.path,
         source: content,
         start: start,
         end: combined.length,
@@ -98,54 +132,76 @@ Future<void> main(List<String> args) async {
   }
 
   final source = combined.toString();
-  final modelDigest = await Sha256().hash(await model.readAsBytes());
-  final modelSha = _hex(modelDigest.bytes);
   final sourceDigest = await Sha256().hash(utf8.encode(source));
   final sourceSha = _hex(sourceDigest.bytes);
-  final temp = await Directory.systemTemp.createTemp('willows-v3-corpus-');
+  if (args.contains('--fingerprint-only')) {
+    stdout.writeln(
+      jsonEncode({
+        'chapterCount': chapters.length,
+        'combinedSourceSha256': sourceSha,
+        'sourceCharacterCount': source.length,
+      }),
+    );
+    return;
+  }
+  var modelSha = '';
+  var parserVersion = UdpipeRawPipelineV3.parserVersion;
+  String? reusedParsedReport;
   var nativeCalls = 0;
+  DependencyDocumentV3 document;
+  Directory? temp;
   try {
-    final pipeline = await UdpipeRawPipelineV3.parse(
-      source: source,
-      parserVersion: UdpipeRawPipelineV3.parserVersion,
-      modelSha256: modelSha,
-      provider: ({required text, required presegmented}) async {
-        nativeCalls += 1;
-        final input = File('${temp.path}/parse-$nativeCalls.txt');
-        await input.writeAsString(text, encoding: utf8, flush: true);
-        final result = await Process.run(
-          probe.path,
-          [model.path, input.path, if (presegmented) '--presegmented'],
-          stdoutEncoding: utf8,
-          stderrEncoding: utf8,
-        );
-        if (result.exitCode != 0) {
-          throw StateError('UDPipe probe failed: ${result.stderr}');
-        }
-        return result.stdout.toString();
-      },
-    );
-    final document = pipeline.document;
-    final plan = ReadAloudSplitterV3.plan(
-      source: source,
-      document: document,
-    );
+    if (parsedReportPath != null) {
+      final parsed = await _loadParsedDocumentFromReport(
+        reportFile: File(parsedReportPath),
+        chapters: chapters,
+        sourceSha256: sourceSha,
+        requireCombinedSourceFingerprint:
+            selectedEpisode == null && selectedEpisodes.isEmpty,
+      );
+      document = parsed.document;
+      modelSha = document.modelSha256;
+      parserVersion = document.parserVersion;
+      reusedParsedReport = File(parsedReportPath).absolute.path;
+    } else {
+      final modelDigest = await Sha256().hash(await model.readAsBytes());
+      modelSha = _hex(modelDigest.bytes);
+      temp = await Directory.systemTemp.createTemp('willows-v3-corpus-');
+      final pipeline = await UdpipeRawPipelineV3.parse(
+        source: source,
+        parserVersion: parserVersion,
+        modelSha256: modelSha,
+        provider: ({required text, required presegmented}) async {
+          nativeCalls += 1;
+          final input = File('${temp!.path}/parse-$nativeCalls.txt');
+          await input.writeAsString(text, encoding: utf8, flush: true);
+          final result = await Process.run(
+            probe.path,
+            [model.path, input.path, if (presegmented) '--presegmented'],
+            stdoutEncoding: utf8,
+            stderrEncoding: utf8,
+          );
+          if (result.exitCode != 0) {
+            throw StateError('UDPipe probe failed: ${result.stderr}');
+          }
+          return result.stdout.toString();
+        },
+      );
+      document = pipeline.document;
+    }
     final chapterReports = <Map<String, dynamic>>[];
     for (final chapter in chapters) {
-      final decisions = plan.originals
-          .where(
-            (decision) =>
-                decision.sourceStart >= chapter.start &&
-                decision.sourceEnd <= chapter.end,
-          )
-          .toList(growable: false);
-      final parserSentences = document.sentences
-          .where(
-            (sentence) =>
-                sentence.start >= chapter.start && sentence.end <= chapter.end,
-          )
-          .toList(growable: false);
-      final report = _chapterReport(chapter, decisions, parserSentences);
+      final chapterDocument = _sliceDocumentForChapter(document, chapter);
+      final plan = ReadAloudSplitterV3.plan(
+        source: chapter.source,
+        document: chapterDocument,
+      );
+      final report = _chapterReport(
+        chapter,
+        plan.originals,
+        chapterDocument.sentences,
+        offsetsAreLocal: true,
+      );
       chapterReports.add(report);
       await _writeChapterMarkdown(outputDirectory, report);
     }
@@ -153,8 +209,9 @@ Future<void> main(List<String> args) async {
       chapterReports,
       sourceSha: sourceSha,
       modelSha: modelSha,
-      parserVersion: document.parserVersion,
+      parserVersion: parserVersion,
       nativeCalls: nativeCalls,
+      reusedParsedReport: reusedParsedReport,
     );
     await outputDirectory.create(recursive: true);
     final reportFile = File('${outputDirectory.path}/willows-v3-report.json');
@@ -176,15 +233,162 @@ Future<void> main(List<String> args) async {
     stdout.writeln('V3 Willows report: ${reportFile.absolute.path}');
     stdout.writeln('V3 Willows summary: ${summaryFile.absolute.path}');
   } finally {
-    await temp.delete(recursive: true);
+    if (temp != null) await temp.delete(recursive: true);
   }
 }
 
-Map<String, dynamic> _chapterReport(
+Future<_ParsedReportDocumentV3> _loadParsedDocumentFromReport({
+  required File reportFile,
+  required List<_ChapterSourceV3> chapters,
+  required String sourceSha256,
+  required bool requireCombinedSourceFingerprint,
+}) async {
+  if (!reportFile.existsSync()) {
+    throw ArgumentError('Parsed report does not exist: ${reportFile.path}');
+  }
+  final decoded = jsonDecode(await reportFile.readAsString(encoding: utf8));
+  if (decoded is! Map ||
+      decoded['summary'] is! Map ||
+      decoded['chapters'] is! List) {
+    throw FormatException(
+        'Parsed report schema is invalid: ${reportFile.path}');
+  }
+  final summary = Map<String, dynamic>.from(decoded['summary'] as Map);
+  final reportSourceSha = summary['combinedSourceSha256']?.toString() ?? '';
+  if (requireCombinedSourceFingerprint && reportSourceSha != sourceSha256) {
+    throw FormatException(
+      'Parsed report source fingerprint does not match current corpus: '
+      'report=$reportSourceSha current=$sourceSha256',
+    );
+  }
+  final parserVersion = summary['parserVersion']?.toString() ?? '';
+  final modelSha256 = summary['modelSha256']?.toString() ?? '';
+  if (parserVersion.isEmpty || modelSha256.isEmpty) {
+    throw const FormatException(
+        'Parsed report has no parser/model fingerprint');
+  }
+  final reportChapters = <String, Map<String, dynamic>>{
+    for (final value in decoded['chapters'] as List)
+      if (value is Map && value['episode'] != null)
+        value['episode'].toString().toUpperCase():
+            Map<String, dynamic>.from(value),
+  };
+  final sentences = <DependencySentenceV3>[];
+  for (final chapter in chapters) {
+    final report = reportChapters[chapter.episode];
+    if (report == null || report['parserSentences'] is! List) {
+      throw FormatException(
+        'Parsed report has no parser sentences for ${chapter.episode}',
+      );
+    }
+    for (final value in report['parserSentences'] as List) {
+      if (value is! Map || value['tokens'] is! List) {
+        throw FormatException(
+          'Parsed report sentence is invalid for ${chapter.episode}',
+        );
+      }
+      final sentence = Map<String, dynamic>.from(value);
+      final localStart = sentence['start'] as int;
+      final localEnd = sentence['end'] as int;
+      if (localStart < 0 ||
+          localEnd <= localStart ||
+          localEnd > chapter.source.length) {
+        throw FormatException(
+          'Parsed report span is invalid for ${chapter.episode}: '
+          '$localStart..$localEnd',
+        );
+      }
+      final expectedText = sentence['text']?.toString() ?? '';
+      final actualText = chapter.source.substring(localStart, localEnd);
+      if (expectedText != actualText) {
+        throw FormatException(
+          'Parsed report text does not match ${chapter.episode} at '
+          '$localStart..$localEnd',
+        );
+      }
+      sentences.add(
+        DependencySentenceV3(
+          start: chapter.start + localStart,
+          end: chapter.start + localEnd,
+          parseCost: (sentence['parseCost'] as num?)?.toDouble(),
+          parseCostPerToken:
+              (sentence['parseCostPerToken'] as num?)?.toDouble(),
+          tokens: [
+            for (final tokenValue in sentence['tokens'] as List)
+              if (tokenValue is Map)
+                DependencyTokenV3(
+                  id: tokenValue['id'] as int,
+                  text: tokenValue['text'].toString(),
+                  sourceText: tokenValue['sourceText']?.toString(),
+                  start: chapter.start + (tokenValue['start'] as int),
+                  end: chapter.start + (tokenValue['end'] as int),
+                  upos: tokenValue['upos'].toString(),
+                  head: tokenValue['head'] as int,
+                  deprel: tokenValue['deprel'].toString(),
+                ),
+          ],
+        ),
+      );
+    }
+  }
+  if (sentences.isEmpty) {
+    throw const FormatException('Parsed report contains no parser sentences');
+  }
+  final document = DependencyDocumentV3(
+    parserVersion: parserVersion,
+    modelSha256: modelSha256,
+    sentences: List.unmodifiable(sentences),
+    healthy: true,
+  );
+  return _ParsedReportDocumentV3(document);
+}
+
+DependencyDocumentV3 _sliceDocumentForChapter(
+  DependencyDocumentV3 document,
   _ChapterSourceV3 chapter,
-  List<ReadAloudOriginalDecisionV3> decisions,
-  List<DependencySentenceV3> parserSentences,
 ) {
+  final sentences = <DependencySentenceV3>[];
+  for (final sentence in document.sentences) {
+    if (sentence.start < chapter.start || sentence.end > chapter.end) continue;
+    sentences.add(
+      DependencySentenceV3(
+        start: sentence.start - chapter.start,
+        end: sentence.end - chapter.start,
+        parseCost: sentence.parseCost,
+        parseCostPerToken: sentence.parseCostPerToken,
+        tokens: [
+          for (final token in sentence.tokens)
+            DependencyTokenV3(
+              id: token.id,
+              text: token.text,
+              sourceText: token.sourceText,
+              start: token.start - chapter.start,
+              end: token.end - chapter.start,
+              upos: token.upos,
+              head: token.head,
+              deprel: token.deprel,
+            ),
+        ],
+      ),
+    );
+  }
+  if (sentences.isEmpty) {
+    throw FormatException('${chapter.episode} contains no parser sentences');
+  }
+  return DependencyDocumentV3(
+    parserVersion: document.parserVersion,
+    modelSha256: document.modelSha256,
+    sentences: List.unmodifiable(sentences),
+    healthy: document.healthy,
+    issues: document.issues,
+  );
+}
+
+Map<String, dynamic> _chapterReport(
+    _ChapterSourceV3 chapter,
+    List<ReadAloudOriginalDecisionV3> decisions,
+    List<DependencySentenceV3> parserSentences,
+    {bool offsetsAreLocal = false}) {
   final localSentences = decisions
       .expand((decision) => decision.localPath.segments)
       .toList(growable: false);
@@ -197,8 +401,34 @@ Map<String, dynamic> _chapterReport(
   var newUnder8Fragments = 0;
   var nonPunctuationCuts = 0;
   var emergencyCuts = 0;
+  var shortQuoteInternalCandidateCount = 0;
+  var shortQuoteInternalSelectedCount = 0;
+  var insideQuotedSpeechCutCount = 0;
+  var quoteEdgeCutCount = 0;
   for (final decision in decisions) {
     final path = decision.localPath;
+    shortQuoteInternalCandidateCount += decision.boundaryCandidates
+        .where(
+          (candidate) =>
+              candidate.insideQuotedSpeech &&
+              (candidate.quoteSpanWordCount ?? 1000000) <=
+                  ReadAloudSplitterV3.preferredMaxUnpunctuatedWords,
+        )
+        .length;
+    shortQuoteInternalSelectedCount += path.boundaries
+        .where(
+          (candidate) =>
+              candidate.insideQuotedSpeech &&
+              (candidate.quoteSpanWordCount ?? 1000000) <=
+                  ReadAloudSplitterV3.preferredMaxUnpunctuatedWords,
+        )
+        .length;
+    insideQuotedSpeechCutCount += path.boundaries
+        .where((candidate) => candidate.insideQuotedSpeech)
+        .length;
+    quoteEdgeCutCount += path.boundaries
+        .where((candidate) => candidate.quoteEdge != null)
+        .length;
     for (final segment in path.segments) {
       if (ReadAloudSplitterV3.maxUnpunctuatedWordCount(segment) > 16) {
         over16Unpunctuated += 1;
@@ -229,16 +459,21 @@ Map<String, dynamic> _chapterReport(
     'newUnder8FragmentCount': newUnder8Fragments,
     'nonPunctuationCutCount': nonPunctuationCuts,
     'emergencyCutCount': emergencyCuts,
+    'shortQuoteInternalCandidateCount': shortQuoteInternalCandidateCount,
+    'shortQuoteInternalSelectedCount': shortQuoteInternalSelectedCount,
+    'insideQuotedSpeechCutCount': insideQuotedSpeechCutCount,
+    'quoteEdgeCutCount': quoteEdgeCutCount,
     'oldSentences': chapter.oldSentences,
     'v3LocalSentences': localSentences,
     'parserSentences': [
       for (final sentence in parserSentences)
         {
-          'start': sentence.start - chapter.start,
-          'end': sentence.end - chapter.start,
+          'start':
+              offsetsAreLocal ? sentence.start : sentence.start - chapter.start,
+          'end': offsetsAreLocal ? sentence.end : sentence.end - chapter.start,
           'text': chapter.source.substring(
-            sentence.start - chapter.start,
-            sentence.end - chapter.start,
+            offsetsAreLocal ? sentence.start : sentence.start - chapter.start,
+            offsetsAreLocal ? sentence.end : sentence.end - chapter.start,
           ),
           'parseCost': sentence.parseCost,
           'parseCostPerToken': sentence.parseCostPerToken,
@@ -248,8 +483,9 @@ Map<String, dynamic> _chapterReport(
                 'id': token.id,
                 'text': token.text,
                 'sourceText': token.sourceText,
-                'start': token.start - chapter.start,
-                'end': token.end - chapter.start,
+                'start':
+                    offsetsAreLocal ? token.start : token.start - chapter.start,
+                'end': offsetsAreLocal ? token.end : token.end - chapter.start,
                 'upos': token.upos,
                 'head': token.head,
                 'deprel': token.deprel,
@@ -262,14 +498,21 @@ Map<String, dynamic> _chapterReport(
         {
           'originalIndex': decision.originalIndex,
           'original': decision.source,
-          'sourceStart': decision.sourceStart - chapter.start,
-          'sourceEnd': decision.sourceEnd - chapter.start,
+          'sourceStart': offsetsAreLocal
+              ? decision.sourceStart
+              : decision.sourceStart - chapter.start,
+          'sourceEnd': offsetsAreLocal
+              ? decision.sourceEnd
+              : decision.sourceEnd - chapter.start,
           'parserHealthy': decision.parserHealthy,
           'parserIssues': decision.parserIssues,
           'parseCost': decision.parseCost,
           'parseCostPerToken': decision.parseCostPerToken,
           'localPathId': decision.localPathId,
           'requiresAiReview': decision.requiresAiReview,
+          'boundaryCandidates': decision.boundaryCandidates
+              .map((candidate) => candidate.toJson())
+              .toList(growable: false),
           'candidatePaths': decision.candidatePaths
               .map((path) => path.toJson())
               .toList(growable: false),
@@ -284,6 +527,7 @@ Map<String, dynamic> _summary(
   required String modelSha,
   required String parserVersion,
   required int nativeCalls,
+  String? reusedParsedReport,
 }) {
   int sum(String key) => chapters.fold<int>(
         0,
@@ -297,6 +541,7 @@ Map<String, dynamic> _summary(
     'modelSha256': modelSha,
     'combinedSourceSha256': sourceSha,
     'nativeCalls': nativeCalls,
+    if (reusedParsedReport != null) 'reusedParsedReport': reusedParsedReport,
     'chapterCount': chapters.length,
     'v2V3DifferentChapterCount':
         chapters.where((chapter) => chapter['v2V3Different'] == true).length,
@@ -312,6 +557,10 @@ Map<String, dynamic> _summary(
     'newUnder8FragmentCount': sum('newUnder8FragmentCount'),
     'nonPunctuationCutCount': sum('nonPunctuationCutCount'),
     'emergencyCutCount': sum('emergencyCutCount'),
+    'shortQuoteInternalCandidateCount': sum('shortQuoteInternalCandidateCount'),
+    'shortQuoteInternalSelectedCount': sum('shortQuoteInternalSelectedCount'),
+    'insideQuotedSpeechCutCount': sum('insideQuotedSpeechCutCount'),
+    'quoteEdgeCutCount': sum('quoteEdgeCutCount'),
   };
 }
 
@@ -378,6 +627,10 @@ String _summaryMarkdown(Map<String, dynamic> summary) => '''
 - Unpunctuated segments above 16 words: ${summary['over16UnpunctuatedSegmentCount']}
 - Non-punctuation cuts: ${summary['nonPunctuationCutCount']}
 - Emergency cuts: ${summary['emergencyCutCount']}
+- Short-quote internal candidates: ${summary['shortQuoteInternalCandidateCount']}
+- Short-quote internal selected cuts: ${summary['shortQuoteInternalSelectedCount']}
+- Selected quote-internal cuts: ${summary['insideQuotedSpeechCutCount']}
+- Selected quote-edge cuts: ${summary['quoteEdgeCutCount']}
 
 This report is read-only. It does not authorize database, TTS, subtitle,
 video, picture mapping, or NAS migration.
@@ -393,6 +646,42 @@ Future<List<String>> _readOldSentences(Directory chapter) async {
       .map((entry) => entry['text']?.toString().trim() ?? '')
       .where((text) => text.isNotEmpty)
       .toList(growable: false);
+}
+
+Future<Map<String, Map<String, dynamic>>> _readSourceBundle(File file) async {
+  if (!file.existsSync()) {
+    throw ArgumentError('Source bundle does not exist: ${file.path}');
+  }
+  final decoded = jsonDecode(await file.readAsString(encoding: utf8));
+  if (decoded is! Map || decoded['chapters'] is! List) {
+    throw FormatException('Source bundle schema is invalid: ${file.path}');
+  }
+  final output = <String, Map<String, dynamic>>{};
+  for (final value in decoded['chapters'] as List) {
+    if (value is! Map ||
+        value['episode'] == null ||
+        value['sentences'] is! List) {
+      throw FormatException('Source bundle chapter is invalid: ${file.path}');
+    }
+    final chapter = Map<String, dynamic>.from(value);
+    final episode = chapter['episode'].toString().toUpperCase();
+    final sentences = (chapter['sentences'] as List)
+        .map((item) => item.toString())
+        .toList(growable: false);
+    final source = chapter['source']?.toString() ?? '';
+    if (sentences.isEmpty ||
+        source.isEmpty ||
+        !ReadAloudSplitterV3.isRoundTripEquivalent(
+          englishContent: source,
+          sentences: sentences,
+        )) {
+      throw FormatException('$episode source bundle does not round-trip');
+    }
+    if (output.putIfAbsent(episode, () => chapter) != chapter) {
+      throw FormatException('Duplicate source bundle episode: $episode');
+    }
+  }
+  return Map.unmodifiable(output);
 }
 
 List<int> _requiredOffsets(List<ReadAloudOriginalDecisionV3> decisions) {
@@ -411,7 +700,7 @@ String _stripLeadingHeadingParagraph(String content) {
       .toList(growable: false);
   if (paragraphs.length > 1 &&
       RegExp(
-        r'^(chapter|episode|part|book)\b[^.!?]*$',
+        r'^(chapter|episode|part|book)\b[^\r\n]*$',
         caseSensitive: false,
       ).hasMatch(paragraphs.first.trim())) {
     return paragraphs.skip(1).join('\n\n').trim();
@@ -459,4 +748,10 @@ class _ChapterSourceV3 {
   final int start;
   final int end;
   final List<String> oldSentences;
+}
+
+class _ParsedReportDocumentV3 {
+  const _ParsedReportDocumentV3(this.document);
+
+  final DependencyDocumentV3 document;
 }

@@ -272,49 +272,45 @@ Future<_BatchEvaluationV3> _evaluateBatch({
     modelSha256: modelSha,
     provider: provider,
   );
-  late final ReadAloudSplitPlanV3 plan;
-  try {
-    plan = ReadAloudSplitterV3.plan(source: source, document: document);
-  } on FormatException catch (error) {
-    final parsedSource = document.sentences
-        .map((sentence) => source.substring(sentence.start, sentence.end))
-        .join(' ');
-    final tailTokens = document.sentences
-        .expand((sentence) => sentence.tokens)
-        .where((token) => token.start >= source.length - 180)
-        .map(
-          (token) => {
-            'text': token.text,
-            'sourceText': token.sourceText,
-            'start': token.start,
-            'end': token.end,
-            'upos': token.upos,
-            'head': token.head,
-            'deprel': token.deprel,
-          },
-        )
-        .toList(growable: false);
-    throw FormatException(
-      '$error; parsedRanges='
-      '${document.sentences.map((value) => '${value.start}-${value.end}').join(',')}; '
-      'source=${jsonEncode(source)}; parsed=${jsonEncode(parsedSource)}; '
-      'tailTokens=${jsonEncode(tailTokens)}',
-    );
-  }
   final results = <Map<String, dynamic>>[];
   var exactMatches = 0;
   var expectedPathAvailableCount = 0;
   var localMismatchButExpectedPathAvailableCount = 0;
+  var parserHealthy = document.healthy;
+  var originalSentenceCount = 0;
+  var outputSentenceCount = 0;
+  var aiReviewOriginalCount = 0;
+  var emergencyOriginalCount = 0;
   for (var index = 0; index < items.length; index += 1) {
     final item = items[index];
     final range = itemRanges[index];
-    final decisions = plan.originals
-        .where(
-          (decision) =>
-              decision.sourceStart >= range.start &&
-              decision.sourceEnd <= range.end,
-        )
-        .toList(growable: false);
+    final itemSource = item['source'] as String;
+    final itemDocument = _sliceEvaluationDocument(
+      document,
+      start: range.start,
+      end: range.end,
+    );
+    late final ReadAloudSplitPlanV3 plan;
+    try {
+      plan = ReadAloudSplitterV3.plan(
+        source: itemSource,
+        document: itemDocument,
+      );
+    } on FormatException catch (error) {
+      throw FormatException(
+        '$error; item=${item['id']}; source=${jsonEncode(itemSource)}; '
+        'parsedRanges='
+        '${itemDocument.sentences.map((value) => '${value.start}-${value.end}').join(',')}',
+      );
+    }
+    final decisions = plan.originals;
+    parserHealthy = parserHealthy && plan.parserHealthy;
+    originalSentenceCount += plan.originals.length;
+    outputSentenceCount += plan.localSentences.length;
+    aiReviewOriginalCount +=
+        plan.originals.where((value) => value.requiresAiReview).length;
+    emergencyOriginalCount +=
+        plan.originals.where((value) => value.localPath.isEmergency).length;
     final predicted = decisions
         .expand((decision) => decision.localPath.segments)
         .toList(growable: false);
@@ -395,17 +391,58 @@ Future<_BatchEvaluationV3> _evaluateBatch({
   return _BatchEvaluationV3(
     results: results,
     exactMatches: exactMatches,
-    parserHealthy: plan.parserHealthy,
+    parserHealthy: parserHealthy,
     parserVersion: document.parserVersion,
-    originalSentenceCount: plan.originals.length,
-    outputSentenceCount: plan.localSentences.length,
-    aiReviewOriginalCount:
-        plan.originals.where((value) => value.requiresAiReview).length,
-    emergencyOriginalCount:
-        plan.originals.where((value) => value.localPath.isEmergency).length,
+    originalSentenceCount: originalSentenceCount,
+    outputSentenceCount: outputSentenceCount,
+    aiReviewOriginalCount: aiReviewOriginalCount,
+    emergencyOriginalCount: emergencyOriginalCount,
     expectedPathAvailableCount: expectedPathAvailableCount,
     localMismatchButExpectedPathAvailableCount:
         localMismatchButExpectedPathAvailableCount,
+  );
+}
+
+DependencyDocumentV3 _sliceEvaluationDocument(
+  DependencyDocumentV3 document, {
+  required int start,
+  required int end,
+}) {
+  final sentences = document.sentences
+      .where((sentence) => sentence.start >= start && sentence.end <= end)
+      .map(
+        (sentence) => DependencySentenceV3(
+          start: sentence.start - start,
+          end: sentence.end - start,
+          parseCost: sentence.parseCost,
+          parseCostPerToken: sentence.parseCostPerToken,
+          tokens: [
+            for (final token in sentence.tokens)
+              DependencyTokenV3(
+                id: token.id,
+                text: token.text,
+                sourceText: token.sourceText,
+                start: token.start - start,
+                end: token.end - start,
+                upos: token.upos,
+                head: token.head,
+                deprel: token.deprel,
+              ),
+          ],
+        ),
+      )
+      .toList(growable: false);
+  if (sentences.isEmpty) {
+    throw const FormatException(
+      'Native evaluation item contains no parser sentence',
+    );
+  }
+  return DependencyDocumentV3(
+    parserVersion: document.parserVersion,
+    modelSha256: document.modelSha256,
+    sentences: sentences,
+    healthy: document.healthy,
+    issues: document.issues,
   );
 }
 
