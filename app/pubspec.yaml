@@ -69,6 +69,7 @@ dependencies:
 
   # 字体
   google_fonts: ^6.2.1
+  cupertino_icons: ^1.0.8
   just_audio_windows: ^0.2.3
   udpipe_parser_v3:
     path: packages/udpipe_parser_v3
