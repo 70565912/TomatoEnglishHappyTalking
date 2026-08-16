@@ -24,12 +24,13 @@ Realtime V3 AI 对话：
 - 当前客户端使用文本 query 模式：`StartConnection` -> `StartSession` -> `ChatTextQuery` -> `FinishSession` -> `FinishConnection`
 - AI 回复文本交给本地 TTS 2.0 播放
 
-BigASR（仅指火山 ASR Provider 下的具体模型实现）：
+火山 ASR（SAUC 流式上传；模型 ≠ 调用方式）：
 
-- 端点：`wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream`
+- 端点：`wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream`（及实时路径 `.../bigmodel`）。路径名含 `bigmodel` 只是接口路径，**不代表**必须选用 BigASR 模型。
 - 鉴权：`X-Api-Key`、`X-Api-Resource-Id`、`X-Api-Request-Id`、`X-Api-Sequence`
-- 音频格式：WAV PCM 16kHz 16bit mono
-- `StreamingAsrService` 依据 `AppConfig.asrProvider` 分流；本节端点和鉴权只适用于实际选择火山对应模型的请求，不代表通用 ASR 能力层
+- 音频格式：WAV PCM 16kHz 16bit mono（部分场景可按当前模型能力使用原音频容器）
+- 模型由 `AppConfig.volcAsrModel` / 设置页选择：`auto`（优先 SeedASR 2.0）、`seedasr_v2`（SeedASR 2.0）、`bigasr_v1`（BigASR 1.0，可选旧模型）。Resource-Id 分别为 `volc.seedasr.sauc.*` 与 `volc.bigasr.sauc.*`；**计费与开通可能不同**，不要把 BigASR 写成火山 ASR 的默认或统称。
+- `StreamingAsrService` 依据 `AppConfig.asrProvider` 分流；本节端点和鉴权只适用于 `asr_provider=volcengine` 的请求，不代表通用 ASR 能力层
 - 跟读评分由 `RecognitionBasedAssessmentEngine` 基于所选 ASR Provider 返回的识别文本和参考句做 LCS / 覆盖率 / 长度比例启发式计算，不与某个供应商模型绑定
 
 数据库服务：
@@ -40,10 +41,10 @@ BigASR（仅指火山 ASR Provider 下的具体模型实现）：
 
 配置与密钥：
 
-- 语音密钥字段：`volc_speech_api_key`，供 TTS、Realtime 和 BigASR 共用。
+- 语音密钥字段：`volc_speech_api_key`，供 TTS、Realtime 和火山 ASR（SeedASR / 可选 BigASR）共用。
 - 文本生成 provider 由 `ai_provider` 控制，默认 `aliyun_bailian`，可切换 `volcengine`。`TextGenerationService` 使用 `AppConfig.openAiTextConfig` 统一走 OpenAI-compatible Chat Completions。当前平台选择也是图片、TTS、ASR 的分流开关：阿里云走 DashScope/百炼，火山走方舟/火山语音，不自动回退到另一平台。
 - 阿里云百炼配置字段：`aliyun_bailian_api_key`、`aliyun_bailian_base_url`、`aliyun_bailian_api_base_url`、`aliyun_bailian_text_model`、`aliyun_bailian_image_model`、`aliyun_bailian_image_size`、`aliyun_bailian_tts_model`、`aliyun_bailian_tts_voice`、`aliyun_bailian_tts_sample_rate`、`aliyun_bailian_asr_model`、`aliyun_bailian_realtime_asr_model`、`aliyun_bailian_realtime_asr_url`、`aliyun_bailian_music_model`；默认兼容模式 base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，默认 DashScope API base URL 为 `https://dashscope.aliyuncs.com/api/v1`，默认文本模型 `qwen3.7-max`，图片模型 `wan2.7-image-pro`，CosyVoice `cosyvoice-v3-flash` + `loongabby_v3`，ASR `qwen3-asr-flash` / `qwen3-asr-realtime`，音乐模型 `fun-music-v1`。设置页用下拉候选保存模型，阿里云文本模型提供 Max/Plus/Flash 档位；图片模型候选只放当前连续组图链路可用的万相模型。
-- 火山方舟配置字段：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`；火山语音配置字段：`volc_speech_api_key`、`volc_tts_resource_id`、`volc_tts_speaker_id`。火山平台用于可选文本 provider、Seedream 图片生成、Doubao TTS 和 BigASR。设置页用下拉候选保存方舟文本模型，提供高效果/低成本档位；Seedream 图片候选只放当前顺序组图链路可用模型。
+- 火山方舟配置字段：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`；火山语音配置字段：`volc_speech_api_key`、`volc_tts_resource_id`、`volc_tts_speaker_id`、`volc_asr_model`。火山平台用于可选文本 provider、Seedream 图片生成、Doubao TTS 和火山 ASR（默认倾向 SeedASR 2.0）。设置页用下拉候选保存方舟文本模型与 ASR 模型，提供高效果/低成本档位；Seedream 图片候选只放当前顺序组图链路可用模型。
 - 当前代码不再从工作目录 `security/speech-api-key.txt` 或 `security/ark.txt` 自动读取 legacy 明文 key。设置页可保存/清除百炼、方舟和语音 key，返回状态只显示 mask，不返回明文。设置页云服务区域必须保持“凭据 / 平台地址 / 模型与语音”分区，Key 清除按钮并入对应输入行；TTS 声音列表按当前平台切换，阿里云保存 CosyVoice voice，火山保存 Doubao speaker。
 - 绘本图片按当前云平台分流：阿里云百炼使用 DashScope 万相异步组图接口，火山引擎使用方舟 `/api/v3/images/generations` Seedream 组图；不要恢复旧 Visual / AK-SK 图片备用链路，也不要在任一平台失败后自动回退到另一平台。
 - Seedream 组图能力只在成功读取到 `volc_ark_api_key` 且当前平台为火山时启用；万相组图能力只在成功读取到 `aliyun_bailian_api_key` 且当前平台为阿里云时启用。缺少当前平台 key 时应跳过对应图片生成，不调用其它平台图片模型。

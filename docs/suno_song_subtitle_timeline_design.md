@@ -109,8 +109,8 @@ ASR words -> 每个发音片段的大致时间
 
 1. 下载 Suno 音频成功后保存版本元数据。
 2. 计算 `audioHash` 和 `lyricsHash`，先查本地缓存；命中则直接复用时间线。
-3. 用程序目录下的 `ffmpeg.exe` 将音频转为 BigASR 友好的 `wav pcm_s16le 16000Hz mono`。
-4. 按歌词语言选择 ASR `language`（`en-US` / `zh-CN`）；中文歌词且当前平台非火山时直接报错。调用 ASR（火山 BigASR 开启 `show_utterances: true`），读取 `utterances[].words[].start_time/end_time`。
+3. 用程序目录下的 `ffmpeg.exe` 将音频转为火山 ASR 友好的 `wav pcm_s16le 16000Hz mono`（必要时；部分模型可走原音频容器）。
+4. 按歌词语言选择 ASR `language`（`en-US` / `zh-CN`）；中文歌词且当前 `asr_provider` 非火山时直接报错。调用当前火山 ASR 模型（默认倾向 SeedASR；BigASR 为可选旧模型）并开启 `show_utterances: true`，读取 `utterances[].words[].start_time/end_time`。
 5. 对原歌词和 ASR 词流做归一化与模糊发音相似度评分（CJK 按字、拉丁按词）。
 6. 把全部歌词 token 拍平成一条序列，与 ASR 词流做一次**全局单调 DP 对齐**（歌词 token gap 与 ASR 词 gap 分别计费），得到每个歌词 token 的时间锚点。
 7. 把 token 锚点折回每行：按覆盖率与平均相似度算 `confidence`，达到阈值的行取首/尾匹配词时间为 `matched`（缺前后 token 时为 `partial`）；纯括注行只有被完整演唱时才接受，否则退回 boundary。
@@ -132,7 +132,7 @@ ASR words -> 每个发音片段的大致时间
 
 ## ASR 请求建议
 
-现有文档中 BigASR 支持 `show_utterances`，返回分句和词级时间：
+现有火山 ASR 文档支持 `show_utterances`，返回分句和词级时间（SeedASR / BigASR 均走同类 SAUC 能力，以当前 Resource-Id 为准）：
 
 - `docs/大模型流式语音识别API.md`
 - `show_utterances`
@@ -163,7 +163,7 @@ ASR words -> 每个发音片段的大致时间
 }
 ```
 
-`language` 由歌词自动选择：纯英文为 `en-US`，含 CJK 为 `zh-CN`（中文时间轴强制火山 BigASR）。`enable_punc` 对歌词对齐价值不大，v1 可以关闭，减少标点对 token 归一化的干扰。若后续发现英文歌曲识别需要保留标点辅助分句，可以在缓存 key 中加入该选项，避免混用不同识别结果。
+`language` 由歌词自动选择：纯英文为 `en-US`，含 CJK 为 `zh-CN`（中文时间轴强制火山引擎 ASR 词级时间，使用当前 `volc_asr_model`；不要写死为必须 BigASR）。`enable_punc` 对歌词对齐价值不大，v1 可以关闭，减少标点对 token 归一化的干扰。若后续发现英文歌曲识别需要保留标点辅助分句，可以在缓存 key 中加入该选项，避免混用不同识别结果。
 
 ## 归一化规则
 
@@ -343,7 +343,7 @@ ASR 调用会产生费用，必须缓存成功结果。除了最终歌曲 timeli
 
 建议缓存键包含：
 
-- `service: bigasr`（或当前 ASR provider 对应命名）
+- `service`: 历史字段可能仍为 `bigasr`（legacy 命名）；以 `provider`、配置模型与火山 `resourceId` 区分 SeedASR / BigASR，不要把该字段理解成“必须用 BigASR 模型”
 - `purpose: suno_song_subtitle_timeline_v1`
 - `audioHash`
 - `lyricsHash`
@@ -380,7 +380,7 @@ Suno metadata 按当前歌词的 `lyricsHash` / `contentHash` 恢复缓存组；
 
 ## 失败处理
 
-- 没有 BigASR key：歌曲仍可播放，但不显示歌曲同步字幕；提示“未配置语音识别，无法生成歌曲字幕时间线”。
+- 没有语音识别凭据 / 未配置可用 ASR：歌曲仍可播放，但不显示歌曲同步字幕；提示“未配置语音识别，无法生成歌曲字幕时间线”。
 - 中文歌词但当前语音识别供应商为阿里云：直接失败，提示切换到火山引擎后再生成；不调用百炼 ASR。
 - ffmpeg 缺失或转码失败：歌曲仍可播放，timeline 生成失败，提示重新发布程序或补齐 `ffmpeg.exe`。
 - ASR 空结果：不缓存成功结果，可允许用户重试。
@@ -415,7 +415,7 @@ Suno metadata 按当前歌词的 `lyricsHash` / `contentHash` 恢复缓存组；
 ## v1 验收标准
 
 - 已下载 Suno 歌曲首次播放前或播放后可生成 timeline。
-- timeline 命中缓存后二次播放不再调用 BigASR。
+- timeline 命中缓存后二次播放不再调用云端 ASR。
 - 歌曲播放时字幕使用原歌词，不使用 ASR 文本。
 - 有哼唱段时字幕不断档。
 - 局部匹配行可标记 `partial`，并按缺失歌词长度补齐可读时长。

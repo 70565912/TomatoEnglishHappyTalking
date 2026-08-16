@@ -152,7 +152,7 @@ NLP、Flutter 端侧 AI、字幕对齐和内容生成方向的研发人员复现
 | 文本模型受约束句法任务 | 阿里 `qwen3.7-max`（P7）和火山 `DeepSeek V4 Flash`（P8）均连续三轮 30/30；豆包 Lite/Pro 未达到生产门槛，Lite 的 5 种争议路径经人工审核全部判错 | [分句 V3.3 验收](docs/read_aloud_sentence_split_v3_3_implementation_report.md) · [Lite 人工审核](docs/volcengine_doubao_lite_sentence_split_human_review.md) |
 | UDPipe / Stanza / spaCy | 10 个困难主谓 root probe 中 Stanza 10/10、官方 UDPipe 参考模型 8/10、spaCy 7/10；生产 UDPipe 用作软结构证据而非唯一裁判 | [句法器对比评测](docs/parser-comparison-evaluation.md) |
 | 绘本章节规划 Prompt | 四类文章最终 12 次响应结构失败为 0；说明文 scene 数标准差由 2.49 降至 0.47，但措辞和边界仍需人工审核 | [分镜调优报告](docs/picture_book_chapter_plan_scene_split_tuning.md) |
-| 本地字幕对齐 / BigASR | MMS CTC 在英文 3/4 样本上是可替代候选，平均 CPU RTF 约 0.88；长 Suno 难例仍需 BigASR 兜底 | [评测总览](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/README.md) · [Round 1](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary.md) · [Round 2](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary_round2.md) |
+| 本地字幕对齐 / 火山云端时间轴 | MMS CTC 在英文 3/4 样本上是可替代候选，平均 CPU RTF 约 0.88；长 Suno 难例仍需云端时间轴兜底（评测基线曾称 BigASR；现行产品优先 SeedASR） | [评测总览](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/README.md) · [Round 1](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary.md) · [Round 2](docs/archive/ctc_forced_aligner_subtitle_eval_20260801/reports/summary_round2.md) |
 | 真实 ASR 快照回归 | E03/E07/E13/E16 固化缺词、重复词和弱锚点故障，离线复测字幕 DP，不重复调用收费 ASR | [方法与证据索引](docs/testing-and-evaluation.md#5-真实-asr-时间轴快照回归) |
 | Windows/WebView/Bridge QA | App 内 Suno Lexical 键盘输入故障被隔离到 WebView2 链路；`article.list` 从 62,752,595 B 降到 64,485 B | [Suno 隔离报告](docs/suno_lexical_lyrics_editor.md) · [Bridge/Release QA](docs/bridge-payload-release-qa-evaluation.md) |
 

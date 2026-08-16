@@ -1,5 +1,7 @@
 # Volcengine Migration Plan
 
+> 历史迁移记录。文中大量 “BigASR” 指当时的火山识别接入；**现行产品**按 `volc_asr_model` 选择 SeedASR 2.0（推荐/默认倾向）或 BigASR 1.0（可选旧模型）。不要把本文的 BigASR 统称当成当前必须开通的模型。
+
 ## Context
 
 This document records the confirmed migration direction for replacing the current legacy Volcengine TTS integration with the newer Doubao TTS 2.0 API, and tracks adjacent impact on AI chat and pronunciation scoring.

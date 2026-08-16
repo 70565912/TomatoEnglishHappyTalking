@@ -77,7 +77,7 @@ class AppConfig {
   static const _volcTtsResourceId = 'volc_tts_resource_id';
   static const _volcTtsSpeakerId = 'volc_tts_speaker_id';
 
-  // ===== 实时语音与 BigASR =====
+  // ===== 实时语音与火山 ASR（SeedASR / 可选 BigASR）=====
   static const _aiProvider = 'ai_provider';
   static const _asrProvider = 'asr_provider';
   static const _textProvider = 'text_provider';

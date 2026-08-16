@@ -1,20 +1,22 @@
 # 测试与评测报告 / Testing and Evaluation Reports
 
-更新日期：2026-08-09
+更新日期：2026-08-16
 
 本文汇总 Tomato English Happy Talking 仓库中已经形成测试过程、数据或明确结论的技术评测。
 它面向需要选择文本模型、句法器、字幕对齐器或客户端实现方案的研发人员，也为复现结果的
 AI 代理提供统一入口。
 
+> **术语：** 下文历史评测里的 “BigASR” 多指当时用作时间轴基线的火山识别结果。现行产品火山 ASR 按 `volc_asr_model` 选择 **SeedASR 2.0**（推荐/默认倾向）或 **BigASR 1.0**（可选旧模型）；不要把评测基线名当成当前必须开通的模型。
+
 > **English abstract:** This repository publishes reproducible engineering evaluations for constrained
 > LLM sentence segmentation, dependency parsing, picture-book scene planning, offline forced alignment
-> versus Volcengine BigASR, ASR timeline regression, WebView2/Suno failure isolation, GPU rendering, and
+> versus Volcengine cloud ASR timelines (historical baseline often labeled BigASR; current product prefers SeedASR), ASR timeline regression, WebView2/Suno failure isolation, GPU rendering, and
 > typed-bridge payload QA. Results below distinguish direct measurements from proxy evidence and design
 > plans.
 
 检索关键词：LLM syntax benchmark、Qwen 3.7 Max、DeepSeek V4 Flash、Doubao Seed Lite、UDPipe、
 Stanza、spaCy、sentence segmentation、picture-book scene planning、MMS CTC、forced alignment、
-Volcengine BigASR、ASR word timestamps、Flutter、WebView2、Windows Release QA。
+Volcengine SeedASR / BigASR、ASR word timestamps、Flutter、WebView2、Windows Release QA。
 
 ## 如何理解这些结果
 
@@ -33,7 +35,7 @@ Volcengine BigASR、ASR word timestamps、Flutter、WebView2、Windows Release Q
 | 受约束 LLM 分句 | 阿里 `qwen3.7-max`（P7）与火山 `deepseek-v4-flash-ga-260731`（P8）均达到三轮 30/30；豆包 Lite/Pro 未达到生产门槛 | 正式评测 |
 | 端侧依存句法 | 项目 UDPipe EWT 模型的 approved-path 覆盖为 243/243；纯本地精确命中为 207/243，说明依存句法适合生成和约束候选，不应被当作唯一自然度裁判 | 正式评测 |
 | 绘本章节分镜 | 通用局部事实块规则将四篇跨结构样本的最终 12 次响应降至 0 个结构失败，并明显降低说明文场景数波动；语义措辞仍需人工审核 | 正式调优评测 |
-| 离线字幕对齐 | MMS CTC 在 3/4 个英文样本上是可替代候选，平均 CPU RTF 约 0.88；长 Suno 难例仍明显漂移，不能全面替换 BigASR | 正式评测 |
+| 离线字幕对齐 | MMS CTC 在 3/4 个英文样本上是可替代候选，平均 CPU RTF 约 0.88；长 Suno 难例仍明显漂移，不能全面替换当时的火山云端时间轴基线（评测文档称 BigASR；现行产品优先 SeedASR） | 正式评测 |
 | ASR 时间轴回归 | E03/E07/E13/E16 的真实 ASR 快照用于离线复现缺词、重复短语、弱锚点和可选歌词等问题，避免单元测试重复调用收费 ASR | 回归证据 |
 | Suno WebView2 | 主 WebView 和独立弹窗的 Lexical 键盘输入都可导致 Windows App 退出，因此正式流程改为系统浏览器手动创建并回到 App 导入 | 问题隔离 |
 | 视频等待层 GPU | 全屏 blur 与持续动画会放大 WebView2 3D 合成成本；移除部分 blur、把等待动画降为 5fps 后实测可接受，但仓库未保存完整前后数值，不应宣传为定量 benchmark | 问题隔离 |

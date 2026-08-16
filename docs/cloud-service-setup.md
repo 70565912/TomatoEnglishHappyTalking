@@ -8,7 +8,7 @@ Tomato 不提供云账号或 API Key。请只为实际使用的能力配置对�
 | --- | --- | --- |
 | 百炼 Key | 阿里云文本、万相绘本组图、CosyVoice TTS、Qwen-ASR、百聆歌曲 | 使用默认阿里云路径时 |
 | 方舟 Key | 火山方舟文本、Seedream 绘本组图 | 使用火山文本或图片时 |
-| 语音 Key | 豆包 TTS、BigASR、Realtime 对话 | 使用火山语音、跟读识别或对话时 |
+| 语音 Key | 豆包 TTS、火山 ASR（SeedASR / 可选 BigASR）、Realtime 对话 | 使用火山语音、跟读识别或对话时 |
 
 建议第一次使用时只配置百炼 Key，先体验文章导入、绘本和听力；需要火山能力或实时对话时再补充其它 Key。
 

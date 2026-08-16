@@ -258,7 +258,7 @@ class Chat extends _$Chat {
       if (path == null) return;
       final audioBytes = await File(path).readAsBytes();
 
-      // Volc BigASR streaming STT for chat mode.
+      // Volcengine streaming STT for chat mode (current volc_asr_model).
       final userText = await StreamingAsrService.recognizeSafe(
         audioBytes: audioBytes,
         articleId: articleId,

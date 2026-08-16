@@ -105,7 +105,9 @@ class StreamingAsrService {
     defaultValue: false,
   );
 
-  // BigASR SAUC (stream upload) endpoint from docs/大模型流式语音识别API.md.
+  // Volcengine SAUC endpoints (path name contains bigmodel; model is chosen via Resource-Id).
+  // SeedASR uses volc.seedasr.sauc.*; BigASR 1.0 uses volc.bigasr.sauc.* — do not treat
+  // "BigASR" as the name of the whole Volc ASR capability.
   static const _endpoint =
       'wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream';
   static const _liveEndpoint =
@@ -277,7 +279,7 @@ class StreamingAsrService {
             completer.completeError(
               AsrException(
                 AsrFailureType.unknown,
-                packet.errorMessage ?? 'BigASR 返回协议错误',
+                packet.errorMessage ?? '火山语音识别返回协议错误',
               ),
             );
           }
@@ -305,7 +307,7 @@ class StreamingAsrService {
           completer.completeError(
             AsrException(
               AsrFailureType.unknown,
-              'BigASR 连接中断：$error',
+              '火山语音识别连接中断：$error',
             ),
           );
         }
@@ -316,14 +318,14 @@ class StreamingAsrService {
           const Duration(seconds: 20),
           onTimeout: () => throw const AsrException(
             AsrFailureType.timeout,
-            'BigASR 识别超时，请稍后重试',
+            '火山语音识别超时，请稍后重试',
           ),
         );
 
         if (recognized.trim().isEmpty) {
           throw const AsrException(
             AsrFailureType.emptyResult,
-            'BigASR 未返回识别结果，请检查网络或本机语音配置',
+            '火山语音识别未返回结果，请检查网络或本机语音配置',
           );
         }
 
@@ -354,13 +356,13 @@ class StreamingAsrService {
       _trace('websocketError requestId=$requestId error=$e');
       throw AsrException(
         AsrFailureType.connectFailed,
-        'BigASR 连接失败：$e',
+        '火山语音识别连接失败：$e',
       );
     } catch (e) {
       _trace('unknownError requestId=$requestId error=$e');
       throw AsrException(
         AsrFailureType.unknown,
-        'BigASR 识别失败：$e',
+        '火山语音识别失败：$e',
       );
     } finally {
       await socket?.close();
@@ -671,7 +673,7 @@ class StreamingAsrService {
             completer.completeError(
               AsrException(
                 AsrFailureType.unknown,
-                packet.errorMessage ?? 'BigASR 返回协议错误',
+                packet.errorMessage ?? '火山语音识别返回协议错误',
               ),
             );
           }
@@ -689,7 +691,7 @@ class StreamingAsrService {
             completer.completeError(
               const AsrException(
                 AsrFailureType.emptyResult,
-                'BigASR 未返回可用于字幕时间线的识别结果',
+                '火山语音识别未返回可用于字幕时间线的结果',
               ),
             );
             return;
@@ -703,7 +705,7 @@ class StreamingAsrService {
             completer.completeError(
               const AsrException(
                 AsrFailureType.emptyResult,
-                'BigASR 未返回可用于字幕时间线的识别结果',
+                '火山语音识别未返回可用于字幕时间线的结果',
               ),
             );
             return;
@@ -715,7 +717,7 @@ class StreamingAsrService {
           completer.completeError(
             AsrException(
               AsrFailureType.unknown,
-              'BigASR 连接中断：$error',
+              '火山语音识别连接中断：$error',
             ),
           );
         }
@@ -728,13 +730,13 @@ class StreamingAsrService {
           Duration(seconds: timeoutSeconds),
           onTimeout: () => throw const AsrException(
             AsrFailureType.timeout,
-            'BigASR 歌曲字幕识别超时，请稍后重试',
+            '火山歌曲字幕识别超时，请稍后重试',
           ),
         );
         if (result.words.isEmpty) {
           throw const AsrException(
             AsrFailureType.emptyResult,
-            'BigASR 未返回词级时间，无法生成歌曲字幕',
+            '火山语音识别未返回词级时间，无法生成歌曲字幕',
           );
         }
         final enrichedResult = _withTimelineMetadata(
@@ -766,13 +768,13 @@ class StreamingAsrService {
       _trace('timeline websocketError requestId=$requestId error=$e');
       throw AsrException(
         AsrFailureType.connectFailed,
-        'BigASR 连接失败：$e',
+        '火山语音识别连接失败：$e',
       );
     } catch (e) {
       _trace('timeline unknownError requestId=$requestId error=$e');
       throw AsrException(
         AsrFailureType.unknown,
-        'BigASR 歌曲字幕识别失败：$e',
+        '火山歌曲字幕识别失败：$e',
       );
     } finally {
       await socket?.close();
@@ -830,7 +832,7 @@ class StreamingAsrService {
             completer.completeError(
               AsrException(
                 AsrFailureType.unknown,
-                packet.errorMessage ?? 'BigASR 返回协议错误',
+                packet.errorMessage ?? '火山语音识别返回协议错误',
               ),
             );
           }
@@ -860,7 +862,7 @@ class StreamingAsrService {
           completer.completeError(
             AsrException(
               AsrFailureType.unknown,
-              'BigASR 连接中断：$error',
+              '火山语音识别连接中断：$error',
             ),
           );
         }
@@ -898,14 +900,14 @@ class StreamingAsrService {
           const Duration(seconds: 20),
           onTimeout: () => throw const AsrException(
             AsrFailureType.timeout,
-            'BigASR 识别超时，请稍后重试',
+            '火山语音识别超时，请稍后重试',
           ),
         );
 
         if (recognized.trim().isEmpty) {
           throw const AsrException(
             AsrFailureType.emptyResult,
-            'BigASR 未返回识别结果，请检查网络或本机语音配置',
+            '火山语音识别未返回结果，请检查网络或本机语音配置',
           );
         }
 
@@ -922,13 +924,13 @@ class StreamingAsrService {
       _trace('live websocketError requestId=$requestId error=$e');
       throw AsrException(
         AsrFailureType.connectFailed,
-        'BigASR 连接失败：$e',
+        '火山语音识别连接失败：$e',
       );
     } catch (e) {
       _trace('live unknownError requestId=$requestId error=$e');
       throw AsrException(
         AsrFailureType.unknown,
-        'BigASR 识别失败：$e',
+        '火山语音识别失败：$e',
       );
     } finally {
       await socket?.close();
@@ -1354,7 +1356,7 @@ class StreamingAsrService {
 
     throw AsrException(
       AsrFailureType.connectFailed,
-      'BigASR 连接失败，请检查网络、本机语音配置或 ResourceId（${errors.join(' | ')}）',
+      '火山语音识别连接失败，请检查网络、本机语音配置或 ResourceId（${errors.join(' | ')}）',
     );
   }
 
@@ -1498,7 +1500,7 @@ class StreamingAsrService {
         flags: flags,
         payloadMap: payloadMap,
         isTerminal: true,
-        errorMessage: errorMessage ?? 'BigASR 协议错误（$fallback）',
+        errorMessage: errorMessage ?? '火山语音识别协议错误（$fallback）',
       );
     }
 

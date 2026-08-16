@@ -2,6 +2,7 @@
 
 ## 2026-08-16
 
+- **文档纠正：火山 ASR ≠ BigASR**：现行 agent / 配置 / 歌曲字幕文档不再把整条火山识别链路统称为 BigASR。BigASR 1.0（`bigasr_v1`）是可选旧模型；SeedASR 2.0（`seedasr_v2`）为推荐/默认倾向。`auto` 优先 SeedASR。用户可见错误文案改为“火山语音识别”。
 - **发布 v1.6.0**：`app/pubspec.yaml` → `1.6.0+8`。英文朗读分句内部求解器升级为
   `syntax_solver_v3_8`，每个正字句只构建一次不可变事实并执行一次有界 DAG 求解；事实、候选、
   评分和求解收敛到唯一生产链路，持久化协议仍保持 `read_aloud_dp_v3` / `reviewed_dp_v3`。

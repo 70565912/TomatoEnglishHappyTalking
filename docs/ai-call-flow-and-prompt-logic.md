@@ -606,7 +606,7 @@ Suno（系统浏览器）：
 
 - 歌曲字幕正文优先使用 `ArticleSongVersion.submittedLyrics`；没有该字段时才回退文章当前歌词。
 - 只有 `submittedLyrics` 与文章歌词一致时，才复用 `article_sentence_translations` 的中文翻译。
-- BigASR 结果只提供词级时间锚点，不写回文章正文、歌词或字幕正文。
+- 火山 ASR（当前所选模型，如 SeedASR；BigASR 仅为可选旧模型）结果只提供词级时间锚点，不写回文章正文、歌词或字幕正文。
 
 ## TTS 调用逻辑
 
@@ -661,8 +661,8 @@ Suno（系统浏览器）：
 
 文件式识别缓存请求包含：
 
-- service: `bigasr`
-- endpoint: `bigmodel_nostream`
+- service: 历史缓存字段可能仍写作 `bigasr`（legacy 命名，不代表当前必选 BigASR 模型）；实际以 `provider` / `asrModel` / `resourceId` 为准
+- endpoint: `bigmodel_nostream`（接口路径名，不是模型名）
 - audioFormat: wav
 - sampleRate: 16000
 - bits: 16
@@ -675,7 +675,7 @@ Suno（系统浏览器）：
 1. 录音时启动 PCM 16k mono stream。
 2. 实时 ASR 尝试显示当前识别文本。
 3. 停止录音后把 PCM 包成 WAV。
-4. 如果实时识别已有结果，直接评分；否则调用文件式 BigASR。
+4. 如果实时识别已有结果，直接评分；否则调用文件式 ASR（当前 `asr_provider` 与火山时的 `volc_asr_model`）。
 5. 评分结果、最近一次录音和识别文本保存到 `latest_sentence_recordings`。
 6. 重启后同一句可恢复“播放录音”和上次评分。
 

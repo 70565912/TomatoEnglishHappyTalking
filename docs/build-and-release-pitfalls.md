@@ -739,7 +739,7 @@ Remove-Item -LiteralPath 'D:\DevTools\flutter\bin\cache\lockfile' -Force
 
 - App 会先把过长或散文化章节压缩成 12 行歌曲格式，再提交给百炼；实际提交文本记录在歌曲版本的 `submittedLyrics` 中。
 - 如果压缩后仍被拒绝，UI 会显示“阿里云百聆拒绝了当前歌词内容...”，不会自动回退到 Suno，避免用户误以为是另一家 provider 生成的版本。
-- 歌曲字幕时间轴使用 `submittedLyrics`，不要用 BigASR 识别文本覆盖歌词正文。
+- 歌曲字幕时间轴使用 `submittedLyrics`，不要用 ASR 识别文本覆盖歌词正文。
 
 ## Suno Styles 为空且页面反复跳动
 

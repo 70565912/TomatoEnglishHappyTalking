@@ -32,7 +32,7 @@
 
 - WAV 是否为 16kHz 16bit mono PCM。
 - `AppConfig.asrProvider`、所选 ASR 模型和对应凭据是否与预期一致。
-- `StreamingAsrService` 是否通过所选 ASR Provider 拿到非空识别文本；只有实际选择火山对应模型时才按 BigASR 协议排查。
+- `StreamingAsrService` 是否通过所选 ASR Provider 拿到非空识别文本；只有 `asr_provider=volcengine` 时才按火山 SAUC 协议与当前 `volc_asr_model`（SeedASR / BigASR）的 Resource-Id 排查，不要默认写成 BigASR。
 - `RecognitionBasedAssessmentEngine` 是否正确处理空识别、错词、漏读和明确标记的测试 fallback。
 - `just_audio` 播放完毕事件是否正确触发下一步。
 - Provider 的 `isRecording` 状态是否被 UI 正确监听。
