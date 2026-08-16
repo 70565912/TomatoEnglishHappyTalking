@@ -53,8 +53,8 @@ Volcengine BigASR、ASR word timestamps、Flutter、WebView2、Windows Release Q
 ### 方法
 
 1. 端侧 UDPipe 解析和 Dart 求解器先锁定原文句界、30/20 词硬约束及标点优先级。
-2. 243 项金标检查本地精确结果与 approved-path 候选覆盖；另用冻结的 60 项 EWT 留出集验证
-   本地路径，留出集不调用远程模型。
+2. 243 项金标检查本地精确结果与 approved-path 候选覆盖；分句质量与性能以 Alice＋Willows
+   101章全量回放为主，不再使用覆盖过窄且耗时过高的60项 EWT 分句留出集。
 3. 只有包含无标点候选的困难句才进入远程复核。十类通用困难输入以 `temperature=0` 连续测试
    三轮；生产门槛为 path 协议合法率 100%、30/30 approved 且三轮一致。
 4. AI 只能返回 `originalIndex + candidatePathId` 或 `REJECT`。非法 ID、超时或未验收模型一律
@@ -121,7 +121,6 @@ Volcengine BigASR、ASR word timestamps、Flutter、WebView2、Windows Release Q
 | EWT UAS / LAS | 81.16% / 77.81% |
 | 243 金标本地精确命中 | 207/243（85.19%） |
 | 243 金标 approved-path 覆盖 | 243/243 |
-| 冻结本地留出集 | 60/60 |
 
 ### 结论
 

@@ -22,7 +22,8 @@ Accepted packaged model:
 - untouched EWT r2.18 test: word F1 98.96%, sentence F1 85.93%, UPOS 93.99%,
   UAS 81.16%, LAS 77.81%
 - task gates: 243/243 approved-path coverage, 10/10 generic difficult-input
-  coverage, 60/60 frozen EWT holdout
+  coverage, and Alice + Willows full-corpus replay. The historical 60/60 EWT
+  short-sentence holdout is no longer a splitter release gate.
 
 ## Reproducible Windows build and training
 

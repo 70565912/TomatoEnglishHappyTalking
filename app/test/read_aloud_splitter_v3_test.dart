@@ -189,4 +189,170 @@ void main() {
       );
     });
   });
+
+  group('V3.7 one-word post-merge', () {
+    test('merges Willows E21 Home! into the previous chunk', () {
+      const prev =
+          'A moment, and he had caught it again; and with it this time came recollection in fullest flood.';
+      const home = 'Home!';
+      const next =
+          'That was what they meant, those caressing appeals, those soft touches wafted through the air,';
+      final merged = ReadAloudSplitterV3.mergeOneWordChunks(const [
+        prev,
+        home,
+        next,
+      ]);
+      expect(merged, isNot(contains(home)));
+      expect(merged.any((chunk) => chunk.endsWith('flood. Home!')), isTrue);
+      expect(
+        merged.where((chunk) => ReadAloudSplitterV3.wordCount(chunk) == 1),
+        isEmpty,
+      );
+    });
+
+    test('merges Willows E46 Free! into the previous chunk', () {
+      const prev = 'first and best thing of all, that he was free!';
+      const free = 'Free!';
+      const next = 'The word and the thought alone were worth fifty blankets.';
+      final merged = ReadAloudSplitterV3.mergeOneWordChunks(const [
+        prev,
+        free,
+        next,
+      ]);
+      expect(merged, isNot(contains(free)));
+      expect(merged.any((chunk) => chunk.contains('free! Free!')), isTrue);
+      expect(
+        merged.where((chunk) => ReadAloudSplitterV3.wordCount(chunk) == 1),
+        isEmpty,
+      );
+    });
+
+    test('merges Willows E50 No. into the previous chunk', () {
+      const prev = 'Or Kitchener?';
+      const no = 'No.';
+      const next = 'It was Mr. Toad.';
+      final merged = ReadAloudSplitterV3.mergeOneWordChunks(const [
+        prev,
+        no,
+        next,
+      ]);
+      expect(
+          merged,
+          equals(const [
+            'Or Kitchener? No.',
+            'It was Mr. Toad.',
+          ]));
+    });
+
+    test('leading one-word chunk merges into the next chunk', () {
+      expect(
+        ReadAloudSplitterV3.mergeOneWordChunks(const [
+          'Home!',
+          'That was the place.',
+        ]),
+        equals(const ['Home! That was the place.']),
+      );
+    });
+
+    test('consecutive one-word chunks are resolved in the same local window',
+        () {
+      expect(
+        ReadAloudSplitterV3.mergeOneWordChunks(const [
+          'Home!',
+          'No.',
+          'Stop.',
+          'The story continues here.',
+        ]),
+        equals(const [
+          'Home! No. Stop.',
+          'The story continues here.',
+        ]),
+      );
+    });
+
+    test('30-word previous plus Home! merges into the next neighbor', () {
+      final long = '${List.generate(30, (i) => 'w$i').join(' ')}.';
+      expect(ReadAloudSplitterV3.wordCount(long), 30);
+      final merged = ReadAloudSplitterV3.mergeOneWordChunks([
+        long,
+        'Home!',
+        'Next sentence continues here.',
+      ]);
+      expect(
+        merged.where((chunk) => ReadAloudSplitterV3.wordCount(chunk) == 1),
+        isEmpty,
+      );
+      expect(merged, isNot(contains('Home!')));
+      expect(
+        merged.any((chunk) => chunk.startsWith('Home! Next')),
+        isTrue,
+      );
+      expect(merged.first, long);
+    });
+
+    test('window re-split absorbs trailing Home! when there is no next chunk',
+        () {
+      final long = List.generate(30, (i) => 'w$i').join(' ');
+      expect(ReadAloudSplitterV3.wordCount(long), 30);
+      final merged = ReadAloudSplitterV3.mergeOneWordChunks([
+        long,
+        'Home!',
+      ]);
+      expect(
+        merged.where((chunk) => ReadAloudSplitterV3.wordCount(chunk) == 1),
+        isEmpty,
+      );
+      expect(merged, isNot(contains('Home!')));
+      expect(
+        merged.every(
+          (chunk) =>
+              ReadAloudSplitterV3.wordCount(chunk) <=
+              ReadAloudSplitterV3.hardMaxWords,
+        ),
+        isTrue,
+      );
+      expect(
+        merged.map(ReadAloudSplitterV3.wordCount),
+        const [29, 2],
+      );
+      expect(merged.last, endsWith('Home!'));
+    });
+
+    test('tight both-side window keeps no singleton under hard max', () {
+      final left = List.generate(30, (i) => 'L$i').join(' ');
+      final right = List.generate(30, (i) => 'R$i').join(' ');
+      final merged = ReadAloudSplitterV3.mergeOneWordChunks([
+        left,
+        'No.',
+        right,
+      ]);
+      expect(
+        merged.where((chunk) => ReadAloudSplitterV3.wordCount(chunk) == 1),
+        isEmpty,
+      );
+      expect(
+        merged.every(
+          (chunk) =>
+              ReadAloudSplitterV3.wordCount(chunk) <=
+              ReadAloudSplitterV3.hardMaxWords,
+        ),
+        isTrue,
+      );
+      expect(
+        merged.map(ReadAloudSplitterV3.wordCount),
+        const [29, 2, 30],
+      );
+    });
+
+    test('final validation rejects an unmerged singleton in release code', () {
+      expect(
+        () => ReadAloudSplitterV3.validateReviewedSentences(
+          'Before this. Home!',
+          const ['Before this.', 'Home!'],
+          rejectOneWordChunks: true,
+        ),
+        throwsFormatException,
+      );
+    });
+  });
 }

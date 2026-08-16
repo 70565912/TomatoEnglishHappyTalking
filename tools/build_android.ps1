@@ -64,6 +64,8 @@ function Assert-LastExitCode {
 }
 
 Initialize-FlutterGitTrust
+. (Join-Path $PSScriptRoot "flutter_tool_guard.ps1")
+Assert-FlutterToolReady -FlutterRoot $flutterRoot
 
 function Expand-DartDefineValues {
     param(

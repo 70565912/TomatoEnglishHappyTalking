@@ -71,16 +71,23 @@ class ArticleSegmentationServiceV3 {
       plan: plan,
       articleId: articleId,
     );
+    final sentencesBeforePostProcessing =
+        ReadAloudSplitterV3.selectedSentencesBeforePostProcessing(
+      plan,
+      selection.selectedPathIds,
+    );
     final sentences = List<String>.unmodifiable(
-      ReadAloudSplitterV3.applySelectedPathIds(
-        plan,
-        selection.selectedPathIds,
-      ),
+      ReadAloudSplitterV3.mergeOneWordChunks(sentencesBeforePostProcessing),
     );
     ReadAloudSplitterV3.validateReviewedSentences(
       source,
       sentences,
-      requiredBoundaryWordOffsets: _requiredBoundaryOffsets(plan),
+      rejectOneWordChunks: true,
+      requiredBoundaryWordOffsets:
+          ReadAloudSplitterV3.requiredBoundaryWordOffsetsAfterMerge(
+        plan,
+        selection.selectedPathIds,
+      ),
     );
 
     final sourceHash = await _sha256(source);
@@ -119,6 +126,9 @@ class ArticleSegmentationServiceV3 {
                 .toList(growable: false),
           },
       ]),
+      sentencesBeforePostProcessing:
+          List.unmodifiable(sentencesBeforePostProcessing),
+      finalSentences: sentences,
       selectedPaths: Map.unmodifiable(selection.selectedPathIds),
       selectionTrace: List.unmodifiable(selection.selectionTrace),
       aiSource: selection.source.name,
@@ -173,16 +183,6 @@ class ArticleSegmentationServiceV3 {
       selection: selection,
       audit: audit,
     );
-  }
-
-  static List<int> _requiredBoundaryOffsets(ReadAloudSplitPlanV3 plan) {
-    final result = <int>[];
-    var words = 0;
-    for (final original in plan.originals) {
-      words += ReadAloudSplitterV3.wordCount(original.source);
-      result.add(words);
-    }
-    return result;
   }
 
   static List<double> _finiteParseScores(ReadAloudSplitPlanV3 plan) =>

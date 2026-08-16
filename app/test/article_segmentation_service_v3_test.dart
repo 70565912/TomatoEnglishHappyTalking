@@ -23,7 +23,7 @@ void main() {
         ReadAloudPathStageV3.punctuation);
     expect(result.selection.remoteAttempts, 0);
     expect(result.audit.sentenceSplitVersion, 'reviewed_dp_v3');
-    expect(result.audit.solverVersion, 'syntax_solver_v3_6');
+    expect(result.audit.solverVersion, 'syntax_solver_v3_8');
     expect(result.audit.parserHealthy, isTrue);
     expect(result.audit.selectedPaths.values.single, startsWith('v3_o0_r1_'));
   });
@@ -44,6 +44,44 @@ void main() {
         (entry) => entry['parserHealthy'] == false,
       ),
       isTrue,
+    );
+  });
+
+  test('surviving-boundary contract accepts one-word merge across originals',
+      () async {
+    const flood =
+        'A moment, and he had caught it again; and with it this time came recollection in fullest flood.';
+    const home = 'Home!';
+    const next = 'That was what they meant.';
+    const source = '$flood $home $next';
+    final service = ArticleSegmentationServiceV3(
+      parser: _FixedParser(
+        _documentForSentences(source, const [flood, home, next]),
+      ),
+    );
+
+    final result = await service.split(source);
+
+    expect(
+      result.sentences
+          .where((chunk) => ReadAloudSplitterV3.wordCount(chunk) == 1),
+      isEmpty,
+    );
+    expect(
+      result.sentences.any((chunk) => chunk.endsWith('flood. Home!')),
+      isTrue,
+    );
+    expect(
+      () => ReadAloudSplitterV3.validateReviewedSentences(
+        source,
+        result.sentences,
+        requiredBoundaryWordOffsets:
+            ReadAloudSplitterV3.requiredBoundaryWordOffsetsAfterMerge(
+          result.plan,
+          result.selection.selectedPathIds,
+        ),
+      ),
+      returnsNormally,
     );
   });
 }
@@ -90,5 +128,50 @@ DependencyDocumentV3 _documentFor(String source, {required bool healthy}) {
         ],
       ),
     ],
+  );
+}
+
+DependencyDocumentV3 _documentForSentences(
+  String source,
+  List<String> sentences,
+) {
+  final parsed = <DependencySentenceV3>[];
+  var cursor = 0;
+  for (final sentence in sentences) {
+    final start = source.indexOf(sentence, cursor);
+    if (start < 0) {
+      throw StateError('Test sentence not found: $sentence');
+    }
+    final end = start + sentence.length;
+    final tokens = <DependencyTokenV3>[];
+    var id = 0;
+    for (final match in RegExp(r'\S+').allMatches(sentence)) {
+      id += 1;
+      tokens.add(
+        DependencyTokenV3(
+          id: id,
+          text: match.group(0)!,
+          start: start + match.start,
+          end: start + match.end,
+          upos: 'X',
+          head: 0,
+          deprel: 'dep',
+        ),
+      );
+    }
+    parsed.add(
+      DependencySentenceV3(
+        start: start,
+        end: end,
+        tokens: tokens,
+      ),
+    );
+    cursor = end;
+  }
+  return DependencyDocumentV3(
+    parserVersion: 'test-udpipe-1.4.0',
+    modelSha256: 'test-model-sha256',
+    healthy: true,
+    sentences: parsed,
   );
 }

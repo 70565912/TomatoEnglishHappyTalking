@@ -389,13 +389,32 @@ Map<String, dynamic> _chapterReport(
     List<ReadAloudOriginalDecisionV3> decisions,
     List<DependencySentenceV3> parserSentences,
     {bool offsetsAreLocal = false}) {
-  final localSentences = decisions
-      .expand((decision) => decision.localPath.segments)
-      .toList(growable: false);
+  final localSentences = ReadAloudSplitterV3.mergeOneWordChunks(
+    decisions
+        .expand((decision) => decision.localPath.segments)
+        .toList(growable: false),
+  );
+  // Build a minimal plan-shaped offset check via surviving originals ∩ merged.
+  final required = <int>[];
+  var words = 0;
+  for (final decision in decisions) {
+    words += ReadAloudSplitterV3.wordCount(decision.source);
+    required.add(words);
+  }
+  final actual = <int>{};
+  var cumulative = 0;
+  for (final sentence in localSentences) {
+    cumulative += ReadAloudSplitterV3.wordCount(sentence);
+    actual.add(cumulative);
+  }
   ReadAloudSplitterV3.validateReviewedSentences(
     chapter.source,
     localSentences,
-    requiredBoundaryWordOffsets: _requiredOffsets(decisions),
+    rejectOneWordChunks: true,
+    requiredBoundaryWordOffsets: [
+      for (final offset in required)
+        if (actual.contains(offset)) offset,
+    ],
   );
   var over16Unpunctuated = 0;
   var newUnder8Fragments = 0;
@@ -682,14 +701,6 @@ Future<Map<String, Map<String, dynamic>>> _readSourceBundle(File file) async {
     }
   }
   return Map.unmodifiable(output);
-}
-
-List<int> _requiredOffsets(List<ReadAloudOriginalDecisionV3> decisions) {
-  var words = 0;
-  return [
-    for (final decision in decisions)
-      words += ReadAloudSplitterV3.wordCount(decision.source),
-  ];
 }
 
 String _stripLeadingHeadingParagraph(String content) {

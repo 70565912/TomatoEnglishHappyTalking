@@ -1,49 +1,17 @@
 ---
-description: "Use when writing or modifying the root PowerShell build, release, emulator, or run scripts. Covers the fixed Flutter/Android toolchain paths, current artifact names, release directories, and fail-fast script patterns for this project."
-applyTo: "*.ps1"
+description: "Path-specific rules for repository PowerShell build, release, QA, emulator, and maintenance scripts."
+applyTo: "**/*.ps1"
 ---
 
-# PowerShell Tooling 规范
+# PowerShell 工具路径级规则
 
-## 适用范围
+先遵守 `/AGENTS.md`，并阅读 `docs/agent_guides/powershell_tooling_rules.md`；构建或发布脚本还需阅读 `docs/agent_guides/build_and_release_rules.md`。
 
-- `tools/build_windows.ps1`
-- `tools/build_android.ps1`
-- `tools/run_android_debug.ps1`
-- `tools/setup_android_emulator.ps1`
-
-## 固定环境事实
-
-- Flutter SDK 固定在 `D:\DevTools\flutter`
-- Android SDK 固定在 `D:\Android\SDK`
-- Android 用户目录固定在 `D:\Android\.android`
-- AVD 目录固定在 `D:\Android\.android\avd`
-- 默认模拟器名称为 `EnglishRead_API_35`
-- 国内镜像环境需要：
-  - `PUB_HOSTED_URL=https://pub.flutter-io.cn`
-  - `FLUTTER_STORAGE_BASE_URL=https://storage.flutter-io.cn`
-
-## 脚本风格
-
-- 保持 `Set-StrictMode -Version Latest`
-- 保持 `$ErrorActionPreference = "Stop"`
-- 需要检查外部命令退出码时，优先封装 `Assert-LastExitCode`
-- 输出信息保持当前中文风格，阶段标题统一用 `=== 标题 ===`
-- 优先让脚本自行设置 `PATH`、`ANDROID_HOME`、`ANDROID_SDK_ROOT` 等环境，不依赖用户当前终端状态
-
-## 当前产物命名
-
-- Windows 可执行文件：`tomato_english_happy_talking.exe`
-- Windows 发布目录：`release\windows\tomato_english_happy_talking`
-- Android 发布 APK：`release\android\tomato_english_happy_talking-android-release.apk`
-
-## 修改约束
-
-- 修改产物名时，同时更新脚本中的发布目录和旧产物清理逻辑
-- 修改 Android 启动或模拟器脚本时，始终同时设置：
-  - `ANDROID_HOME`
-  - `ANDROID_SDK_ROOT`
-  - `ANDROID_USER_HOME`
-  - `ANDROID_AVD_HOME`
-- 涉及 Windows 构建名变更时，注意清理旧的 `app\build\windows` CMake 缓存，避免继续引用旧 target 名
-- 涉及 Android 调试脚本时，优先复用 `build_android.ps1 -Run`，不要复制一套新的 Flutter 启动逻辑
+- 保持 `Set-StrictMode -Version Latest` 和 `$ErrorActionPreference = 'Stop'`；外部进程必须检查退出码并在失败时停止。
+- 优先复用现有 helper（包括退出码、Flutter lock/cache 预检和环境解析），不要复制第二套构建或启动流程。
+- 脚本应自行解析或配置 `PATH`、Flutter/Android SDK 与 Android 环境变量，不依赖调用者终端状态，也不把单台开发机绝对路径当成项目协议。
+- 保持当前中文输出风格和可定位的阶段信息；日志不得泄露凭据或私有路径。
+- 修改产物名或目录时，同步构建、发布、旧程序文件清理与验证逻辑，但不得清空数据库、缓存、录音、绘本、日志或安全配置等用户运行数据。
+- Web UI 构建继续由既有脚本同步到 `app/assets/web/`；新增依赖时同步 `package.json` 与 lockfile，不提交 `node_modules`。
+- Windows 对外发布使用干净 staging，不直接压缩含运行数据的发布目录。
+- 对路径、进程和删除范围做显式校验；临时文件使用隔离目录并在成功或失败后安全清理。

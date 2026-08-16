@@ -4,7 +4,8 @@ import 'scoring_service.dart';
 import 'streaming_asr_service.dart';
 
 /// Recognition-based pronunciation assessment engine
-/// Uses BigASR for speech recognition, then computes heuristic scoring
+/// Uses the configured ASR provider for speech recognition, then computes
+/// heuristic scoring
 /// based on text matching, coverage, and timing (if available).
 class RecognitionBasedAssessmentEngine implements SpeechAssessmentEngine {
   @override

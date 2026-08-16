@@ -30,7 +30,7 @@ void main() {
       document.modelSha256,
       UdpipeSyntaxParserV3.expectedModelSha256,
     );
-    expect(ReadAloudSplitterV3.solverVersion, 'syntax_solver_v3_6');
+    expect(ReadAloudSplitterV3.solverVersion, 'syntax_solver_v3_7');
     expect(plan.localSentences, expected);
     expect(plan.originals, hasLength(4));
     expect(

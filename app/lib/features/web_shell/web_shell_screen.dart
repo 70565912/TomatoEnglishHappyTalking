@@ -1019,7 +1019,10 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
             englishContent, sentences);
       } else {
         ReadAloudSplitterV3.validateReviewedSentences(
-            englishContent, sentences);
+          englishContent,
+          sentences,
+          rejectOneWordChunks: true,
+        );
       }
       final preparedReviewed = preparedInput?.reviewedSentences;
       if (preparedReviewed != null &&

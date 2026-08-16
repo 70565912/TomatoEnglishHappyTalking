@@ -17,7 +17,8 @@ The accepted model is `english-ewt-r2.18-udpipe-v1.4.0.model`, SHA-256
 On the untouched EWT r2.18 test split its raw-text evaluation is word F1
 98.96%, sentence F1 85.93%, UPOS 93.99%, UAS 81.16% and LAS 77.81%.
 Task-level acceptance is solver-versioned. The V3.6 fixed-validator suite accepts
-all 243 fixture constraints, and the V3.6 frozen 60-case holdout is 60/60; one
+all 243 fixture constraints; the historical V3.6 frozen 60-case short-sentence
+holdout was 60/60 but is no longer a splitter release gate; one
 17-word quotation is deliberately split 7/10 under the current length policy.
 The 2026-08-11 native UDPipe evaluation processed all 243 items with a healthy
 parser and no test failure: exact preferred-output match was 71/243 (29.218%),

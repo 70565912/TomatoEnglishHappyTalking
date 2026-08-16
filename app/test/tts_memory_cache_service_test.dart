@@ -118,6 +118,90 @@ void main() {
     expect(srt, isNot(contains('<b>')));
   });
 
+  test('QuPeiYin SRT absorbs a trailing one-word cue only into its neighbor',
+      () {
+    final generic = RecordingExportUtils.srtForCues([
+      const RecordingSubtitleCue(
+        startMs: 0,
+        endMs: 2000,
+        english: 'The doors burst open.',
+        chinese: '门猛地打开。',
+      ),
+      const RecordingSubtitleCue(
+        startMs: 2100,
+        endMs: 2900,
+        english: 'Free!',
+        chinese: '自由！',
+      ),
+      const RecordingSubtitleCue(
+        startMs: 3000,
+        endMs: 5000,
+        english: 'The friends ran home.',
+        chinese: '朋友们跑回了家。',
+      ),
+    ]);
+    final quPeiYin = RecordingExportUtils.srtForQuPeiYinCues([
+      const RecordingSubtitleCue(
+        startMs: 0,
+        endMs: 2000,
+        english: 'The doors burst open.',
+        chinese: '门猛地打开。',
+      ),
+      const RecordingSubtitleCue(
+        startMs: 2100,
+        endMs: 2900,
+        english: 'Free!',
+        chinese: '自由！',
+      ),
+      const RecordingSubtitleCue(
+        startMs: 3000,
+        endMs: 5000,
+        english: 'The friends ran home.',
+        chinese: '朋友们跑回了家。',
+      ),
+    ]);
+
+    expect(generic, contains('2\r\n00:00:02,100 --> 00:00:02,900'));
+    expect(quPeiYin, contains('1\r\n00:00:00,000 --> 00:00:02,900'));
+    expect(quPeiYin, contains('The doors burst open. Free!\r\n门猛地打开。自由！'));
+    expect(quPeiYin, contains('2\r\n00:00:03,000 --> 00:00:05,000'));
+    expect(quPeiYin, isNot(contains('\r\nFree!\r\n')));
+  });
+
+  test('QuPeiYin SRT uses the next cue when the previous cue has 30 words', () {
+    final thirtyWords = List.generate(30, (index) => 'w$index').join(' ');
+    final srt = RecordingExportUtils.srtForQuPeiYinCues([
+      RecordingSubtitleCue(
+        startMs: 0,
+        endMs: 3000,
+        english: thirtyWords,
+        chinese: '前句。',
+      ),
+      const RecordingSubtitleCue(
+        startMs: 3100,
+        endMs: 3800,
+        english: 'No.',
+        chinese: '不。',
+      ),
+      const RecordingSubtitleCue(
+        startMs: 3900,
+        endMs: 5200,
+        english: 'They turned back.',
+        chinese: '他们转身返回。',
+      ),
+      const RecordingSubtitleCue(
+        startMs: 5300,
+        endMs: 6500,
+        english: 'Nothing else moved.',
+        chinese: '再没有东西移动。',
+      ),
+    ]);
+
+    expect(srt, contains('2\r\n00:00:03,100 --> 00:00:05,200'));
+    expect(srt, contains('No. They turned back.\r\n不。他们转身返回。'));
+    expect(srt, contains('3\r\n00:00:05,300 --> 00:00:06,500'));
+  });
+
   test('recording output basename distinguishes listening and song exports',
       () {
     final listeningBaseName = RecordingExportService.outputBaseNameForTest(

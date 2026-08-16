@@ -244,6 +244,11 @@ void main() {
         );
         expect(parserHealthy, isTrue);
         expect(outputSentenceCount, greaterThan(0));
+        expect(
+          expectedPathAvailableCount,
+          items.length,
+          reason: 'every retained gold item must expose an approved path',
+        );
       } finally {
         await temp.delete(recursive: true);
       }
@@ -358,6 +363,9 @@ Future<_BatchEvaluationV3> _evaluateBatch({
               'parseCost': decision.parseCost,
               'parseCostPerToken': decision.parseCostPerToken,
               'localPathId': decision.localPathId,
+              'boundaryCandidates': decision.boundaryCandidates
+                  .map((boundary) => boundary.toJson())
+                  .toList(growable: false),
               'candidatePaths': decision.candidatePaths
                   .map(
                     (path) => {

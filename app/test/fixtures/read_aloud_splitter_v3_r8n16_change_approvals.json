@@ -1,0 +1,280 @@
+{
+  "schemaVersion": "read_aloud_splitter_change_approvals_v1",
+  "baselineCommit": "d1b42730d46d0eaac2e738a02dc257700c37ce79",
+  "candidateCommit": "2d631e9d4fadbb2818fba3cfa2fd4b9409ca2d19",
+  "expectedPairCount": 5,
+  "expectedChapterCount": 101,
+  "approvalCount": 27,
+  "approvals": [
+    {
+      "book": "Alice",
+      "episode": "E16",
+      "originalIndex": 40,
+      "sourceSha256": "b703738b98dbaec39e13b3d6aa4ed2690558f5c8be5916263c5f9182f4447baa",
+      "baselineSegmentsSha256": "cc5204c4cc7394ae4201ced5cb90daf7c4fb045d128d712e8f31d1bd0da585e8",
+      "candidateSegmentsSha256": "bff34370cf477091436da5ba71d88b3485f32ad3ad37585f9b727432cffb73e9",
+      "decision": "supported",
+      "reason": "attribution_and_following_clause_punctuation"
+    },
+    {
+      "book": "Alice",
+      "episode": "E27",
+      "originalIndex": 21,
+      "sourceSha256": "c850d73d6da8414e0a58c472ebfcec63be68a32de622c6292d6c1663ed44d7ff",
+      "baselineSegmentsSha256": "3051b0d06e61e465a4a6c808ca5bac8216152263c73e6d918c51cf02d3c3182b",
+      "candidateSegmentsSha256": "1d7fb1266b7747312a7626f594ed8bdc1d5c6d6bfc0ac0101ad8e8bfd0287f1f",
+      "decision": "supported",
+      "reason": "punctuation_and_clause_balance"
+    },
+    {
+      "book": "Alice",
+      "episode": "E35",
+      "originalIndex": 7,
+      "sourceSha256": "b1f63bc598ce8c133c03efa94da6a4ddeadd8c839a063f86da934dca7d890a56",
+      "baselineSegmentsSha256": "5ac0845112cffa54572e49123b584f8003af0c53ffa9194e64c7668b92d17d19",
+      "candidateSegmentsSha256": "edddeff52ccb2f961577976d53329821652ab2d951362a122d3cbccc521682ef",
+      "decision": "supported",
+      "reason": "introductory_phrase_comma_integrity"
+    },
+    {
+      "book": "Alice",
+      "episode": "E35",
+      "originalIndex": 11,
+      "sourceSha256": "c5e2362bdb48dfc95296970b07583349b263bfbd0708a467f925b58e76bdf99b",
+      "baselineSegmentsSha256": "2d72001676b583c012b69f38a3d74ff9ed57e1ab7e89f78e1d865ce5d2724019",
+      "candidateSegmentsSha256": "39c87133c90fb3c54689797661fd5c917c7c605d897c7e53d7e278d90a2ee64e",
+      "decision": "supported",
+      "reason": "supplemental_phrase_boundary"
+    },
+    {
+      "book": "Alice",
+      "episode": "E41",
+      "originalIndex": 16,
+      "sourceSha256": "4cac2c685bae3fec98f89d4aca81c679329acde8f28fc51fc1901b4510655959",
+      "baselineSegmentsSha256": "53831c6011cb5ee686cd3abbfafd7b899fb16bf7109ba249deed3803ec909020",
+      "candidateSegmentsSha256": "fd6b1d439f87005b09d4b7e93a722f20eb7dfd7ccaa477d988cf1b4dc30e93af",
+      "decision": "supported",
+      "reason": "coordinated_subject_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E01",
+      "originalIndex": 8,
+      "sourceSha256": "bf32b220da0743709252be40af096cf1e1251f376dda5078d7eb40cb18ac4cb2",
+      "baselineSegmentsSha256": "584382abbf64bf9dd80152f35e3e44a5ca224f08fe717be679257f7f35f7f93e",
+      "candidateSegmentsSha256": "613cd0066874fa050350515eca3458ce1474f6ce23abf3687e8a17eae6dc4c6e",
+      "decision": "supported",
+      "reason": "over_20_subject_predicate_boundary"
+    },
+    {
+      "book": "Willows",
+      "episode": "E01",
+      "originalIndex": 25,
+      "sourceSha256": "bae21057ad6170dce2d58fe96dacbf1bc9b8344f5b78caa6253ec98977abfc0a",
+      "baselineSegmentsSha256": "f6fa856036e4ee3ef3f1a2e1999890ce292995140b712ca0fa768e013adf5225",
+      "candidateSegmentsSha256": "31f942a2480c4bcce7477bc016875a9e0566c9b96aa289fb68b20663520e3d9e",
+      "decision": "supported",
+      "reason": "adjective_nominal_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E05",
+      "originalIndex": 34,
+      "sourceSha256": "64fca07a2498d32b599f505b78bcd48fbb5c3a12e7137d72d907c902536bc2bf",
+      "baselineSegmentsSha256": "68c7b360f36ac15f3b5d0e0414295895be10de09c7bb6d1b0a95f04cd3fd96d8",
+      "candidateSegmentsSha256": "8f1ce9286bd76ee920825bca30ad6dff94fd36b817708aff01cf0f88b4cdb45d",
+      "decision": "supported",
+      "reason": "supplemental_prepositional_phrase"
+    },
+    {
+      "book": "Willows",
+      "episode": "E08",
+      "originalIndex": 15,
+      "sourceSha256": "0fcd24ff320d0901f009b458936fb48969c6f21f08f8602ed27ff6998b852b32",
+      "baselineSegmentsSha256": "32e0c5cc232982c2795e03c4ce75be6221872bd2c0b0923c047266ba85bf33d3",
+      "candidateSegmentsSha256": "86b03fe1549c63ce14579fcd117d0ccc234c6846f52263860901062e27a67ed4",
+      "decision": "supported",
+      "reason": "coordinated_predicate_boundary"
+    },
+    {
+      "book": "Willows",
+      "episode": "E14",
+      "originalIndex": 18,
+      "sourceSha256": "00d3032cbe906cd9df8424f48ed0b125aa2151c1e7b5ae32020b640e37197047",
+      "baselineSegmentsSha256": "5fd3fdaceb525681b64bd47a4bcc0b527385a4cd66d17c00e5445f786d1cba81",
+      "candidateSegmentsSha256": "34c7ddf186c31ed05d1ea944225c63faa1343a5b644e253440070f9f81af48db",
+      "decision": "supported",
+      "reason": "source_punctuation_preferred"
+    },
+    {
+      "book": "Willows",
+      "episode": "E16",
+      "originalIndex": 23,
+      "sourceSha256": "8a7b54676007bd83eaaa709fc421335aca93a9f900b460b7349208cdf9a46878",
+      "baselineSegmentsSha256": "1a94b2bf7e89b86064fb89f149431f36d6d8f40cc467034ce8cd9b051c05c6a0",
+      "candidateSegmentsSha256": "5afd0420780999fc88f18361aaaba72d14d669858864499bc8f626a8cdba125a",
+      "decision": "supported",
+      "reason": "over_20_supplemental_phrase"
+    },
+    {
+      "book": "Willows",
+      "episode": "E20",
+      "originalIndex": 17,
+      "sourceSha256": "d66a6d542511bceb56c5f8dcc3285bc2d4a1ee0c5ec0e043cfadfcd28bc34747",
+      "baselineSegmentsSha256": "5c79edb2fe527b1decf8a520e8b99ddd0bb0e4da85e6fddb5814882b2575f8a6",
+      "candidateSegmentsSha256": "d23b81c3336eb6a478e999182e938d31f52e2752bdcbccbd3fca82b0434dc347",
+      "decision": "supported",
+      "reason": "source_punctuation_preferred"
+    },
+    {
+      "book": "Willows",
+      "episode": "E24",
+      "originalIndex": 4,
+      "sourceSha256": "a9882be09b944288689dd541f7d23b69f15f09e4d170ce9319aa13b3415364da",
+      "baselineSegmentsSha256": "7b3ccb5fa6b586d328df8dad0e6d030b2c797515aeca55ca7401e43e36f445b2",
+      "candidateSegmentsSha256": "51ed3c6efa24b3c55b1b57aa8a2500a2e1934234e33c3b6e78aac526af84b3a9",
+      "decision": "supported",
+      "reason": "quote_attribution_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E26",
+      "originalIndex": 20,
+      "sourceSha256": "20aa84246db1baf592f7ffaa1332a693203fe543ccc826899a7e974858815687",
+      "baselineSegmentsSha256": "332d2bbdf77a3b184a8e04c44405de1055a852ebcb0175230f6efff92a93170a",
+      "candidateSegmentsSha256": "30ea905d7d0d3405abb98667100041289831eedd159433af765847d6fcf1d74f",
+      "decision": "supported",
+      "reason": "coordinated_object_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E30",
+      "originalIndex": 21,
+      "sourceSha256": "ebf9687a100cb59306f6afbb146c57194509fe0ff102a7125cf908dfa8eeff71",
+      "baselineSegmentsSha256": "9517085443ea61d3183b2ebcecdc506417c481f53f4d4afd2c0bbb52ede7262b",
+      "candidateSegmentsSha256": "4a42edce3d5f56427eec2eed6527c0350cf5f96dd38779b5ca75f8d5158afa03",
+      "decision": "supported",
+      "reason": "over_20_predicate_locative_boundary"
+    },
+    {
+      "book": "Willows",
+      "episode": "E33",
+      "originalIndex": 6,
+      "sourceSha256": "0a92f5f8e9967a7be5086ce2e8158a0fb1d88bcee1a701a3409cc4ef2947dbc1",
+      "baselineSegmentsSha256": "1e64f4321d052e43b1bcdc56c54cdf086a7e0d8203de2ca906563904d23a1af4",
+      "candidateSegmentsSha256": "9f7c189c54e86d75cc374b37da7b6992d780c7c325b81533837ba146bbf0950b",
+      "decision": "supported",
+      "reason": "introductory_phrase_punctuation"
+    },
+    {
+      "book": "Willows",
+      "episode": "E33",
+      "originalIndex": 7,
+      "sourceSha256": "49a6639a9109ede0ddc3bad02e50ca93d6b9f1f32596d4913db01a66aa188fa4",
+      "baselineSegmentsSha256": "24c625b91c2c985651d147f0e964776035ea35d66d43d4194deed461b8601aee",
+      "candidateSegmentsSha256": "222d1cdf1aa526d8e4858c494ace5e980c4905e367ab5ac930b2959da6c3a7a2",
+      "decision": "supported",
+      "reason": "reduced_relative_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E34",
+      "originalIndex": 15,
+      "sourceSha256": "14c870dbb634f1e31f8a789f5a4f501b59a77118fc5a9ba754b8abfc9217c80f",
+      "baselineSegmentsSha256": "7d239df1235d776b5769ad3caa969ba1b6bd75b0f0e8e0cd3fa1fef530e0fe01",
+      "candidateSegmentsSha256": "911c3dd3f554efdbe9e4f450867fdf5c07badfc7a4349554bd7d771293475e3a",
+      "decision": "supported",
+      "reason": "source_comma_phrase_boundary"
+    },
+    {
+      "book": "Willows",
+      "episode": "E35",
+      "originalIndex": 17,
+      "sourceSha256": "ef73104109530ccfff69c91476b879bac294fc42fa7a2f1603a1ef7166885a32",
+      "baselineSegmentsSha256": "a4a96240677ff1905929eb700d70250f93398aab2d367244d838354069cae7a2",
+      "candidateSegmentsSha256": "48133861fb0ebf9d27fec4fea301b45fff8384870222ff2dcc96518299a47c55",
+      "decision": "supported",
+      "reason": "complete_clause_before_supplement"
+    },
+    {
+      "book": "Willows",
+      "episode": "E37",
+      "originalIndex": 5,
+      "sourceSha256": "654d2be25d46dbfffe4d3238c9b77bdf5ed98f62e709217ccdf80b69f5c5601e",
+      "baselineSegmentsSha256": "22eae200fa10b068e8d88a15a9fe94657185b57b7c119bf6a0c0f48ecc52fc73",
+      "candidateSegmentsSha256": "684cbaad4a5702de50f5fac1df75ee2b0bf421d84ed5a2bdcaa4f6177be11ea4",
+      "decision": "supported",
+      "reason": "over_20_comparative_adverbial_boundary"
+    },
+    {
+      "book": "Willows",
+      "episode": "E38",
+      "originalIndex": 28,
+      "sourceSha256": "b32a51afb5353deeece90669de8c5cfbb9d68a8a77265687dc14f75019385bae",
+      "baselineSegmentsSha256": "a4d8f9553c3fc3e58d41bbded0aa11448ea848199ee86779a04b80bd1d425962",
+      "candidateSegmentsSha256": "f65e8b4ca36a4c9d0aa95277f21d6a32bf60987a1b3e6b83b380836fab8ff993",
+      "decision": "supported",
+      "reason": "coordinated_subject_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E40",
+      "originalIndex": 25,
+      "sourceSha256": "bb79b4d3b15a4ee13269f5778e3566a988bc122d255d8683a3102ba5d8487df3",
+      "baselineSegmentsSha256": "66a513c0d28070f9a07a2150b4e58a53e21b70da2a7b013797ff73ada47c17f9",
+      "candidateSegmentsSha256": "7ad16039a33e09e24578afeba65dd489af3cfc14188ab4ddd27b93ea18045df7",
+      "decision": "supported",
+      "reason": "coordinated_object_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E48",
+      "originalIndex": 24,
+      "sourceSha256": "d53a325348d2de8a82c05bd3066bbe56cf5f950c7660410eaed60d0caa8a1454",
+      "baselineSegmentsSha256": "19cfb5a2a4bc0a10596600cddc235d4bf8f2134f1a322bd15c3c6d37b8f78abb",
+      "candidateSegmentsSha256": "15bb6cffc75943fdc764348d83e4343c1a24d990d2f5f95cf6f251b861007317",
+      "decision": "supported",
+      "reason": "adjective_head_integrity_and_relative_front"
+    },
+    {
+      "book": "Willows",
+      "episode": "E52",
+      "originalIndex": 3,
+      "sourceSha256": "2cf3521bdb421740e29f996638fc3d2791efdc7b3781d034c384e471934fc7d9",
+      "baselineSegmentsSha256": "e4ede738fe0b49d17808e3627cb05e3d250ea6c6806f06cec14fe87c2bce3360",
+      "candidateSegmentsSha256": "4c134cbeaa5d34802800f062873c1c6f317d37040bf7f558c7f22e72bb66609e",
+      "decision": "supported",
+      "reason": "adjective_list_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E57",
+      "originalIndex": 18,
+      "sourceSha256": "4bb36e69488802930286c5b4f10c41e86a5f92738de46ccd429d356efce96a07",
+      "baselineSegmentsSha256": "32045162d229b073722cd4a342042a96498d7ee49503e7016e3bb201f2743ed7",
+      "candidateSegmentsSha256": "ae3120f2ece5649f6dccb1106895e75471c546b2b368e4c9e7cc4fb2528ab6aa",
+      "decision": "supported",
+      "reason": "supplemental_prepositional_comma"
+    },
+    {
+      "book": "Willows",
+      "episode": "E58",
+      "originalIndex": 28,
+      "sourceSha256": "b65833cd12370354358f4bfa4bf6154d41ae74585eee572b91ee6e12ffe0c0a0",
+      "baselineSegmentsSha256": "a4de4afef789a7ce6c46d31e152273db60a014cd7f4c34a113e7eb7cbff30d42",
+      "candidateSegmentsSha256": "8c86e8c32154632c669e709c7aed8cee454d05c8b133280686da8fb8726a21bd",
+      "decision": "supported",
+      "reason": "introductory_clause_and_relative_integrity"
+    },
+    {
+      "book": "Willows",
+      "episode": "E62",
+      "originalIndex": 13,
+      "sourceSha256": "720d7dba55f081a7957fd50b581fc753a394ffbf3084842cb7329a88772feda8",
+      "baselineSegmentsSha256": "1762d6f46662f6fc2112e48980d8aeb734043e82e8292dfffa838f06eda20d22",
+      "candidateSegmentsSha256": "1bd30032f520b0070f6248aba494b0cd5e8e93ad4b169c226154eac8fba78d1c",
+      "decision": "supported",
+      "reason": "subject_predicate_integrity"
+    }
+  ]
+}

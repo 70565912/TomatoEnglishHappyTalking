@@ -99,7 +99,7 @@ void main() {
     final payload = jsonDecode((messages.last as Map)['content'] as String)
         as Map<String, dynamic>;
     final original = (payload['originals'] as List).single as Map;
-    expect(original['minimumBoundaryCount'], greaterThan(0));
+    expect(original['minimumBoundaryCount'], 0);
     final candidate = (original['candidatePaths'] as List).first as Map;
     expect(candidate, contains('isMinimumBoundaryCount'));
     expect(candidate, contains('shortFragmentCount'));

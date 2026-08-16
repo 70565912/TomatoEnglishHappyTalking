@@ -98,6 +98,72 @@ class RecordingExportUtils {
     return buffer.toString();
   }
 
+  /// Listening SRT is the QuPeiYin-compatible export. Old persisted articles
+  /// may still contain a one-English-word cue even though V3.7 no longer
+  /// creates one. Absorb only that cue and one adjacent cue; never reflow the
+  /// remaining timeline or change the generic/song SRT writer.
+  static String srtForQuPeiYinCues(List<RecordingSubtitleCue> cues) =>
+      srtForCues(_mergeOneWordQuPeiYinCues(cues));
+
+  static List<RecordingSubtitleCue> _mergeOneWordQuPeiYinCues(
+    List<RecordingSubtitleCue> cues,
+  ) {
+    final result = <RecordingSubtitleCue>[];
+    var index = 0;
+    while (index < cues.length) {
+      final cue = cues[index];
+      if (_spaceDelimitedEnglishWordCount(cue.english) != 1) {
+        result.add(cue);
+        index += 1;
+        continue;
+      }
+
+      if (result.isNotEmpty &&
+          _spaceDelimitedEnglishWordCount(result.last.english) < 30) {
+        final previous = result.removeLast();
+        result.add(_mergeCues(previous, cue));
+        index += 1;
+        continue;
+      }
+
+      if (index + 1 < cues.length &&
+          _spaceDelimitedEnglishWordCount(cues[index + 1].english) < 30) {
+        result.add(_mergeCues(cue, cues[index + 1]));
+        index += 2;
+        continue;
+      }
+
+      // A legacy 30/1/30 window has no word-level timestamps or translation
+      // alignment from which to manufacture a safe 29/2 cue. Keep it intact;
+      // the formal V3.7 splitter handles that case when the article is rebuilt.
+      result.add(cue);
+      index += 1;
+    }
+    return List.unmodifiable(result);
+  }
+
+  static RecordingSubtitleCue _mergeCues(
+    RecordingSubtitleCue left,
+    RecordingSubtitleCue right,
+  ) =>
+      RecordingSubtitleCue(
+        startMs: math.min(left.startMs, right.startMs),
+        endMs: math.max(left.endMs, right.endMs),
+        english: _joinEnglish(left.english, right.english),
+        chinese: _joinChinese(left.chinese, right.chinese),
+      );
+
+  static int _spaceDelimitedEnglishWordCount(String text) {
+    final cleaned = cleanSubtitleText(text);
+    return cleaned.isEmpty ? 0 : cleaned.split(' ').length;
+  }
+
+  static String _joinEnglish(String left, String right) =>
+      '${cleanSubtitleText(left)} ${cleanSubtitleText(right)}'.trim();
+
+  static String _joinChinese(String left, String right) =>
+      '${cleanSubtitleText(left)}${cleanSubtitleText(right)}';
+
   static String formatSrtTime(int ms) {
     final duration = Duration(milliseconds: math.max(0, ms));
     final hours = duration.inHours;

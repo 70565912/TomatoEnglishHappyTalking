@@ -21,6 +21,29 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
+## Latest update · English read-aloud chunking V3.8 (2026-08-16)
+
+Tomato's English read-aloud chunker for TTS, subtitles, listening navigation, and shadowing now builds one
+immutable fact set and runs one bounded DAG solve per orthographic sentence. Its internal solver is now
+`syntax_solver_v3_8`.
+
+- The fixed corpus gate covers 101 chapters—39 from Alice and 62 from Willows—and 2,927 orthographic
+  sentences. All 27 source sentences changed from the latest accepted baseline passed the unified
+  specification audit, with 0 unsupported and 0 unclassified changes.
+- The final run produced 7,967 read-aloud chunks with 0 source round-trip failures, 0 chunks over 30 words,
+  and a longest chunk of 27 words. On the 243-item native Windows evaluation, an approved path was reachable
+  for 243/243 items, the parser remained healthy, and no item fell back to the emergency original sentence.
+- In alternating AOT replays on the same machine and frozen inputs, median end-to-end time for three
+  representative chapters fell by about 70%–92% versus the pre-refactor implementation. Facts, candidates,
+  scoring, and solving now share one production pipeline.
+
+> Published articles keep their persisted sentence slots and are not automatically resegmented. The new
+> solver applies only to newly created articles or an explicit user rebuild.
+
+[Read the full production-integration and validation report](docs/archive/read_aloud_splitter_v4_production_integration_20260816.md) ·
+[Read the unified read-aloud chunking specification](docs/read_aloud_sentence_split_spec.md) ·
+[Browse all tests and evaluations](docs/testing-and-evaluation.md)
+
 ## From an article to complete learning material
 
 ![Tomato four-step workflow](docs/readme/workflow.webp)

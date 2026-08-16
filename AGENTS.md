@@ -1,672 +1,211 @@
-# Tomato English Happy Talking Agent Guide
+# Tomato English Happy Talking — Agent Guide
 
-本文件由 `.github` 下的 Copilot 指令、agent、instructions 和 prompts 转写而来，作为本仓库 AI 代理的统一工作说明。
+本文件是本仓库 AI Coding Agent 的全局 source of truth。它只记录每次开发都应遵守的工作方式、架构边界、产品不变量、验证要求和文档入口；具体功能、供应商协议和本机环境细节放在 `docs/`，按任务读取。
 
-## 项目概述
+**Working code only. Plausibility is not correctness.**
 
-「Tomato English Happy Talking」是一个 Flutter 独立 App，无后端服务器，支持 Windows EXE 和 Android APK 双平台。
+## 1. 指令与事实优先级
 
-App 直接调用云 API（REST / WebSocket），不依赖本地后端：
+发生冲突时按以下顺序处理：
 
-- 火山引擎 Doubao TTS 2.0：英文语音合成
-- 火山引擎 Realtime V3：AI 对话文本 query / 会话协议
-- 火山引擎 BigASR：聊天语音识别与跟读识别
-- 本地 BigASR 识别驱动评分：替代 Azure Pronunciation Assessment
+1. 用户当前明确要求；
+2. 本文件；
+3. 与目标路径匹配的 `.github/instructions/*.md`；
+4. 当前代码、测试、配置和实际运行行为；
+5. `docs/` 中标记为当前的设计或专项文档；
+6. 历史文档、archive、旧 prompt 和旧注释。
 
-## 当前项目标识
+路径级 instructions 只能补充本文件，不应复制或改写全局规则。发现冲突时先核对当前实现并指出冲突，不要盲从旧文档。不要因为某个 API、模型、Provider、路径或架构曾在仓库中出现，就假设它仍然有效。
 
-- Flutter 包名：`tomato_english_happy_talking`
-- 应用显示名：`Tomato English Happy Talking`
-- Android package / namespace：`com.example.tomato_english_happy_talking`
-- Windows 可执行文件名：`tomato_english_happy_talking.exe`
+## 2. 项目与架构
 
-## 技术栈
-
-- 框架：Flutter 3.41.9 stable，SDK 位于 `D:\DevTools\flutter`
-- 语言：Dart，严格空安全
-- 状态管理：`flutter_riverpod` + `riverpod_annotation` 代码生成风格
-- 路由：`go_router`
-- WebView 壳：`flutter_inappwebview`
-- Web UI：React + Vite + TypeScript，源码在 `web_ui/`
-- HTTP：`dio`
-- 本地数据库：`sqflite` + `path`
-- 安全存储：`flutter_secure_storage`
-- 音频播放：`just_audio`
-- 录音：`record`
-- 波形可视化：`audio_waveforms`
-- 动画/虚拟形象：Web UI CSS 状态动画为主，`rive` / `lottie` 原生依赖保留
-- UI 动效：`flutter_animate`
-- 字体：`google_fonts`，统一使用 Nunito
-
-## 本地工具链与环境
-
-- Flutter SDK：`D:\DevTools\flutter`
-- Android SDK：`D:\Android\SDK`
-- Android 用户目录：`D:\Android\.android`
-- AVD 目录：`D:\Android\.android\avd`
-- 默认模拟器：`EnglishRead_API_35`
-- Windows WebView：需要 Microsoft Edge WebView2 Runtime
-
-默认网络环境需要设置：
-
-```powershell
-$env:PUB_HOSTED_URL = "https://pub.flutter-io.cn"
-$env:FLUTTER_STORAGE_BASE_URL = "https://storage.flutter-io.cn"
-```
-
-每个新终端如需直接调用 Flutter，可先设置：
-
-```powershell
-$env:PATH = "D:\DevTools\flutter\bin;" + $env:PATH
-```
-
-## 项目结构
+Tomato English Happy Talking 是无自建后端的 Flutter 客户端，支持 Windows 和 Android。主用户界面是打包进本地 WebView 的 React/Vite/TypeScript 应用。
 
 ```text
-app/lib/
-├── main.dart
-├── core/
-│   ├── config/app_config.dart
-│   ├── theme/app_theme.dart
-│   └── router/app_router.dart
-├── services/
-│   ├── tts_service.dart
-│   ├── realtime_voice_service.dart
-│   ├── streaming_asr_service.dart
-│   ├── recognition_based_assessment_service.dart
-│   ├── scoring_service.dart  # deprecated compatibility model/stub
-│   └── nlp_service.dart
-├── data/models/
-│   └── article_song_model.dart
-├── features/
-│   ├── home/
-│   ├── article/
-│   ├── follow_read/
-│   ├── chat/
-│   ├── profile/
-│   └── web_shell/
-└── shared/widgets/
-
-web_ui/
-├── src/
-│   ├── App.tsx
-│   ├── bridge.ts
-│   └── types.ts
-└── package.json
+React / Vite / TypeScript Web UI
+              ↓ typed command/event bridge
+       Flutter WebShellScreen
+              ↓
+Riverpod / SQLite / secure storage / audio / cloud services / export
 ```
 
-## 架构约定
+主要目录：
 
-- Services 层只做 API 调用或数据处理，不持有 UI 状态，不调用 `showDialog`。
-- Providers 层使用 `@riverpod` 注解，持有 UI 状态，调用 services。
-- Screens/Widgets 层只做 UI，通过 `ref.watch` / `ref.read` 读取状态。
-- Widget 不直接 `await` API 调用，必须通过 Provider / AsyncValue 桥接。
-- API 响应原始 JSON 不直接传给 Widget，先在 Service 层解析为 Dart 模型。
-- Services 必须提供 mock fallback，方便无 API Key 时本地开发调试。
-- 诊断日志统一使用 `app/lib/core/logging/tomato_logger.dart` 的 `TomatoLogger`；新增链路不要再散落裸 `debugPrint`。日志默认写入运行数据根 `logs/`，并通过 QA `/logs/recent`、`/logs/stream`、`/logs/export` 调试。
-- 当前主 UI 是 `web_ui` 打包后的本地 WebView 页面；Flutter 的 `WebShellScreen` 负责桥接数据库、录音、播放、TTS、ASR、AI 对话和安全配置。
-- 当前产品 UI 以“书库 / 创作中心 / 练习中心 / 设置”为主导航，不再把首页、听力、跟读和对话包装成游戏大厅、任务、闯关、XP 或奖励流程。新页面和文案应延续书籍、章节、绘本、歌曲、视频导出的工作台心智。
-- 练习中心按书籍展示章节列表，章节行必须保留“听力 / 跟读 / 对话”三个入口；“听力”进入书籍播放器 `mode=listening`，章节列表标题可折叠/展开，折叠状态显示“章节列表已折叠”。
-- `app/lib/features/home|article|follow_read|chat|profile` 下的原生 Screen 仍可作为参考/兼容层，但默认路由进入 `WebShellScreen`。
-- Web UI 与 Flutter 交互时必须通过 `web_bridge_protocol.dart` / `bridge.ts` 的 typed command/event 协议，不要从 Web UI 直接访问云 API 或本地文件系统。
-- 一次性数据迁移、内容修复、审计、实验或临时验证逻辑只能放在独立工具脚本、临时工作目录或隔离分支中，**不得**接入 `app/lib/`、`web_ui/src/`、正式 Bridge 协议、Service/Provider/Screen 等产品运行代码，也不得打包进 Windows EXE、Android APK 或正式 Web 资源。
-- 不得为了让一次性脚本工作而在正式运行代码中增加临时 payload 字段、命令入口、旁路校验、供应商绕过或迁移专用状态。一次性任务应由外部工具在备份、事务、版本/哈希防并发和回读校验保护下完成。
-- 如果排障期间确实临时接入过一次性入口，交付前必须将其从正式代码中完全移除，重新构建 Release，并用代码搜索、测试和产物验证确认该入口未残留；只有用户明确批准为长期产品能力的功能才能保留。
-- 歌曲生成来源支持阿里云百聆（Fun-Music）、Suno（系统浏览器）与 ElevenLabs Music；默认 provider 仍是 Suno，但设置页可选择 `bailian_fun_music` 或 `elevenlabs_music`。不要重新引入 MiniMax 歌曲 API、`TOMATO_MINIMAX_API_KEY`、`MiniMax.txt` 或 Web UI 中的 MiniMax/其它来源选项。歌曲状态模型放在 `app/lib/data/models/article_song_model.dart`，供本地歌曲缓存、播放、字幕时间轴和视频导出复用。
-- 阿里云百聆（Fun-Music）入口为 `app/lib/services/bailian_music_service.dart`，通过阿里云 DashScope `https://dashscope.aliyuncs.com/api/v1/services/audio/music/generation` 生成音频；使用 `AppConfig.aliyunBailianApiKey` 与 `AppConfig.aliyunBailianMusicModel`，提交前先把过长或散文化章节压缩成适合歌曲接口的 `submittedLyrics`，再走 `ContentSafetyService`。成功音频写入 `ApiCacheService` 的 `music/` 子目录，metadata 必须记录 `submittedLyrics`、`lyricsHash` 和 `lyricsCompressed`；供应商错误直接显示，不自动回退到 Suno。
-- Suno 生成走 **系统浏览器手动流程**（`app/lib/features/web_shell/suno/suno_external_launcher.dart`）：`listening.songGenerate (suno)` 复制整篇英文歌词到系统剪贴板，并用系统浏览器打开 `https://suno.com/create`；**不在 App 内 WebView 填表、不导航主 WebView 到 suno.com、不提供 Suno 顶栏**。用户在浏览器登录、粘贴、设风格、Create 并下载 MP3 后，回到创作中心用「导入本地音乐」添加版本。返回 `manualActionMessage` 指引用户，不进入 `generating` 自动化轮询。
-- 历史 Suno 自动化（WebView 填表、Library 扫描、「检测下载」、`SunoAutomationController` 等）已移除；Lexical 键盘崩溃与踩坑归档见 `docs/suno_lexical_lyrics_editor.md`。
-- 文章歌曲版本归属 `articleId`：`listening.songState` 必须列出该文全部本地有效版本，**禁止**用当前 `lyricsHash` / `contentHash` 过滤已落盘 cache。`lyricsHash` 仅用于新 cache 条目的 dedup 与 metadata 记录；删除/更新必须就地改对应 cache 行并清理 mp3/metadata，禁止整包 rewrite 到当前 hash 产生孤儿文件。规则见 `docs/article_song_version_retention.md`。
-- Suno 历史缓存与外部导入歌曲的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
-- 歌曲字幕时间轴使用歌曲版本记录的 `submittedLyrics` 作为展示文本，BigASR `show_utterances` 只提供词级时间锚点；如果 `submittedLyrics` 与文章原歌词不同，不要复用文章逐句中文翻译。不要把 ASR 识别文本写回文章、歌词或字幕正文。歌曲播放通过 `listening.song.position` 推送当前 cue；歌曲版视频录制必须先有 `timelinePath`。
-- 字幕 ASR 语言由 `SongSubtitleTimelineService.lyricsAsrLanguage` 根据歌词是否含 CJK 自动选择：`en-US` 或 `zh-CN`；中文歌词按字级 token 对齐。含 CJK 的字幕生成必须走火山 BigASR 词级时间（`show_utterances`）；当前 AI 平台为阿里云时直接报错提示切换火山，不要用百炼 ASR 硬撑中文时间轴。
-- Suno 下载的音频和 metadata 必须保存在持久目录 `suno-music/`。如果旧缓存或设置指向 `.tmp` / 系统临时目录，应通过 `AssetPathService` 迁移或忽略该设置，不要继续把可复用歌曲资产写到临时目录。
-- 听力播放、全屏播放和普通录制只播放英文 TTS；中文翻译只作为字幕/对照文本显示，不再触发听力中文 TTS 预加载或播放。`listening.fullscreenReady` 只检查当前和下一句英文音频，绘本图片只预取当前和下一张；文章保存时应优先保存导入译文，缺失时可用 `PracticeTextService.translateToChinese` 生成逐句字幕，后续听力/跟读只读库中译文，不在打开页面时批量翻译。
-- 文章一旦保存并完成分句，`articles.sentences` 就是听力音频、字幕、逐句翻译、绘本、歌曲和导出的持久化边界；打开文章、查询素材状态、播放、导出和列表展示都必须读取已持久化句子，不得重新分句并写回。需要改变分句时只能重建文章并重新生成相关素材。
-- 老文章的已生成听力材料要按持久化句子文本直接复用，即使当时使用的是旧平台、旧音色或旧 `follow_tts` / `listening_tts` 引用；状态查询、播放、全屏 readiness 和视频导出 readiness 应先按文章一次性建立本地音频句柄索引，再按句子文本查找，避免逐句重复扫描缓存导致“读取中”或播放卡住。
-- 跟读录音可根据 BigASR 实时识别文本自动停止：只有识别结果达到参考句覆盖率并匹配句尾时才触发，避免只说末尾短语就结束。相关启发式在 `follow_read_provider.dart`，更新阈值时同步 `follow_recording_auto_stop_test.dart`。
+| 路径 | 职责 |
+|---|---|
+| `app/lib/` | Flutter 运行代码、Bridge、Provider、Service 与本地能力 |
+| `app/test/`、`app/integration_test/` | Dart/Flutter 测试 |
+| `app/android/` | Android 原生工程 |
+| `web_ui/src/` | React Web UI 与 Bridge 类型 |
+| `app/assets/web/` | 打包进 App 的 Web UI 产物 |
+| `tools/` | 构建、QA、发布和一次性工具 |
+| `docs/` | 当前设计、专项规则、调试和变更文档 |
 
-## Flutter / Dart 规范
+核心分层：
 
-- 必须使用 null safety。
-- 禁止随意使用 `!` 强制解包；只有逻辑上确实不可为 null 时才可使用，并加简短说明。
-- 优先用 `??`、`?.`、`if (x != null)` 守卫。
-- 函数参数能用 named + required 就用，避免位置参数歧义。
-- 异步函数使用 `async` / `await`，避免裸 `.then()` / `.catchError()`。
-- 错误处理使用 `try` / `catch`，在 catch 块中记录日志或返回 fallback。
-- 类名和 Widget 使用 `UpperCamelCase`。
-- 文件名使用 `snake_case`。
-- Screen 文件命名为 `xxx_screen.dart`。
-- 变量、函数和常量使用 `lowerCamelCase`。
-- 优先使用 `StatelessWidget`；需要读取 Riverpod 状态时使用 `ConsumerWidget`。
-- 只有需要本地 UI 状态时使用 `ConsumerStatefulWidget`。
+- Web UI 负责页面、交互和展示状态；不得直接访问云 API、SQLite、安全配置或本地文件。
+- Web UI 与 Flutter 只通过 `app/lib/features/web_shell/web_bridge_protocol.dart`、`web_ui/src/bridge.ts` 和 `web_ui/src/types.ts` 定义的 typed bridge 交互。协议变化必须同步两侧类型和测试。
+- Service 负责远程 API、本地数据处理、缓存、文件和模型转换，不持有 Widget UI 状态。
+- Provider 负责状态与业务编排，沿用仓库现有 Riverpod 代码生成模式。
+- Widget/Screen 负责 UI，通过 Provider/`AsyncValue` 连接业务，不直接调用远程 API。
 
-## UI 主题
+## 3. 工作方式
 
-- 主色：`AppTheme.primary`，橙色 `#FF6B35`
-- 背景蓝：`AppTheme.darkBlue`，深蓝 `#1A237E`
-- 强调黄：`AppTheme.accent`，黄色 `#FFD54F`
-- 字体始终使用 `GoogleFonts.nunito()`
-- 间距优先使用 `8` 的倍数，例如 8、16、24、32
-- 不要在 UI 中硬编码项目主题色，统一从 `AppTheme` 读取。
-- Web UI 中使用 `web_ui/src/styles.css` 的 CSS 变量维护主题色，并与 `AppTheme` 语义保持一致。
-- 新页面需要同时适配 Windows 和 Android，避免硬编码固定宽度。
-- 图标优先使用 Material Icons，除非已有局部约定要求其他图标体系。
+### 3.1 先理解，后修改
 
-## Riverpod 规范
+非简单任务在修改前至少确认：实际入口、调用链、数据流、状态归属、相关测试、相似实现和对应专项文档。
 
-本项目使用 `riverpod_annotation` 代码生成风格，统一用 `@riverpod` / `@Riverpod` 注解，不使用老式手写 Provider 风格。
+不确定时按以下顺序处理：
 
-```dart
-import 'package:riverpod_annotation/riverpod_annotation.dart';
-
-part 'article_provider.g.dart';
-
-@riverpod
-class ArticleNotifier extends _$ArticleNotifier {
-  @override
-  Future<List<Article>> build() async {
-    return ref.read(databaseServiceProvider).getArticles();
-  }
-
-  Future<void> addArticle(Article article) async {
-    await ref.read(databaseServiceProvider).saveArticle(article);
-    ref.invalidateSelf();
-  }
-}
+```text
+搜索 → 阅读 → 运行或复现 → 再判断
 ```
 
-UI 中处理 `AsyncValue` 时必须覆盖三种状态：
+不得编造文件、API、配置、Git 状态、测试结果、构建结果或远程响应。不能验证时明确说明未验证。
 
-- `data`
-- `loading`
-- `error`
+### 3.2 控制授权和范围
 
-Provider 类型选择：
+- 回答、解释、审查或诊断任务以只读调查和报告为主；除非用户同时要求修改，否则不要实施修复。
+- 修改、构建或修复任务应直接完成范围内的本地改动和非破坏性验证，无需为常规步骤反复确认。
+- 提交、推送、发布、远程写入、付费云调用、破坏性操作或明显扩展范围前必须获得明确授权。
+- 保护工作树中已有的无关改动。只修改完成当前任务所必需的文件和代码，不做顺手重构、全仓格式化、依赖升级或历史清理。
+- 自己的修改造成 orphan、临时日志、探针或生成残留时，交付前清理；不要顺手删除原本存在的无关代码或数据。
 
-- 只读列表或详情：`@riverpod Future<T> build()`
-- 有增删改操作：`@riverpod class XxxNotifier extends _$XxxNotifier`
-- 全局 service 实例：`@Riverpod(keepAlive: true)`
-- 页面级临时状态：默认 AutoDispose
+### 3.3 修根因并形成闭环
 
-使用约定：
-
-- `ref.watch()` 用于 `build` 方法中监听状态。
-- `ref.read()` 用于点击、提交等事件处理。
-- 避免在 Provider 的 `build()` 外做副作用。
-- 跨页面共享状态才使用 `keepAlive: true`。
-- Service 通过 Provider 注入，不要在 Notifier 内直接 `new`。
-
-## Services 层规范
-
-适用文件：`app/lib/services/**/*.dart`
-
-核心原则：
-
-- Service 只做 API 调用、数据解析或本地数据处理。
-- 返回 Dart 模型、业务值或 fallback；不要把原始 `Map<String, dynamic>` 直接暴露给 Widget。
-- 每个 public 方法应在 API Key 缺失时走 mock fallback，不让应用崩溃。
-- 错误时使用 `debugPrint` 记录，返回 `null` 或 fallback；不要把异常直接抛给 Widget 层。
-- 只使用 `dio`，不要引入 `http`、`http_dio` 等其他 HTTP 库。
-- API Key 必须通过 `AppConfig` 读取，绝不硬编码。
-
-推荐 dio 超时配置：
-
-```dart
-final _dio = Dio(BaseOptions(
-  connectTimeout: const Duration(seconds: 10),
-  receiveTimeout: const Duration(seconds: 30),
-));
+```text
+明确成功条件
+  ↓
+复现或建立基线证据
+  ↓
+实施最小修改
+  ↓
+运行针对性验证
+  ↓
+阅读失败输出并修复根因
+  ↓
+执行相关回归与必要的真实 App / Release 验证
 ```
 
-Service Provider 推荐写法：
+不要用吞异常、虚假成功、无限重试、神秘延时、宽松判断或静默切换 Provider 来掩盖错误。
 
-```dart
-import 'package:riverpod_annotation/riverpod_annotation.dart';
+## 4. 产品不变量
 
-part 'example_service.g.dart';
+除非用户明确要求改变产品设计，否则保留以下边界：
 
-@Riverpod(keepAlive: true)
-ExampleService exampleService(ExampleServiceRef ref) {
-  return ExampleService();
-}
-```
+- 当前主导航围绕“书库 / 创作中心 / 练习中心 / 设置”，不要重新包装成游戏大厅、XP、闯关、每日任务或奖励系统。
+- 文章保存并完成分句后，`articles.sentences` 是听力、跟读、字幕、翻译、绘本、歌曲和导出的持久化文本边界。打开文章、查询素材、播放或导出时不得偷偷重新分句并覆盖结果；改变边界应显式重建文章和派生素材。
+- Web Bridge 是正式跨层协议。一次性迁移、内容修复、审计、实验和探针应放在独立工具或隔离工作区，不得接入 `app/lib/`、`web_ui/src/`、正式 Bridge 或发布产物。
+- 当前跟读评分使用所选 ASR Provider 的识别结果和 `RecognitionBasedAssessmentEngine`。ASR 是产品能力层，不要把评分链路写死为某个供应商模型；兼容模型或测试 stub 不代表正式远程评分链路。
+- 云平台选择是产品行为。除非当前设计明确提供 fallback，单一 Provider 失败后不得静默切换另一个 Provider。
+- 歌曲字幕中的 ASR 结果只可作为时间锚点时，不得写回文章、歌词或字幕正文。
+- WebView 不直接渲染绘本远程原始超大图；沿用项目定义的 display/thumbnail 链路。
 
-## API 成本、缓存与内容解析优先级
+## 5. 云调用、缓存与凭据
 
-火山语音、Realtime、BigASR、图片生成等云 API 都会产生费用。新增或修改任何会触发云调用的功能时，必须优先考虑“本地解析、本地缓存、复用已有结果”，不要把 AI 请求作为第一选择。
+云服务端点、模型、鉴权和配额会变化。相关修改必须先检查当前代码和云服务专项文档；必要时只查供应商官方文档，不把旧 instructions、旧提交或历史示例当成现行事实。
 
-总体原则：
+- 优先复用已有业务数据、本地解析和成功缓存，再考虑远程 API。
+- 只缓存成功的真实远程结果。错误、异常文本、安全拒绝和 mock/fallback 不得写入成功缓存。
+- cache key 必须覆盖所有影响结果的输入、模型、声音或资源配置，避免错误复用和重复计费。
+- API Key 只通过 `AppConfig` / secure storage 读取；不得硬编码、写日志、进入测试 fixture、通过 Bridge 返回明文或进入缓存。
+- 沿用当前 Service 的 HTTP 与 Provider 选择机制；不要引入第二套重复网络栈或平行业务链路。
+- 缺少配置或远程失败时保留真实错误语义。只有产品行为或明确的测试/本地演示场景需要时才使用可识别的 mock，不得把假数据伪装为成功结果。
 
-- 所有云 API 调用必须先查本地持久缓存或已有业务数据；只有缓存未命中且本地无法确定结果时，才请求远程。
-- 只缓存成功的真实远程结果；不要缓存 API Key、请求 Header、失败响应、异常文本或 mock fallback。
-- 同一输入、同一模型/声音/资源 ID/尺寸/提示词版本应生成稳定缓存 key，避免同内容重复计费。
-- 删除文章时只清理文章独占缓存和引用；全局声音预览、共享 TTS、已确认的组图缓存等不要误删。
-- 新增测试时要覆盖二次调用命中缓存、不重复远程请求、删除文章不误删共享缓存。
-- “省 API”约束主要针对正式运行流程和重复调用：正式功能必须最大化复用本地解析、数据库、文件缓存和成功远程结果。
-- 开发验证不能为了省一次测试调用而跳过关键链路；涉及新增文章、方舟提取/翻译、标题、绘本生成、TTS/听力、跟读录音/识别等端到端改动时，必须做足够完整的回归测试。绘本验证要跑全量文章流程，不能只测第一页或只测 prompt 预览。
-- 绘本生成策略为“每篇文章/每章一组连续分镜图”：用户确认 `picture_book_chapter_scene_plan_v2` 的 `scenes[]` 后，按 scene 创建多条 `picture_book_pages`；第 1 张对应第 1 个 scene，第 N 张对应第 N 个 scene，不做候选图筛选。
-- 正常 scene 数：**AI 文本规划与 AI 组图**最多 12 段（对齐万相连续组图上限）；`confirmPromptReview` / 整章组图在超过 12 景时必须明确拒绝，不得静默截断。`pictureBook.replaceChapterPlan` 与本地 `importPageImage` **可以超过 12 景**；`replaceChapterPlan` 会按分镜同步 `picture_book_pages` 骨架（保留同 pageIndex 已有 ready 图），便于 QA 逐页导入。`picture_book_pages` 必须覆盖完整句子范围；AI 规划阶段对超长章节合并相邻场景，不拆成多组图片请求。
-- 章节组图 prompt 只使用 `bookDescription` / `chapterDescription` / `scenes[].sceneDescription`，适配任意书籍；不要把 Alice、Wonderland 或其它单本书的角色/场景/时代风格固化到通用模板。当前章节内容优先于旧章节历史，避免把上一章角色或场景误带入本章。角色外观锚点优先只放在书籍简介；章节中新出现且书籍简介没有覆盖的视觉角色，可在章节描述里简短补充，不要在每个分镜里重复角色外貌。
-- 章节规划 AI 使用完整原文作为可见细节来源；`chapterDescription` / `scenes[].sceneDescription` 必须把直接引语、对话内容、歌词/喊话文本和内心独白转成第三人称可见画面叙事，保留其中的情节与场景信息，但不得出现引号台词、气泡文案、谜面/歌词原文，或可被生图画进图里的对话文本；优先写动作、姿态、物件与空间关系，少用 ask/explain/tell/reply/say 串场。不要新增本地对话剔除器，也不要为转写对话额外增加一次文本 AI 调用；通过 `picture_book_chapter_scene_plan_v2` 的同一次规划 prompt 约束完成。分镜按通用「插画情况」三轴切分（地点/时间、主视觉焦点人物组、中心进行中活动=焦点人物的主任务及目标，而非每个可见节拍），不因 dialogue turns / 反应 / 情绪 / 同类型重复微动作 / 同一事故的直接结果与收拾余波拆分；连续事实、例子、列表项或一般陈述若属于同一主题与时间/地点框架，应作为同一主题块用一张 montage 表达，不得一事实一景，但该局部规则不能覆盖顺序移动、物件操作、发现、事故或其它因果动作；每个 `sceneDescription` 只能使用自身句子区间内的事件并保持人物动作归属，返回前逐对审核相邻边界；不要把茶桌、厨房、法庭等场景名写成合并特例。新生成的 AI 计划若超过 12 景、索引不连续、区间不连续或未完整覆盖句子槽，必须报错重试，不得静默截断后把余量塞进最后一景；旧持久化计划仍按既有兼容读取规则处理。调优过程与结论见 `docs/picture_book_chapter_plan_scene_split_tuning.md`。
-- Web UI 中“书籍”就是 `story_series`；书籍模型只保留 `title` / `description` / `cover_image_path`。新增章节在 `article.create`（绘本开启）时会先生成并写入首次 `picture_book_chapter_scene_plan_v2` 到 `summary_json`，保存返回后必须打开 `pictureBook.promptReview` 审核弹窗；用户确认 `pictureBook.confirmPromptReview` 后才提交顺序组图；`pictureBook.generate` / `retryPage` 只能作为打开审核流程的兼容入口，不得绕过审核直接消耗图片 API。
-- 取消“图片中不能出现文字”的旧限制。自然文字可以出现，例如书名、标牌、扑克牌数字/花色、地图标注、标签、手写便条或装饰字样；但不要让文字成为理解画面的唯一方式，因为 App 会另行显示字幕。
-- 绘本图片 prompt 使用 `picture_book_group_prompt_scene_description_v2` / `picture_book_chapter_scene_plan_v2`：最终提交图片模型的 `groupPrompt` 只拼接书籍描述、章节描述和每张图的分镜描述。不要重新引入 series Bible、角色卡、参考图、`styleGuide`、`audience`、`safety`、`negativePrompt`、字幕留白字段或旧分镜标题/视觉方向字段。
-- `pictureBook.pageImage` 支持 `variant: "full" | "display" | "thumbnail"`；创作中心和书籍封面应优先请求 `thumbnail`（`640x360`，`picture_book_thumbnails`），不要在列表页一次性把整章原图作为 data URI 加载。WebView 内所有大图展示（听力/跟读/对话内嵌场景图、全屏播放、创作中心大图预览）一律请求 `display`（`1280x720`，`picture_book_display`，本地缩放缓存已下载原图，不重新调用生成 API），这也是产品定义的用户侧体验分辨率；`full`（`2560x1440` 远程原图）**永远不要**交给 WebView `<img>` 渲染——WebView2 部分 Windows GPU 驱动在把大纹理降采样进窗口尺寸时会出现彩色小方块花屏（坑位见 `docs/build-and-release-pitfalls.md`），原图只保留在磁盘供视频导出等原生链路使用。图片一律通过 bridge 返回 data URI（不要把缓存目录 `file://` 路径直接交给 WebView `<img>`）。创作中心绘本组图缩略图可点击预览大图：预览层通过 portal 固定在视口中央，遮罩阻挡其它操作，仅点击大图关闭；预览层不要用 `backdrop-filter` 叠在大图上，可先把 data URI 转成 Blob URL 再显示；预览请求 display 时不要覆盖列表中的 thumbnail URI（变体按 `thumbnail < display < full` 分级，低分辨率不覆盖高分辨率）。
-- 创作中心「生成听力」在材料已完整时会弹出覆盖确认框；该对话框与其它阻塞弹窗一样应 `createPortal` 到 `document.body`，避免在长页面滚动后出现在可视区域外。
-- `pictureBook.promptReview` 只读取本地已持久化的章节场景规划（含 `article.create` 首次写入的计划），不调用图片 API、不删除旧 `picture_book_pages` 或图片缓存；刷新按钮只可重建书籍简介，或同次重建章节描述和 `scenes[]`。`pictureBook.savePromptReview` 只保存审核草稿和书籍简介，仍不调用图片 API、不删除旧图。`pictureBook.confirmPromptReview` 才保存审核后的章节场景计划，确认后删除旧页/旧缓存引用并提交顺序组图。不要恢复 `TOMATO_PICTURE_BOOK_AI_PAGE_PROMPTS`、`TOMATO_PICTURE_BOOK_AI_SERIES_BIBLE` 或 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 旧开关。
-- 「Relevant characters」匹配只在 Flutter `PictureBookService` 实现：按文章标题/正文/`articles.sentences` 做首字母大写整词人名命中；Web UI 不得本地重算。编辑书籍角色时走 `pictureBook.resolveRelevantCharacters`。小写普通名词（如 `bill`）不得匹配角色名 `Bill`。
-- 绘本章节分镜持久化规则：`story_chapters.summary_json` 在 `article.create`（绘本开启）时写入首次章节规划供审核展示，之后以用户保存/确认的审核内容为准；不要为绘本分镜引入 `contentHash`、正文指纹或“输入变更即自动作废”机制。下列操作不得自动让已保存分镜失效：`article.rename`、绘本审核里改书籍简介/角色、听力页 `listening.updateSentence` 的字幕微调（含**软隐藏**：清空英文字幕存空槽，不重排 index、不 invalidate 分镜）。绘本分镜、prompt 审核、`summary_json.scenes[]` 与 `picture_book_pages` 的 `sentenceStartIndex` / `sentenceEndIndex` 必须始终使用 `articles.sentences` 原始槽位下标；允许拼接 prompt 文本时跳过空字符串，但绝不能过滤空槽后重排编号，否则后续可见句会落到错误图片范围。当前产品没有整篇正文编辑，改变分句边界只能删文重建。首次规划之后需要新分镜时，只能由用户显式点 `pictureBook.refreshPromptReview(target: chapterPlan)`（可选 `targetSceneCount`）、QA `pictureBook.replaceChapterPlan` 整表重设，或删文后重新走审核。打开 `pictureBook.promptReview` 时优先读取 `summary_json` 中非空 `scenes[].sceneDescription`；读不到才回退空占位草稿。不要在计划不可用时只保留 `chapterDescription` 却清空分镜并允许直接确认出图。对话练习提纲（`ChatChapterGuideService`）仍可使用自己的 `contentHash`，不要复用到绘本分镜。
-- 听力字幕软隐藏：`listening.updateSentence` 允许清空英文，DB 保留 `""` 空槽与原始 index；听力/跟读/导出/TTS 跳过隐藏句，歌曲仍用 metadata `submittedLyrics`。规则见 `docs/listening_sentence_hide_rules.md`。
-- 顺序组图是正式绘本链路：`PictureBookService` 通过 `PictureBookImageService.generatePictureBookImageGroup(...)` 按当前 `ai_provider` 分流，阿里云走万相异步连续组图（`enable_sequential: true`，`n` 等于已确认 scene 数），火山走 Seedream `sequential_image_generation`（`max_images` 等于已确认 scene 数）。组图失败不自动回退到另一平台或单图；失败页保存错误原因，重试按钮重新打开审核并在确认后重建整章组图。
-- 单页重生成（`pictureBook.pagePromptReview` / `confirmPagePromptReview`）分两种 mode：目标页 `ready` 且本地图可用时走 `singlePageEdit`（用户只填「修改说明」，默认强制选中当前页作参考图；Flutter 用指令编辑模板包装说明，不写回 `summary_json`、不改书籍简介/角色）；失败页 / 无可用图时走 `singlePage`（仍审核书籍/章节/分镜与组合 prompt，参考图默认最近邻 1 张）。两种都可多选参考图（至少 1 张、最多 14 张）；确认时提交 `referencePageIndexes`，服务端按 `pageIndex` 升序解析为 `referenceImagePaths`。整章组图不传参考图。不要恢复 `TOMATO_PICTURE_BOOK_REFERENCE_IMAGES` 或固定全局参考图资产。
-- 创作中心每页可「导入图片」（`pictureBook.importPageImage`）：FilePicker 选择本地 png/jpg/jpeg/webp；已是 16:9 `2560x1440` 则原样写入缓存，否则 Flutter 原生 cover-crop + 双线性（`FilterQuality.medium`）重编码为该尺寸 PNG（`source: import`）并替换该页为 `ready`；不调用图片 API、不打开审核、不改 `summary_json` / 句子区间。
-- 创作中心可「导出组图」（`pictureBook.exportChapterImages`）：导出本章 `ready` 且本地图可用的页到选定目录，文件名为两位场景序号（`01.png`…）；同目录顺带写出 `chapter-english.txt`（章节英文原文）与 `group-prompt.txt`（组图总 Prompt，优先页内已确认 `groupPrompt`，否则按书籍/章节分镜重拼）；自定义前缀会一并加到图片与这两个文本文件名上。遇同名文件先返回冲突，由 UI 选择覆盖或自定义前缀改名后再写。
-- QA 可用 `pictureBook.replaceChapterPlan` 整表重设 `chapterDescription` + `scenes[]`（含句子区间），不调文本 AI、不出图；写入后同步页骨架，可直接 `importPageImage`。场景数量标签、数字输入框和「按此数量匹配分镜」按钮在审核框标题行保持单行横排，Windows 窄窗口不得换行或溢出。AI「按数量匹配分镜」与确认组图仍受 12 景上限约束。
-- 整章组图 HTTP 返回可能按每张图耗时数分钟，不能再用固定 120 秒判定失败。火山 `VolcImageService` 按请求图片数动态设置接收超时，默认每张 150 秒、最小 180 秒、最大 2700 秒；可通过 `TOMATO_VOLC_IMAGE_SECONDS_PER_IMAGE`、`TOMATO_VOLC_IMAGE_MIN_RECEIVE_TIMEOUT_SECONDS`、`TOMATO_VOLC_IMAGE_MAX_RECEIVE_TIMEOUT_SECONDS` 调整。阿里云 `AliyunWanxImageService` 使用 DashScope 异步任务轮询。最终组图 prompt 按审核内容完整提交，不做压缩或上限截断；如平台限制导致失败，先暴露真实提示词再处理。
-- 绘本保存/生成/听力模式的最终联调必须跑真实 Windows App UI。`tools/build_windows.ps1` 默认开启本机 QA 控制接口（`127.0.0.1:39317`）；手动 Flutter 启动时再显式开启 `TOMATO_QA_REMOTE=true`。用 `npm run qa:picture-book-live` 通过 QA 控制接口填表保存、打开听力、轮询异步绘本状态、检查 loading/error/ready UI、字幕和播放；不要只用 service/test harness 作为最终结论。
-- 对话练习提纲由 `ChatChapterGuideService` 单独生成紧凑教学覆盖点；程序内部 fallback 只在无 key/远程失败时本地生成最多 8 个覆盖点，后续聊天轮次只复用提纲，不重复提交完整章节。
+## 6. 代码质量与性能
 
-内容安全失败与敏感词规则：
+- 优先复用仓库已经证明可工作的模式，选择满足需求的最小简单方案。
+- 不为单本书、单个词、单个页面或单次故障持续堆叠特例；修正可解释的统一规则和根因。
+- 避免重复计算、无界队列/缓存、无终止条件的递归或重试、重复业务路径和职责混杂的超大函数。
+- 同一事实只保留一个权威计算位置。兼容旧数据时隔离兼容层并明确退出条件。
+- 性能优化不得删减正确性检查、诊断字段或测试范围。声称行为等价或性能改善时，使用相同机器、输入和构建模式记录回归或基线对比。
+- 不为未来假想需求增加抽象层、配置系统、状态字段或扩展点；不随意修改依赖版本或加入重复能力的依赖。
 
-- 统一使用 `app/lib/services/content_safety_service.dart` 处理平台安全拒绝、失败快照、用户修正后的规则学习和提交前替换。不要在各个 service 里各写一套临时敏感词替换。
-- 正式运行中遇到疑似安全拒绝后，不做二分探测、不反复试探 API。记录 `content_safety_failures`，提示用户修改相关表达后重试。
-- 用户修改后同一用途提交成功时，用失败文本和成功文本做词级 diff，只有像 `heads -> he-ads`、`beheaded -> be-headed` 这种短词/短语拆分才写入 `content_safety_rules`；整句改写只能作为样例，不要泛化成规则。
-- 规则只应用到提交给云 API 的文本，不修改文章正文、字幕、跟读文本和数据库原文。TTS 请求文本也要先套用安全规则；如果替换后仍然 400，记录失败并把失败原因交给 UI，不再继续自动猜测。
-- 替换优先使用连字符或空格，例如 `he-ads` / `he ads`；避免优先使用 `*`，因为语音引擎可能把星号读出来。
-- 400 不一定是安全拒绝。明显的参数、尺寸、鉴权、额度、Resource/Speaker 配置错误不能记录为敏感词规则。
-- 更重要：开发/测试里的 HTTP 400 经常是沙箱网络拦截或 `flutter_test` 默认 `HttpClient` override 造成的假 400，不是火山真实返回。任何 live API 结论前必须确认测试已 `HttpOverrides.global = null`、必要时在沙箱外/已授权网络环境重跑，并看到真实远程响应或缓存命中；不要把测试环境假 400 写进 `content_safety_failures` 或学习成敏感词规则。
-- 2026-06-17 实测：`Alice Was Beginning To Get` 的万相 9 张组图在 `bookDescription` 含 `Caterpillar` 与 `smoking hookah` 时成功返回 9 张 `ready`，说明这两个词本身不能被当作本项目已确认的敏感词或失败原因。以后遇到类似失败，可以提出安全词猜测，但没有真实远程响应、二分证据或平台明确错误前，不得据此修改正式 prompt 机制、压缩/截断规则、替换规则或其它持久代码。
-- 调试云 API 失败时，先定位真实原因，再做正式代码改动。实验性验证必须放在临时脚本、暂存改动或独立 git 分支里；若实验没有得到准确结论，必须撤销所有实验性正式改动，换方向继续排查。不要因为一次未定位失败就长期加入安全规避、prompt 扩写、过度限制、自动改写、回退路径或其它“也许有用”的机制。
-- 安全失败、成功远程结果和 mock fallback 分开处理：失败快照进 `content_safety_failures`，成功远程结果才进 `api_cache_entries`，mock/fallback 不入成功缓存。
+## 7. 日志与安全
 
-新增文章内容处理顺序：
+- 新增运行链路统一使用 `app/lib/core/logging/tomato_logger.dart` 的 `TomatoLogger`，不要增加散落的裸 `debugPrint` 作为正式诊断方案。
+- 日志优先记录 ID、hash、长度、duration、stage、status 和短摘要。
+- 不记录完整 API Key、Authorization、Cookie、文章正文、歌词、云响应或不必要的绝对私有路径。
+- 调试接口、测试开关和 QA 能力不得削弱正式构建的安全边界，也不得把明文密钥返回给 Web UI。
 
-1. 纯英文输入：本地规范化连字符、撇号、空白和标题行后直接使用，不调用 AI 提取或翻译。
-2. 标准中英对照输入：优先本地解析英文原文和中文对照，不调用 AI 提取英文。典型格式是英文段落/中文翻译交替，前面有 `Chapter ...`、英文标题、中文标题，末尾可能有“注：”。英文原文应保留段落边界；中文对照应保存为可复用的字幕/翻译映射；译注不进入正文。
-3. 中英混杂但不是标准对照：不要把本地启发式结果直接当最终正文；这类输入必须调用当前文本 provider 提取英文故事原文。
-4. 纯中文故事：才调用 AI 转成英文练习文。
-5. 标题：用户填写或本地标题候选优先；绘本开启且仍缺标题时，与首次章节规划同一次 AI（`includeTitle`）返回，不要再单独打 `suggest_article_title`；无绘本时才可回退独立标题调用或首句 fallback。
-6. 保存顺序：先写入 `articles` 与分句（可用临时 `Untitled Chapter`），再 upsert 中文对照、关联章节，最后写首次绘本规划；通过 `article.save.progress` 推送进度。译文/规划失败不再删文，错误带回 `resumeArticleId`，前端再次 `article.create` 带该 id 只续传剩余步骤。
+## 8. 验证要求
 
-英文原文课程稿的特殊要求：
+迭代时先运行最相关的测试，交付前按风险扩大范围。没有实际运行的测试、分析、构建、远程请求或 UI 流程不得声称通过。
 
-- `英文原文` / `英语原文` / `英文故事` / `原文` 区块优先本地提取，不调用 AI；正文边界以故事正文为准，不保留课程导读、拓展讲解、词汇表、音标、词条或例句。
-- `【文化卡片】`、`生词好句`、`重点词汇` 等学习材料 heading 一律视为故事正文结束，即使此前处于 `【拓展】` / 背景 / 难句解析等 soft interruption 内。
-- `【拓展】`、背景、难句解析等中途讲解只作为 soft interruption 跳过；只有后续英文行带明确故事叙事信号（如 `said` / `asked` / `replied` / `cried` / `thought` / `heard` / `caught` / `went` / `came` 等）或满足已有故事诗歌续行规则时，才恢复正文。不要仅因英文行以引号、撇号或右单引号开头就恢复，避免把原诗、词汇例句误收为故事正文。
-
-标准中英对照故事的特殊要求：
-
-- 不要把整篇标准中英对照内容直接送给方舟或 Realtime 做“提取英文原文”，这会浪费费用，还可能因为 prompt 截断导致只保存前半篇。
-- 如果必须用 AI 处理长文本，必须分块且保证全量覆盖；不要只取前 `1600` 或 `2200` 字符后把结果当完整文章。
-- 跟读/听力的中文对照应优先复用导入时解析出的中文翻译；不要再逐句调用 `translate_to_chinese` 生成一份可能风格不同的新译文。
-- 绘本生成现在是一章一组 v4 审核分镜图；解析出的英文段落只用于构造整章故事内容、规划上下文和连续性提示，不再直接决定图片页数。
-
-Alice 回归测试用例：
-
-- 标准中英对照样例使用 `C:\Users\Ryan\.codex\attachments\4298cfa0-5ff2-4d43-a889-0f18288ec752\pasted-text.txt` 或等价的 Chapter Eight / The Queen's Croquet-Ground 中英对照文本。通过构建程序的 `article.create` 提交，标题留空、书籍选择 `Alice's Adventures in Wonderland`，期望本地标题为 `The Queen's Croquet-Ground`、正文只保留英文、句子数 75、`article_sentence_translations` 75 条；本地标题与导入译文不应再触发正文提取/翻译 AI；绘本开启时允许一次首次章节规划调用并写入 `summary_json`，随后走 v4 提示词审核与确认后的一组绘本图；`listening.open` 返回 75 项且没有空中文。
-- 数据库中旧 Alice 文章要作为回归样本保留：`Alice's Adventures in Wonderland - Episod 56`、`爱丽丝梦游仙境（原著领读版）- E61` 以及新导入的 `The Queen's Croquet-Ground`。这些文章都必须挂到同一本书籍 `Alice's Adventures in Wonderland` 下。
-- 对旧 Alice 混合正文不要重新整篇提交给 `article.create` 做 AI 提取；旧数据中已保存的英文句子/正文可以用于 `article.list`、`follow.open`、`pictureBook.state`、系列归属测试。若需要重新导入旧内容，优先使用已经提取出的纯英文内容，避免触发 mixed -> 方舟提取。
-- 整理已有文章的书籍归属时使用 `series.attachArticle`，不要用 `pictureBook.generate` 代替；`series.attachArticle` 只创建或更新 `story_chapters` 关系，不触发图片生成和其它云 API。
-- Alice 系列验证至少检查：`article.list` 中相关文章的 `seriesTitle` 均为 `Alice's Adventures in Wonderland`；`story_chapters` 中同系列包含这些文章；旧两篇若没有导入译文，使用 `pictureBook.state` / `article.list` 验证归属和程序状态，不要调用会补翻译的打开流程；标准中英对照样例的 `listening.open` 能直接使用导入译文。
-
-相关实现入口：
-
-- 文章保存入口：`app/lib/features/web_shell/web_shell_screen.dart` 的 `article.create` / `_resumeArticleCreate` / `_ensurePictureBookChapterPlanForCreate` / `_englishPracticeContent`。
-- 续传协议：`ArticleCreateResumeException`（`web_bridge_protocol.dart`）经 bridge `error.data.resumeArticleId` / `failedPhase` 回传；Web UI 用 `NativeCommandError` 保存后续传 id。
-- 本地输入解析：`app/lib/services/practice_input_parser.dart`，标准中英对照必须从这里本地解析直用。
-- 文本生成处理：`app/lib/services/practice_text_service.dart` / `app/lib/services/text_generation_service.dart`，只用于非标准 mixed、纯中文；缺标题且绘本开启时优先并入章节规划 `includeTitle`，无绘本才单独 `suggest_article_title`。
-- 译文 upsert：`DatabaseService.upsertArticleSentenceTranslations`，续传时合并已有行，不整表清删。
-- 持久缓存：`app/lib/services/api_cache_service.dart`。
-- 内容安全规则：`app/lib/services/content_safety_service.dart`，负责提交前替换、疑似安全失败记录和用户成功修正规则学习。
-- 分句的唯一生产求解器是 `app/lib/services/read_aloud_splitter_v3.dart`；Web UI 不得另写分句算法。这是 **朗读块（read-aloud chunk）** 生成器，不要求每块都是独立完整句，首要目标是适合字幕显示、连续朗读、跟读和听力定位。输出只切分原文、不改写原文；UDPipe 正字句仍保留作解析证据，但落在完整匹配引语内部的 parser sentence 不能再作为朗读硬边界，求解器必须合并同一引语涉及的解析句后比较引号内外切点。普通内容 ≤16 词不因长度主动切；17–20 词搜索全部原文标点，合格标点方案优先于 KEEP；21–30 词先按标点，仍有 >20 词长段时再考虑安全语法切点；>30 词必须切。完整直引号或弯引号内的引语若 ≤16 词，内部切点一律 `hardBlocked`，完整的 1–3 词喊话、感叹和重复语可作为独立短块；17–20 词引语沿用普通标点规则；>20 词优先比较引号外和右引号后的边界，外部切点不足时才使用引语内部切点，30 词仍是硬上限。右引号留在左块；`he said/he remarked` 等提示语不得被单独切成无意义短尾，后接完整叙述时可在右引号后切。路径排序必须先消除无意义 1–5 词碎片及 28–30、25–27 词长段，再保护主谓、动宾、限定、名词补语等紧密结构，之后才压低 21–24 词段；17–20 词压力之后，同级方案优先引号外切点；切分次数只能末级择优，`8/22/7` 必须优于 `8/29`。UDPipe protected crossing 是必须复核的软证据，不是绝对硬阻断，不得让解析错树造成 `1/30/2`、`20/4/4/12` 或 `pail / of whitewash` 一类不可读结果。规范化回拼忽略句界空格差异，但不得改词、标点或顺序。完整规则、引语规则和 E61 固定回归见 `docs/read_aloud_sentence_split_v3_5_readability_rules.md`。保存后 `articles.sentences` 为听力、跟读、字幕、翻译、绘本和导出的持久化边界；改算法后须显式重建文章并重新对齐派生素材。
-- 引语识别不得把直双引号按奇偶次序机械配对，必须按前后字符和标点语境判断开、关角色；同形嵌套使用栈，切点落入多层引语时以最内层完整范围决定 `≤16` 词硬阻断。完整引语可以因诗歌、菜单或排版跨越空行并合并内部 parser sentence，但绝不跨文章或章节；跨空行合并只把布局空白折叠为一个空格，不得改词、标点或顺序。未闭合开引号若遇下一段首个新开引号必须放弃旧状态，所有未闭合引号进入全书审计。候选审计必须记录 `insideQuotedSpeech`、`quoteSpanWordCount`、`quoteEdge` 和阻断/降级原因；性能优化可以限制完整展示路径和覆盖探针，但不得删除边界候选、放宽 30 词硬上限或绕过基础全局动态规划。
-- 绘本段落和提示词：`app/lib/services/picture_book_service.dart`（含 `generateChapterPlanForArticle` / `persistChapterPlanForArticle` / `resolveRelevantCharacters`）。
-- Web UI 只能通过 `web_bridge_protocol.dart` / `bridge.ts` 协议提交原始内容，不要绕过 Flutter 直接访问云 API。
-
-### 云服务端点
-
-Doubao TTS 2.0：
-
-- 端点：`https://openspeech.bytedance.com/api/v3/tts/unidirectional`
-- 鉴权：Header `X-Api-Key`、`X-Api-Resource-Id`、可选 `X-Api-Request-Id`
-- 默认 Resource ID：`seed-tts-2.0`
-- 返回 HTTP chunked JSON 行，`data` 字段为 Base64 MP3 分片，按顺序解码合并后交给 `just_audio`
-
-Realtime V3 AI 对话：
-
-- 端点：`wss://openspeech.bytedance.com/api/v3/realtime/dialogue`
-- 推荐鉴权：`X-Api-Key`、`X-Api-Resource-Id: volc.speech.dialog`、`X-Api-Connect-Id`
-- 不再回退旧鉴权头；语音链路只使用新版 `X-Api-Key`
-- 当前客户端使用文本 query 模式：`StartConnection` -> `StartSession` -> `ChatTextQuery` -> `FinishSession` -> `FinishConnection`
-- AI 回复文本交给本地 TTS 2.0 播放
-
-BigASR：
-
-- 端点：`wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream`
-- 鉴权：`X-Api-Key`、`X-Api-Resource-Id`、`X-Api-Request-Id`、`X-Api-Sequence`
-- 音频格式：WAV PCM 16kHz 16bit mono
-- 聊天语音识别与跟读评分识别都通过 `StreamingAsrService`
-- 跟读评分由 `RecognitionBasedAssessmentEngine` 基于识别文本和参考句做 LCS / 覆盖率 / 长度比例启发式计算
-
-数据库服务：
-
-- `DatabaseService` 单例通过 `getInstance()` 获取。
-- 表名、列名用常量定义，避免散落字符串。
-- 所有写操作返回 `Future<void>` 或 `Future<int>`。
-
-配置与密钥：
-
-- 语音密钥字段：`volc_speech_api_key`，供 TTS、Realtime 和 BigASR 共用。
-- 文本生成 provider 由 `ai_provider` 控制，默认 `aliyun_bailian`，可切换 `volcengine`。`TextGenerationService` 使用 `AppConfig.openAiTextConfig` 统一走 OpenAI-compatible Chat Completions。当前平台选择也是图片、TTS、ASR 的分流开关：阿里云走 DashScope/百炼，火山走方舟/火山语音，不自动回退到另一平台。
-- 阿里云百炼配置字段：`aliyun_bailian_api_key`、`aliyun_bailian_base_url`、`aliyun_bailian_api_base_url`、`aliyun_bailian_text_model`、`aliyun_bailian_image_model`、`aliyun_bailian_image_size`、`aliyun_bailian_tts_model`、`aliyun_bailian_tts_voice`、`aliyun_bailian_tts_sample_rate`、`aliyun_bailian_asr_model`、`aliyun_bailian_realtime_asr_model`、`aliyun_bailian_realtime_asr_url`、`aliyun_bailian_music_model`；默认兼容模式 base URL 为 `https://dashscope.aliyuncs.com/compatible-mode/v1`，默认 DashScope API base URL 为 `https://dashscope.aliyuncs.com/api/v1`，默认文本模型 `qwen3.7-max`，图片模型 `wan2.7-image-pro`，CosyVoice `cosyvoice-v3-flash` + `loongabby_v3`，ASR `qwen3-asr-flash` / `qwen3-asr-realtime`，音乐模型 `fun-music-v1`。设置页用下拉候选保存模型，阿里云文本模型提供 Max/Plus/Flash 档位；图片模型候选只放当前连续组图链路可用的万相模型。
-- 火山方舟配置字段：`volc_ark_api_key`、`volc_ark_base_url`、`volc_ark_text_model`、`volc_ark_image_model`；火山语音配置字段：`volc_speech_api_key`、`volc_tts_resource_id`、`volc_tts_speaker_id`。火山平台用于可选文本 provider、Seedream 图片生成、Doubao TTS 和 BigASR。设置页用下拉候选保存方舟文本模型，提供高效果/低成本档位；Seedream 图片候选只放当前顺序组图链路可用模型。
-- 当前代码不再从工作目录 `security/speech-api-key.txt` 或 `security/ark.txt` 自动读取 legacy 明文 key。设置页可保存/清除百炼、方舟和语音 key，返回状态只显示 mask，不返回明文。设置页云服务区域必须保持“凭据 / 平台地址 / 模型与语音”分区，Key 清除按钮并入对应输入行；TTS 声音列表按当前平台切换，阿里云保存 CosyVoice voice，火山保存 Doubao speaker。
-- 绘本图片按当前云平台分流：阿里云百炼使用 DashScope 万相异步组图接口，火山引擎使用方舟 `/api/v3/images/generations` Seedream 组图；不要恢复旧 Visual / AK-SK 图片备用链路，也不要在任一平台失败后自动回退到另一平台。
-- Seedream 组图能力只在成功读取到 `volc_ark_api_key` 且当前平台为火山时启用；万相组图能力只在成功读取到 `aliyun_bailian_api_key` 且当前平台为阿里云时启用。缺少当前平台 key 时应跳过对应图片生成，不调用其它平台图片模型。
-- 火山绘本图片默认使用方舟 `doubao-seedream-5-0-260128`。用户侧展示按产品需求使用 16:9 `1280x720` 体验，但真实方舟网络探针已确认远程 `1280x720` 会返回 `InvalidParameter: image size must be at least 3686400 pixels`；因此远程请求使用最小满足限制的 16:9 `2560x1440`。阿里云万相默认使用 `wan2.7-image-pro` + `2K`。下载后保存远程原图，UI 负责缩小显示；不要为了缩放再调用一次图片生成 API。
-- 注意 `flutter_test` 默认会拦截 `HttpClient` 并让 HTTP 请求本地返回 400；任何 live API 测试都必须先清除测试框架的 HTTP override，否则 400 不能当作火山接口真实错误。
-- 如果 live probe 在普通测试环境里返回空 body 的 HTTP 400，先按“测试环境拦截”处理：检查 `HttpOverrides.global = null`、网络权限/沙箱授权、API Key 是否真实读取，再讨论内容安全。不要先猜敏感词。
-- Seedream 图片 API 笔记放在 `docs/volc_ark_seedream_image_api_notes.md`；涉及模型、endpoint、鉴权、组图、尺寸、缓存 key 的改动时先看这份文档。
-- 调试兼容注入：`--dart-define TOMATO_VOLC_TTS_RESOURCE_ID=...`、`--dart-define TOMATO_VOLC_TTS_SPEAKER_ID=...`
-- 旧的统一语音 key 和分服务语音 key 字段不再作为兜底
-- 设置页可以保存/清除百炼、方舟和语音 key；UI 与 bridge payload 只能展示配置状态和脱敏 mask，不得回传明文 key。
-
-## Android 原生目录规范
-
-适用范围：`app/android/**`
-
-当前事实：
-
-- Android package / namespace 固定为 `com.example.tomato_english_happy_talking`
-- `MainActivity` 路径固定为 `app/android/app/src/main/kotlin/com/example/tomato_english_happy_talking/MainActivity.kt`
-- `MainActivity` 包声明必须是 `package com.example.tomato_english_happy_talking`
-- Android 启动器显示名固定为 `Tomato English Happy Talking`
-
-Gradle 约束：
-
-- `app/android/app/build.gradle.kts` 中的 `namespace` 与 `defaultConfig.applicationId` 必须保持一致。
-- Gradle 插件顺序保持现状：
-  - `com.android.application`
-  - `kotlin-android`
-  - `dev.flutter.flutter-gradle-plugin`
-- 保持 Java 17 配置：
-  - `sourceCompatibility = JavaVersion.VERSION_17`
-  - `targetCompatibility = JavaVersion.VERSION_17`
-  - `kotlinOptions.jvmTarget = JavaVersion.VERSION_17.toString()`
-- 当前 `release` 构建保留 `signingConfig = signingConfigs.getByName("debug")`，除非任务明确要求切换正式签名。
-
-`gradle.properties` 约束：
-
-- 保留 `android.useAndroidX=true`
-- 保留 `android.overridePathCheck=true`
-- 保留 `kotlin.compiler.execution.strategy=in-process`
-
-Manifest 与入口约束：
-
-- `AndroidManifest.xml` 中的 `<application android:label>` 保持为 `Tomato English Happy Talking`。
-- 主 Activity 保持为 `.MainActivity`。
-- 保留当前 `android:exported="true"`、`launchMode="singleTop"`、`hardwareAccelerated="true"` 和 `windowSoftInputMode="adjustResize"`。
-- 保留当前 `PROCESS_TEXT` queries 配置，除非明确确认不再需要。
-
-修改 package 名时必须同步更新：
-
-- `app/android/app/build.gradle.kts`
-- `app/android/app/src/main/AndroidManifest.xml`，若涉及组件全名或包关联
-- `app/android/app/src/main/kotlin/.../MainActivity.kt`
-- Kotlin 目录结构本身
-
-不要把旧包名 `com.example.english_love_reading` 重新引入源码。
-
-## PowerShell Tooling 规范
-
-适用范围：
-
-- `tools/build_windows.ps1`
-- `tools/build_android.ps1`
-- `tools/run_android_debug.ps1`
-- `tools/setup_android_emulator.ps1`
-
-脚本风格：
-
-- 保持 `Set-StrictMode -Version Latest`。
-- 保持 `$ErrorActionPreference = "Stop"`。
-- 需要检查外部命令退出码时，优先封装或复用 `Assert-LastExitCode`。
-- 输出信息保持当前中文风格。
-- 阶段标题统一用 `=== 标题 ===`。
-- 优先让脚本自行设置 `PATH`、`ANDROID_HOME`、`ANDROID_SDK_ROOT` 等环境变量，不依赖用户当前终端状态。
-
-当前产物命名：
-
-- Windows 可执行文件：`tomato_english_happy_talking.exe`
-- Windows 发布目录：`release\windows\tomato_english_happy_talking`
-- Android 发布 APK：`release\android\tomato_english_happy_talking-android-release.apk`
-- Web UI 打包产物：`app\assets\web\`
-- Windows 发布目录同时是本机运行数据目录，可能包含数据库、日志、诊断、导出媒体、缓存和 `security/`。对外分发 zip 不要直接压缩该目录，必须先做干净 staging，只保留程序文件、Flutter assets、FFmpeg 及依赖，排除运行数据和账号/key/settings 文件。
-
-修改约束：
-
-- 修改产物名时，同时更新脚本中的发布目录和旧产物清理逻辑。
-- 修改 Android 启动或模拟器脚本时，始终同时设置：
-  - `ANDROID_HOME`
-  - `ANDROID_SDK_ROOT`
-  - `ANDROID_USER_HOME`
-  - `ANDROID_AVD_HOME`
-- 涉及 Windows 构建名变更时，注意清理旧的 `app\build\windows` CMake 缓存，避免继续引用旧 target 名。
-- 涉及 Android 调试脚本时，优先复用 `build_android.ps1 -Run`，不要复制一套新的 Flutter 启动逻辑。
-- 修改 Web UI 后，保持 `tools/build_windows.ps1`、`tools/build_android.ps1` 自动执行 `npm ci` / `npm install` 与 `npm run build`，确保 `app\assets\web\` 随 EXE/APK 更新。Windows 脚本会用 `node_modules\.tomato-package-lock.sha256` 跳过未变化依赖安装；如果本地 `node_modules` 被占用导致构建失败，脚本会复制 `web_ui/` 到临时目录构建后同步 `app\assets\web\`。
-- 新增 Web UI 依赖时同步更新 `web_ui\package.json` 与 `web_ui\package-lock.json`，不要提交 `node_modules`。
-- Windows Debug 和 Release 可以是两套可执行程序，但桌面运行目录和数据必须共用 `release\windows\tomato_english_happy_talking`；Debug 构建/运行也要先把程序文件发布到该目录，确保 `ffmpeg.exe`、依赖 DLL、数据库和 API 缓存都从同一处读取，不要直接运行 `app\build\windows\...\Debug` 旁边的 EXE。
-
-## 构建、运行与发布
-
-处理构建、发布、模拟器任务时，优先复用根目录 PowerShell 脚本，不要只给一次性裸终端命令。
-
-Codex / 自动化会话执行 Flutter 相关命令时，必须直接走已授权的沙箱外 PowerShell，不要先在受限沙箱内试跑。当前环境已验证受限沙箱会卡在 Flutter SDK cache lockfile 访问上；`flutter --version`、`flutter pub get`、`flutter analyze`、`flutter test`、`tools/build_windows.ps1`、`tools/build_android.ps1`、`tools/run_android_debug.ps1`、`tools/setup_android_emulator.ps1` 等只要会触碰 `D:\DevTools\flutter`，都应直接用类似下面的外部 PowerShell 形式执行：
+常用验证：
 
 ```powershell
-& 'C:\Program Files\PowerShell\7\pwsh.exe' -Command '.\tools\build_windows.ps1'
+# Web UI
+cd web_ui
+npm test
+npm run build
+
+# Flutter / Dart；从 app/ 调用仓库包装脚本
+cd app
+..\tools\run_flutter.ps1 analyze
+..\tools\run_flutter.ps1 test
 ```
 
-纯 Web UI 的 `npm` / `tsc` / `vite` 命令可以按普通仓库命令执行；只有需要 Flutter SDK、Android SDK 或启动桌面/模拟器时才直接走沙箱外。
+按改动选择最低验证范围：
 
-常用命令：
+| 改动 | 至少验证 |
+|---|---|
+| Dart Service / Model / Provider | 相关 `flutter test` + `analyze` |
+| React / TypeScript UI | `npm test` + `npm run build` |
+| Bridge protocol | Flutter 侧相关测试 + Web UI 测试/build + `analyze` |
+| 数据库 / migration / cache | 新旧数据、二次运行、重启、失败恢复、cache hit/miss |
+| Windows UI / WebView / 音频 / 文件 | 真实 Windows App 流程；单元测试不足以定论 |
+| Android / Manifest / Gradle / plugin | Android 构建或设备/模拟器验证 |
+| Release / 发布 | 对应 Release 构建、产物检查与真实运行验证 |
+
+报告结果时明确区分“已验证 / 未验证 / 无法验证”，并说明未执行范围。
+
+## 9. 构建与本机环境
+
+优先使用仓库脚本，不复制平行构建流程：
 
 ```powershell
-# 安装依赖
-cd f:\TomatoEnglishHappyTalking\app
-flutter pub get
-
-# Windows Debug 运行
-cd f:\TomatoEnglishHappyTalking
-.\tools\build_windows.ps1 -Run
-
-# Windows Release 构建
 .\tools\build_windows.ps1 -Release
-
-# Windows Release 构建并运行
-.\tools\build_windows.ps1 -Release -Run
-
-# Android Release 构建并发布
+.\tools\build_windows.ps1 -Run
 .\tools\build_android.ps1
-
-# Android 已连接设备 Debug
-.\tools\build_android.ps1 -Run -DeviceId <device-id>
-
-# Android 模拟器 Debug
 .\tools\run_android_debug.ps1
-
-# 初始化或重建 Android 模拟器环境
-.\tools\setup_android_emulator.ps1 -Start
-
-# Web UI 本地调试
-cd f:\TomatoEnglishHappyTalking\web_ui
-npm run dev
-cd f:\TomatoEnglishHappyTalking
-.\tools\build_windows.ps1 -Run -DartDefine "TOMATO_WEB_UI_DEV_URL=http://127.0.0.1:5173"
+.\tools\setup_android_emulator.ps1
 ```
 
-构建产物：
+Flutter SDK、Android SDK、AVD 和仓库盘符属于本机环境，不是项目协议。脚本应解析或配置环境；不要把某台开发机的绝对路径写进业务代码或通用规则。
 
-- Windows Release 构建输出：`app\build\windows\x64\runner\Release\tomato_english_happy_talking.exe`
-- Windows Debug 构建中间输出：`app\build\windows\x64\runner\Debug\tomato_english_happy_talking.exe`，但调试运行也应使用脚本同步后的发布目录 EXE。
-- Windows 发布目录：`release\windows\tomato_english_happy_talking\`
-- Android 构建输出：`app\build\app\outputs\flutter-apk\app-release.apk`
-- Android 发布 APK：`release\android\tomato_english_happy_talking-android-release.apk`
-- Web UI 构建输出 / App 内置资源：`app\assets\web\`（由 `web_ui/vite.config.ts` 的 `outDir` 指定）
+Windows 发布目录可能同时包含本机运行数据、日志、缓存和安全配置。不得直接压缩整个运行目录对外发布；使用仓库发布脚本和干净 staging。不得为构建方便清空用户运行数据。
 
-- 桌面运行目录和数据固定跟随发布目录：Windows Debug 和 Release 可以是两套构建产物，但脚本会把最终运行的程序文件同步到 `release\windows\tomato_english_happy_talking\`；数据库、`tomato_api_cache/`、绘本图片、TTS、录音、`ffmpeg.exe` 和依赖 DLL 都应从这里读取，不要让 Debug 从 `app\build\windows\...\Debug` 直接启动或写入第二套数据。
-- `tools/build_windows.ps1` 不得清空用户运行数据；如果需要清理发布目录，只能清理程序构建产物，必须保留数据库、`tomato_api_cache/`、录音、绘本图片和配置密钥文件。
-- `D:\DevTools\flutter\bin\flutter.bat analyze`、`flutter.bat --version`、`flutter test` 以及项目 Flutter 构建脚本在当前 Codex 沙箱内已确认会卡住 SDK cache lockfile；代理会话不要先试沙箱内命令，直接用已授权沙箱外 PowerShell 执行，并设置明确超时。
-- Android Release 冷构建可能接近或超过 15 分钟，尤其是 R8/minify、资源压缩、mapping 和 `rive_native` Android artifact 初始化。自动化外层 timeout 至少预留 25-30 分钟；如果 `app/build/app/outputs/flutter-apk/app-release.apk` 与 `outputs/mapping/release/mapping.txt` 已更新但 `release/android/` 仍旧，先查 Gradle daemon 日志是否已 `Success`，再重新运行脚本或按脚本目标同步产物。
+## 10. 专项规则路由
 
-只有在怀疑脚本本身有问题时，才退回到底层 `flutter build`、`flutter run`、`gradlew`、`adb` 或 `emulator` 命令定位。
+只读取与当前任务相关的文档，不要默认加载全部 `docs/`。历史/归档文档只作背景。
 
-## 新建功能页面工作流
+| 任务范围 | 必读文档 |
+|---|---|
+| 一般开发与项目结构 | [开发与构建指南](docs/development-guide.md) |
+| 产品导航和原生/WebView 关系 | [产品 UI 专项规则](docs/agent_guides/product_ui_rules.md) |
+| 页面、Provider、Bridge、Web UI | [功能页面开发专项规则](docs/agent_guides/feature_development_rules.md) |
+| 分句算法、规则、性能与测试 | [分句统一规范](docs/read_aloud_sentence_split_spec.md)、[分句工程迭代约束](docs/read_aloud_sentence_split_engineering_rules.md) |
+| 歌曲、听力、字幕、TTS 复用、跟读 | [音乐、听力与跟读专项规则](docs/agent_guides/music_listening_follow_read_rules.md) |
+| 绘本、图片缓存、审核与云成本 | [绘本与云 API 成本专项规则](docs/agent_guides/picture_book_and_cloud_cost_rules.md) |
+| 内容安全、文章导入、翻译与续传 | [内容安全与文章导入专项规则](docs/agent_guides/content_safety_and_article_import_rules.md) |
+| 云端点、Provider、模型与密钥 | [云服务端点与配置专项规则](docs/agent_guides/cloud_service_configuration_rules.md) |
+| 新建或重构云 API Service | [云 API Service 开发专项规则](docs/agent_guides/cloud_service_development_rules.md) |
+| Android 原生、Manifest、Gradle | [Android 原生专项规则](docs/agent_guides/android_native_rules.md) |
+| PowerShell 工具 | [PowerShell 工具专项规则](docs/agent_guides/powershell_tooling_rules.md) |
+| 构建、运行与发布 | [构建发布专项规则](docs/agent_guides/build_and_release_rules.md)、[构建发布踩坑](docs/build-and-release-pitfalls.md) |
+| 日志与运行时诊断 | [诊断日志专项规则](docs/agent_guides/logging_rules.md) |
+| 跟读录音、ASR、评分与播放 | [跟读功能排查专项规则](docs/agent_guides/follow_read_troubleshooting.md) |
+| 重要历史变化 | [变更记录](docs/change_log.md) |
 
-新建页面前先搜索现有 `web_ui` 路由、bridge command、Flutter feature、provider 和 widget 结构。
+## 11. 完成条件与本文件维护
 
-当前默认产品 UI 在 `web_ui/src/App.tsx` 中维护，路由使用 hash path：
+任务完成前确认：
 
-- `/`
-- `/article/new`
-- `/follow/<articleId>`
-- `/chat/<articleId>`
-- `/settings`
+- 实际改动满足用户目标且没有无关扩张；
+- 相关测试、分析、构建或真实流程已按风险执行并阅读输出；
+- 没有新增 secret、临时入口、假成功或自己造成的残留；
+- 文档、协议两侧、生成文件和产物在适用时保持同步；
+- 最终报告列出改动、验证结果和仍未验证的风险。
 
-Flutter 外层 `app_router.dart` 只负责让这些入口进入 `WebShellScreen`，并保留 `/follow-read/<articleId>`、`/profile` 等旧别名。
-
-新增面向用户的主流程时，通常需要同步：
-
-- `web_ui/src/App.tsx`：页面、状态与交互
-- `web_ui/src/types.ts`：bridge payload 类型
-- `web_ui/src/bridge.ts`：本地 mock payload
-- `app/lib/features/web_shell/web_shell_screen.dart`：native command handler 和事件推送
-- `app/lib/features/web_shell/web_bridge_protocol.dart`：协议解析规则
-
-只有确实需要原生 Flutter 页面或兼容旧 UI 时，才在 `app/lib/features/<feature_name>/` 下创建，结构如下：
-
-```text
-features/<feature_name>/
-├── <feature_name>_screen.dart
-├── providers/
-│   └── <feature_name>_provider.dart
-└── widgets/
-```
-
-Screen 基本要求：
-
-- 使用 `ConsumerWidget` 或必要时 `ConsumerStatefulWidget`。
-- 背景、按钮、强调色从 `AppTheme` 获取。
-- 字体用 `GoogleFonts.nunito()`。
-- UI 不直接调用 cloud API。
-- 支持 Windows 与 Android 布局。
-
-Provider 基本要求：
-
-- 使用 `riverpod_annotation`。
-- 文件包含 `part '<feature_name>_provider.g.dart';`。
-- 状态更新集中在 Notifier 或函数式 provider 中。
-
-路由注册：
-
-- 路由统一维护在 `app/lib/core/router/app_router.dart`。
-- 新路由使用 `GoRoute` 加入现有路由表，并确认 `web_ui` 的 hash route 与 bridge session 生命周期一致。
-
-如果新增或修改了 `@riverpod` 代码，需要运行项目已有代码生成流程或等效命令，并优先沿用仓库已有脚本/约定。
-
-## 新建或重构云 API Service 工作流
-
-新建 service 时：
-
-- 文件放在 `app/lib/services/<service_name>_service.dart`。
-- 配置存取入口在 `app/lib/core/config/app_config.dart`。
-- 如新增非密钥运行参数，通常同步更新 `app/lib/features/profile/profile_screen.dart` 和 Web UI `settings.load` 展示。
-- 设置页可以通过云服务选项卡保存/清除百炼、方舟和火山语音 key；输入框只能处理用户草稿值，bridge payload 只能返回配置状态和脱敏 mask，不得回传明文 key。不要在代码、日志、文档或测试 fixture 中硬编码真实 API Key。
-- 不要为了验证服务逻辑去改构建链。
-
-Service 必须满足：
-
-- 只用 `dio`。
-- API Key 通过 `AppConfig` 读取。
-- mock fallback 返回结构合理的假数据。
-- 返回 Dart 模型类。
-- 错误时用 `TomatoLogger` 记录摘要并返回 `null` 或 fallback。
-- 不修改 `pubspec.yaml` 既有依赖版本，除非任务明确要求。
-
-## 诊断日志规范
-
-- 统一入口：`TomatoLogger`。
-- 固定字段：`ts, level, category, event, message, flowId, articleId, route, stage, status, durationMs, data, error, stack`。
-- 级别：`trace/debug/info/warn/error/fatal`；默认 `info`，可用 `TOMATO_LOG_LEVEL` 调整。
-- 分类：`startup, bridge, qa, webview, article, pictureBook, tts, asr, chat, follow, listening, recording, suno, music, cache, config, safety`。
-- 日志目录解析顺序：`TOMATO_LOG_DIR`、`TOMATO_DESKTOP_DATA_ROOT\logs`、桌面程序目录 `logs`。Windows Debug/Release 都应复用 `release\windows\tomato_english_happy_talking\logs`。
-- 日志文件为 NDJSON，内存保留最近 2000 条，文件默认 5 MB 轮转，最多 10 个文件或 7 天。
-- 永远不要记录完整 API key、Authorization、Cookie、完整文章正文、完整歌词、完整云响应或绝对路径明文；需要定位内容时记录 hash、长度、业务 ID 和短摘要。
-- Web UI 通过 `diagnostics.clientLog` 上报 `window.onerror`、`unhandledrejection` 和关键 `console.warn/error`；bridge 请求只记录 payload 摘要。
-- QA 实时接口：`GET /logs/recent?limit=200&level=&category=&since=`、`GET /logs/stream?level=&category=`、`GET /logs/files`、`GET /logs/export`。
-
-## 跟读功能排查工作流
-
-跟读流程：
-
-```text
-1. NlpService.splitSentences(text)          -> List<String>
-2. TtsService.synthesize(sentence)          -> List<int> MP3 bytes
-3. just_audio AudioPlayer.play(bytes)       -> play audio
-4. record AudioRecorder.start(path)         -> start recording WAV
-5. record AudioRecorder.stop()              -> WAV file path
-6. RecognitionBasedAssessmentEngine.assess -> BigASR recognize + heuristic score
-7. ScoreDisplayWidget.show(result)          -> render score
-```
-
-排查关键文件：
-
-- `app/lib/services/tts_service.dart`
-- `app/lib/services/streaming_asr_service.dart`
-- `app/lib/services/recognition_based_assessment_service.dart`
-- `app/lib/services/scoring_service.dart`（仅保留兼容数据结构 / mock stub）
-- `app/lib/features/follow_read/providers/follow_read_provider.dart`
-- `app/lib/features/follow_read/follow_read_screen.dart`
-- `app/lib/features/web_shell/web_shell_screen.dart`
-- `app/android/app/src/main/AndroidManifest.xml`
-- `app/android/app/build.gradle.kts`
-
-常见检查项：
-
-- WAV 是否为 16kHz 16bit mono PCM。
-- BigASR WebSocket 是否拿到非空识别文本。
-- `RecognitionBasedAssessmentEngine` 是否正确处理空识别、错词、漏读和 mock fallback。
-- `just_audio` 播放完毕事件是否正确触发下一步。
-- Provider 的 `isRecording` 状态是否被 UI 正确监听。
-- WebView bridge 是否把 `follow.state` / `avatar.state` 推给 Web UI。
-- Android 是否声明并实际申请 `RECORD_AUDIO` 权限。
-- 模拟器问题优先用 `.\tools\run_android_debug.ps1` 复现。
-
-## 重要禁止项
-
-- 不要引入 `dio` 以外的 HTTP 库。
-- 不要硬编码 API Key。
-- 不要硬编码项目主题色。
-- 不要在 Widget 中直接 `await` API 调用。
-- 不要把 API 原始 JSON 直接传给 Widget。
-- 不要随意修改 `pubspec.yaml` 中已有依赖版本。
-- 不要把 Ark 文本补全重新作为聊天主链路。
-- 不要重新引入 Azure Speech 配置、依赖或 Pronunciation Assessment 调用。
-- 不要把标准中英对照故事整篇直接送给 AI 做英文提取/翻译；必须先本地解析并复用英文原文、中文对照和标题信息。
-- 不要对已经有本地缓存或导入译文的数据重复调用 TTS、Realtime、BigASR、图片生成或翻译接口。
-- 不要移除 Android 构建稳定性相关配置：
-  - `android.overridePathCheck=true`
-  - `kotlin.compiler.execution.strategy=in-process`
-  - `hooks.user_defines.sqlite3.source: system`
-  - `hooks.user_defines.sqlite3.name_windows: winsqlite3`
-- 不要把旧包名 `com.example.english_love_reading` 重新引入源码。
-- 不要只给裸 `flutter` 命令来处理构建、发布或模拟器任务，优先复用根目录脚本。
-
-## 工作方式
-
-- 修改前先搜索并阅读相关代码，确认现有结构。
-- 每次修改聚焦一个明确关注点。
-- 修改后检查 null safety、import 路径、Provider 生成文件引用和主题使用是否正确。
-- 涉及构建、发布或运行时，优先执行根目录脚本进行验证。
-- 如果失败，先定位脚本层或配置层原因，再给出结论。
+本文件不是项目百科。只涉及单一功能、供应商 schema、模型/端点、固定 fixture、具体书籍或历史事故的内容应进入对应 `docs/`。同一规则只写一次；只有用户纠正暴露出可复现且未被覆盖的项目级缺口时，才在这里增加一条可执行规则，并定期删除失效内容。

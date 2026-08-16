@@ -1,13 +1,15 @@
-# 英文朗读分句 V3
+# 英文朗读分句规则
 
 生产版本标识继续使用 `read_aloud_dp_v3`；经端侧句法、确定性求解及候选路径复核后保存为
 `reviewed_dp_v3`。版本号没有升级为 V4。
 
-当前字幕、朗读负担与引语完整性规则的内部求解器子版本为 `syntax_solver_v3_6`；子版本参与缓存和运行审计，
-但不改变文章级 V3 标识，也不会迁移旧文章。
+当前发布实现已完成行为等价重构，内部求解器子版本为 `syntax_solver_v3_8`。子版本参与缓存和
+运行审计，但不改变文章级 V3 标识，也不会自动迁移旧文章。归档中的“V4”仅指 clean-room 重构
+工程代号，不是文章版本协议；若将来升级文章级版本，必须独立设计兼容和迁移方案。
 
-V3.6 的长度触发、完整引语范围、严格路径排序和 E61 固定回归详见
-[`read_aloud_sentence_split_v3_5_readability_rules.md`](read_aloud_sentence_split_v3_5_readability_rules.md)。
+唯一生产规则、行为等价门槛、统一 DAG 架构和性能约束见
+[`read_aloud_sentence_split_spec.md`](read_aloud_sentence_split_spec.md)。历史规则与迁移记录保留在
+[`read_aloud_sentence_split_readability_rules.md`](read_aloud_sentence_split_readability_rules.md)，不得覆盖唯一规范。
 
 V3.3 的完整候选格、软句法证据与受约束 AI 扩展已经实现。端侧和本地回归已通过；阿里
 `qwen3.7-max` 和火山 `deepseek-v4-flash-ga-260731` 已达到受约束路径选择门槛。柳林风声迁移仍须

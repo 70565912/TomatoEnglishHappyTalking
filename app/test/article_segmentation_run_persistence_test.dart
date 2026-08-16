@@ -33,7 +33,7 @@ void main() {
     }
   });
 
-  test('stores the article and reproducible V3.6 run in one transaction',
+  test('stores the article and reproducible V3.7 run in one transaction',
       () async {
     final now = DateTime.utc(2026, 8, 8, 19, 30);
     final article = Article(
@@ -46,7 +46,7 @@ void main() {
     final run = ArticleSegmentationRunRecord(
       sourceHash: 'source-sha256',
       sentenceSplitVersion: 'reviewed_dp_v3',
-      solverVersion: 'syntax_solver_v3_6',
+      solverVersion: 'syntax_solver_v3_7',
       parserVersion: 'udpipe-1.4.0',
       modelSha256: 'model-sha256',
       parserHealthy: true,
@@ -59,6 +59,8 @@ void main() {
           ],
         },
       ],
+      sentencesBeforePostProcessing: const ['Before.', 'Home!'],
+      finalSentences: const ['Before. Home!'],
       selectedPaths: const {0: 'v3_o0_keep'},
       selectionTrace: const [
         {
@@ -84,19 +86,23 @@ void main() {
     final rows = await DatabaseService.getArticleSegmentationRuns(articleId);
     expect(rows, hasLength(1));
     expect(rows.single['sentence_split_version'], 'reviewed_dp_v3');
-    expect(rows.single['solver_version'], 'syntax_solver_v3_6');
+    expect(rows.single['solver_version'], 'syntax_solver_v3_7');
     expect(rows.single['parser_version'], 'udpipe-1.4.0');
     expect(rows.single['model_sha256'], 'model-sha256');
     expect(rows.single['selected_paths_json'], '{"0":"v3_o0_keep"}');
     final candidateAudit = jsonDecode(
       rows.single['candidate_paths_json'] as String,
     ) as Map<String, dynamic>;
+    expect(candidateAudit['originals'], hasLength(1));
     expect(
       candidateAudit['schemaVersion'],
-      'article_segmentation_candidate_audit_v3_6',
+      'article_segmentation_candidate_audit_v3_7',
     );
-    expect(candidateAudit['originals'], hasLength(1));
     expect(candidateAudit['selectionTrace'], hasLength(1));
+    expect(
+      (candidateAudit['postProcessing'] as Map)['final'],
+      const ['Before. Home!'],
+    );
     expect(
       ((candidateAudit['selectionTrace'] as List).single
           as Map<String, dynamic>)['candidateSetHash'],

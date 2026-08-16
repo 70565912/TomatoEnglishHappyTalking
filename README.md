@@ -21,6 +21,24 @@
 
 ![Tomato 产品总览](docs/readme/product-overview.webp)
 
+## 最新进展 · 英文朗读分句 V3.8（2026-08-16）
+
+Tomato 已将面向 TTS、字幕、听力定位和跟读的英文朗读分句器重构为一次不可变事实构建与一次有界
+DAG 求解，并升级内部求解器为 `syntax_solver_v3_8`。
+
+- Alice 39 章与 Willows 62 章共 101 章、2,927 个正字句完成固定语料门禁；相对最近接受基线的
+  27 个变化原句全部通过统一规范审核，不支持变化 0、未分类变化 0。
+- 最终生成 7,967 个朗读句段，原文回拼失败 0、超过 30 词的句段 0，最长句段 27 词；Windows
+  原生 243 项评测中，人工认可路径覆盖 243/243，解析器健康且没有紧急原句输出。
+- 在同机、同冻结输入的 AOT 交替回放中，三个代表章节相对重构前实现的中位耗时降低约
+  70%–92%；事实、候选、评分和求解职责已经收敛到唯一生产链路。
+
+> 已发布文章继续使用持久化句槽，不会因算法升级自动重分；新建文章或用户显式重建后才使用新求解器。
+
+[查看完整生产整合与验证报告](docs/archive/read_aloud_splitter_v4_production_integration_20260816.md) ·
+[查看英文朗读分句统一规范](docs/read_aloud_sentence_split_spec.md) ·
+[查看全部测试与评测](docs/testing-and-evaluation.md)
+
 ## 从文章到完整学习材料
 
 ![Tomato 四步工作流](docs/readme/workflow.webp)

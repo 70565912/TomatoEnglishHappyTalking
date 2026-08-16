@@ -1,97 +1,19 @@
 ---
-description: "Use when writing or modifying service classes (TtsService, ScoringService, AiService, NlpService, DatabaseService). Covers API call patterns, error handling, mock fallback, and security requirements for Volcano Engine TTS/AI and Azure Speech APIs."
+description: "Path-specific rules for service classes: boundaries, models, HTTP reuse, credentials, errors, caching, and diagnostics."
 applyTo: "app/lib/services/**/*.dart"
 ---
 
-# Services 层编码规范
+# Services 路径级规则
 
-## 核心原则
+先遵守 `/AGENTS.md`，并按任务阅读 `docs/agent_guides/cloud_service_development_rules.md`；涉及 Provider、端点、模型或密钥时再读 `docs/agent_guides/cloud_service_configuration_rules.md`。
 
-- Services **只做 API 调用 / 数据处理**，不持有 UI 状态
-- 返回值或抛出异常——不在 service 内 `showDialog`
-- 每个 service **必须提供 mock fallback**，当 API Key 未配置时返回虚假数据而不是崩溃
+- Service 只负责远程 API、本地数据处理、缓存、文件和模型转换，不持有 Widget UI 状态，不显示 Dialog。
+- 沿用对应服务的现有传输栈、Provider 选择、超时、重试和异常类型：HTTP 通常复用 `dio`，实时/流式协议复用仓库现有 WebSocket 实现；不要增加平行网络栈或复制业务链路。
+- API 原始响应在 Service 内校验并转换为 Dart 模型或明确的业务值，不直接暴露给 Widget。
+- API Key 和敏感配置只从 `AppConfig` / secure storage 读取，不硬编码、不写日志、不进入 fixture、Bridge payload 或缓存。
+- 远程失败应保留可诊断的真实错误语义。只有现有产品契约或明确测试场景要求时才返回可识别的 fallback；不得用 mock 冒充远程成功。
+- 只缓存成功的真实结果，cache key 覆盖所有影响输出的输入和配置；错误、安全拒绝和 mock/fallback 不进入成功缓存。
+- 正式诊断使用 `TomatoLogger`，只记录 ID、hash、长度、阶段、状态和短摘要。
+- 数据库写操作保持事务、幂等性和当前返回契约；表名、列名沿用集中定义。
 
-## API Key 读取
-
-所有 Key 通过 `AppConfig` 获取，**绝不**硬编码：
-
-```dart
-// ✅ 好
-final apiKey = await AppConfig.instance.volcTtsToken;
-if (apiKey == null) return _mockResult();   // fallback
-
-// ❌ 禁止
-const apiKey = 'Bearer sk-xxxxx';
-```
-
-## HTTP 调用（dio）
-
-- 只用 `dio`，**不引入** `http`、`http_dio` 等其他库
-- 超时设置：`connectTimeout: 10s`，`receiveTimeout: 30s`
-- 在 `DioException` 里区分网络错误 vs 业务错误
-
-```dart
-final _dio = Dio(BaseOptions(
-  connectTimeout: const Duration(seconds: 10),
-  receiveTimeout: const Duration(seconds: 30),
-));
-
-Future<List<int>?> synthesize(String text) async {
-  final token = await AppConfig.instance.volcTtsToken;
-  if (token == null) return null;          // mock fallback
-
-  try {
-    final response = await _dio.post(
-      'https://openspeech.bytedance.com/api/v1/tts',
-      options: Options(headers: {'Authorization': 'Bearer $token'}),
-      data: { /* ... */ },
-    );
-    return (response.data['data']['audio'] as String).toAudioBytes();
-  } on DioException catch (e) {
-    debugPrint('[TtsService] request failed: ${e.message}');
-    return null;
-  }
-}
-```
-
-## 火山引擎 TTS API
-
-- 端点：`https://openspeech.bytedance.com/api/v1/tts`
-- 鉴权：Header `Authorization: Bearer <token>`，Body 携带 `appid`
-- 返回 Base64 编码的 MP3，解码为 `List<int>` 后交给 `just_audio`
-
-## 火山方舟 Doubao API
-
-- 端点：`https://ark.cn-beijing.volces.com/api/v3/chat/completions`
-- 格式兼容 OpenAI：`{"model": "doubao-pro-32k", "messages": [...]}`
-- Header：`Authorization: Bearer <ark_api_key>`
-
-## Azure Speech 发音评分 API
-
-- 端点：`https://{region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1`
-- 必须携带 Header：`Ocp-Apim-Subscription-Key`、`Pronunciation-Assessment`（Base64 JSON）
-- 音频格式：WAV PCM 16kHz 16bit mono
-- 返回 JSON 包含 `NBest[0].PronunciationAssessment` 对象
-
-## Mock Fallback 模式
-
-```dart
-// 每个 public 方法顶部检查 Key，缺失时走 mock
-Future<PronunciationResult> assess(Uint8List wav, String refText) async {
-  final key = await AppConfig.instance.azureSpeechKey;
-  if (key == null) return _mockResult(refText);
-
-  // ... 真实 API 调用 ...
-}
-
-PronunciationResult _mockResult(String text) => PronunciationResult(
-  overallScore: 85.0,
-  words: text.split(' ').map((w) => WordResult(word: w, score: 85.0)).toList(),
-);
-```
-
-## 数据库服务（sqflite）
-
-- `DatabaseService` 单例，通过 `getInstance()` 获取
-- 表名、列名用常量定义，避免散落字符串
-- 所有写操作返回 `Future<void>` 或 `Future<int>` (rowId)
+供应商 endpoint、鉴权头、模型 ID 和响应 schema 不在本文件固化。修改前以当前代码、专项文档和供应商官方文档交叉验证。

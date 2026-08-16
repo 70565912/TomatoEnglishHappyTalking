@@ -1,7 +1,7 @@
 # 英文朗读分句 V3.3 实施与验收报告
 
 > 本文是 2026-08-09 的历史验收快照。当前长度触发和路径排序已由
-> `docs/read_aloud_sentence_split_v3_5_readability_rules.md` 取代；本文中的“安全原句保持原样”及
+> `docs/read_aloud_sentence_split_readability_rules.md` 取代；本文中的“安全原句保持原样”及
 > 207/243 指标不得作为 V3.5 的当前验收结论。
 
 日期：2026-08-09
@@ -98,4 +98,4 @@ bridge 及 Windows/Android 原生集成已经完成。通用候选召回、留�
 
 Release 数据库已经通过仓库外层一次性工具离线迁移，782 个既有绘本页的句子区间已重对齐；
 图片和媒体字段未变，未重新合成 TTS，未调用远程 API。完整规则、统计和迁移证据以
-`docs/read_aloud_sentence_split_v3_5_readability_rules.md` 为准。
+`docs/read_aloud_sentence_split_readability_rules.md` 为准。

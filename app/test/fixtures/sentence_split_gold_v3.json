@@ -810,10 +810,9 @@
         "and he was trying to recollect all the fine and biting things he used to say to masters of steam-launches when their wash,"
       ],
       "expectedChunks": [
-        "and he was trying to recollect all the fine and",
-        "biting things he used to say to masters of steam-launches when their wash,"
+        "and he was trying to recollect all the fine and biting things he used to say to masters of steam-launches when their wash,"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_keeps_a_23_word_flexible_sentence_instead_of_splitting_a_coordinated_modifier"
     },
     {
       "id": "manual_e01_e08:E08:12",
@@ -949,12 +948,11 @@
         "\"Me complain of that beautiful, that heavenly vision that has been vouchsafed me! Mend the cart!"
       ],
       "expectedChunks": [
-        "\"Police-station!",
-        "Complaint!\" murmured Toad dreamily.",
+        "\"Police-station! Complaint!\" murmured Toad dreamily.",
         "\"Me complain of that beautiful, that heavenly vision that has been vouchsafed me!",
         "Mend the cart!"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_keeps_a_short_complete_quote_intact"
     },
     {
       "id": "manual_e01_e08:E08:42",
@@ -1202,11 +1200,10 @@
         "The Rat crept into the hollow, and there he found the Mole, exhausted and still trembling."
       ],
       "expectedChunks": [
-        "\"Ratty!",
-        "Is that really you?\"",
+        "\"Ratty! Is that really you?\"",
         "The Rat crept into the hollow, and there he found the Mole, exhausted and still trembling."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_keeps_a_short_complete_quote_intact"
     },
     {
       "id": "stratified_e09_e62:E11:3",
@@ -1260,10 +1257,9 @@
       ],
       "expectedChunks": [
         "\"That was never done by a branch or a stump.",
-        "Looks as if it was made by a sharp edge of something in metal.",
-        "Funny!\""
+        "Looks as if it was made by a sharp edge of something in metal. Funny!\""
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_merges_a_one_word_terminal_quote_fragment"
     },
     {
       "id": "stratified_e09_e62:E13:4",
@@ -1460,10 +1456,10 @@
         "night by one of them."
       ],
       "expectedChunks": [
-        "At last I managed to extract from him that Mole had been",
-        "seen in the Wild Wood last night by one of them."
+        "At last I managed to extract from him",
+        "that Mole had been seen in the Wild Wood last night by one of them."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_uses_the_content_clause_front_instead_of_splitting_auxiliary_and_predicate"
     },
     {
       "id": "stratified_e09_e62:E17:7",
@@ -2069,10 +2065,10 @@
         "in all the length and breadth of Merry England."
       ],
       "expectedChunks": [
-        "and Toad was a helpless prisoner in the remotest dungeon of the",
-        "best-guarded keep of the stoutest castle in all the length and breadth of Merry England."
+        "and Toad was a helpless prisoner",
+        "in the remotest dungeon of the best-guarded keep of the stoutest castle in all the length and breadth of Merry England."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_uses_a_complete_copular_nominal_before_the_long_adpositional_phrase"
     },
     {
       "id": "stratified_e09_e62:E30:15",
@@ -2269,10 +2265,11 @@
         "the gift of forgetfulness."
       ],
       "expectedChunks": [
-        "For this is the last best gift that the kindly demi-god is careful to bestow on those to",
-        "whom he has revealed himself in their helping: the gift of forgetfulness."
+        "For this is the last best gift",
+        "that the kindly demi-god is careful to bestow on those to whom he has revealed himself in their helping:",
+        "the gift of forgetfulness."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_uses_the_relative_front_and_colon_instead_of_splitting_to_whom"
     },
     {
       "id": "stratified_e09_e62:E33:23",
@@ -2649,10 +2646,9 @@
         "But the constant chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
       ],
       "expectedChunks": [
-        "But the constant",
-        "chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
+        "But the constant chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_keeps_the_determiner_modifier_and_nominal_head_together"
     },
     {
       "id": "stratified_e09_e62:E40:11",
@@ -2679,10 +2675,9 @@
       ],
       "expectedChunks": [
         "clean of any chilly premonitions of the passing year.",
-        "But the constant",
-        "chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
+        "But the constant chorus of the orchards and hedges had shrunk to a casual evensong from a few yet unwearied performers;"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_keeps_the_determiner_modifier_and_nominal_head_together"
     },
     {
       "id": "reviewed_v2:E41:39",
@@ -2848,10 +2843,10 @@
         "as those I clambered in and out of in my own childhood;"
       ],
       "expectedChunks": [
-        "The little boats that lie tethered to the rings and stanchions of the old sea-wall are gaily",
-        "painted as those I clambered in and out of in my own childhood;"
+        "The little boats that lie tethered to the rings and stanchions of the old sea-wall are gaily painted",
+        "as those I clambered in and out of in my own childhood;"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "r8k_reaudit_keeps_the_adverb_with_its_participial_predicate"
     },
     {
       "id": "reviewed_v2:E45:12",

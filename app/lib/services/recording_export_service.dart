@@ -3619,7 +3619,7 @@ class RecordingExportService {
       path.replaceAll(r'\', '/').replaceAll("'", r"'\''");
 
   static String _srtForTimeline(_RecordingTimeline timeline) {
-    return RecordingExportUtils.srtForCues(
+    return RecordingExportUtils.srtForQuPeiYinCues(
       timeline.segments
           .map(
             (segment) => RecordingSubtitleCue(

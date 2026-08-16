@@ -10,6 +10,8 @@ class ArticleSegmentationRunRecord {
     required this.parserHealthy,
     required this.parserIssues,
     required this.candidatePaths,
+    required this.sentencesBeforePostProcessing,
+    required this.finalSentences,
     required this.selectedPaths,
     required this.aiSource,
     required this.aiRemoteAttempts,
@@ -34,6 +36,8 @@ class ArticleSegmentationRunRecord {
   final bool parserHealthy;
   final List<String> parserIssues;
   final List<Map<String, dynamic>> candidatePaths;
+  final List<String> sentencesBeforePostProcessing;
+  final List<String> finalSentences;
   final Map<int, String> selectedPaths;
   final List<Map<String, dynamic>> selectionTrace;
   final String aiSource;
@@ -65,6 +69,8 @@ class ArticleSegmentationRunRecord {
       parserHealthy: parserHealthy,
       parserIssues: parserIssues,
       candidatePaths: candidatePaths,
+      sentencesBeforePostProcessing: sentencesBeforePostProcessing,
+      finalSentences: finalSentences,
       selectedPaths: selectedPaths,
       selectionTrace: selectionTrace,
       aiSource: aiSource,
@@ -92,9 +98,14 @@ class ArticleSegmentationRunRecord {
         'parser_healthy': parserHealthy ? 1 : 0,
         'parser_issues_json': jsonEncode(parserIssues),
         'candidate_paths_json': jsonEncode({
-          'schemaVersion': 'article_segmentation_candidate_audit_v3_6',
+          'schemaVersion': 'article_segmentation_candidate_audit_v3_7',
           'originals': candidatePaths,
           'selectionTrace': selectionTrace,
+          'postProcessing': {
+            'rule': 'merge_one_word_chunks_local_v1',
+            'before': sentencesBeforePostProcessing,
+            'final': finalSentences,
+          },
         }),
         'selected_paths_json': jsonEncode(
           selectedPaths.map((key, value) => MapEntry(key.toString(), value)),

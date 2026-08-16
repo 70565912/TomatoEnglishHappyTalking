@@ -1,100 +1,16 @@
 ---
-description: "Use when writing Flutter widgets, screens, or Dart classes. Covers null safety, widget patterns, theming, naming conventions, and common Flutter anti-patterns to avoid."
+description: "Path-specific Dart and Flutter rules for null safety, async code, widgets, theming, naming, and diagnostics."
 applyTo: "app/lib/**/*.dart"
 ---
 
-# Flutter / Dart 编码规范
+# Flutter / Dart 路径级规则
 
-## Null Safety
+先遵守 `/AGENTS.md`。页面、Provider 或 Bridge 改动同时阅读 `docs/agent_guides/feature_development_rules.md`。
 
-- 禁止 `!` 强制解包，除非变量在逻辑上**确实不可为 null**（且注释说明原因）
-- 优先用 `??`、`?.`、`if (x != null)` 守卫
-- 函数参数能用 named + required 就用，避免位置参数歧义
-
-```dart
-// ✅ 好
-final title = article?.title ?? '未命名';
-
-// ❌ 避免
-final title = article!.title;
-```
-
-## 异步代码
-
-- 所有异步函数用 `async/await`，禁止裸 `.then().catchError()`
-- 错误处理用 `try/catch`，在 catch 块中记录日志或返回 fallback
-
-```dart
-// ✅ 好
-Future<String?> fetchData() async {
-  try {
-    final response = await dio.get('/endpoint');
-    return response.data['text'] as String;
-  } catch (e) {
-    debugPrint('fetchData failed: $e');
-    return null;
-  }
-}
-```
-
-## Widget 规范
-
-- `StatelessWidget` 优先，只有需要本地 UI 状态时用 `ConsumerStatefulWidget`
-- 用 `ConsumerWidget` 替代 `StatelessWidget` 当需要读取 Riverpod 状态
-- Widget 不直接 `await` API——通过 Provider/AsyncValue 桥接
-
-```dart
-// ✅ 好
-class ArticleCard extends ConsumerWidget {
-  const ArticleCard({required this.articleId, super.key});
-  final int articleId;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final article = ref.watch(articleProvider(articleId));
-    return article.when(
-      data: (a) => Text(a.title),
-      loading: () => const CircularProgressIndicator(),
-      error: (e, _) => Text('加载失败'),
-    );
-  }
-}
-```
-
-## 命名规范
-
-| 类型 | 风格 | 示例 |
-|------|------|------|
-| 类 / Widget | `UpperCamelCase` | `FollowReadScreen` |
-| 文件 | `snake_case` | `follow_read_screen.dart` |
-| 变量 / 函数 | `lowerCamelCase` | `fetchArticle()` |
-| 常量 | `lowerCamelCase` | `const maxSentences = 20` |
-| Screen 文件 | `xxx_screen.dart` | `chat_screen.dart` |
-
-## 主题与样式
-
-- 颜色始终从 `AppTheme` 取，**不要**硬编码颜色值
-- 字体始终用 `GoogleFonts.nunito()`
-- 间距用 `8` 的倍数（8, 16, 24, 32）
-
-```dart
-// ✅ 好
-color: AppTheme.primary       // #FF6B35
-color: AppTheme.darkBlue      // #1A237E
-style: GoogleFonts.nunito(fontSize: 16)
-
-// ❌ 避免
-color: const Color(0xFFFF6B35)  // 硬编码
-```
-
-## 文件组织
-
-每个 feature 目录结构：
-```
-features/follow_read/
-├── follow_read_screen.dart       # 主屏 UI
-├── providers/
-│   └── follow_read_provider.dart # Riverpod providers
-└── widgets/
-    └── sentence_card.dart        # 局部 widget
-```
+- 保持 sound null safety。优先使用 `??`、`?.` 和显式 guard；只有逻辑上已证明非空时使用 `!`，并让理由在代码上下文中可见。
+- 异步流程优先 `async` / `await`。捕获异常时保留真实失败语义并用 `TomatoLogger` 记录必要摘要；不要吞异常或返回假成功。
+- 类和 Widget 使用 `UpperCamelCase`，文件使用 `snake_case`，变量、函数和常量使用 `lowerCamelCase`；Screen 文件沿用 `*_screen.dart`。
+- 无本地可变状态时优先 `StatelessWidget` / `ConsumerWidget`；确需本地生命周期状态时使用 `ConsumerStatefulWidget`。
+- Widget 通过 Provider / `AsyncValue` 获取业务状态，不直接调用远程 API；加载、成功和错误状态都应可观察。
+- Flutter UI 颜色和字体沿用 `AppTheme` 与当前设计系统，不复制硬编码主题值；同时检查 Windows 和 Android 布局。
+- 不手工编辑生成文件；修改注解或模型后运行仓库现有代码生成与相关验证。
