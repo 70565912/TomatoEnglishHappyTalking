@@ -2,6 +2,7 @@
 # Usage:
 #   .\tools\publish_github_release.ps1 -Version 1.0.0
 #   .\tools\publish_github_release.ps1 -Version 1.0.0 -SkipBuild
+#   .\tools\publish_github_release.ps1 -Version 1.0.0 -SkipBuild -PackageOnly
 #   .\tools\publish_github_release.ps1 -Version 1.0.0 -Draft
 #
 # Encoding guard:
@@ -12,6 +13,7 @@ param(
     [string]$Version,
 
     [switch]$SkipBuild,
+    [switch]$PackageOnly,
     [switch]$Draft
 )
 
@@ -615,8 +617,12 @@ $checksumPath = Join-Path $distRoot "SHA256SUMS.txt"
 Write-Host "=== Preflight checks ($tagName) ===" -ForegroundColor Cyan
 Assert-VersionFormat -Value $Version
 Assert-GitWorktreeCleanForRelease
-Assert-GhAuthenticated
-Assert-TagAndReleaseAvailable -TagName $tagName
+if (-not $PackageOnly) {
+    Assert-GhAuthenticated
+    Assert-TagAndReleaseAvailable -TagName $tagName
+} else {
+    Write-Host "PackageOnly enabled; GitHub authentication and release checks are skipped." -ForegroundColor Yellow
+}
 
 New-Item -ItemType Directory -Path $distRoot -Force | Out-Null
 
@@ -634,6 +640,14 @@ New-VersionedAndroidApk -TagName $tagName -ApkPath $apkPath
 
 Write-Host "=== Generate SHA-256 manifest ===" -ForegroundColor Cyan
 New-ChecksumManifest -AssetPaths @($zipPath, $apkPath) -ManifestPath $checksumPath
+
+if ($PackageOnly) {
+    Write-Host "`nRelease assets packaged without publishing: $tagName" -ForegroundColor Green
+    Write-Host "  Windows: $zipPath"
+    Write-Host "  Android: $apkPath"
+    Write-Host "  SHA-256: $checksumPath"
+    return
+}
 
 Publish-GitTagAndRelease -TagName $tagName -VersionValue $Version -ZipPath $zipPath -ApkPath $apkPath -ChecksumPath $checksumPath
 
