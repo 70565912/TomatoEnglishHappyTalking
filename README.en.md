@@ -21,7 +21,7 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
-## Latest update · English read-aloud chunking V3.8 (2026-08-16)
+## Latest release · v1.6.0 English read-aloud chunking V3.8 (2026-08-16)
 
 Tomato's English read-aloud chunker for TTS, subtitles, listening navigation, and shadowing now builds one
 immutable fact set and runs one bounded DAG solve per orthographic sentence. Its internal solver is now
