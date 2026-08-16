@@ -616,12 +616,12 @@ $checksumPath = Join-Path $distRoot "SHA256SUMS.txt"
 
 Write-Host "=== Preflight checks ($tagName) ===" -ForegroundColor Cyan
 Assert-VersionFormat -Value $Version
-Assert-GitWorktreeCleanForRelease
 if (-not $PackageOnly) {
+    Assert-GitWorktreeCleanForRelease
     Assert-GhAuthenticated
     Assert-TagAndReleaseAvailable -TagName $tagName
 } else {
-    Write-Host "PackageOnly enabled; GitHub authentication and release checks are skipped." -ForegroundColor Yellow
+    Write-Host "PackageOnly enabled; clean-worktree, GitHub authentication, and release checks are skipped." -ForegroundColor Yellow
 }
 
 New-Item -ItemType Directory -Path $distRoot -Force | Out-Null
