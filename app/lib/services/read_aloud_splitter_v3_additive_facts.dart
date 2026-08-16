@@ -148,7 +148,12 @@ bool _isValidatedStableSyntaxCandidateV3(
   final isConfirmedRightClause =
       candidate.reasons.contains('deferred_stable_right_clause') &&
           (dependencyFact?.finiteClauseStart ?? false);
-  if (!isRelativeFront && !isConfirmedRightClause && surfaceKind == null) {
+  final isRecoveredAdjectivalSharedPredicate =
+      candidate.reasons.contains('recovered_adjectival_shared_predicate');
+  if (!isRelativeFront &&
+      !isConfirmedRightClause &&
+      !isRecoveredAdjectivalSharedPredicate &&
+      surfaceKind == null) {
     return false;
   }
   final allowedWarnings = <String>{
@@ -162,6 +167,8 @@ bool _isValidatedStableSyntaxCandidateV3(
       'surface_object_predicative_complement_separation',
       'surface_xcomp_predicate_separation',
     },
+    if (isRecoveredAdjectivalSharedPredicate)
+      'surface_mixed_coordinator_chain_separation',
   };
   return !candidate.softWarnings.any(
     (warning) =>
@@ -214,6 +221,30 @@ ReadAloudBoundaryKindV3? _surfaceStableSyntaxKindV3(
   }
   final leftPos = words[boundary - 1].upos;
   final rightPos = words[boundary].upos;
+  if (leftPos.any(const {'NOUN', 'PROPN'}.contains) &&
+      (rightPos.contains('AUX') ||
+          const {
+            'can',
+            'could',
+            'may',
+            'might',
+            'must',
+            'shall',
+            'should',
+            'will',
+            'would',
+          }.contains(_additiveLexemeV3(words[boundary].text)))) {
+    return ReadAloudBoundaryKindV3.dependencyClause;
+  }
+  if (leftPos.any(const {'NOUN', 'PROPN', 'PRON'}.contains) &&
+      _additiveCoordinatorsV3.contains(
+        _additiveLexemeV3(words[boundary].text),
+      ) &&
+      words
+          .sublist(boundary + 1, math.min(words.length, boundary + 6))
+          .any((word) => word.upos.any(const {'NOUN', 'PROPN'}.contains))) {
+    return ReadAloudBoundaryKindV3.dependencyPhrase;
+  }
   if (leftPos.contains('VERB') &&
           (_isCompactComparativeAdverbialFrontV3(words, boundary) ||
               _isComparativeReferenceClauseFrontV3(words, boundary)) ||
@@ -223,7 +254,6 @@ ReadAloudBoundaryKindV3? _surfaceStableSyntaxKindV3(
           candidate.reasons.any((reason) => reason.endsWith(':xcomp'))) {
     return ReadAloudBoundaryKindV3.dependencyPhrase;
   }
-  if (!candidate.isEmergency) return null;
   if (leftPos.contains('ADV') &&
       rightPos.any(const {'DET', 'PRON', 'NOUN', 'PROPN'}.contains) &&
       (boundary < 2 ||
@@ -251,7 +281,27 @@ ReadAloudBoundaryKindV3? _surfaceStableSyntaxKindV3(
   if (leftPos.any(const {'NOUN', 'PROPN'}.contains) &&
       rightPos.contains('ADP') &&
       !const {'of', 'than'}.contains(_additiveLexemeV3(words[boundary].text))) {
-    final left = words.sublist(math.max(0, boundary - 6), boundary);
+    // `occurs | to me` is an attached short complement, not a supplemental PP
+    // front. Keep the incomplete emergency; do not promote via NOUN|ADP rules.
+    if (candidate.reasons.contains(
+          'incomplete_attached_prepositional_complement',
+        ) &&
+        _additiveLexemeV3(words[boundary].text) == 'to' &&
+        !_isCompleteSupplementalPrepositionalTailV3(words, boundary)) {
+      return null;
+    }
+    if (words.length - boundary >
+            ReadAloudSplitterV3.preferredMaxUnpunctuatedWords &&
+        _additiveSupplementalTailPrepositionsV3.contains(
+          _additiveLexemeV3(words[boundary].text),
+        ) &&
+        _hasLaterCompleteSupplementalPrepositionalTailV3(words, boundary)) {
+      return null;
+    }
+    if (_isCompleteSupplementalPrepositionalTailV3(words, boundary)) {
+      return ReadAloudBoundaryKindV3.dependencyPhrase;
+    }
+    final left = words.sublist(math.max(0, boundary - 8), boundary);
     final copula = left.lastIndexWhere((word) => word.upos.contains('AUX'));
     if (copula > 0 &&
         left.take(copula).any(
@@ -280,7 +330,56 @@ ReadAloudBoundaryKindV3? _surfaceStableSyntaxKindV3(
       }
     }
   }
+  if (!candidate.isEmergency) return null;
   return null;
+}
+
+bool _isCompleteSupplementalPrepositionalTailV3(
+  List<_SourceWordV3> words,
+  int boundary,
+) {
+  final right = words.sublist(boundary);
+  if (!_additiveSupplementalTailPrepositionsV3.contains(
+        _additiveLexemeV3(right.first.text),
+      ) ||
+      right.length < 6 ||
+      right.length > ReadAloudSplitterV3.preferredMaxUnpunctuatedWords ||
+      right.any((word) => word.upos.any(const {'VERB', 'AUX'}.contains)) ||
+      right
+              .where(
+                (word) =>
+                    word.upos.any(const {'NOUN', 'PROPN', 'PRON'}.contains),
+              )
+              .length <
+          2) {
+    return false;
+  }
+  final left = words.sublist(
+    math.max(0, boundary - ReadAloudSplitterV3.preferredMaxUnpunctuatedWords),
+    boundary,
+  );
+  return left.any((word) => word.upos.contains('AUX')) &&
+      left
+              .where(
+                (word) =>
+                    word.upos.any(const {'NOUN', 'PROPN', 'PRON'}.contains),
+              )
+              .length >=
+          2;
+}
+
+bool _hasLaterCompleteSupplementalPrepositionalTailV3(
+  List<_SourceWordV3> words,
+  int boundary,
+) {
+  for (var next = boundary + 1; next <= words.length - 6; next += 1) {
+    if (words[next - 1].upos.any(const {'NOUN', 'PROPN'}.contains) &&
+        words[next].upos.contains('ADP') &&
+        _isCompleteSupplementalPrepositionalTailV3(words, next)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool _isCompactComparativeAdverbialFrontV3(
@@ -423,7 +522,8 @@ List<_AdditiveBoundaryFactV3> _buildAdditiveBoundaryFactsV3({
               source,
               words,
               candidate,
-            ))
+            ) &&
+            !_isTightStrongBehindSyntaxHoldV3(candidate, candidates))
           _buildAdditiveBoundaryFactV3(
             candidate,
             isFiniteClauseStart:
@@ -432,57 +532,92 @@ List<_AdditiveBoundaryFactV3> _buildAdditiveBoundaryFactsV3({
             isPronounClauseStart:
                 dependencyFacts[candidate.afterWord]?.pronounClauseStart ??
                     false,
-            componentRisk: (dependencyFacts[candidate.afterWord]?.risk ?? 0) +
-                _nominalCoordinatorRiskV3(words, candidate),
+            componentRisk: dependencyFacts[candidate.afterWord]?.risk ?? 0,
             punctuationContinuationRisk: _punctuationContinuationRiskV3(
               words,
               candidate,
             ),
+            coordinatorBeforeNearbyStrongRisk:
+                _coordinatorBeforeNearbyStrongRiskV3(
+              words,
+              candidate,
+              candidates,
+            ),
           ),
     ];
 
-int _nominalCoordinatorRiskV3(
+/// `Ah! now | they` — a non-punct cut one/two words after a strong beat.
+bool _isTightStrongBehindSyntaxHoldV3(
+  ReadAloudBoundaryCandidateV3 candidate,
+  List<ReadAloudBoundaryCandidateV3> candidates,
+) {
+  if (candidate.isPunctuation) return false;
+  final after = candidate.afterWord;
+  return candidates.any(
+    (other) =>
+        other.kind == ReadAloudBoundaryKindV3.strongPunctuation &&
+        after > other.afterWord &&
+        after - other.afterWord <= 2,
+  );
+}
+
+/// Bare coordinator / relative / light-participle cuts that leave a pause
+/// nearby lose to cutting at that pause (R-PUNCT-FIRST).
+/// Lookahead: `Duchess | and …—`, `idea | that …,`, `watermen | applying …,`
+/// Lookbehind: `pop! … sunlight | and`, `moment— … | which`
+/// Supplemental PP fronts (`memories | by the fireside;`) stay unpenalized.
+int _coordinatorBeforeNearbyStrongRiskV3(
   List<_SourceWordV3> words,
   ReadAloudBoundaryCandidateV3 candidate,
+  List<ReadAloudBoundaryCandidateV3> candidates,
 ) {
-  final boundary = candidate.afterWord;
-  if (!candidate.isPunctuation &&
-      boundary > 0 &&
-      boundary + 2 < words.length &&
-      words[boundary - 1].upos.any(const {'NOUN', 'PROPN'}.contains) &&
-      words[boundary].upos.contains('CCONJ') &&
-      words[boundary + 1].upos.contains('VERB') &&
-      words[boundary + 2].upos.contains('ADP') &&
-      candidate.crossedDependencyArcs > 1 &&
-      !RegExp(r'(?:ed|en|ing|s)$')
-          .hasMatch(_additiveLexemeV3(words[boundary + 1].text)) &&
-      !candidate.reasons.contains('deferred_stable_shared_predicate')) {
-    return 1;
-  }
-  if (!candidate.softWarnings.contains(
-        'surface_nominal_coordinator_separation',
-      ) ||
-      boundary + 1 >= words.length) {
+  if (candidate.isPunctuation || candidate.afterWord >= words.length) {
     return 0;
   }
-  final rightHead = words[boundary + 1];
-  if (rightHead.upos.contains('PRON')) return 0;
-  if (rightHead.upos.any(const {'NOUN', 'PROPN'}.contains)) {
-    final tail = words.sublist(
-      boundary + 2,
-      math.min(words.length, boundary + 8),
-    );
-    final relative = tail.indexWhere(
-      (word) => word.upos.any(const {'PRON', 'SCONJ'}.contains),
-    );
-    if (relative >= 0 &&
-        tail.skip(relative + 1).any(
-              (word) => word.upos.any(_additivePredicatePosV3.contains),
-            )) {
-      return 0;
-    }
+  final right = _additiveLexemeV3(words[candidate.afterWord].text);
+  final rightIsPivot = const {
+        'and',
+        'or',
+        'but',
+        'nor',
+        'that',
+        'which',
+        'who',
+        'whom',
+        'without',
+        'with',
+      }.contains(right) ||
+      (words[candidate.afterWord].upos.contains('VERB') &&
+          right.endsWith('ing'));
+  final after = candidate.afterWord;
+  final tightStrongBehind = candidates.any(
+    (other) =>
+        other.kind == ReadAloudBoundaryKindV3.strongPunctuation &&
+        after > other.afterWord &&
+        after - other.afterWord <= 2,
+  );
+  // Bare syntax holds like `Ah! now | they` must not outrank the strong beat.
+  if (tightStrongBehind && !candidate.isPunctuation) {
+    return 4;
   }
-  return 1;
+  if (!rightIsPivot && !tightStrongBehind) return 0;
+  final lookAhead = right.endsWith('ing') ||
+          const {'that', 'which', 'who', 'whom'}.contains(right)
+      ? 16
+      : 8;
+  final hasNearbyAhead = candidates.any(
+    (other) =>
+        other.isPunctuation &&
+        other.afterWord > after &&
+        other.afterWord - after <= lookAhead,
+  );
+  final hasStrongBehind = candidates.any(
+    (other) =>
+        other.kind == ReadAloudBoundaryKindV3.strongPunctuation &&
+        other.afterWord < after &&
+        after - other.afterWord <= 8,
+  );
+  return hasNearbyAhead || hasStrongBehind || tightStrongBehind ? 2 : 0;
 }
 
 int _punctuationContinuationRiskV3(
@@ -514,31 +649,16 @@ int _punctuationContinuationRiskV3(
       return 1;
     }
   }
-  if (!leftPos.contains('ADJ') ||
-      !rightPos.any(const {'ADJ', 'ADP'}.contains)) {
-    return 0;
+  // Short quote/paren closers before a participial or adjectival continuation
+  // are weak relative to a following comma (`"Mole End" | painted,` /
+  // `(he thought) | poor and clumsy,`).
+  if ((candidate.quoteEdge == 'after_closing' &&
+          (candidate.quoteSpanWordCount ?? 0) <= 2) ||
+      (candidate.parenEdge == 'after_closing' &&
+          (candidate.parenSpanWordCount ?? 0) <= 3)) {
+    if (rightPos.any(const {'VERB', 'ADJ', 'ADV'}.contains)) return 2;
   }
-  return words
-          .sublist(boundary + 1, math.min(words.length, boundary + 3))
-          .any((word) => word.upos.any(const {'NOUN', 'PROPN'}.contains))
-      ? 1
-      : 0;
-}
-
-bool _isTightModifierCommaV3(
-  List<_SourceWordV3> words,
-  ReadAloudBoundaryCandidateV3 candidate,
-) {
-  final boundary = candidate.afterWord;
-  return candidate.isPunctuation &&
-      candidate.kind != ReadAloudBoundaryKindV3.strongPunctuation &&
-      boundary > 0 &&
-      boundary < words.length &&
-      words[boundary - 1].upos.contains('ADJ') &&
-      words[boundary].upos.contains('ADJ') &&
-      words
-          .sublist(boundary + 1, math.min(words.length, boundary + 3))
-          .any((word) => word.upos.any(const {'NOUN', 'PROPN'}.contains));
+  return 0;
 }
 
 bool _isEmbeddedQuotedNominalPunctuationV3(
@@ -565,6 +685,22 @@ bool _isEmbeddedQuotedNominalPunctuationV3(
       !right.any((word) => word.upos.any(_additivePredicatePosV3.contains));
 }
 
+/// Short quoted complements (`"busy"`, `"Mole End"`) followed by a PP or
+/// participial continuation must not force a strong-pause cut
+/// (`"Mole End" | painted`). They remain optional edges.
+bool _isShortQuotedComplementClosingBeforeContinuationV3(
+  List<_SourceWordV3> words,
+  ReadAloudBoundaryCandidateV3 candidate,
+) {
+  if (candidate.quoteEdge != 'after_closing') return false;
+  if ((candidate.quoteSpanWordCount ?? 0) > 2) return false;
+  final afterWord = candidate.afterWord;
+  if (afterWord >= words.length) return false;
+  final right = words[afterWord];
+  return right.upos.contains('ADP') ||
+      right.upos.any(const {'VERB', 'ADJ', 'ADV'}.contains);
+}
+
 bool _isSurfaceQuoteOpeningPauseV3(
   String source,
   List<_SourceWordV3> words,
@@ -586,6 +722,7 @@ _AdditiveBoundaryFactV3 _buildAdditiveBoundaryFactV3(
   required bool isPronounClauseStart,
   required int componentRisk,
   required int punctuationContinuationRisk,
+  int coordinatorBeforeNearbyStrongRisk = 0,
 }) {
   final allowedRelativeWarnings = <String>{
     if (candidate.reasons.contains('surface_relative_clause_front'))
@@ -599,7 +736,8 @@ _AdditiveBoundaryFactV3 _buildAdditiveBoundaryFactV3(
       'surface_object_predicative_complement_separation',
       'surface_xcomp_predicate_separation',
     },
-    if (candidate.reasons.contains('deferred_stable_shared_predicate'))
+    if (candidate.reasons.contains('deferred_stable_shared_predicate') ||
+        candidate.reasons.contains('recovered_adjectival_shared_predicate'))
       'surface_mixed_coordinator_chain_separation',
   };
   final actionableWarnings = candidate.softWarnings
@@ -654,6 +792,13 @@ _AdditiveBoundaryFactV3 _buildAdditiveBoundaryFactV3(
           !isConfirmedDeferredClause
       ? 1
       : 0;
+  // Parenthetical closer before an attached PP (`change (she knew) | to …`)
+  // stays a delimiter edge, but must not outrank keeping the complement with
+  // its governing predicate.
+  final parenCloseSplitsAttachedPp = candidate.parenEdge == 'after_closing' &&
+      candidate.reasons.contains(
+        'incomplete_attached_prepositional_complement',
+      );
   return _AdditiveBoundaryFactV3(
     candidate: candidate,
     protectedRelationCrossings:
@@ -662,6 +807,8 @@ _AdditiveBoundaryFactV3 _buildAdditiveBoundaryFactV3(
         weakPunctuationWarningRisk -
         lengthCriticalStructuralRisk +
         fallbackEmergencyRisk +
+        (parenCloseSplitsAttachedPp ? 2 : 0) +
+        coordinatorBeforeNearbyStrongRisk +
         (candidate.isPunctuation ||
                 candidate.reasons.contains('validated_stable_syntax_boundary')
             ? 0
@@ -683,11 +830,22 @@ bool _isHardBlockedSurfaceBoundaryV3(
   final afterWord = candidate.afterWord;
   if (afterWord <= 0 || afterWord >= words.length) return false;
   final leftWord = words[afterWord - 1];
+  final rightWord = words[afterWord];
   final leftText = source.substring(leftWord.start, leftWord.end);
+  final rightText = source.substring(rightWord.start, rightWord.end);
   final left = _additiveLexemeV3(leftText);
-  final right = _additiveLexemeV3(words[afterWord].text);
-  return candidate.quoteEdge == 'after_closing' &&
-          !RegExp(r'''["'”’][,;:.!?—–-]*$''').hasMatch(leftText.trimRight()) ||
+  final right = _additiveLexemeV3(rightText);
+  // Closing quotes may sit on the left word, in the inter-word gap, or glued to
+  // the right token (`know" —(pointing…)`). Quote→paren junctions are real
+  // delimiter edges even when the glyph is not on the left word alone.
+  final closingQuoteVisible = RegExp(r'''["'”’][,;:.!?—–-]*$''')
+          .hasMatch(leftText.trimRight()) ||
+      RegExp(r'''["'”’]''').hasMatch(
+        source.substring(leftWord.end, rightWord.start),
+      ) ||
+      RegExp(r'''^["'”’]''').hasMatch(rightText.trimLeft()) ||
+      candidate.parenEdge == 'before_opening';
+  return candidate.quoteEdge == 'after_closing' && !closingQuoteVisible ||
       _isElongationBoundaryV3(source, words, afterWord) ||
       _additiveTitleAbbreviationV3.hasMatch(leftText.trim()) ||
       _additiveCoordinatorsV3.contains(left) &&
@@ -709,6 +867,11 @@ bool _isElongationBoundaryV3(
   if (left.end != right.start || left.end - left.start < 2) return false;
   final dash = source[left.end - 1];
   if (dash != '—' && dash != '–') return false;
+  // Only block true stutter elongations (`W—What`, `a—a`). A full word before
+  // the dash (`moment—that`) can share a letter with the next word without
+  // being an elongation compound.
+  final coreLen = left.end - left.start - 1;
+  if (coreLen > 2) return false;
   final beforeDash = source[left.end - 2].toLowerCase();
   final afterDash = source[right.start].toLowerCase();
   return beforeDash == afterDash &&
@@ -729,6 +892,21 @@ final RegExp _additiveTitleAbbreviationV3 = RegExp(
 const _additivePredicatePosV3 = <String>{'VERB', 'AUX'};
 const _additivePredicateBridgePosV3 = <String>{'ADV', 'PART', 'AUX'};
 const _additiveCoordinatorsV3 = <String>{'and', 'or', 'nor', 'but'};
+const _additiveSupplementalTailPrepositionsV3 = <String>{
+  'in',
+  'on',
+  'at',
+  'by',
+  'near',
+  'beyond',
+  'within',
+  'outside',
+  'inside',
+  'throughout',
+  'across',
+  'along',
+  'around',
+};
 const _additivePunctuationWarningsV3 = <String>{
   'surface_possible_antecedent_possessive_separation',
   'surface_parallel_list_item_separation',

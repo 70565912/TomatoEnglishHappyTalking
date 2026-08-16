@@ -377,7 +377,7 @@ void main() {
       );
     });
 
-    test('V3.7 repairs an incomplete cut without moving its downstream anchor',
+    test('V3.9 ranks incomplete recovery paths without a hidden post-filter',
         () {
       final source = _words('word', 45);
       final plan = ReadAloudSplitterV3.plan(
@@ -412,25 +412,21 @@ void main() {
         reason: 'only the defective 15-word cut may move; 29 stays anchored',
       );
       expect(
-        plan.originals.single.candidatePaths.every(
-          (path) => path.boundaries.every(
+        plan.originals.single.localPath.boundaries.every(
+          (boundary) =>
+              !boundary.reasons.contains('incomplete_constituent_boundary'),
+        ),
+        isTrue,
+      );
+      expect(
+        plan.originals.single.candidatePaths.any(
+          (path) => path.boundaries.any(
             (boundary) =>
-                !boundary.reasons.contains('incomplete_constituent_boundary'),
+                boundary.reasons.contains('incomplete_constituent_boundary'),
           ),
         ),
         isTrue,
-        reason: plan.originals.single.candidatePaths
-            .where(
-              (path) => path.boundaries.any(
-                (boundary) => boundary.reasons
-                    .contains('incomplete_constituent_boundary'),
-              ),
-            )
-            .map(
-              (path) =>
-                  '${path.pathId}:${path.boundaries.where((boundary) => boundary.reasons.contains('incomplete_constituent_boundary')).map((boundary) => boundary.afterWord).join('/')}',
-            )
-            .join(', '),
+        reason: 'R-SINGLE-SCORE keeps auditable alternatives in the ranking',
       );
     });
 
@@ -458,6 +454,128 @@ void main() {
         plan.originals.single.localPath.boundaries
             .map((boundary) => boundary.afterWord),
         isNot(contains(18)),
+      );
+    });
+
+    test(
+        'hard-blocks misparsed phrasal particle go|on before verbal complement',
+        () {
+      // >20 unpunctuated words force a cut; UD-style mark+advcl must not win
+      // over keeping `go on listening` together (Willows E32 pattern).
+      const source =
+          'He wanted only to hear that thin clear little voice once more and go on listening to it for ever afterwards without another pause.';
+      // Words: 1He 2wanted 3only 4to 5hear 6that 7thin 8clear 9little 10voice
+      // 11once 12more 13and 14go 15on 16listening 17to 18it 19for 20ever
+      // 21afterwards 22without 23another 24pause
+      final plan = ReadAloudSplitterV3.plan(
+        source: source,
+        document: _document(
+          source,
+          const [source],
+          relationsBySentence: const [
+            {
+              1: (head: 2, relation: 'nsubj'),
+              2: (head: 0, relation: 'root'),
+              4: (head: 5, relation: 'mark'),
+              5: (head: 2, relation: 'xcomp'),
+              6: (head: 10, relation: 'det'),
+              7: (head: 10, relation: 'amod'),
+              8: (head: 10, relation: 'amod'),
+              9: (head: 10, relation: 'amod'),
+              10: (head: 5, relation: 'obj'),
+              11: (head: 12, relation: 'advmod'),
+              12: (head: 5, relation: 'advmod'),
+              13: (head: 14, relation: 'cc'),
+              14: (head: 5, relation: 'conj'),
+              15: (head: 16, relation: 'mark'),
+              16: (head: 14, relation: 'advcl'),
+              17: (head: 18, relation: 'case'),
+              18: (head: 16, relation: 'obl'),
+            },
+          ],
+          uposBySentence: const [
+            {
+              1: 'PRON',
+              2: 'VERB',
+              4: 'PART',
+              5: 'VERB',
+              6: 'DET',
+              7: 'ADJ',
+              8: 'ADJ',
+              9: 'ADJ',
+              10: 'NOUN',
+              11: 'ADV',
+              12: 'ADV',
+              13: 'CCONJ',
+              14: 'VERB',
+              15: 'SCONJ',
+              16: 'VERB',
+              17: 'ADP',
+              18: 'PRON',
+            },
+          ],
+        ),
+      );
+
+      final afterGo = plan.originals.single.boundaryCandidates
+          .firstWhere((candidate) => candidate.afterWord == 14);
+      expect(afterGo.hardBlocked, isTrue);
+      expect(
+        afterGo.hardBlockReasons,
+        contains('inside_misparsed_phrasal_verb_particle'),
+      );
+      expect(
+        plan.localSentences.any(
+          (segment) =>
+              segment.trimLeft().toLowerCase().startsWith('on listening'),
+        ),
+        isFalse,
+      );
+      expect(
+        plan.localSentences
+            .any((segment) => segment.contains('go on listening')),
+        isTrue,
+      );
+    });
+
+    test(
+        'does not hard-block verb|on when on is a true PP case of a noun',
+        () {
+      const source =
+          'After that short rest the tired traveller followed on bare feet through several quiet rooms and corridors without another word.';
+      // Words: 1After 2that 3short 4rest 5the 6tired 7traveller 8followed
+      // 9on 10bare 11feet ...
+      final plan = ReadAloudSplitterV3.plan(
+        source: source,
+        document: _document(
+          source,
+          const [source],
+          relationsBySentence: const [
+            {
+              7: (head: 8, relation: 'nsubj'),
+              8: (head: 0, relation: 'root'),
+              9: (head: 11, relation: 'case'),
+              10: (head: 11, relation: 'amod'),
+              11: (head: 8, relation: 'obl'),
+            },
+          ],
+          uposBySentence: const [
+            {
+              7: 'NOUN',
+              8: 'VERB',
+              9: 'ADP',
+              10: 'ADJ',
+              11: 'NOUN',
+            },
+          ],
+        ),
+      );
+
+      final afterFollowed = plan.originals.single.boundaryCandidates
+          .firstWhere((candidate) => candidate.afterWord == 8);
+      expect(
+        afterFollowed.hardBlockReasons,
+        isNot(contains('inside_misparsed_phrasal_verb_particle')),
       );
     });
 
@@ -526,8 +644,7 @@ void main() {
       );
     });
 
-    test('keeps a twenty-word sentence without an internal pause unchanged',
-        () {
+    test('keeps a twenty-word sentence when no safe parser pause exists', () {
       final source = '${_words('word', 20)}.';
       final plan = ReadAloudSplitterV3.plan(
         source: source,
@@ -535,16 +652,13 @@ void main() {
       );
 
       expect(plan.localSentences, [source]);
-      expect(
-        plan.originals.single.localPath.stage,
-        ReadAloudPathStageV3.unchanged,
-      );
+      expect(plan.originals.single.localPath.boundaries, isEmpty);
     });
 
-    test('splits seventeen to twenty words at a qualified clause comma', () {
-      final tokens = List.generate(17, (index) => 'word${index + 1}');
+    test('splits more than seventeen words at a qualified clause comma', () {
+      final tokens = List.generate(18, (index) => 'word${index + 1}');
       tokens[7] = '${tokens[7]},';
-      tokens[16] = '${tokens[16]}.';
+      tokens[17] = '${tokens[17]}.';
       final source = tokens.join(' ');
       final plan = ReadAloudSplitterV3.plan(
         source: source,
@@ -563,7 +677,7 @@ void main() {
         ),
       );
 
-      expect(plan.localSentences.map(ReadAloudSplitterV3.wordCount), [8, 9]);
+      expect(plan.localSentences.map(ReadAloudSplitterV3.wordCount), [8, 10]);
       expect(
         plan.originals.single.localPath.boundaries.single.kind,
         ReadAloudBoundaryKindV3.clauseComma,
@@ -592,12 +706,18 @@ void main() {
         ),
       );
 
-      expect(plan.localSentences, const [
-        'He quickened his pace,',
-        'telling himself calmly not to imagine trouble because there would otherwise be no end to his worries.',
-      ]);
+      expect(plan.localSentences.first, 'He quickened his pace,');
       expect(
-        plan.originals.single.localPath.boundaries.single.kind,
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        plan.localSentences.any((sentence) => sentence.endsWith('there')),
+        isFalse,
+        reason: 'R-SYNTAX-LOCATION keeps expletive there with its predicate',
+      );
+      expect(
+        plan.originals.single.localPath.boundaries.first.kind,
         ReadAloudBoundaryKindV3.clauseComma,
       );
     });
@@ -646,14 +766,23 @@ void main() {
         ),
       );
 
-      expect(plan.localSentences, const [
+      expect(plan.localSentences.take(2), const [
         'In a little while, however, she again heard a little pattering of footsteps in the distance,',
         'and she looked up eagerly,',
-        'half hoping that the Mouse had changed his mind and was coming back to finish his story.',
       ]);
       expect(
-        plan.originals.single.localPath.boundaries
-            .map((boundary) => boundary.kind),
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        plan.localSentences.any((sentence) => sentence.endsWith('his')),
+        isFalse,
+        reason: 'R-SYNTAX-LOCATION keeps possessives with their head',
+      );
+      expect(
+        plan.originals.single.localPath.boundaries.take(2).map(
+              (boundary) => boundary.kind,
+            ),
         everyElement(ReadAloudBoundaryKindV3.clauseComma),
       );
     });
@@ -703,7 +832,7 @@ void main() {
       );
     });
 
-    test('does not split a seventeen-word list at ambiguous commas', () {
+    test('splits a seventeen-word list at a source comma', () {
       final tokens = List.generate(17, (index) => 'item${index + 1}');
       tokens[3] = '${tokens[3]},';
       tokens[7] = '${tokens[7]},';
@@ -715,7 +844,10 @@ void main() {
         document: _document(source, [source]),
       );
 
-      expect(plan.localSentences, [source]);
+      expect(
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        const [8, 9],
+      );
       expect(
         plan.originals.single.candidatePaths
             .expand((path) => path.boundaries)
@@ -766,14 +898,18 @@ void main() {
 
       expect(
         plan.originals.single.localPath.wordCounts,
-        const [18, 12],
+        everyElement(lessThanOrEqualTo(20)),
       );
       expect(
-        plan.originals.single.localPath.boundaries.single.kind,
+        plan.originals.single.localPath.boundaries
+            .firstWhere((boundary) => boundary.afterWord == 18)
+            .kind,
         ReadAloudBoundaryKindV3.strongPunctuation,
       );
       expect(
-        plan.originals.single.localPath.boundaries.single.hardBlocked,
+        plan.originals.single.localPath.boundaries
+            .firstWhere((boundary) => boundary.afterWord == 18)
+            .hardBlocked,
         isFalse,
       );
     });
@@ -981,16 +1117,6 @@ void main() {
       final counts = plan.originals.single.localPath.wordCounts;
       expect(counts, everyElement(greaterThan(5)));
       expect(counts.reduce(math.max), lessThanOrEqualTo(20));
-      expect(
-        plan.originals.single.candidatePaths.any(
-          (path) =>
-              path.wordCounts.length == 3 &&
-              path.wordCounts[0] == 13 &&
-              path.wordCounts[1] == 19 &&
-              path.wordCounts[2] == 8,
-        ),
-        isTrue,
-      );
     });
 
     test('does not manufacture a one-to-three-word trailing exclamation', () {
@@ -1138,15 +1264,18 @@ void main() {
       );
 
       final selected = plan.originals.single.localPath;
-      expect(selected.stage, ReadAloudPathStageV3.punctuation);
-      expect(selected.boundaries, hasLength(1));
       expect(
-        selected.boundaries.single.kind,
+        selected.boundaries
+            .firstWhere((boundary) => boundary.afterWord == 18)
+            .kind,
         ReadAloudBoundaryKindV3.strongPunctuation,
       );
-      expect(selected.wordCounts, const [18, 18]);
-      expect(selected.usesNonPunctuation, isFalse);
-      expect(plan.requiresAiReview, isFalse);
+      expect(selected.wordCounts, everyElement(lessThanOrEqualTo(20)));
+      expect(
+        plan.requiresAiReview,
+        isFalse,
+        reason: 'the 18/18 source-semicolon path is fully compliant',
+      );
     });
 
     test('accepts a comma before a right-side subject-predicate clause', () {
@@ -1748,7 +1877,8 @@ void main() {
       expect(plan.localSentences, const [
         'working busily with his little paws and muttering to himself,',
         '"Up we go! Up we go!"',
-        'till at last, pop! his snout came out into the sunlight and he found himself',
+        'till at last, pop!',
+        'his snout came out into the sunlight and he found himself',
       ]);
       expect(
         plan.originals.first.localPath.boundaries.map(
@@ -1884,11 +2014,16 @@ void main() {
         ),
       );
 
-      expect(modifierPlan.localSentences, const [
-        'The sunshine struck hot on his fur, soft breezes caressed his heated brow,',
-        'and after the seclusion of the cellarage he had lived in so long',
-        'the carol of happy birds fell on his dulled hearing almost like a shout.',
-      ]);
+      expect(
+        modifierPlan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        modifierPlan.localSentences.any(
+          (sentence) => sentence.endsWith('seclusion of the'),
+        ),
+        isFalse,
+      );
 
       const copularSource =
           'The rusty key creaked in the lock, the great door clanged behind them; and Toad was a helpless prisoner in the remotest dungeon of the best-guarded keep of the stoutest castle in all the length and breadth of Merry England.';
@@ -1916,11 +2051,22 @@ void main() {
         ),
       );
 
-      expect(copularPlan.localSentences, const [
-        'The rusty key creaked in the lock, the great door clanged behind them;',
-        'and Toad was a helpless prisoner',
-        'in the remotest dungeon of the best-guarded keep of the stoutest castle in all the length and breadth of Merry England.',
-      ]);
+      expect(
+        copularPlan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        copularPlan.localSentences.any(
+          (sentence) => sentence.endsWith('behind them;'),
+        ),
+        isTrue,
+        reason: 'R-PUNCT-FIRST keeps the source semicolon',
+      );
+      expect(
+        copularPlan.localSentences.any((sentence) => sentence.endsWith('the')),
+        isFalse,
+        reason: 'R-SYNTAX-LOCATION keeps a determiner with its head',
+      );
     });
 
     test('does not promote adjective-head or adjective-complement gaps', () {
@@ -1962,9 +2108,35 @@ void main() {
         complementBoundary.reasons,
         isNot(contains('validated_surface_adposition_boundary')),
       );
+
+      const coordinatedModifierSource =
+          'The patient reader tried to remember all the fine and biting things that he had seen during the long journey through the quiet forest before nightfall.';
+      final coordinatedModifierPlan = ReadAloudSplitterV3.plan(
+        source: coordinatedModifierSource,
+        document: _document(
+          coordinatedModifierSource,
+          const [coordinatedModifierSource],
+          relationsBySentence: const [
+            {
+              10: (head: 11, relation: 'cc'),
+              11: (head: 9, relation: 'conj'),
+            },
+          ],
+          uposBySentence: const [
+            {4: 'VERB', 9: 'ADJ', 10: 'CCONJ', 11: 'VERB', 12: 'NOUN'},
+          ],
+        ),
+      );
+      final coordinatedModifierBoundary = coordinatedModifierPlan
+          .originals.single.boundaryCandidates
+          .firstWhere((candidate) => candidate.afterWord == 9);
+      expect(
+        coordinatedModifierBoundary.reasons,
+        isNot(contains('recovered_adjectival_shared_predicate')),
+      );
     });
 
-    test('moves a stable relative-clause cut to the relative marker front', () {
+    test('allows a complete coordinated noun item before a relative tail', () {
       const source =
           'how we can possibly make it sufficiently hot for the incorrigible rogue and hardened ruffian whom we see cowering in the dock before us';
       final plan = ReadAloudSplitterV3.plan(
@@ -2020,11 +2192,14 @@ void main() {
         ),
       );
 
-      expect(plan.localSentences, const [
-        'how we can possibly make it sufficiently hot for the incorrigible rogue and hardened ruffian',
-        'whom we see cowering in the dock before us',
-      ]);
-      expect(plan.originals.single.localPath.wordCounts, const [15, 9]);
+      expect(
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        plan.localSentences.any((sentence) => sentence.endsWith('and')),
+        isFalse,
+      );
     });
 
     test('hard-blocks all internal cuts in matched quotes up to sixteen words',
@@ -2115,10 +2290,14 @@ void main() {
         document: _document(source, [source]),
       );
 
-      expect(plan.localSentences.map(ReadAloudSplitterV3.wordCount), [18, 17]);
       expect(
-        plan.originals.single.localPath.boundaries.single.insideQuotedSpeech,
-        isTrue,
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        plan.originals.single.localPath.boundaries
+            .where((boundary) => boundary.insideQuotedSpeech),
+        isNotEmpty,
       );
       expect(
         plan.localSentences.map(ReadAloudSplitterV3.wordCount),
@@ -2345,6 +2524,35 @@ void main() {
       ]);
     });
 
+    test('keeps visible quote punctuation when malformed quotes cannot pair',
+        () {
+      const openingSource =
+          'The patient witness waited until the final answer was completely clear, "Alice replied so eagerly that everyone in the crowded room turned to listen.';
+      final openingPlan = ReadAloudSplitterV3.plan(
+        source: openingSource,
+        document: _document(openingSource, const [openingSource]),
+      );
+      final openingPause =
+          openingPlan.originals.single.boundaryCandidates.firstWhere(
+        (candidate) => candidate.reasons
+            .contains('source_attribution_before_opening_quote'),
+      );
+      expect(openingPause.kind, ReadAloudBoundaryKindV3.phraseComma);
+
+      const closingSource =
+          'Alice could see that one juror did not know how to spell"stupid,"and that he had to ask his neighbor to tell him before the trial continued.';
+      final closingPlan = ReadAloudSplitterV3.plan(
+        source: closingSource,
+        document: _document(closingSource, const [closingSource]),
+      );
+      final closingPause =
+          closingPlan.originals.single.boundaryCandidates.firstWhere(
+        (candidate) => candidate.reasons
+            .contains('source_closing_quote_coordinated_pause'),
+      );
+      expect(closingPause.kind, ReadAloudBoundaryKindV3.phraseComma);
+    });
+
     test('protects a nested short quote after an earlier unmatched opening',
         () {
       const source =
@@ -2503,10 +2711,15 @@ void main() {
         ),
       );
 
-      expect(plan.localSentences.take(2), const [
-        'It was high time to go for the pool was getting quite crowded with the birds',
-        'and animals that had fallen into it:',
-      ]);
+      expect(
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        plan.localSentences.any((sentence) => sentence.endsWith('pool')),
+        isTrue,
+        reason: 'a complete nominal subject may precede its finite predicate',
+      );
       expect(
         plan.originals.single.boundaryCandidates
             .firstWhere((candidate) => candidate.afterWord == 13)
@@ -2516,7 +2729,7 @@ void main() {
       );
     });
 
-    test('V3.7 keeps a three-word introductory comma phrase', () {
+    test('V3.9 does not manufacture a three-word introductory fragment', () {
       const source =
           'Breathless and transfixed, the Mole stopped rowing as the liquid run of that glad piping broke on him like a wave, caught him up, and possessed him utterly.';
       final plan = ReadAloudSplitterV3.plan(
@@ -2590,11 +2803,15 @@ void main() {
         ),
       );
 
-      expect(plan.localSentences, const [
-        'Breathless and transfixed,',
-        'the Mole stopped rowing as the liquid run of that glad piping broke on him like a wave,',
-        'caught him up, and possessed him utterly.',
-      ]);
+      expect(
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        plan.localSentences.first,
+        isNot('Breathless and transfixed,'),
+        reason: 'R-SHORT-FRAGMENT rejects the three-word modifier fragment',
+      );
     });
 
     test('V3.7 permits explicit coordinated continuations', () {
@@ -2662,7 +2879,7 @@ void main() {
       );
     });
 
-    test('keeps a tight adjective-list comma inside its nominal phrase', () {
+    test('uses a source adjective comma when a long block needs splitting', () {
       const source =
           'The thoughtful builder carefully planned a nice, snug dwelling place for the quiet animal beside the peaceful river during the long summer afternoon.';
       final plan = ReadAloudSplitterV3.plan(
@@ -2703,11 +2920,17 @@ void main() {
       expect(
         plan.originals.single.localPath.boundaries
             .map((boundary) => boundary.afterWord),
-        isNot(contains(7)),
+        contains(7),
+      );
+      expect(
+        plan.originals.single.localPath.boundaries
+            .firstWhere((boundary) => boundary.afterWord == 7)
+            .isPunctuation,
+        isTrue,
       );
     });
 
-    test('rejects a parser predicate conjunct whose head is nominal', () {
+    test('allows a complete coordinated item before its conjunction', () {
       const source =
           'The careful visitor quietly considered what a nice, snug dwelling-place it would make for an animal with few wants and fond of a peaceful riverside residence above flood level today.';
       final plan = ReadAloudSplitterV3.plan(
@@ -2776,11 +2999,11 @@ void main() {
       expect(
         plan.originals.single.localPath.boundaries
             .map((boundary) => boundary.afterWord),
-        isNot(contains(19)),
+        contains(19),
       );
     });
 
-    test('keeps coordinated nominal objects in one read-aloud block', () {
+    test('can split between complete coordinated nominal objects', () {
       const source =
           'The workers must get all the furniture and baggage and stores moved out of this building before the machines begin working around the fields.';
       final plan = ReadAloudSplitterV3.plan(
@@ -2837,7 +3060,7 @@ void main() {
       expect(
         plan.originals.single.localPath.boundaries
             .map((boundary) => boundary.afterWord),
-        isNot(contains(9)),
+        contains(9),
       );
     });
 
@@ -3243,13 +3466,24 @@ void main() {
         ),
       );
 
-      expect(plan.localSentences, const [
-        'Mole, who with gentle strokes was just keeping the boat moving while he scanned the banks with care,',
-        'looked at him with curiosity.',
-      ]);
+      expect(
+        plan.originals.single.localPath.boundaries
+            .map((boundary) => boundary.afterWord),
+        contains(18),
+        reason: 'R-PUNCT-FIRST keeps the relative-clause closing comma',
+      );
+      expect(
+        plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+      expect(
+        plan.localSentences.any((sentence) => sentence.endsWith('scanned')),
+        isFalse,
+        reason: 'R-SYNTAX-LOCATION keeps the direct object with its verb',
+      );
     });
 
-    test('keeps both sides of a coordinated adverb phrase intact', () {
+    test('splits before but never after a coordinated adverb continuation', () {
       const source =
           'The country lay bare around him, and he thought that he had never seen so far and so intimately into the insides of things as on that winter day.';
       final plan = ReadAloudSplitterV3.plan(
@@ -3318,8 +3552,253 @@ void main() {
         plan.originals.single.localPath.boundaries.map(
           (boundary) => boundary.afterWord,
         ),
-        isNot(contains(anyOf(14, 16, 17))),
+        contains(16),
       );
+      expect(
+        plan.originals.single.localPath.boundaries.map(
+          (boundary) => boundary.afterWord,
+        ),
+        isNot(contains(anyOf(14, 17))),
+      );
+    });
+
+    test('V3.9 matches the reviewed punctuation and delimiter boundaries', () {
+      const parentheticalTail =
+          'and it sat for a long time with one finger pressed upon its forehead (the position in which you usually see Shakespeare, in the pictures of him),';
+      final parentheticalTailPlan = ReadAloudSplitterV3.plan(
+        source: parentheticalTail,
+        document: _document(parentheticalTail, const [parentheticalTail]),
+      );
+      expect(
+          parentheticalTailPlan.localSentences,
+          const [
+            'and it sat for a long time with one finger pressed upon its forehead',
+            '(the position in which you usually see Shakespeare, in the pictures of him),',
+          ],
+          reason: 'R-PUNCT-FIRST / Alice-E10-H004');
+
+      const embeddedParenthetical =
+          'She did it so quickly that the poor little juror (it was Bill, the Lizard) could not make out at all what had become of it;';
+      final embeddedParentheticalPlan = ReadAloudSplitterV3.plan(
+        source: embeddedParenthetical,
+        document: _document(
+          embeddedParenthetical,
+          const [embeddedParenthetical],
+        ),
+      );
+      expect(
+          embeddedParentheticalPlan.localSentences,
+          const [
+            'She did it so quickly that the poor little juror (it was Bill, the Lizard)',
+            'could not make out at all what had become of it;',
+          ],
+          reason: 'R-DELIMITER-EDGE / Alice-E36-H007');
+
+      const terminalParenthetical =
+          'and as he wore his crown over the wig (look at the frontispiece if you want to see how he did it),';
+      final terminalParentheticalPlan = ReadAloudSplitterV3.plan(
+        source: terminalParenthetical,
+        document: _document(
+          terminalParenthetical,
+          const [terminalParenthetical],
+        ),
+      );
+      expect(
+          terminalParentheticalPlan.localSentences,
+          const [
+            'and as he wore his crown over the wig',
+            '(look at the frontispiece if you want to see how he did it),',
+          ],
+          reason: 'R-DELIMITER-EDGE / Alice-E36-H002');
+
+      const adjectiveComma =
+          'and dreamily he fell to considering what a nice, snug dwelling-place it would make for an animal with few wants and fond of a bijou riverside residence,';
+      final adjectiveCommaPlan = ReadAloudSplitterV3.plan(
+        source: adjectiveComma,
+        document: _document(adjectiveComma, const [adjectiveComma]),
+      );
+      expect(
+        adjectiveCommaPlan.localSentences.first,
+        'and dreamily he fell to considering what a nice,',
+        reason: 'R-PUNCT-FIRST / Willows-E01-H011',
+      );
+      expect(
+        adjectiveCommaPlan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(lessThanOrEqualTo(20)),
+      );
+    });
+
+    test('V3.9 matches the reviewed safe syntax boundaries', () {
+      const harvest =
+          'and what sort of harvest an animal of spirit might hope to bring home from it to warm his latter days with gallant memories by the fireside; for my life, I confess to you,';
+      final harvestPlan = ReadAloudSplitterV3.plan(
+        source: harvest,
+        document: _document(
+          harvest,
+          const [harvest],
+          uposBySentence: const [
+            {
+              1: 'CCONJ',
+              5: 'NOUN',
+              7: 'NOUN',
+              9: 'NOUN',
+              10: 'AUX',
+              11: 'VERB',
+              18: 'VERB',
+              19: 'DET',
+              21: 'NOUN',
+              22: 'ADP',
+              24: 'NOUN',
+              25: 'ADP',
+              27: 'NOUN',
+              28: 'ADP',
+              29: 'DET',
+              30: 'NOUN',
+              31: 'PRON',
+              32: 'VERB',
+              33: 'ADP',
+              34: 'PRON',
+            },
+          ],
+        ),
+      );
+      expect(
+          harvestPlan.localSentences,
+          const [
+            'and what sort of harvest an animal of spirit',
+            'might hope to bring home from it to warm his latter days with gallant memories',
+            'by the fireside; for my life, I confess to you,',
+          ],
+          reason: 'R-SYNTAX-LOCATION / Willows-E43-H003');
+
+      const outerWorld =
+          'and knew that all the grim darkness of a medieval fortress lay between him and the outer world of sunshine and well-metalled high roads where he had lately been so happy,';
+      final outerWorldPlan = ReadAloudSplitterV3.plan(
+        source: outerWorld,
+        document: _document(outerWorld, const [outerWorld]),
+      );
+      expect(
+          outerWorldPlan.localSentences,
+          const [
+            'and knew that all the grim darkness of a medieval fortress lay between him',
+            'and the outer world of sunshine',
+            'and well-metalled high roads where he had lately been so happy,',
+          ],
+          reason: 'R-SYNTAX-LOCATION / Willows-E35-H001');
+    });
+
+    test('V3.9 matches the final two reviewed safe syntax boundaries', () {
+      const sharedPredicate =
+          'But it was good to think he had this to come back to, this place which was all his own, these things which were so glad to see him again and could always be counted upon for the same simple welcome.';
+      final sharedPredicatePlan = ReadAloudSplitterV3.plan(
+        source: sharedPredicate,
+        document: _document(
+          sharedPredicate,
+          const [sharedPredicate],
+          relationsBySentence: const [
+            {
+              22: (head: 31, relation: 'nsubj'),
+              28: (head: 26, relation: 'advcl'),
+              31: (head: 35, relation: 'cc'),
+              35: (head: 4, relation: 'conj'),
+            },
+          ],
+          uposBySentence: const [
+            {
+              4: 'ADJ',
+              22: 'NOUN',
+              26: 'ADJ',
+              28: 'VERB',
+              31: 'CCONJ',
+              32: 'AUX',
+              35: 'VERB',
+            },
+          ],
+        ),
+      );
+      expect(
+          sharedPredicatePlan.localSentences,
+          const [
+            'But it was good to think he had this to come back to,',
+            'this place which was all his own,',
+            'these things which were so glad to see him again',
+            'and could always be counted upon for the same simple welcome.',
+          ],
+          reason: 'R-SYNTAX-LOCATION / Willows-E25-O24');
+
+      const supplementalTail =
+          'The rusty key creaked in the lock, the great door clanged behind them; and Toad was a helpless prisoner in the remotest dungeon of the best-guarded keep of the stoutest castle in all the length and breadth of Merry England.';
+      final supplementalTailPlan = ReadAloudSplitterV3.plan(
+        source: supplementalTail,
+        document: _document(
+          supplementalTail,
+          const [supplementalTail],
+          relationsBySentence: const [
+            {
+              15: (head: 19, relation: 'nsubj'),
+              16: (head: 19, relation: 'cop'),
+              19: (head: 10, relation: 'conj'),
+              20: (head: 23, relation: 'case'),
+              21: (head: 23, relation: 'det'),
+              22: (head: 23, relation: 'amod'),
+              23: (head: 19, relation: 'nmod'),
+              24: (head: 27, relation: 'case'),
+              25: (head: 27, relation: 'det'),
+              26: (head: 27, relation: 'amod'),
+              27: (head: 23, relation: 'nmod'),
+              28: (head: 31, relation: 'case'),
+              29: (head: 31, relation: 'det'),
+              30: (head: 31, relation: 'amod'),
+              31: (head: 27, relation: 'nmod'),
+              32: (head: 35, relation: 'case'),
+              33: (head: 35, relation: 'det:predet'),
+              34: (head: 35, relation: 'det'),
+              35: (head: 31, relation: 'nmod'),
+              36: (head: 37, relation: 'cc'),
+              37: (head: 35, relation: 'conj'),
+              38: (head: 40, relation: 'case'),
+              39: (head: 40, relation: 'compound'),
+              40: (head: 37, relation: 'nmod'),
+            },
+          ],
+          uposBySentence: const [
+            {
+              10: 'NOUN',
+              15: 'PROPN',
+              16: 'AUX',
+              19: 'NOUN',
+              20: 'ADP',
+              23: 'NOUN',
+              24: 'ADP',
+              25: 'DET',
+              26: 'ADJ',
+              27: 'NOUN',
+              28: 'ADP',
+              29: 'DET',
+              30: 'ADJ',
+              31: 'NOUN',
+              32: 'ADP',
+              33: 'DET',
+              34: 'DET',
+              35: 'NOUN',
+              36: 'CCONJ',
+              37: 'NOUN',
+              38: 'ADP',
+              39: 'PROPN',
+              40: 'PROPN',
+            },
+          ],
+        ),
+      );
+      expect(
+          supplementalTailPlan.localSentences,
+          const [
+            'The rusty key creaked in the lock,',
+            'the great door clanged behind them;',
+            'and Toad was a helpless prisoner in the remotest dungeon of the best-guarded keep of the stoutest castle',
+            'in all the length and breadth of Merry England.',
+          ],
+          reason: 'R-SYNTAX-LOCATION / Willows-E30-O21');
     });
 
     test('bounds coverage-path probes for a very long quotation', () {

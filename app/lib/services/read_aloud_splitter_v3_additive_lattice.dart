@@ -14,13 +14,25 @@ final class _AdditiveReadAloudLatticeV3 {
     required List<_AdditiveBoundaryFactV3> boundaryFacts,
   }) {
     if (words.isEmpty) return const [];
+    // R-LENGTH-ZONES: complete originals at or under the comfort ceiling keep
+    // every internal boundary out of the path — including syntax cuts.
+    if (words.length <= ReadAloudSplitterV3.preferredMaxUnpunctuatedWords) {
+      final ends = [words.length];
+      return [
+        _AdditiveSplitPathV3(
+          boundaries: const [],
+          segments: List.unmodifiable(_additiveSegmentsV3(source, words, ends)),
+          wordCounts: List.unmodifiable(_additiveLengthsV3(ends)),
+          maxUnpunctuatedWordCounts: List.unmodifiable(
+            _additiveUnpunctuatedLengthsV3(words, ends),
+          ),
+          score: List.unmodifiable(_additiveZeroScoreV3),
+        ),
+      ];
+    }
     final boundaryByEnd = <int, _AdditiveBoundaryFactV3>{
       for (final fact in boundaryFacts) fact.candidate.afterWord: fact,
     };
-    final comfortable21Starts = _comfortable21StartsV3(
-      words.length,
-      boundaryFacts,
-    );
     final punctuationFacts = boundaryFacts
         .where((fact) => fact.candidate.isPunctuation)
         .toList(growable: false);
@@ -33,7 +45,15 @@ final class _AdditiveReadAloudLatticeV3 {
           (fact) =>
               fact.candidate.kind ==
                   ReadAloudBoundaryKindV3.strongPunctuation &&
+              (!_isAlternativeOpeningDelimiterEdgeV3(fact.candidate) ||
+                  // Quote→paren junctions are real pause edges even when the
+                  // paren side looks like an opener (`know" | —(pointing…)`).
+                  fact.candidate.quoteEdge == 'after_closing') &&
               !_isEmbeddedQuotedNominalPunctuationV3(
+                words,
+                fact.candidate,
+              ) &&
+              !_isShortQuotedComplementClosingBeforeContinuationV3(
                 words,
                 fact.candidate,
               ) &&
@@ -85,7 +105,6 @@ final class _AdditiveReadAloudLatticeV3 {
           sourceWordCount: words.length,
           openingBoundary: start == 0 ? null : boundaryByEnd[start],
           closingBoundary: boundaryFact,
-          comfortable21Starts: comfortable21Starts,
           words: words,
           punctuationFacts: punctuationFacts,
           strongPunctuationEnds: strongPunctuationEnds,
@@ -183,65 +202,123 @@ List<int> _additiveSegmentScoreV3({
   required int sourceWordCount,
   required _AdditiveBoundaryFactV3? openingBoundary,
   required _AdditiveBoundaryFactV3? closingBoundary,
-  required Int32List? comfortable21Starts,
   required List<_SourceWordV3> words,
   required List<_AdditiveBoundaryFactV3> punctuationFacts,
   required List<int> strongPunctuationEnds,
   required Set<int> attributionClosings,
 }) {
-  final skippedStrong = strongPunctuationEnds
-      .where((offset) => offset > start && offset < end)
-      .length;
   final closesAtSyntaxBoundary =
       closingBoundary != null && !closingBoundary.candidate.isPunctuation;
+  final skippedStrong = strongPunctuationEnds
+      .where(
+        (offset) =>
+            offset > start &&
+            offset < end &&
+            !(_isValidatedSyntaxBoundaryV3(openingBoundary) &&
+                    offset - start <= 3 ||
+                _isValidatedSyntaxBoundaryV3(closingBoundary) &&
+                    end - offset <= 3),
+      )
+      .length;
   final rawInternalPunctuation = punctuationFacts
       .where(
         (fact) =>
             fact.candidate.afterWord > start && fact.candidate.afterWord < end,
       )
       .toList(growable: false);
-  final isFlatAmbiguousList = _isFlatAmbiguousListV3(
-    rawInternalPunctuation,
-    start: start,
-    end: end,
-  );
   final internalPunctuation = rawInternalPunctuation
       .where(
         (fact) =>
-            !_isTightModifierCommaV3(words, fact.candidate) &&
             !_isEmbeddedQuotedNominalPunctuationV3(words, fact.candidate) &&
-            (fact.candidate.kind != ReadAloudBoundaryKindV3.ambiguousComma ||
-                !isFlatAmbiguousList &&
-                    !(openingBoundary?.candidate.quoteEdge == 'after_closing' &&
-                        fact.candidate.afterWord - start <= 5) ||
-                start == 0 &&
-                    fact.candidate.afterWord == 3 &&
-                    sourceWordCount > 20 &&
-                    !fact.candidate.insideQuotedSpeech &&
-                    !fact.candidate.insideParenthetical),
+            !_isRedundantOpeningDelimiterEdgeV3(
+              fact.candidate,
+              segmentEnd: end,
+              closingBoundary: closingBoundary,
+            ) &&
+            !(fact.candidate.kind == ReadAloudBoundaryKindV3.ambiguousComma &&
+                openingBoundary?.candidate.quoteEdge == 'after_closing' &&
+                fact.candidate.afterWord - start <= 5) &&
+            !_isOptionalNominativeAbsoluteCommaV3(words, fact) &&
+            // `change (she knew) | to …`: the closer is real punctuation, but
+            // parking it is required to keep the attached PP with its verb.
+            !_isAttachedPpParentheticalClosingV3(fact),
       )
       .toList(growable: false);
-  final skippedPunctuation = length >= 17 || closesAtSyntaxBoundary
-      ? internalPunctuation.length
-      : internalPunctuation
+  final opensOnEmergency =
+      openingBoundary?.candidate.isEmergency == true;
+  final quoteParenJunctionSkip = length > 16
+      ? rawInternalPunctuation
           .where(
             (fact) =>
-                _isPriorityQuotePauseV3(
-                  fact.candidate,
-                  start: start,
-                  end: end,
-                  sourceWordCount: sourceWordCount,
-                  attributionClosings: attributionClosings,
-                ) ||
-                _replacesRiskyAmbiguousPauseV3(
-                  openingBoundary,
-                  fact,
-                  punctuationFacts: punctuationFacts,
-                  start: start,
-                  end: end,
-                ),
+                fact.candidate.quoteEdge == 'after_closing' &&
+                fact.candidate.parenEdge == 'before_opening',
           )
-          .length;
+          .length
+      : 0;
+  final skippedPunctuation = internalPunctuation
+      .where(
+        (fact) =>
+            length > 17 ||
+            closesAtSyntaxBoundary ||
+            // Emergency openings must not park a medial pause inside a
+            // mid-length tail (E17: `bend | about` / `easily | in` + comma).
+            (sourceWordCount > 20 && length >= 6 && opensOnEmergency) ||
+            // Balanced medial commas: do not pressure-split short *originals*
+            // (R-LENGTH-ZONES / DB <=16 KEEP). Long sources may still need
+            // asyndetic clause commas inside a <=16 punctuation subspan
+            // (Willows E30 rusty-key / door).
+            ((length > 16 || sourceWordCount > 20) &&
+                fact.candidate.afterWord - start >= 6 &&
+                end - fact.candidate.afterWord >= 6) ||
+            // Syntax openings that park a still-usable clause-join pause
+            // (`… murmur, | and …`) must pay — even inside a mid-length span
+            // (Willows E58 `position | assigned … murmur,`). Do not broaden to
+            // every ≥4/≥4 pause: that collapses reviewed supplemental PP fronts
+            // such as `memories | by the fireside;`.
+            (openingBoundary != null &&
+                !openingBoundary.candidate.isPunctuation &&
+                fact.candidate.afterWord - start >= 4 &&
+                end - fact.candidate.afterWord >= 4 &&
+                _additiveCoordinatorsV3.contains(
+                  _additiveLexemeV3(words[fact.candidate.afterWord].text),
+                )) ||
+            // Alice E38: syntax opening parks a mid-span comma with ≥4/≥4 sides
+            // inside a >16 block (`idea | that … jury-box,`).
+            (openingBoundary != null &&
+                !openingBoundary.candidate.isPunctuation &&
+                length > 16 &&
+                fact.candidate.afterWord - start >= 4 &&
+                end - fact.candidate.afterWord >= 4) ||
+            _hasCompleteFiveWordPunctuationTailV3(
+              fact,
+              words: words,
+              end: end,
+            ) ||
+            // Short comparative/prep tails after a comma (`direction, | like a
+            // serpent`) must count as skipped punctuation — otherwise a nearby
+            // syntax cut such as `find | that` parks the comma for free.
+            _hasCompleteShortAdpositionPunctuationTailV3(
+              fact,
+              words: words,
+              end: end,
+            ) ||
+            _isPriorityQuotePauseV3(
+              fact.candidate,
+              start: start,
+              end: end,
+              sourceWordCount: sourceWordCount,
+              attributionClosings: attributionClosings,
+            ) ||
+            _replacesRiskyAmbiguousPauseV3(
+              openingBoundary,
+              fact,
+              punctuationFacts: punctuationFacts,
+              start: start,
+              end: end,
+            ),
+      )
+      .length +
+      quoteParenJunctionSkip;
   final shortfall = math.max(0, 8 - length);
   final closesShortNominalAdpositionPause = length < 8 &&
       closingBoundary?.candidate.kind == ReadAloudBoundaryKindV3.phraseComma &&
@@ -257,27 +334,27 @@ List<int> _additiveSegmentScoreV3({
           closingBoundary?.candidate.kind ==
               ReadAloudBoundaryKindV3.ambiguousComma) &&
       words[end].upos.any(_additivePredicatePosV3.contains);
-  final overload = math.max(0, length - 16);
-  final qualifiedOverload = sourceWordCount <= 20 && internalPunctuation.isEmpty
-      ? 0
-      : overload * overload;
-  final hasComfortableSyntaxBoundary = length == 21 &&
-      comfortable21Starts != null &&
-      comfortable21Starts[start] > 0;
-  final isIntroductoryPause = sourceWordCount > 20 &&
-      start == 0 &&
-      length == 3 &&
-      closingBoundary?.candidate.insideQuotedSpeech == false &&
-      closingBoundary?.candidate.insideParenthetical == false &&
-      (closingBoundary?.candidate.kind == ReadAloudBoundaryKindV3.phraseComma ||
-          closingBoundary?.candidate.kind ==
+  final overload = math.max(0, length - 20);
+  // Clause/phrase commas are the R-PUNCT-FIRST edges that must not lose to a
+  // nearby syntax cut solely because a 17–20 comma-closed block was charged as
+  // "unpunctuated" elasticity (Alice E05 candle/out). Strong terminals keep the
+  // elasticity charge so reviewed syntax-before-supplement paths stay stable.
+  final closesAtCommaPause = closingBoundary != null &&
+      (closingBoundary.candidate.kind == ReadAloudBoundaryKindV3.clauseComma ||
+          closingBoundary.candidate.kind ==
+              ReadAloudBoundaryKindV3.phraseComma ||
+          closingBoundary.candidate.kind ==
               ReadAloudBoundaryKindV3.ambiguousComma);
+  final elasticOverload = length >= 17 &&
+          length <= 20 &&
+          internalPunctuation.isEmpty &&
+          !closesAtCommaPause
+      ? length - 16
+      : 0;
   final isLongSourceCompleteShortClause = sourceWordCount > 20 &&
       length >= 4 &&
       length <= 5 &&
-      (closingBoundary?.candidate.kind == ReadAloudBoundaryKindV3.clauseComma ||
-          closingBoundary?.candidate.kind ==
-              ReadAloudBoundaryKindV3.strongPunctuation ||
+      (closingBoundary?.candidate.isPunctuation == true ||
           closingBoundary?.candidate.quoteEdge == 'before_opening' ||
           end == sourceWordCount &&
               openingBoundary?.candidate.isPunctuation == true);
@@ -285,6 +362,10 @@ List<int> _additiveSegmentScoreV3({
         (reason) => reason == 'quote_edge:after_closing',
       ) ??
       false;
+  // 17–20 sources may close on a punctuation-bounded 4–5 tail when the opening
+  // edge itself is low structural risk (v3.8/v3.9 baseline). Do not broaden this
+  // into a comma-kind-only trailing-postmodifier exemption — that Attempt D path
+  // fixed E13 door in isolation but left confirmed R-SYNTAX-LOCATION cuts.
   final isFlexibleSourceCompleteShortTail = sourceWordCount >= 17 &&
       sourceWordCount <= 20 &&
       end == sourceWordCount &&
@@ -294,8 +375,37 @@ List<int> _additiveSegmentScoreV3({
       openingBoundary!.strongStructuralRisk == 0 &&
       openingBoundary.residualRisk == 0 &&
       !opensAfterClosingQuote;
-  final isCompleteShortClause =
-      isLongSourceCompleteShortClause || isFlexibleSourceCompleteShortTail;
+  // A verified finite-clause front (`doubt | that …`) is a complete 4–5 word
+  // unit; do not let its shortfall beat an incomplete emergency such as
+  // `able | to` farther right in the same >20 unpunctuated span.
+  final isCompleteClauseFrontShort = length >= 4 &&
+      length <= 5 &&
+      closingBoundary?.candidate.kind ==
+          ReadAloudBoundaryKindV3.dependencyClause &&
+      (closingBoundary!.candidate.reasons.contains(
+            'complete_dependency_clause_subtree',
+          ) ||
+          closingBoundary.candidate.reasons.contains(
+            'validated_surface_right_clause',
+          ) ||
+          closingBoundary.candidate.reasons.contains(
+            'deferred_stable_right_clause',
+          ));
+  // `direction, | like a serpent` is a complete 3-word adposition tail; without
+  // this exemption the fragment score prefers parking the comma after a syntax
+  // cut such as `find | that`.
+  final isCompleteShortAdpositionTail = length >= 3 &&
+      length <= 5 &&
+      end == sourceWordCount &&
+      openingBoundary?.candidate.isPunctuation == true &&
+      words[start].upos.contains('ADP') &&
+      words
+          .sublist(start + 1, end)
+          .any((word) => word.upos.any(const {'NOUN', 'PROPN', 'PRON'}.contains));
+  final isCompleteShortClause = isLongSourceCompleteShortClause ||
+      isFlexibleSourceCompleteShortTail ||
+      isCompleteClauseFrontShort ||
+      isCompleteShortAdpositionTail;
   final isStandaloneShortQuote = _isStandaloneShortQuoteV3(
     words,
     start: start,
@@ -305,10 +415,26 @@ List<int> _additiveSegmentScoreV3({
     openingBoundary: openingBoundary,
     attributionClosings: attributionClosings,
   );
+  // A 2–3 word unit that already closes on a source sentence terminal
+  // (`Society!`, `No?`) is a complete spoken beat. Do not pay the short-
+  // fragment tax that would push the cut past the terminal onto a later
+  // syntax edge (`Society! Now | we…`).
+  final isCompleteStrongTerminalShort = length >= 2 &&
+      length <= 3 &&
+      closingBoundary?.candidate.kind ==
+          ReadAloudBoundaryKindV3.strongPunctuation &&
+      _additiveQuotedTerminalPauseV3.hasMatch(words[end - 1].text);
   return [
-    length <= 3 && !isIntroductoryPause && !isStandaloneShortQuote
+    length <= 3 &&
+            !isStandaloneShortQuote &&
+            !isCompleteShortAdpositionTail &&
+            !isCompleteStrongTerminalShort
         ? (4 - length) * (4 - length)
         : 0,
+    length > 20 ? 1 : 0,
+    overload * overload,
+    skippedStrong,
+    skippedPunctuation,
     length >= 4 &&
             length <= 5 &&
             !isCompleteShortClause &&
@@ -317,44 +443,127 @@ List<int> _additiveSegmentScoreV3({
         : 0,
     0, // non-punctuation protected crossings
     0, // structural warnings
-    skippedStrong,
-    length >= 28 ? 1 : 0,
-    skippedPunctuation,
     closesShortNominalAdpositionPause
         ? 1
         : 0, // weak punctuation structural warnings
-    length >= 25 ? 1 : 0,
-    length >= 22 || hasComfortableSyntaxBoundary ? 1 : 0,
     0, // emergency boundary
+    elasticOverload * elasticOverload, // 17-20 unpunctuated elasticity
     0, // non-punctuation boundary
-    length >= 17 && internalPunctuation.isNotEmpty ? 1 : 0,
-    qualifiedOverload,
     isStandaloneShortQuote
         ? 0
         : shortfall * shortfall + (closesShortBeforePredicate ? 1 : 0),
     0, // residual boundary risk
+    0, // prefer closing parenthetical edge when otherwise equal
     0, // boundary count
   ];
 }
 
-bool _isFlatAmbiguousListV3(
-  List<_AdditiveBoundaryFactV3> punctuation, {
-  required int start,
+bool _isValidatedSyntaxBoundaryV3(_AdditiveBoundaryFactV3? boundary) =>
+    boundary?.candidate.reasons.contains(
+      'validated_stable_syntax_boundary',
+    ) ??
+    false;
+
+bool _hasCompleteFiveWordPunctuationTailV3(
+  _AdditiveBoundaryFactV3 boundary, {
+  required List<_SourceWordV3> words,
   required int end,
 }) {
-  if (punctuation.length < 3 ||
-      punctuation.any(
-        (fact) => fact.candidate.kind != ReadAloudBoundaryKindV3.ambiguousComma,
-      )) {
+  final start = boundary.candidate.afterWord;
+  if (end - start != 5 || start >= words.length) return false;
+  return words[start].upos.any(_additivePredicatePosV3.contains) ||
+      words
+          .sublist(start, math.min(end, start + 3))
+          .any((word) => word.upos.any(_additivePredicatePosV3.contains));
+}
+
+/// Comma followed by a compact adposition-led tail (`like a serpent`). Parking
+/// that pause while taking an earlier syntax cut violates R-PUNCT-FIRST; the
+/// broader dependencyClause skippedPunctuation charge previously regresses
+/// E17 particle paths, so only this adposition-tail shape is charged.
+bool _hasCompleteShortAdpositionPunctuationTailV3(
+  _AdditiveBoundaryFactV3 boundary, {
+  required List<_SourceWordV3> words,
+  required int end,
+}) {
+  final start = boundary.candidate.afterWord;
+  final length = end - start;
+  if (length < 3 || length > 5 || start >= words.length) return false;
+  if (!words[start].upos.contains('ADP')) return false;
+  return words
+      .sublist(start + 1, end)
+      .any((word) => word.upos.any(const {'NOUN', 'PROPN', 'PRON'}.contains));
+}
+
+/// Nominative-absolute commas (`Badger, having… breakfast, had…`) are real
+/// source pauses but optional under R-PUNCT-FIRST when a later coordination /
+/// clause edge is preferred. Not counting them as skippedPunctuation lets the
+/// DB path `study | … face, |` compete without hard-blocking early commas.
+bool _isOptionalNominativeAbsoluteCommaV3(
+  List<_SourceWordV3> words,
+  _AdditiveBoundaryFactV3 fact,
+) {
+  final afterWord = fact.candidate.afterWord;
+  if (afterWord <= 0 || afterWord >= words.length) return false;
+  final kind = fact.candidate.kind;
+  if (kind != ReadAloudBoundaryKindV3.clauseComma &&
+      kind != ReadAloudBoundaryKindV3.phraseComma &&
+      kind != ReadAloudBoundaryKindV3.ambiguousComma) {
     return false;
   }
-  var previous = start;
-  for (final fact in punctuation) {
-    if (fact.candidate.afterWord - previous < 4) return false;
-    previous = fact.candidate.afterWord;
+  final left = words[afterWord - 1];
+  final right = words[afterWord];
+  final rightLexeme = right.text.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+  if ((rightLexeme == 'having' || rightLexeme == 'being') &&
+      left.upos.any(const {'NOUN', 'PROPN', 'PRON'}.contains)) {
+    return true;
   }
-  return end - previous >= 4;
+  if (!right.upos.any(_additivePredicatePosV3.contains) ||
+      !left.upos.any(const {'NOUN', 'PROPN'}.contains)) {
+    return false;
+  }
+  final lookbackStart = math.max(0, afterWord - 12);
+  for (var index = afterWord - 2; index >= lookbackStart; index--) {
+    final lexeme =
+        words[index].text.toLowerCase().replaceAll(RegExp(r'[^a-z]'), '');
+    if (lexeme == 'having' || lexeme == 'being') return true;
+  }
+  return false;
 }
+
+bool _isAlternativeOpeningDelimiterEdgeV3(
+  ReadAloudBoundaryCandidateV3 candidate,
+) =>
+    candidate.reasons.any(
+      const {
+        'source_parenthetical_opening_edge',
+        'source_quote_opening_edge',
+      }.contains,
+    );
+
+bool _isRedundantOpeningDelimiterEdgeV3(
+  ReadAloudBoundaryCandidateV3 candidate, {
+  required int segmentEnd,
+  required _AdditiveBoundaryFactV3? closingBoundary,
+}) {
+  // Quote|paren junctions (`know" | —(pointing…)`) are real R-PUNCT-FIRST /
+  // delimiter edges — not a skippable paren opener inside a kept closer.
+  if (candidate.quoteEdge == 'after_closing') return false;
+  final spanWordCount = candidate.parenSpanWordCount;
+  if (candidate.parenEdge != 'before_opening' || spanWordCount == null) {
+    return false;
+  }
+  final matchingClosing = candidate.afterWord + spanWordCount;
+  return matchingClosing <= segmentEnd &&
+      (matchingClosing < segmentEnd ||
+          closingBoundary?.candidate.parenEdge == 'after_closing');
+}
+
+bool _isAttachedPpParentheticalClosingV3(_AdditiveBoundaryFactV3 fact) =>
+    fact.candidate.parenEdge == 'after_closing' &&
+    fact.candidate.reasons.contains(
+      'incomplete_attached_prepositional_complement',
+    );
 
 bool _isPriorityQuotePauseV3(
   ReadAloudBoundaryCandidateV3 candidate, {
@@ -371,6 +580,14 @@ bool _isPriorityQuotePauseV3(
     return (candidate.quoteSpanWordCount ?? 0) >= 6 &&
         leftLength >= 6 &&
         rightLength >= 6;
+  }
+  if (candidate.quoteEdge == 'after_closing' &&
+      candidate.reasons.contains('source_quote_closing_edge') &&
+      (candidate.quoteSpanWordCount ?? 0) >= 2 &&
+      (candidate.quoteSpanWordCount ?? 0) <= 16 &&
+      candidate.quoteSpanWordCount == leftLength &&
+      sourceWordCount - offset >= 6) {
+    return true;
   }
   return candidate.quoteEdge == 'after_closing' &&
       !attributionClosings.contains(offset) &&
@@ -475,56 +692,29 @@ final _additiveQuotedTerminalPauseV3 =
 final _additiveClosingQuoteTerminalV3 = RegExp(r'''[.!?]["'”’]+[—–-]?$''');
 final _additiveOpeningQuoteWordV3 = RegExp(r'''^["'“‘]''');
 
-Int32List? _comfortable21StartsV3(
-  int wordCount,
-  List<_AdditiveBoundaryFactV3> boundaryFacts,
-) {
-  if (wordCount < 21) return null;
-  final counts = Int32List(wordCount - 20);
-  for (final fact in boundaryFacts) {
-    final boundary = fact.candidate;
-    if (boundary.isPunctuation ||
-        boundary.isEmergency ||
-        boundary.protectedRelationCrossings > 0 ||
-        fact.strongStructuralRisk > 0 ||
-        fact.lengthCriticalStructuralRisk > 0 ||
-        fact.residualRisk > 0) {
-      continue;
-    }
-    final firstStart = math.max(0, boundary.afterWord - 15);
-    final lastStart = math.min(wordCount - 21, boundary.afterWord - 6);
-    if (firstStart > lastStart) continue;
-    counts[firstStart] += 1;
-    if (lastStart + 1 < counts.length) counts[lastStart + 1] -= 1;
-  }
-  var active = 0;
-  for (var start = 0; start < counts.length; start += 1) {
-    active += counts[start];
-    counts[start] = active;
-  }
-  return counts;
-}
-
 List<int> _additiveBoundaryScoreV3(_AdditiveBoundaryFactV3 fact) {
   final boundary = fact.candidate;
   final nonPunctuation = !boundary.isPunctuation;
   return [
     0,
     0,
+    0,
+    0,
+    0,
+    0,
     nonPunctuation ? fact.protectedRelationCrossings : 0,
-    fact.strongStructuralRisk,
-    0,
-    0,
-    0,
+    fact.strongStructuralRisk + fact.lengthCriticalStructuralRisk,
     fact.weakPunctuationRisk,
-    0,
-    fact.lengthCriticalStructuralRisk,
     boundary.isEmergency ? 1 : 0,
+    0,
     nonPunctuation ? 1 : 0,
     0,
-    0,
-    0,
     fact.residualRisk,
+    boundary.parenEdge == 'before_opening' &&
+            boundary.quoteEdge != 'after_closing' ||
+        boundary.quoteEdge == 'before_opening'
+        ? 1
+        : 0,
     1,
   ];
 }
@@ -602,21 +792,12 @@ _CandidatePathRoundsV3 _materializeAdditivePathsV3({
   required int originalIndex,
   required List<_AdditiveSplitPathV3> ranked,
 }) {
-  final stable = ranked
-      .where(
-        (path) => path.boundaries.every(
-          (boundary) =>
-              !boundary.reasons.contains('incomplete_constituent_boundary'),
-        ),
-      )
-      .toList(growable: false);
-  final eligible = stable.isEmpty ? ranked : stable;
   final expanded = <ReadAloudCandidatePathV3>[];
   for (var index = 0;
-      index < eligible.length &&
+      index < ranked.length &&
           index < ReadAloudSplitterV3.maxExpandedCandidatePaths;
       index += 1) {
-    final source = eligible[index];
+    final source = ranked[index];
     final round = index < ReadAloudSplitterV3.maxCandidatePaths
         ? ReadAloudCandidateRoundV3.initial
         : ReadAloudCandidateRoundV3.expanded;
@@ -702,7 +883,6 @@ final class _AdditiveDraftV3 {
 }
 
 const _additiveZeroScoreV3 = <int>[
-  0,
   0,
   0,
   0,

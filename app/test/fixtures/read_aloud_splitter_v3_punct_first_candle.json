@@ -1,0 +1,306 @@
+{
+  "description": "Alice E05: punctuation cut after 'out,' must beat syntax cut after 'candle' (R-PUNCT-FIRST).",
+  "source": "And she tried to fancy what the flame of a candle looks like after the candle is blown out, for she could not remember ever having seen such a thing.",
+  "parserVersion": "udpipe-1.4.0",
+  "modelSha256": "b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f",
+  "expectedSegments": [
+    "And she tried to fancy what the flame of a candle looks like after the candle is blown out,",
+    "for she could not remember ever having seen such a thing."
+  ],
+  "sentences": [
+    {
+      "start": 0,
+      "end": 149,
+      "tokens": [
+        {
+          "id": 1,
+          "text": "And",
+          "start": 0,
+          "end": 3,
+          "upos": "CCONJ",
+          "head": 3,
+          "deprel": "cc"
+        },
+        {
+          "id": 2,
+          "text": "she",
+          "start": 4,
+          "end": 7,
+          "upos": "PRON",
+          "head": 3,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 3,
+          "text": "tried",
+          "start": 8,
+          "end": 13,
+          "upos": "VERB",
+          "head": 0,
+          "deprel": "root"
+        },
+        {
+          "id": 4,
+          "text": "to",
+          "start": 14,
+          "end": 16,
+          "upos": "PART",
+          "head": 5,
+          "deprel": "mark"
+        },
+        {
+          "id": 5,
+          "text": "fancy",
+          "start": 17,
+          "end": 22,
+          "upos": "VERB",
+          "head": 3,
+          "deprel": "xcomp"
+        },
+        {
+          "id": 6,
+          "text": "what",
+          "start": 23,
+          "end": 27,
+          "upos": "PRON",
+          "head": 12,
+          "deprel": "obj"
+        },
+        {
+          "id": 7,
+          "text": "the",
+          "start": 28,
+          "end": 31,
+          "upos": "DET",
+          "head": 8,
+          "deprel": "det"
+        },
+        {
+          "id": 8,
+          "text": "flame",
+          "start": 32,
+          "end": 37,
+          "upos": "NOUN",
+          "head": 12,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 9,
+          "text": "of",
+          "start": 38,
+          "end": 40,
+          "upos": "ADP",
+          "head": 11,
+          "deprel": "case"
+        },
+        {
+          "id": 10,
+          "text": "a",
+          "start": 41,
+          "end": 42,
+          "upos": "DET",
+          "head": 11,
+          "deprel": "det"
+        },
+        {
+          "id": 11,
+          "text": "candle",
+          "start": 43,
+          "end": 49,
+          "upos": "NOUN",
+          "head": 8,
+          "deprel": "nmod"
+        },
+        {
+          "id": 12,
+          "text": "looks",
+          "start": 50,
+          "end": 55,
+          "upos": "VERB",
+          "head": 5,
+          "deprel": "ccomp"
+        },
+        {
+          "id": 13,
+          "text": "like",
+          "start": 56,
+          "end": 60,
+          "upos": "ADP",
+          "head": 16,
+          "deprel": "case"
+        },
+        {
+          "id": 14,
+          "text": "after",
+          "start": 61,
+          "end": 66,
+          "upos": "ADP",
+          "head": 16,
+          "deprel": "case"
+        },
+        {
+          "id": 15,
+          "text": "the",
+          "start": 67,
+          "end": 70,
+          "upos": "DET",
+          "head": 16,
+          "deprel": "det"
+        },
+        {
+          "id": 16,
+          "text": "candle",
+          "start": 71,
+          "end": 77,
+          "upos": "NOUN",
+          "head": 12,
+          "deprel": "nmod"
+        },
+        {
+          "id": 17,
+          "text": "is",
+          "start": 78,
+          "end": 80,
+          "upos": "AUX",
+          "head": 18,
+          "deprel": "aux:pass"
+        },
+        {
+          "id": 18,
+          "text": "blown",
+          "start": 81,
+          "end": 86,
+          "upos": "VERB",
+          "head": 3,
+          "deprel": "ccomp"
+        },
+        {
+          "id": 19,
+          "text": "out",
+          "start": 87,
+          "end": 90,
+          "upos": "ADP",
+          "head": 18,
+          "deprel": "compound:prt"
+        },
+        {
+          "id": 20,
+          "text": ",",
+          "start": 90,
+          "end": 91,
+          "upos": "PUNCT",
+          "head": 25,
+          "deprel": "punct"
+        },
+        {
+          "id": 21,
+          "text": "for",
+          "start": 92,
+          "end": 95,
+          "upos": "SCONJ",
+          "head": 25,
+          "deprel": "mark"
+        },
+        {
+          "id": 22,
+          "text": "she",
+          "start": 96,
+          "end": 99,
+          "upos": "PRON",
+          "head": 25,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 23,
+          "text": "could",
+          "start": 100,
+          "end": 105,
+          "upos": "AUX",
+          "head": 25,
+          "deprel": "aux"
+        },
+        {
+          "id": 24,
+          "text": "not",
+          "start": 106,
+          "end": 109,
+          "upos": "PART",
+          "head": 25,
+          "deprel": "advmod"
+        },
+        {
+          "id": 25,
+          "text": "remember",
+          "start": 110,
+          "end": 118,
+          "upos": "VERB",
+          "head": 3,
+          "deprel": "advcl"
+        },
+        {
+          "id": 26,
+          "text": "ever",
+          "start": 119,
+          "end": 123,
+          "upos": "ADV",
+          "head": 28,
+          "deprel": "advmod"
+        },
+        {
+          "id": 27,
+          "text": "having",
+          "start": 124,
+          "end": 130,
+          "upos": "AUX",
+          "head": 28,
+          "deprel": "aux"
+        },
+        {
+          "id": 28,
+          "text": "seen",
+          "start": 131,
+          "end": 135,
+          "upos": "VERB",
+          "head": 25,
+          "deprel": "ccomp"
+        },
+        {
+          "id": 29,
+          "text": "such",
+          "start": 136,
+          "end": 140,
+          "upos": "DET",
+          "head": 31,
+          "deprel": "det:predet"
+        },
+        {
+          "id": 30,
+          "text": "a",
+          "start": 141,
+          "end": 142,
+          "upos": "DET",
+          "head": 31,
+          "deprel": "det"
+        },
+        {
+          "id": 31,
+          "text": "thing",
+          "start": 143,
+          "end": 148,
+          "upos": "NOUN",
+          "head": 28,
+          "deprel": "obj"
+        },
+        {
+          "id": 32,
+          "text": ".",
+          "start": 148,
+          "end": 149,
+          "upos": "PUNCT",
+          "head": 3,
+          "deprel": "punct"
+        }
+      ]
+    }
+  ]
+}

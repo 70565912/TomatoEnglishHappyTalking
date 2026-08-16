@@ -23,7 +23,7 @@ void main() {
         ReadAloudPathStageV3.punctuation);
     expect(result.selection.remoteAttempts, 0);
     expect(result.audit.sentenceSplitVersion, 'reviewed_dp_v3');
-    expect(result.audit.solverVersion, 'syntax_solver_v3_8');
+    expect(result.audit.solverVersion, 'syntax_solver_v3_9');
     expect(result.audit.parserHealthy, isTrue);
     expect(result.audit.selectedPaths.values.single, startsWith('v3_o0_r1_'));
   });

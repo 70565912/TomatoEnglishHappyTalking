@@ -1,0 +1,430 @@
+{
+  "id": "alice_e17",
+  "book": "Alice",
+  "episode": "E17",
+  "source": "As there seemed to be no chance of getting her hands up to her head, she tried to get her head down to them, and was delighted to find that her neck would bend about easily in any direction, like a serpent.",
+  "parserVersion": "udpipe-1.4.0",
+  "modelSha256": "b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f",
+  "sentences": [
+    {
+      "start": 0,
+      "end": 206,
+      "tokens": [
+        {
+          "id": 1,
+          "text": "As",
+          "start": 0,
+          "end": 2,
+          "upos": "SCONJ",
+          "head": 3,
+          "deprel": "mark"
+        },
+        {
+          "id": 2,
+          "text": "there",
+          "start": 3,
+          "end": 8,
+          "upos": "PRON",
+          "head": 3,
+          "deprel": "expl"
+        },
+        {
+          "id": 3,
+          "text": "seemed",
+          "start": 9,
+          "end": 15,
+          "upos": "VERB",
+          "head": 18,
+          "deprel": "advcl"
+        },
+        {
+          "id": 4,
+          "text": "to",
+          "start": 16,
+          "end": 18,
+          "upos": "PART",
+          "head": 7,
+          "deprel": "mark"
+        },
+        {
+          "id": 5,
+          "text": "be",
+          "start": 19,
+          "end": 21,
+          "upos": "AUX",
+          "head": 7,
+          "deprel": "cop"
+        },
+        {
+          "id": 6,
+          "text": "no",
+          "start": 22,
+          "end": 24,
+          "upos": "DET",
+          "head": 7,
+          "deprel": "det"
+        },
+        {
+          "id": 7,
+          "text": "chance",
+          "start": 25,
+          "end": 31,
+          "upos": "NOUN",
+          "head": 3,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 8,
+          "text": "of",
+          "start": 32,
+          "end": 34,
+          "upos": "SCONJ",
+          "head": 9,
+          "deprel": "mark"
+        },
+        {
+          "id": 9,
+          "text": "getting",
+          "start": 35,
+          "end": 42,
+          "upos": "VERB",
+          "head": 7,
+          "deprel": "acl"
+        },
+        {
+          "id": 10,
+          "text": "her",
+          "start": 43,
+          "end": 46,
+          "upos": "PRON",
+          "head": 11,
+          "deprel": "nmod:poss"
+        },
+        {
+          "id": 11,
+          "text": "hands",
+          "start": 47,
+          "end": 52,
+          "upos": "NOUN",
+          "head": 9,
+          "deprel": "obj"
+        },
+        {
+          "id": 12,
+          "text": "up",
+          "start": 53,
+          "end": 55,
+          "upos": "ADV",
+          "head": 9,
+          "deprel": "advmod"
+        },
+        {
+          "id": 13,
+          "text": "to",
+          "start": 56,
+          "end": 58,
+          "upos": "ADP",
+          "head": 15,
+          "deprel": "case"
+        },
+        {
+          "id": 14,
+          "text": "her",
+          "start": 59,
+          "end": 62,
+          "upos": "PRON",
+          "head": 15,
+          "deprel": "nmod:poss"
+        },
+        {
+          "id": 15,
+          "text": "head",
+          "start": 63,
+          "end": 67,
+          "upos": "NOUN",
+          "head": 9,
+          "deprel": "obl"
+        },
+        {
+          "id": 16,
+          "text": ",",
+          "start": 67,
+          "end": 68,
+          "upos": "PUNCT",
+          "head": 3,
+          "deprel": "punct"
+        },
+        {
+          "id": 17,
+          "text": "she",
+          "start": 69,
+          "end": 72,
+          "upos": "PRON",
+          "head": 18,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 18,
+          "text": "tried",
+          "start": 73,
+          "end": 78,
+          "upos": "VERB",
+          "head": 0,
+          "deprel": "root"
+        },
+        {
+          "id": 19,
+          "text": "to",
+          "start": 79,
+          "end": 81,
+          "upos": "PART",
+          "head": 20,
+          "deprel": "mark"
+        },
+        {
+          "id": 20,
+          "text": "get",
+          "start": 82,
+          "end": 85,
+          "upos": "VERB",
+          "head": 18,
+          "deprel": "xcomp"
+        },
+        {
+          "id": 21,
+          "text": "her",
+          "start": 86,
+          "end": 89,
+          "upos": "PRON",
+          "head": 22,
+          "deprel": "nmod:poss"
+        },
+        {
+          "id": 22,
+          "text": "head",
+          "start": 90,
+          "end": 94,
+          "upos": "NOUN",
+          "head": 20,
+          "deprel": "obj"
+        },
+        {
+          "id": 23,
+          "text": "down",
+          "start": 95,
+          "end": 99,
+          "upos": "ADV",
+          "head": 20,
+          "deprel": "advmod"
+        },
+        {
+          "id": 24,
+          "text": "to",
+          "start": 100,
+          "end": 102,
+          "upos": "ADP",
+          "head": 25,
+          "deprel": "case"
+        },
+        {
+          "id": 25,
+          "text": "them",
+          "start": 103,
+          "end": 107,
+          "upos": "PRON",
+          "head": 20,
+          "deprel": "obl"
+        },
+        {
+          "id": 26,
+          "text": ",",
+          "start": 107,
+          "end": 108,
+          "upos": "PUNCT",
+          "head": 29,
+          "deprel": "punct"
+        },
+        {
+          "id": 27,
+          "text": "and",
+          "start": 109,
+          "end": 112,
+          "upos": "CCONJ",
+          "head": 29,
+          "deprel": "cc"
+        },
+        {
+          "id": 28,
+          "text": "was",
+          "start": 113,
+          "end": 116,
+          "upos": "AUX",
+          "head": 29,
+          "deprel": "cop"
+        },
+        {
+          "id": 29,
+          "text": "delighted",
+          "start": 117,
+          "end": 126,
+          "upos": "ADJ",
+          "head": 18,
+          "deprel": "conj"
+        },
+        {
+          "id": 30,
+          "text": "to",
+          "start": 127,
+          "end": 129,
+          "upos": "PART",
+          "head": 31,
+          "deprel": "mark"
+        },
+        {
+          "id": 31,
+          "text": "find",
+          "start": 130,
+          "end": 134,
+          "upos": "VERB",
+          "head": 29,
+          "deprel": "xcomp"
+        },
+        {
+          "id": 32,
+          "text": "that",
+          "start": 135,
+          "end": 139,
+          "upos": "SCONJ",
+          "head": 36,
+          "deprel": "mark"
+        },
+        {
+          "id": 33,
+          "text": "her",
+          "start": 140,
+          "end": 143,
+          "upos": "PRON",
+          "head": 34,
+          "deprel": "nmod:poss"
+        },
+        {
+          "id": 34,
+          "text": "neck",
+          "start": 144,
+          "end": 148,
+          "upos": "NOUN",
+          "head": 36,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 35,
+          "text": "would",
+          "start": 149,
+          "end": 154,
+          "upos": "AUX",
+          "head": 36,
+          "deprel": "aux"
+        },
+        {
+          "id": 36,
+          "text": "bend",
+          "start": 155,
+          "end": 159,
+          "upos": "VERB",
+          "head": 31,
+          "deprel": "ccomp"
+        },
+        {
+          "id": 37,
+          "text": "about",
+          "start": 160,
+          "end": 165,
+          "upos": "ADV",
+          "head": 38,
+          "deprel": "advmod"
+        },
+        {
+          "id": 38,
+          "text": "easily",
+          "start": 166,
+          "end": 172,
+          "upos": "ADV",
+          "head": 36,
+          "deprel": "advmod"
+        },
+        {
+          "id": 39,
+          "text": "in",
+          "start": 173,
+          "end": 175,
+          "upos": "ADP",
+          "head": 41,
+          "deprel": "case"
+        },
+        {
+          "id": 40,
+          "text": "any",
+          "start": 176,
+          "end": 179,
+          "upos": "DET",
+          "head": 41,
+          "deprel": "det"
+        },
+        {
+          "id": 41,
+          "text": "direction",
+          "start": 180,
+          "end": 189,
+          "upos": "NOUN",
+          "head": 36,
+          "deprel": "obl"
+        },
+        {
+          "id": 42,
+          "text": ",",
+          "start": 189,
+          "end": 190,
+          "upos": "PUNCT",
+          "head": 45,
+          "deprel": "punct"
+        },
+        {
+          "id": 43,
+          "text": "like",
+          "start": 191,
+          "end": 195,
+          "upos": "ADP",
+          "head": 45,
+          "deprel": "case"
+        },
+        {
+          "id": 44,
+          "text": "a",
+          "start": 196,
+          "end": 197,
+          "upos": "DET",
+          "head": 45,
+          "deprel": "det"
+        },
+        {
+          "id": 45,
+          "text": "serpent",
+          "start": 198,
+          "end": 205,
+          "upos": "NOUN",
+          "head": 18,
+          "deprel": "obl"
+        },
+        {
+          "id": 46,
+          "text": ".",
+          "start": 205,
+          "end": 206,
+          "upos": "PUNCT",
+          "head": 18,
+          "deprel": "punct"
+        }
+      ]
+    }
+  ]
+}

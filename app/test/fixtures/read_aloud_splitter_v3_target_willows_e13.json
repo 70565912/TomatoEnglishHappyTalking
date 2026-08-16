@@ -1,0 +1,250 @@
+{
+  "id": "willows_e13",
+  "book": "Willows",
+  "episode": "E13",
+  "source": "In the side of what had seemed to be a snow-bank stood a solid-looking little door, painted a dark green.",
+  "parserVersion": "udpipe-1.4.0",
+  "modelSha256": "b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f",
+  "sentences": [
+    {
+      "start": 0,
+      "end": 105,
+      "tokens": [
+        {
+          "id": 1,
+          "text": "In",
+          "start": 0,
+          "end": 2,
+          "upos": "ADP",
+          "head": 3,
+          "deprel": "case"
+        },
+        {
+          "id": 2,
+          "text": "the",
+          "start": 3,
+          "end": 6,
+          "upos": "DET",
+          "head": 3,
+          "deprel": "det"
+        },
+        {
+          "id": 3,
+          "text": "side",
+          "start": 7,
+          "end": 11,
+          "upos": "NOUN",
+          "head": 0,
+          "deprel": "root"
+        },
+        {
+          "id": 4,
+          "text": "of",
+          "start": 12,
+          "end": 14,
+          "upos": "ADP",
+          "head": 5,
+          "deprel": "case"
+        },
+        {
+          "id": 5,
+          "text": "what",
+          "start": 15,
+          "end": 19,
+          "upos": "PRON",
+          "head": 3,
+          "deprel": "nmod"
+        },
+        {
+          "id": 6,
+          "text": "had",
+          "start": 20,
+          "end": 23,
+          "upos": "AUX",
+          "head": 7,
+          "deprel": "aux"
+        },
+        {
+          "id": 7,
+          "text": "seemed",
+          "start": 24,
+          "end": 30,
+          "upos": "VERB",
+          "head": 5,
+          "deprel": "acl:relcl"
+        },
+        {
+          "id": 8,
+          "text": "to",
+          "start": 31,
+          "end": 33,
+          "upos": "PART",
+          "head": 13,
+          "deprel": "mark"
+        },
+        {
+          "id": 9,
+          "text": "be",
+          "start": 34,
+          "end": 36,
+          "upos": "AUX",
+          "head": 13,
+          "deprel": "cop"
+        },
+        {
+          "id": 10,
+          "text": "a",
+          "start": 37,
+          "end": 38,
+          "upos": "DET",
+          "head": 13,
+          "deprel": "det"
+        },
+        {
+          "id": 11,
+          "text": "snow",
+          "start": 39,
+          "end": 43,
+          "upos": "NOUN",
+          "head": 13,
+          "deprel": "compound"
+        },
+        {
+          "id": 12,
+          "text": "-",
+          "start": 43,
+          "end": 44,
+          "upos": "PUNCT",
+          "head": 11,
+          "deprel": "punct"
+        },
+        {
+          "id": 13,
+          "text": "bank",
+          "start": 44,
+          "end": 48,
+          "upos": "NOUN",
+          "head": 14,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 14,
+          "text": "stood",
+          "start": 49,
+          "end": 54,
+          "upos": "VERB",
+          "head": 7,
+          "deprel": "ccomp"
+        },
+        {
+          "id": 15,
+          "text": "a",
+          "start": 55,
+          "end": 56,
+          "upos": "DET",
+          "head": 20,
+          "deprel": "det"
+        },
+        {
+          "id": 16,
+          "text": "solid",
+          "start": 57,
+          "end": 62,
+          "upos": "ADJ",
+          "head": 18,
+          "deprel": "amod"
+        },
+        {
+          "id": 17,
+          "text": "-",
+          "start": 62,
+          "end": 63,
+          "upos": "PUNCT",
+          "head": 16,
+          "deprel": "punct"
+        },
+        {
+          "id": 18,
+          "text": "looking",
+          "start": 63,
+          "end": 70,
+          "upos": "VERB",
+          "head": 20,
+          "deprel": "amod"
+        },
+        {
+          "id": 19,
+          "text": "little",
+          "start": 71,
+          "end": 77,
+          "upos": "ADJ",
+          "head": 20,
+          "deprel": "amod"
+        },
+        {
+          "id": 20,
+          "text": "door",
+          "start": 78,
+          "end": 82,
+          "upos": "NOUN",
+          "head": 14,
+          "deprel": "obj"
+        },
+        {
+          "id": 21,
+          "text": ",",
+          "start": 82,
+          "end": 83,
+          "upos": "PUNCT",
+          "head": 22,
+          "deprel": "punct"
+        },
+        {
+          "id": 22,
+          "text": "painted",
+          "start": 84,
+          "end": 91,
+          "upos": "VERB",
+          "head": 14,
+          "deprel": "conj"
+        },
+        {
+          "id": 23,
+          "text": "a",
+          "start": 92,
+          "end": 93,
+          "upos": "DET",
+          "head": 25,
+          "deprel": "det"
+        },
+        {
+          "id": 24,
+          "text": "dark",
+          "start": 94,
+          "end": 98,
+          "upos": "ADJ",
+          "head": 25,
+          "deprel": "amod"
+        },
+        {
+          "id": 25,
+          "text": "green",
+          "start": 99,
+          "end": 104,
+          "upos": "NOUN",
+          "head": 22,
+          "deprel": "obj"
+        },
+        {
+          "id": 26,
+          "text": ".",
+          "start": 104,
+          "end": 105,
+          "upos": "PUNCT",
+          "head": 3,
+          "deprel": "punct"
+        }
+      ]
+    }
+  ]
+}

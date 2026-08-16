@@ -1,4 +1,4 @@
-/// Production read-aloud chunk splitter (`read_aloud_dp_v3` / syntax_solver_v3_8).
+/// Production read-aloud chunk splitter (`read_aloud_dp_v3` / syntax_solver_v3_9).
 ///
 /// Each orthographic sentence builds one immutable fact set and runs one
 /// bounded DAG solve. Rules live in `docs/read_aloud_sentence_split_spec.md`.
@@ -6,8 +6,6 @@ library;
 
 import 'dart:convert';
 import 'dart:math' as math;
-import 'dart:typed_data';
-
 import 'read_aloud_display_metrics.dart';
 
 part 'read_aloud_splitter_v3_solver.dart';
@@ -343,7 +341,7 @@ class ReadAloudSolverCountersV3 {
 class ReadAloudSplitterV3 {
   static const version = 'read_aloud_dp_v3';
   static const reviewedVersion = 'reviewed_dp_v3';
-  static const solverVersion = 'syntax_solver_v3_8';
+  static const solverVersion = 'syntax_solver_v3_9';
   static const hardMaxWords = 30;
   static const preferredMinUnpunctuatedWords = 8;
   static const preferredMaxUnpunctuatedWords = 16;

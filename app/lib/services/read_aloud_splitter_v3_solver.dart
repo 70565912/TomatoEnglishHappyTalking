@@ -117,7 +117,8 @@ final class _ReadAloudSplitterEngineV3 {
   static final RegExp _visiblePause = RegExp(r'[.!?…;:—–,]');
   static final RegExp _inlinePause = RegExp(r'[;:—–,]');
   static final RegExp _boundaryPause = RegExp(r'''[.!?…;:—–,]["'”’)}\]]*$''');
-  static final RegExp _strongPunctuation = RegExp(r'''[;:—–]["'”’)}\]]*$''');
+  static final RegExp _strongPunctuation =
+      RegExp(r'''[.!?…;:—–]["'”’)}\]]*$''');
   static final RegExp _quotedTerminalPunctuation =
       RegExp(r'''[.!?…]["'”’)}\]]*$''');
   static final RegExp _commaPunctuation = RegExp(r''',["'”’)}\]]*$''');
@@ -1094,13 +1095,17 @@ final class _ReadAloudSplitterEngineV3 {
       var partStart = 0;
       for (var offset = 0; offset + 1 < token.length; offset += 1) {
         final punctuation = token[offset];
-        if (!_inlinePause.hasMatch(punctuation) ||
+        // Also split glued terminals before a following capital
+        // (`jurors."She` → `jurors."` | `She`) so quote-close stays a cut.
+        final isTerminalBeforeLexical =
+            RegExp(r'''[.!?…]''').hasMatch(punctuation);
+        if (!(_inlinePause.hasMatch(punctuation) || isTerminalBeforeLexical) ||
             !startsLexical.hasMatch(token.substring(offset + 1))) {
           continue;
         }
         final previous = offset > 0 ? token[offset - 1] : '';
         final next = token[offset + 1];
-        if (const {',', ':'}.contains(punctuation) &&
+        if (const {',', ':', '.'}.contains(punctuation) &&
             _decimalDigit.hasMatch(previous) &&
             _decimalDigit.hasMatch(next)) {
           continue;
@@ -1258,6 +1263,38 @@ final class _ReadAloudSplitterEngineV3 {
       final hardBlockReasons = <String>[
         if (spanningTokens.isNotEmpty && !_boundaryPause.hasMatch(left))
           'inside_parser_token:${spanningTokens.map((token) => token.id).join(',')}',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {'and', 'or', 'nor', 'but'}.contains(leftLexeme))
+          'inside_coordinator_right_operand',
+        if (!_boundaryPause.hasMatch(left) &&
+            const {
+              'a',
+              'an',
+              'the',
+              'my',
+              'your',
+              'his',
+              'her',
+              'its',
+              'our',
+              'their',
+              'whose',
+            }.contains(leftLexeme))
+          'inside_surface_determiner_head',
+        if (!_boundaryPause.hasMatch(left) &&
+            leftLexeme == 'there' &&
+            const {
+              'can',
+              'could',
+              'may',
+              'might',
+              'must',
+              'shall',
+              'should',
+              'will',
+              'would',
+            }.contains(rightLexeme))
+          'inside_expletive_predicate',
         if (insideQuotedSpeech &&
             quoteSpanWordCount != null &&
             quoteSpanWordCount <= preferredMaxUnpunctuatedWords)
@@ -1313,6 +1350,14 @@ final class _ReadAloudSplitterEngineV3 {
                 afterWord,
                 dependencies,
               );
+      final hasRecoveredAdjectivalSharedPredicate =
+          const {'and', 'but', 'or'}.contains(rightLexeme) &&
+              _hasDeferredSharedPredicateBoundary(
+                afterWord,
+                dependencies,
+                allowedHeadUpos: const {'ADJ'},
+                requireLeftSubject: true,
+              );
       final hasDelayedSharedPredicate = _hasDelayedSharedPredicateBoundary(
         afterWord,
         dependencies,
@@ -1321,6 +1366,7 @@ final class _ReadAloudSplitterEngineV3 {
           _hasAttachedPrepositionalComplementBoundary(
         afterWord,
         dependencies,
+        words: words,
       );
       final hasMultiwordAdpositionComplement =
           _hasMultiwordAdpositionComplementBoundary(
@@ -1369,10 +1415,67 @@ final class _ReadAloudSplitterEngineV3 {
           )
           .toList(growable: false);
       final separatesPronounNominalHead = !_boundaryPause.hasMatch(left) &&
-          leftDependencies.hasAnyUpos(const {'PRON'}) &&
-          rightDependencies.hasAnyUpos(const {'NOUN', 'PROPN'});
+          leftDependencies.hasAnyUpos(const {'PRON', 'DET'}) &&
+          rightDependencies.hasAnyUpos(const {'ADJ', 'NOUN', 'PROPN'});
       if (separatesPronounNominalHead) {
         hardBlockReasons.add('inside_surface_determiner_head');
+      }
+      // Never cut after a case/adposition into its object
+      // (`mouths of | their holes`).
+      if (!_boundaryPause.hasMatch(left) &&
+          leftDependencies.any(
+            (dependency) =>
+                dependency.token.upos == 'ADP' ||
+                dependency.token.deprel.split(':').first == 'case',
+          ) &&
+          rightDependencies.hasAnyUpos(const {
+            'DET',
+            'PRON',
+            'ADJ',
+            'NOUN',
+            'PROPN',
+            'NUM',
+          })) {
+        hardBlockReasons.add('inside_prepositional_complement');
+      }
+      // Perception / report verbs often take a bare clausal complement whose
+      // subject starts with a determiner (`heard | the angels tell…`). A right
+      // subject–predicate shape must not exempt that tight V|DET attachment.
+      if (!_boundaryPause.hasMatch(left) &&
+          leftDependencies.hasAnyUpos(const {'VERB', 'AUX'}) &&
+          (rightDependencies.hasAnyUpos(const {'DET'}) ||
+              const {
+                'a',
+                'an',
+                'the',
+                'this',
+                'that',
+                'these',
+                'those',
+                'my',
+                'your',
+                'his',
+                'her',
+                'its',
+                'our',
+                'their',
+              }.contains(rightLexeme))) {
+        hardBlockReasons.add('inside_predicate_determiner_object');
+      }
+      // Misparsed phrasal particle: UD often tags `go | on listening` as
+      // SCONJ/mark + advcl instead of compound:prt. Spec still forbids
+      // splitting the particle from the verb. Require a right verbal
+      // complement headed by the left verb so true PP fronts
+      // (`followed | on bare feet`) stay eligible.
+      if (!_boundaryPause.hasMatch(left) &&
+          _separatesMisparsedPhrasalVerbParticle(
+            afterWord,
+            rightLexeme,
+            leftDependencies,
+            rightDependencies,
+            dependencies,
+          )) {
+        hardBlockReasons.add('inside_misparsed_phrasal_verb_particle');
       }
       final rightClauseMarker = rightDependencies
           .where(
@@ -1969,12 +2072,20 @@ final class _ReadAloudSplitterEngineV3 {
               RegExp(r'''^["'“‘]''').hasMatch(right) ||
           RegExp(r''',["'”’]$''').hasMatch(left) &&
               RegExp(r'^[a-z]').hasMatch(right);
+      final surfaceClosingQuoteCoordinatedPause =
+          RegExp(r''',["'”’]$''').hasMatch(left) &&
+              const {'and', 'but', 'or', 'nor'}.contains(rightLexeme);
       final allowsSourceClosingQuotePause = quoteEdge == 'after_closing' &&
           _commaPunctuation.hasMatch(left) &&
           ((words[afterWord - 1].quotedSpeechStartWord ?? 0) > 0 ||
               (quoteSpanWordCount ?? 0) >= 6);
       final allowsDeferredOpeningParentheticalPause =
           parenEdge == 'before_opening' && (parenSpanWordCount ?? 0) >= 6;
+      final isCompleteParentheticalEdge = parenSpanWordCount != null &&
+          const {'before_opening', 'after_closing'}.contains(parenEdge);
+      final isCompleteQuoteEdge = quoteSpanWordCount != null &&
+          const {'before_opening', 'after_closing', 'between_quotes'}
+              .contains(quoteEdge);
       ReadAloudBoundaryKindV3 kind;
       final reasons = <String>[
         if (insideQuotedSpeech) 'inside_quoted_speech',
@@ -1985,6 +2096,8 @@ final class _ReadAloudSplitterEngineV3 {
         if (hasSubjectlessCoordinatedPredicate)
           'incomplete_subjectless_coordinated_predicate',
         if (hasDeferredSharedPredicate) 'deferred_stable_shared_predicate',
+        if (hasRecoveredAdjectivalSharedPredicate)
+          'recovered_adjectival_shared_predicate',
         if (hasDelayedSharedPredicate) 'incomplete_delayed_shared_predicate',
         if (hasAttachedPrepositionalComplement)
           'incomplete_attached_prepositional_complement',
@@ -2008,24 +2121,53 @@ final class _ReadAloudSplitterEngineV3 {
           'deferred_stable_parenthetical_edge',
         if (hasDeferredRightClause) 'deferred_stable_right_clause',
       ];
+      // Do not offer `change (she knew) | to …` or `change | (she knew) to …`
+      // as path edges; both delimiter sides must stay parked with the PP.
+      if (parenEdge == 'after_closing' && hasAttachedPrepositionalComplement) {
+        hardBlockReasons.add('attached_pp_after_parenthetical_closing');
+      }
+      if (parenEdge == 'before_opening' &&
+          parenSpanWordCount != null &&
+          _hasAttachedPrepositionalComplementBoundary(
+            afterWord + parenSpanWordCount,
+            dependencies,
+            words: words,
+          )) {
+        hardBlockReasons.add('attached_pp_before_parenthetical_opening');
+      }
       if (allowsSourceClosingQuotePause) {
         kind = ReadAloudBoundaryKindV3.phraseComma;
         reasons.add('source_closing_quote_comma_pause');
-      } else if (protectsQuotedAttribution && quoteEdge == 'before_opening') {
+      } else if (protectsQuotedAttribution &&
+          (quoteEdge == 'before_opening' ||
+              RegExp(r'''^["'“‘]''').hasMatch(right))) {
         kind = ReadAloudBoundaryKindV3.phraseComma;
         reasons.add('source_attribution_before_opening_quote');
+      } else if (surfaceClosingQuoteCoordinatedPause) {
+        kind = ReadAloudBoundaryKindV3.phraseComma;
+        reasons.add('source_closing_quote_coordinated_pause');
       } else if (protectsQuotedAttribution) {
         kind = ReadAloudBoundaryKindV3.emergency;
         reasons.add('protected_quote_attribution_gap');
-      } else if (_strongPunctuation.hasMatch(left) ||
+      } else if (isCompleteParentheticalEdge ||
+          isCompleteQuoteEdge ||
+          _strongPunctuation.hasMatch(left) ||
           (insideQuotedSpeech || quoteEdge == 'after_closing') &&
               _quotedTerminalPunctuation.hasMatch(left) ||
           parenEdge == 'after_closing' && _boundaryPause.hasMatch(left)) {
         kind = ReadAloudBoundaryKindV3.strongPunctuation;
         reasons.add(
-          parenEdge == 'after_closing'
-              ? 'source_parenthetical_closing_punctuation'
-              : 'source_strong_punctuation',
+          parenEdge == 'before_opening'
+              ? 'source_parenthetical_opening_edge'
+              : parenEdge == 'after_closing'
+                  ? 'source_parenthetical_closing_edge'
+                  : quoteEdge == 'before_opening'
+                      ? 'source_quote_opening_edge'
+                      : quoteEdge == 'after_closing'
+                          ? 'source_quote_closing_edge'
+                          : quoteEdge == 'between_quotes'
+                              ? 'source_between_quotes_edge'
+                              : 'source_strong_punctuation',
         );
       } else if (_commaPunctuation.hasMatch(left) &&
           (oneLegalClauseSubtreeArc ||
@@ -2158,12 +2300,27 @@ final class _ReadAloudSplitterEngineV3 {
           _protectedRelations.contains(relation)) {
         return true;
       }
+      // Right-side adverbial / particle whose head lies on the left of the cut:
+      // `bend | about`, `about | easily` (stacked advmod of bend), `blown | out`.
+      // Soft incomplete only — raises emergency risk; does not hard-block.
+      if (head < afterWord &&
+          dependency.wordIndex >= afterWord &&
+          (relation == 'advmod' ||
+              fullRelation == 'compound:prt' ||
+              (relation == 'compound' &&
+                  const {'ADP', 'ADV', 'PART'}.contains(dependency.token.upos)))) {
+        return true;
+      }
       // An open clausal complement inherits its subject from the predicate on
       // the left, so `seemed | quite natural` and `looked | so good` are not
       // closed read-aloud boundaries. Other clause relations retain the
       // established V3.6 treatment.
       if (relation == 'xcomp') {
-        if (_hasExplicitContinuationMarker(afterWord, dependencies)) {
+        if (_hasExplicitContinuationMarker(afterWord, dependencies) &&
+            !_isInfinitivalComplementMarkerOfLeftPredicate(
+              afterWord,
+              dependencies,
+            )) {
           continue;
         }
         if (_isStructuredComparativeContinuation(
@@ -2195,6 +2352,69 @@ final class _ReadAloudSplitterEngineV3 {
                   dependency.token.deprel.split(':').first,
                 )),
       );
+
+  /// `go | on listening` when the parser marks particle-shaped `on` as the
+  /// mark of a right verbal complement headed by the left verb. True case-PP
+  /// fronts (`followed | on bare feet`) do not match: the particle's head is
+  /// a noun, not a verb headed by the left predicate.
+  static bool _separatesMisparsedPhrasalVerbParticle(
+    int afterWord,
+    String rightLexeme,
+    List<_MappedDependencyV3> leftDependencies,
+    List<_MappedDependencyV3> rightDependencies,
+    List<_MappedDependencyV3> dependencies,
+  ) {
+    if (!leftDependencies.hasAnyUpos(const {'VERB', 'AUX'})) return false;
+    if (!_phrasalParticleLexemes.contains(rightLexeme)) return false;
+    for (final marker in rightDependencies) {
+      final relation = marker.token.deprel.split(':').first;
+      final looksLikeParticleShell = relation == 'mark' ||
+          relation == 'advmod' ||
+          const {'ADP', 'PART', 'ADV', 'SCONJ'}.contains(marker.token.upos);
+      if (!looksLikeParticleShell) continue;
+      final complement = dependencies
+          .where((dependency) => dependency.token.id == marker.token.head)
+          .firstOrNull;
+      if (complement == null || complement.wordIndex < afterWord) continue;
+      if (!const {'VERB', 'AUX'}.contains(complement.token.upos)) continue;
+      if (complement.headWordIndex != afterWord - 1) continue;
+      final complementRelation = complement.token.deprel.split(':').first;
+      if (const {'advcl', 'xcomp', 'ccomp'}.contains(complementRelation)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /// `able | to arrange`, `used | to be`, `occurs | to me`: the infinitival
+  /// marker completes the left predicate's open complement and must not waive
+  /// the xcomp incomplete-constituent signal.
+  static bool _isInfinitivalComplementMarkerOfLeftPredicate(
+    int afterWord,
+    List<_MappedDependencyV3> dependencies,
+  ) {
+    final marker = dependencies
+        .where(
+          (dependency) =>
+              dependency.wordIndex == afterWord &&
+              dependency.token.deprel.split(':').first == 'mark' &&
+              dependency.token.text.toLowerCase() == 'to',
+        )
+        .firstOrNull;
+    if (marker == null) return false;
+    final complementId = marker.token.head;
+    final complement = dependencies
+        .where((dependency) => dependency.token.id == complementId)
+        .firstOrNull;
+    if (complement == null || complement.wordIndex < afterWord) return false;
+    final complementHead = complement.headWordIndex;
+    if (complementHead == null || complementHead >= afterWord) return false;
+    final relation = complement.token.deprel.split(':').first;
+    return relation == 'xcomp' ||
+        relation == 'ccomp' ||
+        relation == 'advcl' ||
+        relation == 'obl';
+  }
 
   /// Allows a pause before a complete comparative complement such as an
   /// adverbial modifier + adjectival xcomp + its own subordinate modifier.
@@ -2305,8 +2525,10 @@ final class _ReadAloudSplitterEngineV3 {
 
   static bool _hasDeferredSharedPredicateBoundary(
     int afterWord,
-    List<_MappedDependencyV3> dependencies,
-  ) {
+    List<_MappedDependencyV3> dependencies, {
+    Set<String> allowedHeadUpos = const {'VERB', 'AUX'},
+    bool requireLeftSubject = false,
+  }) {
     final coordinator = dependencies
         .where(
           (dependency) =>
@@ -2328,7 +2550,7 @@ final class _ReadAloudSplitterEngineV3 {
               dependencies.any(
                 (head) =>
                     head.wordIndex == dependency.headWordIndex &&
-                    const {'VERB', 'AUX'}.contains(head.token.upos),
+                    allowedHeadUpos.contains(head.token.upos),
               ),
         )
         .firstOrNull;
@@ -2342,6 +2564,17 @@ final class _ReadAloudSplitterEngineV3 {
           ),
     );
     if (hasOwnSubject) return false;
+    if (requireLeftSubject) {
+      return dependencies.any(
+        (dependency) =>
+            dependency.wordIndex < afterWord &&
+            (dependency.token.head == predicate.token.id ||
+                dependency.token.head == coordinator.token.id) &&
+            const {'nsubj', 'csubj', 'expl'}.contains(
+              dependency.token.deprel.split(':').first,
+            ),
+      );
+    }
     return dependencies.any(
       (dependency) =>
           dependency.wordIndex < afterWord &&
@@ -2354,18 +2587,79 @@ final class _ReadAloudSplitterEngineV3 {
   /// is not a safe substitute boundary merely because the parser also exposes
   /// a clause arc. This follows the `anchor <- argument <- case` topology, so
   /// a clause-linking `for`/`as` is unaffected.
+  ///
+  /// When the token immediately left of the cut is only an adverbial/particle
+  /// shell (`easily | in`), look back to the governing predicate. When the cut
+  /// closes a parenthetical (`change (she knew) | to …`), look back past that
+  /// paren span. Do not look back from ordinary nominals — that would demote
+  /// supplemental PP fronts such as `castle | in all…`.
   static bool _hasAttachedPrepositionalComplementBoundary(
     int afterWord,
-    List<_MappedDependencyV3> dependencies,
-  ) {
-    final anchors = dependencies.where(
+    List<_MappedDependencyV3> dependencies, {
+    List<_SourceWordV3> words = const [],
+  }) {
+    final immediateLeft = dependencies.where(
+      (dependency) => dependency.wordIndex == afterWord - 1,
+    );
+    final leftIsAdverbialShell = immediateLeft.any(
       (dependency) =>
-          dependency.wordIndex == afterWord - 1 &&
-          (const {'VERB', 'AUX', 'NOUN', 'PROPN', 'PRON'}
-                  .contains(dependency.token.upos) ||
-              dependency.token.upos == 'ADJ' &&
-                  RegExp(r'(?:ed|en|ing)$', caseSensitive: false)
-                      .hasMatch(dependency.token.text)),
+          const {'ADV', 'PART'}.contains(dependency.token.upos) ||
+          dependency.token.deprel.split(':').first == 'advmod' ||
+          dependency.token.deprel == 'compound:prt',
+    );
+    var lookbackStart =
+        leftIsAdverbialShell ? math.max(0, afterWord - 4) : afterWord - 1;
+    int? closedParenSpan;
+    if (words.isNotEmpty && afterWord > 0 && afterWord <= words.length) {
+      final leftWord = words[afterWord - 1];
+      if (leftWord.parentheticalEndWord == afterWord &&
+          leftWord.parentheticalStartWord != null) {
+        closedParenSpan = leftWord.parentheticalSpanIndex;
+        lookbackStart = math.min(
+          lookbackStart,
+          math.max(0, leftWord.parentheticalStartWord! - 1),
+        );
+      }
+    }
+    final anchors = dependencies.where(
+      (dependency) {
+        if (dependency.wordIndex < lookbackStart ||
+            dependency.wordIndex >= afterWord) {
+          return false;
+        }
+        if (!(const {'VERB', 'AUX', 'NOUN', 'PROPN', 'PRON', 'ADV'}
+                .contains(dependency.token.upos) ||
+            dependency.token.upos == 'ADJ' &&
+                RegExp(r'(?:ed|en|ing)$', caseSensitive: false)
+                    .hasMatch(dependency.token.text))) {
+          return false;
+        }
+        if (dependency.wordIndex == afterWord - 1) return true;
+        for (final intervening in dependencies) {
+          if (intervening.wordIndex <= dependency.wordIndex ||
+              intervening.wordIndex >= afterWord) {
+            continue;
+          }
+          if (closedParenSpan != null &&
+              intervening.wordIndex < words.length &&
+              words[intervening.wordIndex].parentheticalSpanIndex ==
+                  closedParenSpan) {
+            continue;
+          }
+          if (const {
+            'NOUN',
+            'PROPN',
+            'PRON',
+            'VERB',
+            'AUX',
+            'SCONJ',
+            'CCONJ',
+          }.contains(intervening.token.upos)) {
+            return false;
+          }
+        }
+        return true;
+      },
     );
     for (final anchor in anchors) {
       final rightArguments = dependencies.where(
@@ -2386,6 +2680,49 @@ final class _ReadAloudSplitterEngineV3 {
         );
         if (startsWithCaseMarker) return true;
       }
+    }
+    // `bring … young ones | to the mouths`: the object noun is not the obl
+    // head, but cutting before the verb's case-marked PP still splits an
+    // attached complement. Do not treat this as a supplemental PP front.
+    final leftObject = dependencies.where(
+      (dependency) =>
+          dependency.wordIndex == afterWord - 1 &&
+          const {'obj', 'iobj'}.contains(
+            dependency.token.deprel.split(':').first,
+          ),
+    );
+    for (final object in leftObject) {
+      final rightArguments = dependencies.where(
+        (dependency) =>
+            dependency.wordIndex >= afterWord &&
+            dependency.token.head == object.token.head &&
+            const {'obl', 'nmod'}.contains(
+              dependency.token.deprel.split(':').first,
+            ),
+      );
+      for (final argument in rightArguments) {
+        final startsWithCaseMarker = dependencies.any(
+          (dependency) =>
+              dependency.wordIndex == afterWord &&
+              dependency.token.upos == 'ADP' &&
+              dependency.token.head == argument.token.id &&
+              dependency.token.deprel.split(':').first == 'case',
+        );
+        if (startsWithCaseMarker) return true;
+      }
+    }
+    // UD often attaches the obl/nmod above the pre-paren predicate
+    // (`change (she knew) to …` → clamor.obl → root). After a closed
+    // parenthetical, a case-marked PP at the cut is still an attached
+    // complement for read-aloud purposes.
+    if (closedParenSpan != null) {
+      final caseAtCut = dependencies.any(
+        (dependency) =>
+            dependency.wordIndex == afterWord &&
+            dependency.token.upos == 'ADP' &&
+            dependency.token.deprel.split(':').first == 'case',
+      );
+      if (caseAtCut) return true;
     }
     return false;
   }

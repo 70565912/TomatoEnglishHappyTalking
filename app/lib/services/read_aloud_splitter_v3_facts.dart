@@ -70,3 +70,23 @@ const _attachmentLexemes = <String>{
   'away',
   'forth',
 };
+
+/// Closed-class particle shells used when UD mis-tags a phrasal particle as
+/// mark/advmod of a verbal complement (`go on listening`) instead of
+/// `compound:prt`. Not a book/word exception list: topology still requires
+/// the marked verb to be headed by the left predicate.
+const _phrasalParticleLexemes = <String>{
+  'on',
+  'off',
+  'up',
+  'out',
+  'away',
+  'back',
+  'down',
+  'over',
+  'along',
+  'around',
+  'through',
+  'ahead',
+  'forth',
+};

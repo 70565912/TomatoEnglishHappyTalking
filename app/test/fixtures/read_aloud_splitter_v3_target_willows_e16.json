@@ -1,0 +1,538 @@
+{
+  "id": "willows_e16",
+  "book": "Willows",
+  "episode": "E16",
+  "source": "The animals well knew that Badger, having eaten a hearty breakfast, had retired to his study and settled himself in an arm-chair with his legs up on another and a red cotton handkerchief over his face, and was being \"busy\" in the usual way at this time of the year.",
+  "parserVersion": "udpipe-1.4.0",
+  "modelSha256": "b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f",
+  "sentences": [
+    {
+      "start": 0,
+      "end": 265,
+      "tokens": [
+        {
+          "id": 1,
+          "text": "The",
+          "start": 0,
+          "end": 3,
+          "upos": "DET",
+          "head": 2,
+          "deprel": "det"
+        },
+        {
+          "id": 2,
+          "text": "animals",
+          "start": 4,
+          "end": 11,
+          "upos": "NOUN",
+          "head": 4,
+          "deprel": "nsubj"
+        },
+        {
+          "id": 3,
+          "text": "well",
+          "start": 12,
+          "end": 16,
+          "upos": "ADV",
+          "head": 4,
+          "deprel": "advmod"
+        },
+        {
+          "id": 4,
+          "text": "knew",
+          "start": 17,
+          "end": 21,
+          "upos": "VERB",
+          "head": 0,
+          "deprel": "root"
+        },
+        {
+          "id": 5,
+          "text": "that",
+          "start": 22,
+          "end": 26,
+          "upos": "DET",
+          "head": 6,
+          "deprel": "det"
+        },
+        {
+          "id": 6,
+          "text": "Badger",
+          "start": 27,
+          "end": 33,
+          "upos": "NOUN",
+          "head": 4,
+          "deprel": "obj"
+        },
+        {
+          "id": 7,
+          "text": ",",
+          "start": 33,
+          "end": 34,
+          "upos": "PUNCT",
+          "head": 9,
+          "deprel": "punct"
+        },
+        {
+          "id": 8,
+          "text": "having",
+          "start": 35,
+          "end": 41,
+          "upos": "AUX",
+          "head": 9,
+          "deprel": "aux"
+        },
+        {
+          "id": 9,
+          "text": "eaten",
+          "start": 42,
+          "end": 47,
+          "upos": "VERB",
+          "head": 4,
+          "deprel": "advcl"
+        },
+        {
+          "id": 10,
+          "text": "a",
+          "start": 48,
+          "end": 49,
+          "upos": "DET",
+          "head": 12,
+          "deprel": "det"
+        },
+        {
+          "id": 11,
+          "text": "hearty",
+          "start": 50,
+          "end": 56,
+          "upos": "NOUN",
+          "head": 12,
+          "deprel": "compound"
+        },
+        {
+          "id": 12,
+          "text": "breakfast",
+          "start": 57,
+          "end": 66,
+          "upos": "NOUN",
+          "head": 9,
+          "deprel": "obj"
+        },
+        {
+          "id": 13,
+          "text": ",",
+          "start": 66,
+          "end": 67,
+          "upos": "PUNCT",
+          "head": 15,
+          "deprel": "punct"
+        },
+        {
+          "id": 14,
+          "text": "had",
+          "start": 68,
+          "end": 71,
+          "upos": "AUX",
+          "head": 15,
+          "deprel": "aux"
+        },
+        {
+          "id": 15,
+          "text": "retired",
+          "start": 72,
+          "end": 79,
+          "upos": "VERB",
+          "head": 4,
+          "deprel": "conj"
+        },
+        {
+          "id": 16,
+          "text": "to",
+          "start": 80,
+          "end": 82,
+          "upos": "ADP",
+          "head": 18,
+          "deprel": "case"
+        },
+        {
+          "id": 17,
+          "text": "his",
+          "start": 83,
+          "end": 86,
+          "upos": "PRON",
+          "head": 18,
+          "deprel": "nmod:poss"
+        },
+        {
+          "id": 18,
+          "text": "study",
+          "start": 87,
+          "end": 92,
+          "upos": "NOUN",
+          "head": 15,
+          "deprel": "obl"
+        },
+        {
+          "id": 19,
+          "text": "and",
+          "start": 93,
+          "end": 96,
+          "upos": "CCONJ",
+          "head": 20,
+          "deprel": "cc"
+        },
+        {
+          "id": 20,
+          "text": "settled",
+          "start": 97,
+          "end": 104,
+          "upos": "VERB",
+          "head": 4,
+          "deprel": "conj"
+        },
+        {
+          "id": 21,
+          "text": "himself",
+          "start": 105,
+          "end": 112,
+          "upos": "PRON",
+          "head": 20,
+          "deprel": "obj"
+        },
+        {
+          "id": 22,
+          "text": "in",
+          "start": 113,
+          "end": 115,
+          "upos": "ADP",
+          "head": 26,
+          "deprel": "case"
+        },
+        {
+          "id": 23,
+          "text": "an",
+          "start": 116,
+          "end": 118,
+          "upos": "DET",
+          "head": 26,
+          "deprel": "det"
+        },
+        {
+          "id": 24,
+          "text": "arm",
+          "start": 119,
+          "end": 122,
+          "upos": "NOUN",
+          "head": 26,
+          "deprel": "compound"
+        },
+        {
+          "id": 25,
+          "text": "-",
+          "start": 122,
+          "end": 123,
+          "upos": "PUNCT",
+          "head": 24,
+          "deprel": "punct"
+        },
+        {
+          "id": 26,
+          "text": "chair",
+          "start": 123,
+          "end": 128,
+          "upos": "NOUN",
+          "head": 20,
+          "deprel": "obl"
+        },
+        {
+          "id": 27,
+          "text": "with",
+          "start": 129,
+          "end": 133,
+          "upos": "ADP",
+          "head": 29,
+          "deprel": "case"
+        },
+        {
+          "id": 28,
+          "text": "his",
+          "start": 134,
+          "end": 137,
+          "upos": "PRON",
+          "head": 29,
+          "deprel": "nmod:poss"
+        },
+        {
+          "id": 29,
+          "text": "legs",
+          "start": 138,
+          "end": 142,
+          "upos": "NOUN",
+          "head": 26,
+          "deprel": "nmod"
+        },
+        {
+          "id": 30,
+          "text": "up",
+          "start": 143,
+          "end": 145,
+          "upos": "ADP",
+          "head": 32,
+          "deprel": "case"
+        },
+        {
+          "id": 31,
+          "text": "on",
+          "start": 146,
+          "end": 148,
+          "upos": "ADP",
+          "head": 32,
+          "deprel": "case"
+        },
+        {
+          "id": 32,
+          "text": "another",
+          "start": 149,
+          "end": 156,
+          "upos": "DET",
+          "head": 29,
+          "deprel": "nmod"
+        },
+        {
+          "id": 33,
+          "text": "and",
+          "start": 157,
+          "end": 160,
+          "upos": "CCONJ",
+          "head": 37,
+          "deprel": "cc"
+        },
+        {
+          "id": 34,
+          "text": "a",
+          "start": 161,
+          "end": 162,
+          "upos": "DET",
+          "head": 37,
+          "deprel": "det"
+        },
+        {
+          "id": 35,
+          "text": "red",
+          "start": 163,
+          "end": 166,
+          "upos": "ADJ",
+          "head": 37,
+          "deprel": "amod"
+        },
+        {
+          "id": 36,
+          "text": "cotton",
+          "start": 167,
+          "end": 173,
+          "upos": "NOUN",
+          "head": 37,
+          "deprel": "compound"
+        },
+        {
+          "id": 37,
+          "text": "handkerchief",
+          "start": 174,
+          "end": 186,
+          "upos": "NOUN",
+          "head": 32,
+          "deprel": "conj"
+        },
+        {
+          "id": 38,
+          "text": "over",
+          "start": 187,
+          "end": 191,
+          "upos": "ADP",
+          "head": 40,
+          "deprel": "case"
+        },
+        {
+          "id": 39,
+          "text": "his",
+          "start": 192,
+          "end": 195,
+          "upos": "PRON",
+          "head": 40,
+          "deprel": "nmod:poss"
+        },
+        {
+          "id": 40,
+          "text": "face",
+          "start": 196,
+          "end": 200,
+          "upos": "NOUN",
+          "head": 37,
+          "deprel": "nmod"
+        },
+        {
+          "id": 41,
+          "text": ",",
+          "start": 200,
+          "end": 201,
+          "upos": "PUNCT",
+          "head": 46,
+          "deprel": "punct"
+        },
+        {
+          "id": 42,
+          "text": "and",
+          "start": 202,
+          "end": 205,
+          "upos": "CCONJ",
+          "head": 46,
+          "deprel": "cc"
+        },
+        {
+          "id": 43,
+          "text": "was",
+          "start": 206,
+          "end": 209,
+          "upos": "AUX",
+          "head": 46,
+          "deprel": "aux"
+        },
+        {
+          "id": 44,
+          "text": "being",
+          "start": 210,
+          "end": 215,
+          "upos": "AUX",
+          "head": 46,
+          "deprel": "cop"
+        },
+        {
+          "id": 45,
+          "text": "\"",
+          "start": 216,
+          "end": 217,
+          "upos": "PUNCT",
+          "head": 46,
+          "deprel": "punct"
+        },
+        {
+          "id": 46,
+          "text": "busy",
+          "start": 217,
+          "end": 221,
+          "upos": "ADJ",
+          "head": 32,
+          "deprel": "conj"
+        },
+        {
+          "id": 47,
+          "text": "\"",
+          "start": 221,
+          "end": 222,
+          "upos": "PUNCT",
+          "head": 51,
+          "deprel": "punct"
+        },
+        {
+          "id": 48,
+          "text": "in",
+          "start": 223,
+          "end": 225,
+          "upos": "ADP",
+          "head": 51,
+          "deprel": "case"
+        },
+        {
+          "id": 49,
+          "text": "the",
+          "start": 226,
+          "end": 229,
+          "upos": "DET",
+          "head": 51,
+          "deprel": "det"
+        },
+        {
+          "id": 50,
+          "text": "usual",
+          "start": 230,
+          "end": 235,
+          "upos": "ADJ",
+          "head": 51,
+          "deprel": "amod"
+        },
+        {
+          "id": 51,
+          "text": "way",
+          "start": 236,
+          "end": 239,
+          "upos": "NOUN",
+          "head": 46,
+          "deprel": "obl"
+        },
+        {
+          "id": 52,
+          "text": "at",
+          "start": 240,
+          "end": 242,
+          "upos": "ADP",
+          "head": 54,
+          "deprel": "case"
+        },
+        {
+          "id": 53,
+          "text": "this",
+          "start": 243,
+          "end": 247,
+          "upos": "DET",
+          "head": 54,
+          "deprel": "det"
+        },
+        {
+          "id": 54,
+          "text": "time",
+          "start": 248,
+          "end": 252,
+          "upos": "NOUN",
+          "head": 51,
+          "deprel": "nmod"
+        },
+        {
+          "id": 55,
+          "text": "of",
+          "start": 253,
+          "end": 255,
+          "upos": "ADP",
+          "head": 57,
+          "deprel": "case"
+        },
+        {
+          "id": 56,
+          "text": "the",
+          "start": 256,
+          "end": 259,
+          "upos": "DET",
+          "head": 57,
+          "deprel": "det"
+        },
+        {
+          "id": 57,
+          "text": "year",
+          "start": 260,
+          "end": 264,
+          "upos": "NOUN",
+          "head": 54,
+          "deprel": "nmod"
+        },
+        {
+          "id": 58,
+          "text": ".",
+          "start": 264,
+          "end": 265,
+          "upos": "PUNCT",
+          "head": 4,
+          "deprel": "punct"
+        }
+      ]
+    }
+  ]
+}
