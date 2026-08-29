@@ -538,9 +538,7 @@ void main() {
       );
     });
 
-    test(
-        'does not hard-block verb|on when on is a true PP case of a noun',
-        () {
+    test('does not hard-block verb|on when on is a true PP case of a noun', () {
       const source =
           'After that short rest the tired traveller followed on bare feet through several quiet rooms and corridors without another word.';
       // Words: 1After 2that 3short 4rest 5the 6tired 7traveller 8followed
@@ -2593,20 +2591,23 @@ void main() {
       expect(plan.localSentences.first, '"coldtonguecoldham— cresssodawater—"');
     });
 
-    test('keeps a matched short quote intact across a blank layout line', () {
+    test('does not match an incomplete quote across a blank paragraph', () {
       const source =
           '"coldtonguecoldham—\n\ncresssodawater—" The Mole listened.';
-      final plan = ReadAloudSplitterV3.plan(
+      final document = _document(source, const [
+        '"coldtonguecoldham—',
+        'cresssodawater—"',
+        'The Mole listened.',
+      ]);
+      final scan = ReadAloudDelimiterScannerV3.scan(
         source: source,
-        document: _document(source, const [
-          '"coldtonguecoldham—',
-          'cresssodawater—"',
-          'The Mole listened.',
-        ]),
+        tokens: document.sentences.expand((sentence) => sentence.tokens),
       );
+      final plan = ReadAloudSplitterV3.plan(source: source, document: document);
 
-      expect(plan.originals, hasLength(2));
-      expect(plan.localSentences.first, '"coldtonguecoldham— cresssodawater—"');
+      expect(scan.quoteSpans, isEmpty);
+      expect(scan.quoteIssues, isNotEmpty);
+      expect(plan.originals, hasLength(3));
     });
 
     test('uses the innermost complete quote when same-mark speech is nested',

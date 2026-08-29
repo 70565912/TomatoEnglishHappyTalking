@@ -16,10 +16,11 @@
         "as they peeped hurriedly from their holes to see what the row was about."
       ],
       "expectedChunks": [
-        "He was bowled over in an instant by the impatient and contemptuous Mole, who trotted along the side of the hedge chaffing the other rabbits",
+        "He was bowled over in an instant by the impatient and contemptuous Mole,",
+        "who trotted along the side of the hedge chaffing the other rabbits",
         "as they peeped hurriedly from their holes to see what the row was about."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_splits_the_over20_block_at_complete_clause_boundaries"
     },
     {
       "id": "explicit_regression:2",
@@ -679,12 +680,15 @@
         "and the roadside in such glowing colours that the Mole could hardly sit in his chair for excitement."
       ],
       "expectedChunks": [
-        "During luncheon-which was excellent, of course, as everything at Toad Hall always was-the Toad simply let himself go.",
+        "During luncheon-which was excellent, of course,",
+        "as everything at Toad Hall always was-the Toad simply let himself go.",
         "Disregarding the Rat, he proceeded to play upon the inexperienced Mole as on a harp.",
-        "Naturally a voluble animal, and always mastered by his imagination, he painted the prospects of the trip and the joys of the open life",
-        "and the roadside in such glowing colours that the Mole could hardly sit in his chair for excitement."
+        "Naturally a voluble animal, and always mastered by his imagination,",
+        "he painted the prospects of the trip",
+        "and the joys of the open life and the roadside in such glowing colours",
+        "that the Mole could hardly sit in his chair for excitement."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_applies_punctuation_first_and_the_approved_e06_10_7_14_11_path"
     },
     {
       "id": "manual_e01_e08:E06:11",
@@ -903,10 +907,11 @@
         "and lodge a complaint against it."
       ],
       "expectedChunks": [
-        "you'll have to go straight to the police-station and see if they know",
-        "anything about that motor-car and who it belongs to, and lodge a complaint against it."
+        "you'll have to go straight to the police-station",
+        "and see if they know anything about that motor-car and who it belongs to,",
+        "and lodge a complaint against it."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_avoids_the_know_object_split_and_keeps_the_source_comma"
     },
     {
       "id": "manual_e01_e08:E08:25",
@@ -933,10 +938,11 @@
         "and till your nerves have recovered their shock.\""
       ],
       "expectedChunks": [
-        "Meanwhile, the Mole and I will go to an inn and find comfortable rooms",
-        "where we can stay till the cart's ready, and till your nerves have recovered their shock.\""
+        "Meanwhile, the Mole and I will go to an inn",
+        "and find comfortable rooms where we can stay till the cart's ready,",
+        "and till your nerves have recovered their shock.\""
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_keeps_the_required_comma_path_in_the_current_parser_context"
     },
     {
       "id": "manual_e01_e08:E08:28",
@@ -1058,10 +1064,10 @@
         "and the swollen river raced past outside their windows with a speed that mocked at boating of any sort or kind,"
       ],
       "expectedChunks": [
-        "and the swollen river raced past outside their windows with a",
-        "speed that mocked at boating of any sort or kind,"
+        "and the swollen river raced past outside their windows with a speed",
+        "that mocked at boating of any sort or kind,"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_keeps_the_determiner_with_speed_and_uses_the_relative_front"
     },
     {
       "id": "stratified_e09_e62:E09:0",
@@ -1572,10 +1578,10 @@
         "And-and I never meant to let you know I was feeling that way about it-it was all an accident and a mistake!"
       ],
       "expectedChunks": [
-        "And-and I never meant to let you know I was feeling",
-        "that way about it-it was all an accident and a mistake!"
+        "And-and I never meant to let you know",
+        "I was feeling that way about it-it was all an accident and a mistake!"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_uses_the_finite_clause_front_instead_of_splitting_feeling_from_its_complement"
     },
     {
       "id": "reviewed_v2:E22:34",
@@ -1772,10 +1778,10 @@
         "and bushy and spiky up out of the earth towards him, as if by strings."
       ],
       "expectedChunks": [
-        "and a hot sun seemed to be pulling",
-        "everything green and bushy and spiky up out of the earth towards him, as if by strings."
+        "and a hot sun seemed to be pulling everything green and bushy",
+        "and spiky up out of the earth towards him, as if by strings."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_rejects_the_predicate_object_split"
     },
     {
       "id": "stratified_e09_e62:E26:8",
@@ -1787,10 +1793,10 @@
         "or support to each other in case of sudden trouble or danger."
       ],
       "expectedChunks": [
-        "instead of sprawling all across the road and",
-        "being of no use or support to each other in case of sudden trouble or danger."
+        "instead of sprawling all across the road and being of no use",
+        "or support to each other in case of sudden trouble or danger."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_keeps_the_coordinator_with_its_right_operand"
     },
     {
       "id": "stratified_e09_e62:E26:9",
@@ -2065,10 +2071,10 @@
         "in all the length and breadth of Merry England."
       ],
       "expectedChunks": [
-        "and Toad was a helpless prisoner",
-        "in the remotest dungeon of the best-guarded keep of the stoutest castle in all the length and breadth of Merry England."
+        "and Toad was a helpless prisoner in the remotest dungeon of the best-guarded keep of the stoutest castle",
+        "in all the length and breadth of Merry England."
       ],
-      "changeReason": "r8k_reaudit_uses_a_complete_copular_nominal_before_the_long_adpositional_phrase"
+      "changeReason": "v3_10_reaudit_matches_the_approved_complete_copular_nominal_and_supplemental_tail"
     },
     {
       "id": "stratified_e09_e62:E30:15",
@@ -2123,10 +2129,10 @@
         "and rolled away at the dispersing touch of the cool fingers of the short"
       ],
       "expectedChunks": [
-        "and the sullen heats of the torrid afternoon broke up and",
-        "rolled away at the dispersing touch of the cool fingers of the short"
+        "and the sullen heats of the torrid afternoon broke up",
+        "and rolled away at the dispersing touch of the cool fingers of the short"
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_keeps_the_coordinator_with_the_right_clause"
     },
     {
       "id": "stratified_e09_e62:E31:20",
@@ -3316,10 +3322,11 @@
         "and the animals set off."
       ],
       "expectedChunks": [
-        "The Toad was so anxious not to be left out",
-        "that he took up the inferior position assigned to him without a murmur, and the animals set off."
+        "The Toad was so anxious not to be left out that he took up the inferior position",
+        "assigned to him without a murmur,",
+        "and the animals set off."
       ],
-      "changeReason": "v3_only_split_no_merge_preserves_valid_original_sentences_and_hard_terminal_boundaries"
+      "changeReason": "v3_10_reaudit_keeps_the_required_comma_and_coordinated_clause_boundaries"
     },
     {
       "id": "reviewed_v2:E58:19",

@@ -24,42 +24,6 @@ extension on Iterable<_MappedDependencyV3> {
       any((dependency) => values.contains(dependency.token.upos));
 }
 
-class _QuoteSpanV3 {
-  const _QuoteSpanV3({
-    required this.index,
-    required this.start,
-    required this.end,
-    required this.wordCount,
-  });
-
-  final int index;
-  final int start;
-
-  /// Exclusive offset immediately after the matching closing quote.
-  final int end;
-  final int wordCount;
-}
-
-class _ParenSpanV3 {
-  const _ParenSpanV3({
-    required this.index,
-    required this.start,
-    required this.end,
-    required this.wordCount,
-    required this.nestingDepth,
-  });
-
-  final int index;
-  final int start;
-
-  /// Exclusive offset immediately after the matching closing parenthesis.
-  final int end;
-  final int wordCount;
-
-  /// 1 = outermost matched pair in the nesting stack at close time.
-  final int nestingDepth;
-}
-
 class _MappedDependencyV3 {
   const _MappedDependencyV3({
     required this.token,
@@ -379,6 +343,10 @@ final class _ReadAloudSplitterEngineV3 {
 
     final left = source[offset - 1];
     final right = source[offset];
+    if (const {"'", '’', '”'}.contains(left) &&
+        const {"'", '‘', '“'}.contains(right)) {
+      return false;
+    }
     final leftContinuesWord = isAlphaNumeric(left) ||
         isJoiner(left) && offset >= 2 && isAlphaNumeric(source[offset - 2]);
     final rightContinuesWord = isAlphaNumeric(right) ||
@@ -396,9 +364,21 @@ final class _ReadAloudSplitterEngineV3 {
       throw const FormatException('V3 分句正文不能为空');
     }
     _validateDocument(source, document);
-    final quoteSpans = _matchedQuoteSpans(source);
-    final parenScan = _scanParentheticalSpans(source);
-    final parenSpans = parenScan.spans;
+    final delimiterScan = ReadAloudDelimiterScannerV3.scan(
+      source: source,
+      tokens: document.sentences.expand((sentence) => sentence.tokens),
+    );
+    final quoteSpans = delimiterScan.behavioralQuoteSpans(
+      source: source,
+      parserSentences: document.sentences,
+    );
+    final parenSpans = delimiterScan.parentheticalSpans;
+    final unmatchedQuoteOpeningOffsets =
+        delimiterScan.behavioralUnmatchedQuoteOpeningOffsets(
+      source: source,
+      parserSentences: document.sentences,
+      activeQuoteSpans: quoteSpans,
+    );
     final parserSentences = _coalesceParserSentencesInsideMatchedDelimiters(
       source,
       _coalesceNonTerminalAbbreviationSentences(
@@ -407,6 +387,7 @@ final class _ReadAloudSplitterEngineV3 {
       ),
       quoteSpans,
       parenSpans,
+      unmatchedQuoteOpeningOffsets: unmatchedQuoteOpeningOffsets,
     );
     final originals = <ReadAloudOriginalDecisionV3>[];
     var sentenceFactBuilds = 0;
@@ -440,9 +421,11 @@ final class _ReadAloudSplitterEngineV3 {
         sentenceStart: sentenceStart,
         quoteSpans: quoteSpans,
         parenSpans: parenSpans,
+        originalParserSentences: document.sentences,
+        unmatchedQuoteOpeningOffsets: unmatchedQuoteOpeningOffsets,
       );
       sentenceFactBuilds += 1;
-      final ranked = const _AdditiveReadAloudLatticeV3().solve(
+      final latticeResult = const _AdditiveReadAloudLatticeV3().solve(
         source: sentenceSource,
         words: facts.words,
         boundaryFacts: facts.additiveBoundaryFacts,
@@ -450,7 +433,7 @@ final class _ReadAloudSplitterEngineV3 {
       dagSolves += 1;
       final pathRounds = _materializeAdditivePathsV3(
         originalIndex: index,
-        ranked: ranked,
+        ranked: latticeResult.ranked,
       );
       if (pathRounds.initial.isEmpty || pathRounds.expanded.isEmpty) {
         throw FormatException('V3 分句无法为第 ${index + 1} 个原句生成可行路径');
@@ -464,12 +447,13 @@ final class _ReadAloudSplitterEngineV3 {
           parserHealthy: document.healthy && facts.mappingIssues.isEmpty,
           parserIssues: List.unmodifiable([
             ...document.issues,
-            ...parenScan.issues,
+            ...delimiterScan.parentheticalIssues,
             ...facts.mappingIssues,
           ]),
           initialCandidatePaths: List.unmodifiable(pathRounds.initial),
           expandedCandidatePaths: List.unmodifiable(pathRounds.expanded),
           boundaryCandidates: List.unmodifiable(facts.boundaryCandidates),
+          candidateCoverage: latticeResult.coverage,
           localPathId: pathRounds.initial.first.pathId,
           parseCost: parsedSentence.parseCost,
           parseCostPerToken: parsedSentence.parseCostPerToken,
@@ -483,7 +467,7 @@ final class _ReadAloudSplitterEngineV3 {
           originals.every((decision) => decision.parserHealthy),
       parserIssues: List.unmodifiable([
         ...document.issues,
-        ...parenScan.issues,
+        ...delimiterScan.parentheticalIssues,
       ]),
       originals: List.unmodifiable(originals),
       counters: ReadAloudSolverCountersV3(
@@ -505,18 +489,36 @@ final class _ReadAloudSplitterEngineV3 {
     required String sentenceSource,
     required DependencySentenceV3 parsedSentence,
     required int sentenceStart,
-    required List<_QuoteSpanV3> quoteSpans,
-    required List<_ParenSpanV3> parenSpans,
+    required List<ReadAloudDelimiterSpanV3> quoteSpans,
+    required List<ReadAloudDelimiterSpanV3> parenSpans,
+    required List<DependencySentenceV3> originalParserSentences,
+    required Set<int> unmatchedQuoteOpeningOffsets,
   }) {
-    final words = _sourceWords(sentenceSource);
+    final sentenceEnd = sentenceStart + sentenceSource.length;
+    final localQuoteSpans = quoteSpans
+        .where(
+          (span) => span.start < sentenceEnd && span.end > sentenceStart,
+        )
+        .toList(growable: false);
+    final localParenSpans = parenSpans
+        .where(
+          (span) => span.start < sentenceEnd && span.end > sentenceStart,
+        )
+        .toList(growable: false);
+    final words = _sourceWords(
+      sentenceSource,
+      sentenceStart: sentenceStart,
+      delimiterSpans: [...localQuoteSpans, ...localParenSpans],
+      additionalOpeningOffsets: unmatchedQuoteOpeningOffsets,
+    );
     _annotateQuotedSpeechWords(
       words,
-      quoteSpans,
+      localQuoteSpans,
       sentenceStart: sentenceStart,
     );
     _annotateParentheticalWords(
       words,
-      parenSpans,
+      localParenSpans,
       sentenceStart: sentenceStart,
     );
     final mapped = _mapDependencies(
@@ -537,8 +539,10 @@ final class _ReadAloudSplitterEngineV3 {
       mapped,
       sentenceStart: sentenceStart,
       parserTokens: parsedSentence.tokens,
-      quoteSpans: quoteSpans,
-      parenSpans: parenSpans,
+      quoteSpans: localQuoteSpans,
+      parenSpans: localParenSpans,
+      originalParserSentences: originalParserSentences,
+      unmatchedQuoteOpeningOffsets: unmatchedQuoteOpeningOffsets,
     );
     final dependencyFacts = _buildDependencyGapFactsV3(
       words: words,
@@ -747,15 +751,16 @@ final class _ReadAloudSplitterEngineV3 {
 
   /// Keeps UDPipe's orthographic analysis intact while allowing the read-aloud
   /// solver to compare delimiter-internal and delimiter-external cuts in one
-  /// lattice. Only parser boundaries strictly inside a fully matched quote or
-  /// parenthetical span are joined.
+  /// lattice. Parser boundaries inside a fully matched span, including a
+  /// boundary immediately before its closer, are joined so the closer can be
+  /// owned by the lexical block on its left.
   static List<DependencySentenceV3>
       _coalesceParserSentencesInsideMatchedDelimiters(
-    String source,
-    List<DependencySentenceV3> sentences,
-    List<_QuoteSpanV3> quoteSpans,
-    List<_ParenSpanV3> parenSpans,
-  ) {
+          String source,
+          List<DependencySentenceV3> sentences,
+          List<ReadAloudDelimiterSpanV3> quoteSpans,
+          List<ReadAloudDelimiterSpanV3> parenSpans,
+          {required Set<int> unmatchedQuoteOpeningOffsets}) {
     final output = <DependencySentenceV3>[];
     var index = 0;
     while (index < sentences.length) {
@@ -763,10 +768,17 @@ final class _ReadAloudSplitterEngineV3 {
       while (index + 1 < sentences.length) {
         final boundary = group.last.end;
         final liesInsideMatchedDelimiter = quoteSpans.any(
-              (span) => boundary > span.start && boundary < span.end - 1,
+              (span) =>
+                  span.kind == ReadAloudDelimiterKindV3.straightSingleQuote ||
+                          span.kind == ReadAloudDelimiterKindV3.curlySingleQuote
+                      ? boundary == span.end - 1 || boundary == span.start + 1
+                      : boundary > span.start && boundary < span.end - 1,
             ) ||
             parenSpans.any(
               (span) => boundary > span.start && boundary < span.end - 1,
+            ) ||
+            unmatchedQuoteOpeningOffsets.any(
+              (opening) => boundary == opening + 1,
             );
         if (!liesInsideMatchedDelimiter) break;
         index += 1;
@@ -778,131 +790,9 @@ final class _ReadAloudSplitterEngineV3 {
     return List.unmodifiable(output);
   }
 
-  /// Finds straight and curly double-quoted speech within each paragraph.
-  /// Unmatched quote state is deliberately discarded at paragraph breaks so a
-  /// malformed or poetic paragraph cannot absorb later parser sentences.
-  static List<_QuoteSpanV3> _matchedQuoteSpans(String source) {
-    final spans = <_QuoteSpanV3>[];
-    final paragraphBreak = RegExp(r'(?:\r?\n)[ \t]*(?:\r?\n)+');
-    var paragraphStart = 0;
-    final straightOpenings = <int>[];
-    final curlyOpenings = <int>[];
-
-    void scanParagraph(int start, int end) {
-      final carriedStraightOpening = straightOpenings.isNotEmpty;
-      final carriedCurlyOpening = curlyOpenings.isNotEmpty;
-      var sawStraightQuote = false;
-      var sawCurlyQuote = false;
-      for (var offset = start; offset < end; offset += 1) {
-        final character = source[offset];
-        if (character == '"') {
-          final opens = _straightQuoteOpens(
-            source,
-            offset,
-            paragraphStart: start,
-            paragraphEnd: end,
-            hasUnclosedQuote: straightOpenings.isNotEmpty,
-          );
-          if (!sawStraightQuote && carriedStraightOpening && opens) {
-            // A new paragraph that starts another quotation does not close an
-            // abandoned opening from earlier prose. A closing mark may still
-            // complete a quote whose visual layout spans blank lines.
-            straightOpenings.clear();
-          }
-          sawStraightQuote = true;
-          if (opens) {
-            straightOpenings.add(offset);
-          } else if (straightOpenings.isNotEmpty) {
-            final straightOpening = straightOpenings.removeLast();
-            spans.add(
-              _QuoteSpanV3(
-                index: spans.length,
-                start: straightOpening,
-                end: offset + 1,
-                wordCount:
-                    wordCount(source.substring(straightOpening, offset + 1)),
-              ),
-            );
-          }
-        } else if (character == '“') {
-          if (!sawCurlyQuote && carriedCurlyOpening) {
-            curlyOpenings.clear();
-          }
-          sawCurlyQuote = true;
-          curlyOpenings.add(offset);
-        } else if (character == '”' && curlyOpenings.isNotEmpty) {
-          sawCurlyQuote = true;
-          final curlyOpening = curlyOpenings.removeLast();
-          spans.add(
-            _QuoteSpanV3(
-              index: spans.length,
-              start: curlyOpening,
-              end: offset + 1,
-              wordCount: wordCount(source.substring(curlyOpening, offset + 1)),
-            ),
-          );
-        }
-      }
-    }
-
-    for (final match in paragraphBreak.allMatches(source)) {
-      scanParagraph(paragraphStart, match.start);
-      paragraphStart = match.end;
-    }
-    scanParagraph(paragraphStart, source.length);
-    spans.sort((left, right) => left.start.compareTo(right.start));
-    return List.unmodifiable([
-      for (var index = 0; index < spans.length; index += 1)
-        _QuoteSpanV3(
-          index: index,
-          start: spans[index].start,
-          end: spans[index].end,
-          wordCount: spans[index].wordCount,
-        ),
-    ]);
-  }
-
-  /// Classifies an ASCII double quote from its surface context instead of
-  /// blindly alternating open/close state. Gutenberg prose can begin with the
-  /// closing mark of speech started in an omitted paragraph, and can contain
-  /// same-mark nested song quotations such as `returns—"Lest ...`. Alternation
-  /// would shift every later quote in that paragraph and leave real short
-  /// speech unprotected.
-  static bool _straightQuoteOpens(
-    String source,
-    int offset, {
-    required int paragraphStart,
-    required int paragraphEnd,
-    required bool hasUnclosedQuote,
-  }) {
-    if (offset <= paragraphStart) return true;
-    if (offset + 1 >= paragraphEnd) return false;
-
-    final previous = source[offset - 1];
-    final next = source[offset + 1];
-    final previousIsSpace = previous.trim().isEmpty;
-    final nextIsSpace = next.trim().isEmpty;
-
-    // `...!"  "Next...` is a closing mark followed by an opening mark.
-    if (!previousIsSpace && nextIsSpace) return false;
-    if (previousIsSpace && !nextIsSpace) return true;
-    if (next == '"') return false;
-    if (previous == '"') return true;
-
-    // Narration commonly introduces speech after a colon or dash. A dash on
-    // the right, by contrast, normally continues narration after a closing
-    // quote: `song"—then`.
-    if ('([{<:—–'.contains(previous)) return true;
-    if (')]}>.。,!?;—–'.contains(next)) return false;
-    if ('.。,!?;'.contains(previous)) return false;
-
-    // Only genuinely ambiguous word-adjacent marks fall back to stack state.
-    return !hasUnclosedQuote;
-  }
-
   static void _annotateQuotedSpeechWords(
     List<_SourceWordV3> words,
-    List<_QuoteSpanV3> quoteSpans, {
+    List<ReadAloudDelimiterSpanV3> quoteSpans, {
     required int sentenceStart,
   }) {
     final firstWordBySpan = <int, int>{};
@@ -933,7 +823,7 @@ final class _ReadAloudSplitterEngineV3 {
 
   static void _annotateParentheticalWords(
     List<_SourceWordV3> words,
-    List<_ParenSpanV3> parenSpans, {
+    List<ReadAloudDelimiterSpanV3> parenSpans, {
     required int sentenceStart,
   }) {
     final firstWordBySpan = <int, int>{};
@@ -962,11 +852,11 @@ final class _ReadAloudSplitterEngineV3 {
     }
   }
 
-  static _QuoteSpanV3? _innermostQuoteSpanAtOffset(
-    List<_QuoteSpanV3> quoteSpans,
+  static ReadAloudDelimiterSpanV3? _innermostQuoteSpanAtOffset(
+    List<ReadAloudDelimiterSpanV3> quoteSpans,
     int offset,
   ) {
-    _QuoteSpanV3? result;
+    ReadAloudDelimiterSpanV3? result;
     for (final span in quoteSpans) {
       if (offset <= span.start || offset >= span.end - 1) continue;
       if (result == null ||
@@ -977,71 +867,11 @@ final class _ReadAloudSplitterEngineV3 {
     return result;
   }
 
-  /// Stack-matched nestable `(...)` spans. Matching is paragraph-local:
-  /// unmatched opens are audited and discarded at a paragraph break, and an
-  /// unmatched close is audited without manufacturing a span.
-  static ({List<_ParenSpanV3> spans, List<String> issues})
-      _scanParentheticalSpans(String source) {
-    final spans = <({int start, int end, int wordCount, int nestingDepth})>[];
-    final issues = <String>[];
-    final paragraphBreak = RegExp(r'(?:\r?\n)[ \t]*(?:\r?\n)+');
-
-    void scanParagraph(int start, int end) {
-      final openings = <int>[];
-      for (var offset = start; offset < end; offset += 1) {
-        final character = source[offset];
-        if (character == '(') {
-          openings.add(offset);
-        } else if (character == ')') {
-          if (openings.isEmpty) {
-            issues.add('unmatched_parenthesis_close:$offset');
-            continue;
-          }
-          final nestingDepth = openings.length;
-          final opening = openings.removeLast();
-          spans.add(
-            (
-              start: opening,
-              end: offset + 1,
-              wordCount: wordCount(source.substring(opening, offset + 1)),
-              nestingDepth: nestingDepth,
-            ),
-          );
-        }
-      }
-      for (final opening in openings) {
-        issues.add('unmatched_parenthesis_open:$opening');
-      }
-    }
-
-    var paragraphStart = 0;
-    for (final match in paragraphBreak.allMatches(source)) {
-      scanParagraph(paragraphStart, match.start);
-      paragraphStart = match.end;
-    }
-    scanParagraph(paragraphStart, source.length);
-
-    spans.sort((left, right) => left.start.compareTo(right.start));
-    return (
-      spans: List.unmodifiable([
-        for (var index = 0; index < spans.length; index += 1)
-          _ParenSpanV3(
-            index: index,
-            start: spans[index].start,
-            end: spans[index].end,
-            wordCount: spans[index].wordCount,
-            nestingDepth: spans[index].nestingDepth,
-          ),
-      ]),
-      issues: List.unmodifiable(issues),
-    );
-  }
-
-  static _ParenSpanV3? _innermostParenSpanAtOffset(
-    List<_ParenSpanV3> parenSpans,
+  static ReadAloudDelimiterSpanV3? _innermostParenSpanAtOffset(
+    List<ReadAloudDelimiterSpanV3> parenSpans,
     int offset,
   ) {
-    _ParenSpanV3? result;
+    ReadAloudDelimiterSpanV3? result;
     for (final span in parenSpans) {
       if (offset <= span.start || offset >= span.end - 1) continue;
       if (result == null ||
@@ -1052,13 +882,46 @@ final class _ReadAloudSplitterEngineV3 {
     return result;
   }
 
-  static List<_SourceWordV3> _sourceWords(String sentence) {
+  static List<_SourceWordV3> _sourceWords(
+    String sentence, {
+    int sentenceStart = 0,
+    List<ReadAloudDelimiterSpanV3> delimiterSpans = const [],
+    Set<int> additionalOpeningOffsets = const {},
+  }) {
     final words = <_SourceWordV3>[];
     final lexical = _lexicalCharacter;
     final startsLexical = RegExp(
       r'''^["'“‘(\[]*[\p{L}\p{N}]''',
       unicode: true,
     );
+    final openingOffsets = <int>{
+      for (final offset in additionalOpeningOffsets)
+        if (offset >= sentenceStart && offset < sentenceStart + sentence.length)
+          offset - sentenceStart,
+      for (final span in delimiterSpans)
+        if (_isSingleQuoteSpanV3(span) &&
+            span.start >= sentenceStart &&
+            span.start < sentenceStart + sentence.length)
+          span.start - sentenceStart,
+    };
+    final closingOffsets = <int>{};
+    var earlierStraightDoubleQuotes = 0;
+    for (var offset = 0; offset < sentence.length; offset += 1) {
+      final character = sentence[offset];
+      if (character == '"') {
+        if (earlierStraightDoubleQuotes.isOdd) closingOffsets.add(offset);
+        earlierStraightDoubleQuotes += 1;
+      } else if (character == '”' || character == '’') {
+        closingOffsets.add(offset);
+      }
+    }
+    final forcedDelimiterBoundaries = <int>{
+      ..._forcedDelimiterBoundaryOffsetsV3(
+        sentence,
+        sentenceStart: sentenceStart,
+        delimiterSpans: delimiterSpans,
+      ),
+    };
     int? pendingPunctuationStart;
 
     void appendPart(int start, int end) {
@@ -1074,6 +937,16 @@ final class _ReadAloudSplitterEngineV3 {
             end,
           ),
         );
+        return;
+      }
+      final containsOpening = openingOffsets.any(
+        (offset) => offset >= start && offset < end,
+      );
+      final containsClosing = closingOffsets.any(
+        (offset) => offset >= start && offset < end,
+      );
+      if (containsOpening && !containsClosing) {
+        pendingPunctuationStart ??= start;
         return;
       }
       if (words.isNotEmpty) {
@@ -1094,6 +967,11 @@ final class _ReadAloudSplitterEngineV3 {
       final token = match.group(0)!;
       var partStart = 0;
       for (var offset = 0; offset + 1 < token.length; offset += 1) {
+        if (offset > partStart &&
+            forcedDelimiterBoundaries.contains(match.start + offset)) {
+          appendPart(match.start + partStart, match.start + offset);
+          partStart = offset;
+        }
         final punctuation = token[offset];
         // Also split glued terminals before a following capital
         // (`jurors."She` → `jurors."` | `She`) so quote-close stays a cut.
@@ -1111,10 +989,11 @@ final class _ReadAloudSplitterEngineV3 {
           continue;
         }
         var partEnd = offset + 1;
-        if (punctuation != ':' &&
-            partEnd < token.length &&
-            _isClosingQuoteAt(sentence, match.start + partEnd)) {
-          partEnd += 1;
+        if (punctuation != ':') {
+          while (partEnd < token.length &&
+              closingOffsets.contains(match.start + partEnd)) {
+            partEnd += 1;
+          }
         }
         appendPart(match.start + partStart, match.start + partEnd);
         partStart = partEnd;
@@ -1122,18 +1001,40 @@ final class _ReadAloudSplitterEngineV3 {
       }
       appendPart(match.start + partStart, match.end);
     }
+    if (pendingPunctuationStart != null && words.isNotEmpty) {
+      final previous = words.removeLast();
+      words.add(
+        _SourceWordV3(
+          sentence.substring(previous.start),
+          previous.start,
+          sentence.length,
+        ),
+      );
+    }
     return words;
   }
 
-  static bool _isClosingQuoteAt(String source, int offset) {
-    final mark = source[offset];
-    if (mark == '”' || mark == '’') return true;
-    if (mark != '"') return false;
-    var earlierDoubleQuotes = 0;
-    for (var index = 0; index < offset; index += 1) {
-      if (source[index] == '"') earlierDoubleQuotes += 1;
-    }
-    return earlierDoubleQuotes.isOdd;
+  static Set<int> _forcedDelimiterBoundaryOffsetsV3(
+    String sentence, {
+    required int sentenceStart,
+    required List<ReadAloudDelimiterSpanV3> delimiterSpans,
+  }) {
+    final spanStarts = {for (final span in delimiterSpans) span.start};
+    return {
+      for (final span in delimiterSpans)
+        if (span.end > sentenceStart &&
+            span.end < sentenceStart + sentence.length &&
+            spanStarts.contains(span.end))
+          span.end - sentenceStart,
+      for (final span in delimiterSpans)
+        if (_isSingleQuoteSpanV3(span) &&
+            span.end > sentenceStart &&
+            span.end < sentenceStart + sentence.length &&
+            RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(
+              sentence[span.end - sentenceStart],
+            ))
+          span.end - sentenceStart,
+    };
   }
 
   static List<_MappedDependencyV3> _mapDependencies(
@@ -1200,8 +1101,10 @@ final class _ReadAloudSplitterEngineV3 {
     List<_MappedDependencyV3> dependencies, {
     required int sentenceStart,
     required List<DependencyTokenV3> parserTokens,
-    required List<_QuoteSpanV3> quoteSpans,
-    List<_ParenSpanV3> parenSpans = const [],
+    required List<ReadAloudDelimiterSpanV3> quoteSpans,
+    List<ReadAloudDelimiterSpanV3> parenSpans = const [],
+    List<DependencySentenceV3> originalParserSentences = const [],
+    Set<int> unmatchedQuoteOpeningOffsets = const {},
     bool applyParentheticalRules = true,
     bool classifyLocalIncompleteConstituents = true,
     bool classifySubjectlessCoordinatedPredicates = false,
@@ -1221,6 +1124,7 @@ final class _ReadAloudSplitterEngineV3 {
           ? words[afterWord].parentheticalSpanIndex
           : null;
       final boundaryOffset = sentenceStart + words[afterWord - 1].end;
+      final rightWordOffset = sentenceStart + words[afterWord].start;
       final containingQuoteSpan =
           _innermostQuoteSpanAtOffset(quoteSpans, boundaryOffset);
       final containingParenSpan = applyParentheticalRules
@@ -1228,10 +1132,13 @@ final class _ReadAloudSplitterEngineV3 {
           : null;
       final insideQuotedSpeech = containingQuoteSpan != null;
       final insideParenthetical = containingParenSpan != null;
-      final quoteSpanWordCount = containingQuoteSpan?.wordCount ??
-          (leftQuoteSpan != null
+      final quoteSpanWordCount = containingQuoteSpan != null
+          ? containingQuoteSpan.wordCount
+          : leftQuoteSpan != null
               ? words[afterWord - 1].quotedSpeechWordCount
-              : words[afterWord].quotedSpeechWordCount);
+              : rightQuoteSpan != null
+                  ? words[afterWord].quotedSpeechWordCount
+                  : null;
       final parenSpanWordCount = containingParenSpan?.wordCount ??
           (leftParenSpan != null
               ? words[afterWord - 1].parentheticalWordCount
@@ -1244,7 +1151,45 @@ final class _ReadAloudSplitterEngineV3 {
                   ? 'after_closing'
                   : rightQuoteSpan != null
                       ? 'before_opening'
-                      : null;
+                      : unmatchedQuoteOpeningOffsets.contains(rightWordOffset)
+                          ? 'before_opening'
+                          : null;
+      final isSingleQuoteEdge = quoteEdge != null &&
+          quoteSpans.any(
+            (span) =>
+                (span.kind == ReadAloudDelimiterKindV3.straightSingleQuote ||
+                    span.kind == ReadAloudDelimiterKindV3.curlySingleQuote) &&
+                (span.end == boundaryOffset || span.start == rightWordOffset),
+          );
+      final adjacentCompleteQuoteEdge = quoteEdge == 'between_quotes' &&
+          isSingleQuoteEdge &&
+          (words[afterWord - 1].quotedSpeechWordCount ?? 0) >= 4 &&
+          (words[afterWord].quotedSpeechWordCount ?? 0) >= 4;
+      final shiftedParserDelimiterBoundary = quoteEdge != null &&
+          (quoteSpans.any(
+                (span) =>
+                    (span.kind ==
+                            ReadAloudDelimiterKindV3.straightSingleQuote ||
+                        span.kind ==
+                            ReadAloudDelimiterKindV3.curlySingleQuote) &&
+                    ((const {'after_closing', 'between_quotes'}
+                                .contains(quoteEdge) &&
+                            span.end == boundaryOffset &&
+                            originalParserSentences.any(
+                              (sentence) => sentence.end == span.end - 1,
+                            )) ||
+                        (const {'before_opening', 'between_quotes'}
+                                .contains(quoteEdge) &&
+                            span.start == rightWordOffset &&
+                            originalParserSentences.any(
+                              (sentence) => sentence.end == span.start + 1,
+                            ))),
+              ) ||
+              (quoteEdge == 'before_opening' &&
+                  unmatchedQuoteOpeningOffsets.contains(rightWordOffset) &&
+                  originalParserSentences.any(
+                    (sentence) => sentence.end == rightWordOffset + 1,
+                  )));
       final parenEdge = insideParenthetical
           ? null
           : leftParenSpan != null && rightParenSpan != null
@@ -1304,6 +1249,56 @@ final class _ReadAloudSplitterEngineV3 {
             parenSpanWordCount <= preferredMaxUnpunctuatedWords)
           'inside_short_complete_parenthetical',
       ];
+      final containsShiftedParserDelimiter = quoteSpans.any(
+            (span) =>
+                (span.kind == ReadAloudDelimiterKindV3.straightSingleQuote ||
+                    span.kind == ReadAloudDelimiterKindV3.curlySingleQuote) &&
+                span.start < sentenceStart + sentence.length &&
+                span.end > sentenceStart &&
+                originalParserSentences.any(
+                  (sentence) =>
+                      sentence.end == span.end - 1 ||
+                      sentence.end == span.start + 1,
+                ),
+          ) ||
+          unmatchedQuoteOpeningOffsets.any(
+            (opening) =>
+                opening >= sentenceStart &&
+                opening < sentenceStart + sentence.length &&
+                originalParserSentences.any(
+                  (sentence) => sentence.end == opening + 1,
+                ),
+          );
+      if (containsShiftedParserDelimiter && !shiftedParserDelimiterBoundary) {
+        final containingParserUnit = originalParserSentences
+            .where(
+              (sentence) =>
+                  boundaryOffset > sentence.start &&
+                  boundaryOffset < sentence.end,
+            )
+            .firstOrNull;
+        if (containingParserUnit != null) {
+          final unitWordCount = words.where((word) {
+            final lexical = RegExp(
+              r'[\p{L}\p{N}]',
+              unicode: true,
+            ).firstMatch(word.text);
+            if (lexical == null) return false;
+            final offset = sentenceStart + word.start + lexical.start;
+            return offset >= containingParserUnit.start &&
+                offset < containingParserUnit.end;
+          }).length;
+          if (unitWordCount <= preferredMaxUnpunctuatedWords) {
+            hardBlockReasons.add('inside_short_parser_sentence_replay_unit');
+          }
+        }
+      }
+      // Two independently matched, readable quote spans are separate speech
+      // blocks. Parser arcs and even one glued parser token (`it’‘And` / `it''And`)
+      // must not erase the source delimiter boundary between them.
+      if (adjacentCompleteQuoteEdge || shiftedParserDelimiterBoundary) {
+        hardBlockReasons.clear();
+      }
       final crossings = dependencies.where((dependency) {
         if (dependency.token.deprel.split(':').first == 'punct') {
           return false;
@@ -2086,10 +2081,18 @@ final class _ReadAloudSplitterEngineV3 {
       final isCompleteQuoteEdge = quoteSpanWordCount != null &&
           const {'before_opening', 'after_closing', 'between_quotes'}
               .contains(quoteEdge);
+      final allowsCompleteQuoteNarrationPause = quoteEdge == 'after_closing' &&
+          isSingleQuoteEdge &&
+          _quotedTerminalPunctuation.hasMatch(left) &&
+          (quoteSpanWordCount ?? 0) >= 2 &&
+          (quoteSpanWordCount ?? 0) <= preferredMaxUnpunctuatedWords &&
+          words.length - afterWord > 5;
       ReadAloudBoundaryKindV3 kind;
       final reasons = <String>[
         if (insideQuotedSpeech) 'inside_quoted_speech',
         if (quoteEdge != null) 'quote_edge:$quoteEdge',
+        if (isSingleQuoteEdge) 'single_quote_edge',
+        if (shiftedParserDelimiterBoundary) 'shifted_parser_delimiter_boundary',
         if (quoteEdge == 'after_closing' &&
             hasCoordinatedRightSubjectPredicateClause)
           'quote_edge_coordinated_continuation',
@@ -2169,6 +2172,9 @@ final class _ReadAloudSplitterEngineV3 {
                               ? 'source_between_quotes_edge'
                               : 'source_strong_punctuation',
         );
+        if (allowsCompleteQuoteNarrationPause) {
+          reasons.add('complete_quote_before_narration_pause');
+        }
       } else if (_commaPunctuation.hasMatch(left) &&
           (oneLegalClauseSubtreeArc ||
               hasRightSubjectPredicateClause ||
@@ -2308,7 +2314,8 @@ final class _ReadAloudSplitterEngineV3 {
           (relation == 'advmod' ||
               fullRelation == 'compound:prt' ||
               (relation == 'compound' &&
-                  const {'ADP', 'ADV', 'PART'}.contains(dependency.token.upos)))) {
+                  const {'ADP', 'ADV', 'PART'}
+                      .contains(dependency.token.upos)))) {
         return true;
       }
       // An open clausal complement inherits its subject from the predicate on

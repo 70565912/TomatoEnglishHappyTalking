@@ -532,6 +532,8 @@ List<_AdditiveBoundaryFactV3> _buildAdditiveBoundaryFactsV3({
             isPronounClauseStart:
                 dependencyFacts[candidate.afterWord]?.pronounClauseStart ??
                     false,
+            isSurfaceSubordinatorClauseStart:
+                _isSurfaceSubordinatorClauseFrontV3(words, candidate),
             componentRisk: dependencyFacts[candidate.afterWord]?.risk ?? 0,
             punctuationContinuationRisk: _punctuationContinuationRiskV3(
               words,
@@ -545,6 +547,50 @@ List<_AdditiveBoundaryFactV3> _buildAdditiveBoundaryFactsV3({
             ),
           ),
     ];
+
+bool _isSurfaceSubordinatorClauseFrontV3(
+  List<_SourceWordV3> words,
+  ReadAloudBoundaryCandidateV3 candidate,
+) {
+  final boundary = candidate.afterWord;
+  if (candidate.kind != ReadAloudBoundaryKindV3.dependencyClause ||
+      !candidate.reasons.contains(
+        'dependency_clause_with_outer_container_arcs',
+      ) ||
+      boundary <= 0 ||
+      boundary >= words.length) {
+    return false;
+  }
+  final opener = _additiveLexemeV3(words[boundary].text);
+  if (!const {
+    'after',
+    'although',
+    'as',
+    'because',
+    'before',
+    'if',
+    'once',
+    'since',
+    'though',
+    'unless',
+    'until',
+    'when',
+    'whereas',
+    'while',
+  }.contains(opener)) {
+    return false;
+  }
+  final right = words.sublist(
+    boundary,
+    math.min(words.length, boundary + 10),
+  );
+  final predicate = right.indexWhere(
+    (word) => word.upos.any(_additivePredicatePosV3.contains),
+  );
+  return predicate >= 2 &&
+      right.take(predicate).skip(1).any(
+          (word) => word.upos.any(const {'NOUN', 'PROPN', 'PRON'}.contains));
+}
 
 /// `Ah! now | they` — a non-punct cut one/two words after a strong beat.
 bool _isTightStrongBehindSyntaxHoldV3(
@@ -720,11 +766,14 @@ _AdditiveBoundaryFactV3 _buildAdditiveBoundaryFactV3(
   ReadAloudBoundaryCandidateV3 candidate, {
   required bool isFiniteClauseStart,
   required bool isPronounClauseStart,
+  required bool isSurfaceSubordinatorClauseStart,
   required int componentRisk,
   required int punctuationContinuationRisk,
   int coordinatorBeforeNearbyStrongRisk = 0,
 }) {
   final allowedRelativeWarnings = <String>{
+    if (candidate.reasons.contains('complete_quote_before_narration_pause'))
+      ..._additiveStructuralWarningsV3,
     if (candidate.reasons.contains('surface_relative_clause_front'))
       ..._additiveRelativeFrontWarningsV3,
     if (candidate.reasons.contains('validated_surface_right_clause'))
@@ -736,6 +785,7 @@ _AdditiveBoundaryFactV3 _buildAdditiveBoundaryFactV3(
       'surface_object_predicative_complement_separation',
       'surface_xcomp_predicate_separation',
     },
+    if (isSurfaceSubordinatorClauseStart) 'surface_determiner_head_separation',
     if (candidate.reasons.contains('deferred_stable_shared_predicate') ||
         candidate.reasons.contains('recovered_adjectival_shared_predicate'))
       'surface_mixed_coordinator_chain_separation',
@@ -815,10 +865,14 @@ _AdditiveBoundaryFactV3 _buildAdditiveBoundaryFactV3(
             : componentRisk),
     lengthCriticalStructuralRisk: lengthCriticalStructuralRisk,
     weakPunctuationRisk: weakPunctuationRisk,
-    residualRisk: math.max(
-      0,
-      candidate.risk - candidate.protectedRelationCrossings * 1000,
-    ),
+    residualRisk: candidate.reasons.contains('single_quote_edge') &&
+                candidate.reasons.contains('source_between_quotes_edge') ||
+            candidate.reasons.contains('shifted_parser_delimiter_boundary')
+        ? 0
+        : math.max(
+            0,
+            candidate.risk - candidate.protectedRelationCrossings * 1000,
+          ),
   );
 }
 
@@ -838,13 +892,13 @@ bool _isHardBlockedSurfaceBoundaryV3(
   // Closing quotes may sit on the left word, in the inter-word gap, or glued to
   // the right token (`know" —(pointing…)`). Quote→paren junctions are real
   // delimiter edges even when the glyph is not on the left word alone.
-  final closingQuoteVisible = RegExp(r'''["'”’][,;:.!?—–-]*$''')
-          .hasMatch(leftText.trimRight()) ||
-      RegExp(r'''["'”’]''').hasMatch(
-        source.substring(leftWord.end, rightWord.start),
-      ) ||
-      RegExp(r'''^["'”’]''').hasMatch(rightText.trimLeft()) ||
-      candidate.parenEdge == 'before_opening';
+  final closingQuoteVisible =
+      RegExp(r'''["'”’][,;:.!?—–-]*$''').hasMatch(leftText.trimRight()) ||
+          RegExp(r'''["'”’]''').hasMatch(
+            source.substring(leftWord.end, rightWord.start),
+          ) ||
+          RegExp(r'''^["'”’]''').hasMatch(rightText.trimLeft()) ||
+          candidate.parenEdge == 'before_opening';
   return candidate.quoteEdge == 'after_closing' && !closingQuoteVisible ||
       _isElongationBoundaryV3(source, words, afterWord) ||
       _additiveTitleAbbreviationV3.hasMatch(leftText.trim()) ||

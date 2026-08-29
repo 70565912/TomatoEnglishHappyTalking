@@ -52,7 +52,14 @@ class OrthographicSentenceBoundaryV3 {
     }
 
     final ranges = <OrthographicSentenceRangeV3>[];
-    final quoteStack = <String>[];
+    final delimiterScan = ReadAloudDelimiterScannerV3.scan(
+      source: source,
+      tokens: document.sentences.expand((sentence) => sentence.tokens),
+    );
+    final quoteSpans = delimiterScan.behavioralQuoteSpans(
+      source: source,
+      parserSentences: document.sentences,
+    );
     var sentenceStart = _skipWhitespaceForward(source, 0);
 
     void addBoundary(int rawEnd) {
@@ -67,17 +74,7 @@ class OrthographicSentenceBoundaryV3 {
 
     for (var index = 0; index < tokens.length; index += 1) {
       final token = tokens[index];
-      if (index > 0 &&
-          _containsParagraphBreak(
-            source.substring(tokens[index - 1].end, token.start),
-          )) {
-        // Paragraphs are locked orthographic units. An unmatched quotation in
-        // one paragraph must never change how punctuation in the next
-        // paragraph is interpreted.
-        quoteStack.clear();
-      }
       if (_isQuoteToken(source, token)) {
-        _updateQuoteStack(quoteStack, source, token);
         continue;
       }
       if (!_isTerminalPunctuation(token)) continue;
@@ -88,15 +85,18 @@ class OrthographicSentenceBoundaryV3 {
       );
       if (dotLeaderEnd != null && index < dotLeaderEnd) continue;
 
-      final insideQuote = quoteStack.isNotEmpty;
-      final closingQuoteIndex = insideQuote
-          ? _immediateClosingQuoteIndex(
-              source: source,
-              tokens: tokens,
-              punctuationIndex: index,
-              expectedQuote: quoteStack.last,
-            )
-          : null;
+      final enclosingQuote = _immediateEnclosingQuoteSpan(
+        source: source,
+        token: token,
+        quoteSpans: quoteSpans,
+      );
+      final insideQuote = enclosingQuote != null;
+      final closingQuoteIndex = enclosingQuote == null
+          ? null
+          : _tokenIndexContainingOffset(
+              tokens,
+              enclosingQuote.end - 1,
+            );
       if (closingQuoteIndex == null) {
         if (_hasLowercaseSourceContinuation(
           source: source,
@@ -126,6 +126,7 @@ class OrthographicSentenceBoundaryV3 {
         tokens: tokens,
         punctuationIndex: index,
         closingQuoteIndex: closingQuoteIndex,
+        quoteStartOffset: enclosingQuote!.start,
       );
       final shouldAttach = _hasLowercaseDependencyContinuation(
             tokens: tokens,
@@ -143,6 +144,7 @@ class OrthographicSentenceBoundaryV3 {
           _closingDelimiterEnd(
             tokens: tokens,
             closingQuoteIndex: closingQuoteIndex,
+            minimumEnd: enclosingQuote.end,
           ),
         );
       }
@@ -274,8 +276,9 @@ class OrthographicSentenceBoundaryV3 {
   static int _closingDelimiterEnd({
     required List<_FlatDependencyTokenV3> tokens,
     required int closingQuoteIndex,
+    int? minimumEnd,
   }) {
-    var end = tokens[closingQuoteIndex].end;
+    var end = minimumEnd ?? tokens[closingQuoteIndex].end;
     for (var index = closingQuoteIndex + 1; index < tokens.length; index += 1) {
       if (!const {')', ']', '}'}.contains(tokens[index].sourceText)) break;
       end = tokens[index].end;
@@ -308,72 +311,35 @@ class OrthographicSentenceBoundaryV3 {
       token.upos == 'SYM' ||
       !RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(token.sourceText);
 
-  static void _updateQuoteStack(
-    List<String> stack,
-    String source,
-    _FlatDependencyTokenV3 token,
-  ) {
-    final quote = token.sourceText;
-    if (quote == '\u201c' || quote == '\u2018') {
-      stack.add(quote);
-      return;
+  static ReadAloudDelimiterSpanV3? _immediateEnclosingQuoteSpan({
+    required String source,
+    required _FlatDependencyTokenV3 token,
+    required List<ReadAloudDelimiterSpanV3> quoteSpans,
+  }) {
+    ReadAloudDelimiterSpanV3? result;
+    for (final span in quoteSpans) {
+      if (token.start <= span.start || token.end > span.end - 1) continue;
+      final between = source.substring(token.end, span.end - 1);
+      if (!RegExp(r'^[\s\)\]\}]*$').hasMatch(between)) continue;
+      if (result == null ||
+          span.start >= result.start && span.end <= result.end) {
+        result = span;
+      }
     }
-    if (quote == '\u201d' || quote == '\u2019') {
-      final expected = quote == '\u201d' ? '\u201c' : '\u2018';
-      if (stack.isNotEmpty && stack.last == expected) stack.removeLast();
-      return;
-    }
-    final before = token.start > 0 ? source[token.start - 1] : '';
-    final after = token.end < source.length ? source[token.end] : '';
-    final looksOpening = _isAlphaNumeric(after) &&
-        (before.isEmpty || RegExp(r'[\s\(\[\{]').hasMatch(before));
-    final looksClosing = _isAlphaNumeric(before) &&
-            (after.isEmpty || RegExp(r'[\s.,;:!?\)\]\}]').hasMatch(after)) ||
-        RegExp(r'[,.;:!?\)\]\}]').hasMatch(before) &&
-            (after.isEmpty || RegExp(r'\s').hasMatch(after));
-    if (looksOpening && !looksClosing) {
-      stack.add(quote);
-      return;
-    }
-    if (looksClosing && !looksOpening) {
-      if (stack.isNotEmpty && stack.last == quote) stack.removeLast();
-      return;
-    }
-    if (stack.isNotEmpty && stack.last == quote) {
-      stack.removeLast();
-    } else {
-      stack.add(quote);
-    }
+    return result;
   }
 
-  static int? _immediateClosingQuoteIndex({
-    required String source,
-    required List<_FlatDependencyTokenV3> tokens,
-    required int punctuationIndex,
-    required String expectedQuote,
-  }) {
-    for (var index = punctuationIndex + 1; index < tokens.length; index += 1) {
-      final token = tokens[index];
-      final gap = source.substring(tokens[index - 1].end, token.start);
-      if (gap.contains(RegExp(r'\r?\n\s*\r?\n'))) return null;
-      if (_isQuoteToken(source, token) &&
-          _closesQuote(token.sourceText, expectedQuote)) {
+  static int? _tokenIndexContainingOffset(
+    List<_FlatDependencyTokenV3> tokens,
+    int offset,
+  ) {
+    for (var index = 0; index < tokens.length; index += 1) {
+      if (tokens[index].start <= offset && offset < tokens[index].end) {
         return index;
       }
-      if (token.upos != 'PUNCT' && token.upos != 'SYM') return null;
-      if (!_isClosingDelimiter(token.sourceText)) return null;
     }
     return null;
   }
-
-  static bool _closesQuote(String candidate, String expected) {
-    if (expected == '\u201c') return candidate == '\u201d';
-    if (expected == '\u2018') return candidate == '\u2019';
-    return candidate == expected;
-  }
-
-  static bool _isClosingDelimiter(String value) =>
-      const {')', ']', '}', '\u201d', '\u2019', '"', "'"}.contains(value);
 
   /// A lower-case non-predicate immediately after a closing quotation is an
   /// orthographic continuation only when its dependency head is a following
@@ -413,6 +379,7 @@ class OrthographicSentenceBoundaryV3 {
     required List<_FlatDependencyTokenV3> tokens,
     required int punctuationIndex,
     required int closingQuoteIndex,
+    int? quoteStartOffset,
   }) {
     if (closingQuoteIndex + 1 < tokens.length &&
         const {'"', '\u201c', '\u2018'}
@@ -445,6 +412,7 @@ class OrthographicSentenceBoundaryV3 {
             quoteStartSearchIndex: _quoteContentStart(
               tokens,
               punctuationIndex,
+              quoteStartOffset: quoteStartOffset,
             ),
             coordinated: true,
           );
@@ -456,7 +424,11 @@ class OrthographicSentenceBoundaryV3 {
       if (predicateIndex != null && _isPredicate(tokens[predicateIndex])) {
         return _QuoteAttributionV3(
           predicateIndex: predicateIndex,
-          quoteStartSearchIndex: _quoteContentStart(tokens, punctuationIndex),
+          quoteStartSearchIndex: _quoteContentStart(
+            tokens,
+            punctuationIndex,
+            quoteStartOffset: quoteStartOffset,
+          ),
         );
       }
     }
@@ -468,7 +440,11 @@ class OrthographicSentenceBoundaryV3 {
             subject.head == first.id) {
           return _QuoteAttributionV3(
             predicateIndex: following.first,
-            quoteStartSearchIndex: _quoteContentStart(tokens, punctuationIndex),
+            quoteStartSearchIndex: _quoteContentStart(
+              tokens,
+              punctuationIndex,
+              quoteStartOffset: quoteStartOffset,
+            ),
           );
         }
       }
@@ -477,6 +453,7 @@ class OrthographicSentenceBoundaryV3 {
         quoteStartSearchIndex: _quoteContentStart(
           tokens,
           punctuationIndex,
+          quoteStartOffset: quoteStartOffset,
         ),
       );
     }
@@ -487,6 +464,7 @@ class OrthographicSentenceBoundaryV3 {
           quoteStartSearchIndex: _quoteContentStart(
             tokens,
             punctuationIndex,
+            quoteStartOffset: quoteStartOffset,
           ),
         );
       }
@@ -496,8 +474,14 @@ class OrthographicSentenceBoundaryV3 {
 
   static int _quoteContentStart(
     List<_FlatDependencyTokenV3> tokens,
-    int punctuationIndex,
-  ) {
+    int punctuationIndex, {
+    int? quoteStartOffset,
+  }) {
+    if (quoteStartOffset != null) {
+      for (var index = 0; index <= punctuationIndex; index += 1) {
+        if (tokens[index].end > quoteStartOffset) return index;
+      }
+    }
     for (var index = punctuationIndex - 1; index >= 0; index -= 1) {
       final value = tokens[index].sourceText;
       if (const {'"', '\u201c', '\u2018'}.contains(value)) return index + 1;

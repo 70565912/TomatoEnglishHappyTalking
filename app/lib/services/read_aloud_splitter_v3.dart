@@ -1,4 +1,4 @@
-/// Production read-aloud chunk splitter (`read_aloud_dp_v3` / syntax_solver_v3_9).
+/// Production read-aloud chunk splitter (`read_aloud_dp_v3` / syntax_solver_v3_10).
 ///
 /// Each orthographic sentence builds one immutable fact set and runs one
 /// bounded DAG solve. Rules live in `docs/read_aloud_sentence_split_spec.md`.
@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'read_aloud_display_metrics.dart';
 
+part 'read_aloud_splitter_v3_delimiters.dart';
 part 'read_aloud_splitter_v3_solver.dart';
 part 'read_aloud_splitter_v3_facts.dart';
 part 'read_aloud_splitter_v3_additive_facts.dart';
@@ -238,6 +239,96 @@ class ReadAloudCandidatePathV3 {
       };
 }
 
+/// One normal, rule-compliant segment edge in the word-position DAG.
+///
+/// Offsets are zero-based word positions and [endWord] is exclusive.
+class ReadAloudCandidateSegmentEdgeV3 {
+  const ReadAloudCandidateSegmentEdgeV3({
+    required this.startWord,
+    required this.endWord,
+  });
+
+  final int startWord;
+  final int endWord;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ReadAloudCandidateSegmentEdgeV3 &&
+      other.startWord == startWord &&
+      other.endWord == endWord;
+
+  @override
+  int get hashCode => Object.hash(startWord, endWord);
+
+  Map<String, int> toJson() => {
+        'startWord': startWord,
+        'endWord': endWord,
+      };
+}
+
+/// Reachability evidence from the same bounded DAG used for candidate paths.
+///
+/// This is deliberately diagnostic rather than selectable: AI review continues
+/// to choose only from [ReadAloudOriginalDecisionV3.candidatePaths]. Coverage
+/// proves that a reviewed boundary chain is supported even when the complete
+/// Cartesian combination is not one of the 24 materialized paths.
+class ReadAloudCandidateCoverageV3 {
+  ReadAloudCandidateCoverageV3({
+    required this.sourceWordCount,
+    required Iterable<int> reachableBoundaryAfterWords,
+    required Iterable<ReadAloudCandidateSegmentEdgeV3> reachableSegmentEdges,
+  })  : reachableBoundaryAfterWords =
+            Set<int>.unmodifiable(reachableBoundaryAfterWords),
+        reachableSegmentEdges =
+            Set<ReadAloudCandidateSegmentEdgeV3>.unmodifiable(
+          reachableSegmentEdges,
+        );
+
+  final int sourceWordCount;
+
+  /// Internal word boundaries that occur on at least one complete normal path.
+  final Set<int> reachableBoundaryAfterWords;
+
+  /// Segments that occur on at least one complete normal path.
+  ///
+  /// Normal coverage excludes one-word chunks, chunks over the 20-word target,
+  /// hard-blocked boundaries and emergency boundaries.
+  final Set<ReadAloudCandidateSegmentEdgeV3> reachableSegmentEdges;
+
+  bool supportsWordCounts(Iterable<int> wordCounts) {
+    var start = 0;
+    var sawSegment = false;
+    for (final count in wordCounts) {
+      if (count <= 0) return false;
+      final end = start + count;
+      if (!reachableSegmentEdges.contains(
+        ReadAloudCandidateSegmentEdgeV3(startWord: start, endWord: end),
+      )) {
+        return false;
+      }
+      start = end;
+      sawSegment = true;
+    }
+    return sawSegment && start == sourceWordCount;
+  }
+
+  Map<String, dynamic> toJson() {
+    final boundaries = reachableBoundaryAfterWords.toList()..sort();
+    final segments = reachableSegmentEdges.toList()
+      ..sort((left, right) {
+        final startComparison = left.startWord.compareTo(right.startWord);
+        return startComparison != 0
+            ? startComparison
+            : left.endWord.compareTo(right.endWord);
+      });
+    return {
+      'sourceWordCount': sourceWordCount,
+      'reachableBoundaryAfterWords': boundaries,
+      'reachableSegmentEdges': segments.map((edge) => edge.toJson()).toList(),
+    };
+  }
+}
+
 class ReadAloudOriginalDecisionV3 {
   const ReadAloudOriginalDecisionV3({
     required this.originalIndex,
@@ -249,6 +340,7 @@ class ReadAloudOriginalDecisionV3 {
     required this.initialCandidatePaths,
     required this.expandedCandidatePaths,
     required this.boundaryCandidates,
+    required this.candidateCoverage,
     required this.localPathId,
     this.parseCost,
     this.parseCostPerToken,
@@ -263,6 +355,7 @@ class ReadAloudOriginalDecisionV3 {
   final List<ReadAloudCandidatePathV3> initialCandidatePaths;
   final List<ReadAloudCandidatePathV3> expandedCandidatePaths;
   final List<ReadAloudBoundaryCandidateV3> boundaryCandidates;
+  final ReadAloudCandidateCoverageV3 candidateCoverage;
   final String localPathId;
   final double? parseCost;
   final double? parseCostPerToken;
@@ -341,7 +434,7 @@ class ReadAloudSolverCountersV3 {
 class ReadAloudSplitterV3 {
   static const version = 'read_aloud_dp_v3';
   static const reviewedVersion = 'reviewed_dp_v3';
-  static const solverVersion = 'syntax_solver_v3_9';
+  static const solverVersion = 'syntax_solver_v3_10';
   static const hardMaxWords = 30;
   static const preferredMinUnpunctuatedWords = 8;
   static const preferredMaxUnpunctuatedWords = 16;
