@@ -99,7 +99,9 @@ void main() {
     final payload = jsonDecode((messages.last as Map)['content'] as String)
         as Map<String, dynamic>;
     final original = (payload['originals'] as List).single as Map;
-    expect(original['minimumBoundaryCount'], 0);
+    // The synthetic source has 21 words, so R-LENGTH-ZONES requires at least
+    // one boundary before candidate-path review.
+    expect(original['minimumBoundaryCount'], 1);
     final candidate = (original['candidatePaths'] as List).first as Map;
     expect(candidate, contains('isMinimumBoundaryCount'));
     expect(candidate, contains('shortFragmentCount'));
