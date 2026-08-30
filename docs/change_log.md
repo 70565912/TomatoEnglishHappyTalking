@@ -15,6 +15,9 @@
 - **回归与性能**：冻结 parser 文档回放中 Alice/Willows 101 章默认首选相对已接受 delimiter 候选
   完全不变；Looking Glass 只保留既定 14 组 delimiter 修正，C52 继续为 `16/6/6`。6,757 句发布
   fixture 只读校验，未重生成或迁移。五组同机 AOT 交替基准扩展到9轮，未发现明确中位数回退。
+- **导出目录按书名分层**：听力/歌曲视频与歌曲音频写入
+  `recording-export/{srt|subtitled|mp3}/<书名>/`；书名用绘本系列名，无系列时用文章标题。
+  文件名去掉系列前缀，只保留章节名与 `listening` / `song` / `song-audio` 标记。视频库仍扫描旧扁平文件。
 
 ## 2026-08-17
 

@@ -691,7 +691,14 @@ class RecordingExportService {
     }
     final directory = Directory(defaultOutputDirectory());
     await _probeWritableDirectories(
-      _videoOutputDirectoriesForMode(directory, request.subtitleMode),
+      _videoOutputDirectoriesForMode(
+        directory,
+        request.subtitleMode,
+        bookDirectoryName: _bookDirectoryNameForAssets(
+          seriesTitle: assets.series?.title ?? '',
+          articleTitle: assets.article.title,
+        ),
+      ),
       reasons,
     );
 
@@ -863,7 +870,14 @@ class RecordingExportService {
     }
     final directory = Directory(defaultOutputDirectory());
     await _probeWritableDirectories(
-      _videoOutputDirectoriesForMode(directory, request.subtitleMode),
+      _videoOutputDirectoriesForMode(
+        directory,
+        request.subtitleMode,
+        bookDirectoryName: _bookDirectoryNameForAssets(
+          seriesTitle: assets.series?.title ?? '',
+          articleTitle: assets.article.title,
+        ),
+      ),
       reasons,
     );
     return RecordingReadiness(
@@ -1058,11 +1072,16 @@ class RecordingExportService {
       now: now,
     );
     final outputVariants = <_RecordingVideoOutputVariant>[];
+    final bookDirectoryName = _bookDirectoryName(
+      seriesTitle: series?.title ?? '',
+      articleTitle: article.title,
+    );
     for (final variant in variants) {
       final baseName = baseNames[variant]!;
       final outputDirectory = _videoOutputDirectoryForVariant(
         directory,
         variant,
+        bookDirectoryName: bookDirectoryName,
       );
       final subtitlePath = variant == _RecordingVideoSubtitleVariant.srt
           ? path_lib.join(outputDirectory.path, '$baseName.srt')
@@ -1195,13 +1214,18 @@ class RecordingExportService {
       throw RecordingExportException('歌曲音频文件不存在：$sourcePath');
     }
 
-    final outputDirectory = _mp3OutputDirectoryFor(outputRootDirectory);
+    final outputDirectory = _mp3OutputDirectoryFor(
+      outputRootDirectory,
+      bookDirectoryName: _bookDirectoryName(
+        seriesTitle: series?.title ?? '',
+        articleTitle: article.title,
+      ),
+    );
     await outputDirectory.create(recursive: true);
     final extension = _audioOutputExtension(sourcePath);
     final baseName = await _availableOutputBaseName(
       directory: outputDirectory,
       article: article,
-      series: series,
       exportKind: 'song-audio',
       now: now,
       extensionsToCheck: [extension],
@@ -1278,27 +1302,75 @@ class RecordingExportService {
   static Directory _subtitledOutputDirectoryFor(Directory rootDirectory) =>
       Directory(path_lib.join(rootDirectory.path, 'subtitled'));
 
-  static Directory _mp3OutputDirectoryFor(Directory rootDirectory) =>
-      Directory(path_lib.join(rootDirectory.path, 'mp3'));
+  static Directory _mp3OutputDirectoryFor(
+    Directory rootDirectory, {
+    String bookDirectoryName = '',
+  }) =>
+      _kindOutputDirectoryFor(
+        rootDirectory,
+        'mp3',
+        bookDirectoryName: bookDirectoryName,
+      );
+
+  static Directory _kindOutputDirectoryFor(
+    Directory rootDirectory,
+    String kind, {
+    String bookDirectoryName = '',
+  }) {
+    final typeDirectory = path_lib.join(rootDirectory.path, kind);
+    if (bookDirectoryName.trim().isEmpty) {
+      return Directory(typeDirectory);
+    }
+    return Directory(path_lib.join(typeDirectory, bookDirectoryName));
+  }
+
+  static String _bookDirectoryName({
+    required String seriesTitle,
+    required String articleTitle,
+  }) {
+    final series = seriesTitle.trim();
+    if (series.isNotEmpty) {
+      return _sanitizeFileName(series);
+    }
+    return _sanitizeFileName(articleTitle);
+  }
+
+  static String _bookDirectoryNameForAssets({
+    required String seriesTitle,
+    required String articleTitle,
+  }) {
+    if (seriesTitle.trim().isEmpty && articleTitle.trim().isEmpty) {
+      return '';
+    }
+    return _bookDirectoryName(
+      seriesTitle: seriesTitle,
+      articleTitle: articleTitle,
+    );
+  }
 
   static Directory _videoOutputDirectoryForVariant(
     Directory rootDirectory,
-    _RecordingVideoSubtitleVariant variant,
-  ) =>
-      switch (variant) {
-        _RecordingVideoSubtitleVariant.srt =>
-          _srtOutputDirectoryFor(rootDirectory),
-        _RecordingVideoSubtitleVariant.subtitled =>
-          _subtitledOutputDirectoryFor(rootDirectory),
-      };
+    _RecordingVideoSubtitleVariant variant, {
+    required String bookDirectoryName,
+  }) =>
+      _kindOutputDirectoryFor(
+        rootDirectory,
+        variant.fileMarker,
+        bookDirectoryName: bookDirectoryName,
+      );
 
   static List<Directory> _videoOutputDirectoriesForMode(
     Directory rootDirectory,
-    RecordingSubtitleMode mode,
-  ) {
+    RecordingSubtitleMode mode, {
+    required String bookDirectoryName,
+  }) {
     final paths = {
       for (final variant in _subtitleVariantsForMode(mode))
-        _videoOutputDirectoryForVariant(rootDirectory, variant).path,
+        _videoOutputDirectoryForVariant(
+          rootDirectory,
+          variant,
+          bookDirectoryName: bookDirectoryName,
+        ).path,
     };
     return paths.map(Directory.new).toList(growable: false);
   }
@@ -1540,39 +1612,59 @@ class RecordingExportService {
     required Directory directory,
     required int articleId,
   }) async {
-    final versions = <RecordingVideoVersion>[];
-    for (final target in _videoScanDirectories(directory)) {
-      versions.addAll(await _scanArticleVideosInDirectory(
-        directory: target,
-        articleId: articleId,
-      ));
-    }
-    return versions;
-  }
-
-  static List<Directory> _videoScanDirectories(Directory rootDirectory) => [
-        rootDirectory,
-        _srtOutputDirectoryFor(rootDirectory),
-        _subtitledOutputDirectoryFor(rootDirectory),
-      ];
-
-  static Future<List<RecordingVideoVersion>> _scanArticleVideosInDirectory({
-    required Directory directory,
-    required int articleId,
-  }) async {
-    if (!await directory.exists()) {
-      return const <RecordingVideoVersion>[];
-    }
     final context = await _recordingArticleContext(articleId);
     final article = context.article;
     if (article == null) {
       return const <RecordingVideoVersion>[];
     }
-    final prefix = _outputBasePrefix(
+    final prefixes = _outputBasePrefixes(
       seriesTitle: context.series?.title ?? '',
       articleTitle: article.title,
     );
-    if (prefix.isEmpty) {
+    if (prefixes.isEmpty) {
+      return const <RecordingVideoVersion>[];
+    }
+    final versions = <RecordingVideoVersion>[];
+    for (final target in await _videoScanDirectories(directory)) {
+      versions.addAll(await _scanArticleVideosInDirectory(
+        directory: target,
+        articleId: articleId,
+        prefixes: prefixes,
+      ));
+    }
+    return versions;
+  }
+
+  static Future<List<Directory>> _videoScanDirectories(
+    Directory rootDirectory,
+  ) async {
+    final directories = <Directory>[
+      rootDirectory,
+      _srtOutputDirectoryFor(rootDirectory),
+      _subtitledOutputDirectoryFor(rootDirectory),
+    ];
+    for (final kindDirectory in [
+      _srtOutputDirectoryFor(rootDirectory),
+      _subtitledOutputDirectoryFor(rootDirectory),
+    ]) {
+      if (!await kindDirectory.exists()) {
+        continue;
+      }
+      await for (final entity in kindDirectory.list(followLinks: false)) {
+        if (entity is Directory) {
+          directories.add(entity);
+        }
+      }
+    }
+    return directories;
+  }
+
+  static Future<List<RecordingVideoVersion>> _scanArticleVideosInDirectory({
+    required Directory directory,
+    required int articleId,
+    required List<String> prefixes,
+  }) async {
+    if (!await directory.exists()) {
       return const <RecordingVideoVersion>[];
     }
     final versions = <RecordingVideoVersion>[];
@@ -1583,8 +1675,8 @@ class RecordingExportService {
           continue;
         }
         final fileName = path_lib.basename(entity.path);
-        final parsed = _parseExportedVideoFileName(
-          prefix: prefix,
+        final parsed = _parseExportedVideoFileNameWithPrefixes(
+          prefixes: prefixes,
           fileName: fileName,
         );
         if (parsed == null) {
@@ -1637,14 +1729,42 @@ class RecordingExportService {
     return _RecordingArticleContext(article, series);
   }
 
-  static String _outputBasePrefix({
+  static List<String> _outputBasePrefixes({
     required String seriesTitle,
     required String articleTitle,
-  }) =>
-      _sanitizeFileName([
-        if (seriesTitle.trim().isNotEmpty) seriesTitle,
-        articleTitle,
-      ].join(' - '));
+  }) {
+    final prefixes = <String>[];
+    final articlePrefix = _sanitizeFileName(articleTitle);
+    if (articlePrefix.isNotEmpty) {
+      prefixes.add(articlePrefix);
+    }
+    if (seriesTitle.trim().isNotEmpty) {
+      final legacyPrefix = _sanitizeFileName(
+        [seriesTitle, articleTitle].join(' - '),
+      );
+      if (legacyPrefix.isNotEmpty && !prefixes.contains(legacyPrefix)) {
+        prefixes.add(legacyPrefix);
+      }
+    }
+    prefixes.sort((left, right) => right.length.compareTo(left.length));
+    return prefixes;
+  }
+
+  static _ExportedVideoFileNameInfo? _parseExportedVideoFileNameWithPrefixes({
+    required List<String> prefixes,
+    required String fileName,
+  }) {
+    for (final prefix in prefixes) {
+      final parsed = _parseExportedVideoFileName(
+        prefix: prefix,
+        fileName: fileName,
+      );
+      if (parsed != null) {
+        return parsed;
+      }
+    }
+    return null;
+  }
 
   static _ExportedVideoFileNameInfo? _parseExportedVideoFileName({
     required String prefix,
@@ -1889,16 +2009,11 @@ class RecordingExportService {
       }
     }
 
-    final items = <_RecordingSentenceItem>[];
-    for (final cue in timeline.cues) {
-      final page = _pageForSentence(readyPages, cue.lineIndex);
-      items.add(_RecordingSentenceItem(
-        index: cue.lineIndex,
-        english: cue.english,
-        chinese: cue.chinese,
-        pageIndex: page?.pageIndex ?? 0,
-      ));
-    }
+    final items = _songItemsForCues(
+      sentences: article.sentences,
+      readyPages: readyPages,
+      cues: timeline.cues,
+    );
     return _PreparedSongRecordingAssets(
       article: article,
       series: series,
@@ -3476,13 +3591,11 @@ class RecordingExportService {
   static Future<String> _availableOutputBaseName({
     required Directory directory,
     required Article article,
-    required StorySeries? series,
     required String exportKind,
     DateTime? now,
     List<String> extensionsToCheck = const ['.mp4', '.srt'],
   }) async {
     final safeBase = _outputBaseName(
-      seriesTitle: series?.title ?? '',
       articleTitle: article.title,
       exportKind: exportKind,
       subtitleKind: '',
@@ -3515,10 +3628,13 @@ class RecordingExportService {
     DateTime? now,
   }) async {
     final timestamp = now ?? DateTime.now();
+    final bookDirectoryName = _bookDirectoryName(
+      seriesTitle: series?.title ?? '',
+      articleTitle: article.title,
+    );
     final safeBases = <_RecordingVideoSubtitleVariant, String>{
       for (final variant in variants)
         variant: _outputBaseName(
-          seriesTitle: series?.title ?? '',
           articleTitle: article.title,
           exportKind: exportKind,
           subtitleKind: variant.fileMarker,
@@ -3536,6 +3652,7 @@ class RecordingExportService {
         final directory = _videoOutputDirectoryForVariant(
           rootDirectory,
           entry.key,
+          bookDirectoryName: bookDirectoryName,
         );
         final extensions = entry.key == _RecordingVideoSubtitleVariant.srt
             ? const ['.mp4', '.srt']
@@ -3557,7 +3674,6 @@ class RecordingExportService {
   }
 
   static String _outputBaseName({
-    required String seriesTitle,
     required String articleTitle,
     required String exportKind,
     String subtitleKind = '',
@@ -3566,7 +3682,6 @@ class RecordingExportService {
     final stamp =
         '${now.year}${_two(now.month)}${_two(now.day)}-${_two(now.hour)}${_two(now.minute)}${_two(now.second)}';
     final raw = [
-      if (seriesTitle.trim().isNotEmpty) seriesTitle,
       articleTitle,
       exportKind,
       if (subtitleKind.trim().isNotEmpty) subtitleKind,
@@ -3633,6 +3748,231 @@ class RecordingExportService {
     );
   }
 
+  static List<_RecordingSentenceItem> _songItemsForCues({
+    required List<String> sentences,
+    required List<PictureBookPage> readyPages,
+    required List<SongSubtitleCue> cues,
+  }) {
+    final sentenceIndexes = _sentenceIndexesForSongCues(
+      sentences: sentences,
+      cues: cues,
+    );
+    final items = <_RecordingSentenceItem>[];
+    for (var i = 0; i < cues.length; i += 1) {
+      final cue = cues[i];
+      final sentenceIndex =
+          i < sentenceIndexes.length ? sentenceIndexes[i] : cue.lineIndex;
+      final page = _pageForSentence(readyPages, sentenceIndex);
+      items.add(_RecordingSentenceItem(
+        index: cue.lineIndex,
+        english: cue.english,
+        chinese: cue.chinese,
+        pageIndex: page?.pageIndex ?? 0,
+      ));
+    }
+    return _ensureTrailingSongPages(items: items, pages: readyPages);
+  }
+
+  static List<int> _sentenceIndexesForSongCues({
+    required List<String> sentences,
+    required List<SongSubtitleCue> cues,
+  }) {
+    final visibleIndexes = visibleSentenceIndexes(sentences).toList();
+    if (cues.isEmpty) {
+      return const [];
+    }
+    if (visibleIndexes.isEmpty) {
+      return List<int>.filled(cues.length, 0);
+    }
+
+    var uniqueLineCount = 0;
+    for (final cue in cues) {
+      uniqueLineCount = math.max(uniqueLineCount, cue.lineIndex + 1);
+    }
+    final lines = List<String>.filled(uniqueLineCount, '');
+    for (final cue in cues) {
+      if (cue.lineIndex < 0 || cue.lineIndex >= uniqueLineCount) {
+        continue;
+      }
+      if (lines[cue.lineIndex].trim().isEmpty) {
+        lines[cue.lineIndex] = cue.english;
+      }
+    }
+
+    final visibleTexts = [
+      for (final index in visibleIndexes) sentences[index].trim(),
+    ];
+    if (uniqueLineCount == visibleIndexes.length) {
+      var allMatch = true;
+      for (var i = 0; i < uniqueLineCount; i += 1) {
+        if (_normalizeSongMapText(lines[i]) !=
+            _normalizeSongMapText(visibleTexts[i])) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) {
+        return [
+          for (final cue in cues)
+            visibleIndexes[_clampIndex(cue.lineIndex, visibleIndexes.length)],
+        ];
+      }
+    }
+
+    final lineToVisible = _alignLyricLinesToVisibleSentences(
+      lines: lines,
+      visibleTexts: visibleTexts,
+    );
+    return [
+      for (final cue in cues)
+        visibleIndexes[_clampIndex(
+          lineToVisible[_clampIndex(cue.lineIndex, uniqueLineCount)],
+          visibleIndexes.length,
+        )],
+    ];
+  }
+
+  static List<int> _alignLyricLinesToVisibleSentences({
+    required List<String> lines,
+    required List<String> visibleTexts,
+  }) {
+    final sentNorms = [
+      for (final text in visibleTexts) _normalizeSongMapText(text),
+    ];
+    final articleJoined = sentNorms.join();
+    final sentEnds = <int>[];
+    var running = 0;
+    for (final norm in sentNorms) {
+      running += norm.length;
+      sentEnds.add(running);
+    }
+    final lineToVisible = List<int>.filled(lines.length, 0);
+    if (articleJoined.isEmpty) {
+      return lineToVisible;
+    }
+
+    var cursor = 0;
+    for (var lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+      final norm = _normalizeSongMapText(lines[lineIndex]);
+      if (norm.isEmpty) {
+        lineToVisible[lineIndex] =
+            _visibleIndexAtOffset(sentEnds, math.max(0, cursor - 1));
+        continue;
+      }
+
+      var found = articleJoined.indexOf(norm, cursor);
+      var consume = norm.length;
+      if (found < 0) {
+        final prefix = _longestPrefixMatch(
+          haystack: articleJoined,
+          needle: norm,
+          start: cursor,
+        );
+        if (prefix != null) {
+          found = prefix.$1;
+          consume = prefix.$2;
+        }
+      }
+      if (found < 0) {
+        final remainingLines = math.max(1, lines.length - lineIndex);
+        final remainingArticle = math.max(0, articleJoined.length - cursor);
+        consume = math.max(1, remainingArticle ~/ remainingLines);
+        found = cursor;
+      }
+      final end = math.min(articleJoined.length, found + consume);
+      cursor = math.max(cursor, end);
+      lineToVisible[lineIndex] = _visibleIndexAtOffset(
+        sentEnds,
+        end > 0 ? end - 1 : 0,
+      );
+    }
+    return lineToVisible;
+  }
+
+  static (int, int)? _longestPrefixMatch({
+    required String haystack,
+    required String needle,
+    required int start,
+  }) {
+    final minKeep = math.min(8, needle.length);
+    for (var length = needle.length - 1; length >= minKeep; length -= 1) {
+      final found = haystack.indexOf(needle.substring(0, length), start);
+      if (found >= 0) {
+        return (found, length);
+      }
+    }
+    return null;
+  }
+
+  static int _visibleIndexAtOffset(List<int> sentEnds, int offset) {
+    for (var i = 0; i < sentEnds.length; i += 1) {
+      if (offset < sentEnds[i]) {
+        return i;
+      }
+    }
+    return math.max(0, sentEnds.length - 1);
+  }
+
+  static int _clampIndex(int value, int length) {
+    if (length <= 0) {
+      return 0;
+    }
+    if (value < 0) {
+      return 0;
+    }
+    if (value >= length) {
+      return length - 1;
+    }
+    return value;
+  }
+
+  static String _normalizeSongMapText(String raw) {
+    final buffer = StringBuffer();
+    for (final unit in raw.toLowerCase().codeUnits) {
+      final isDigit = unit >= 48 && unit <= 57;
+      final isLatin = unit >= 97 && unit <= 122;
+      if (isDigit || isLatin || unit > 127) {
+        buffer.writeCharCode(unit);
+      }
+    }
+    return buffer.toString();
+  }
+
+  static List<_RecordingSentenceItem> _ensureTrailingSongPages({
+    required List<_RecordingSentenceItem> items,
+    required List<PictureBookPage> pages,
+  }) {
+    if (items.isEmpty || pages.isEmpty) {
+      return items;
+    }
+    var maxUsed = -1;
+    for (final item in items) {
+      maxUsed = math.max(maxUsed, item.pageIndex);
+    }
+    final trailingUnused = [
+      for (final page in pages)
+        if (page.pageIndex > maxUsed) page,
+    ];
+    if (trailingUnused.isEmpty) {
+      return items;
+    }
+    final out = List<_RecordingSentenceItem>.from(items);
+    final assignCount = math.min(trailingUnused.length, out.length);
+    for (var i = 0; i < assignCount; i += 1) {
+      final itemIndex = out.length - assignCount + i;
+      final page =
+          trailingUnused[trailingUnused.length - assignCount + i];
+      final previous = out[itemIndex];
+      out[itemIndex] = _RecordingSentenceItem(
+        index: previous.index,
+        english: previous.english,
+        chinese: previous.chinese,
+        pageIndex: page.pageIndex,
+      );
+    }
+    return out;
+  }
+
   static PictureBookPage? _pageForSentence(
     List<PictureBookPage> pages,
     int sentenceIndex,
@@ -3690,18 +4030,57 @@ class RecordingExportService {
   }
 
   @visibleForTesting
-  static List<Map<String, Object?>> songTimelineRowsForTest(
-    SongSubtitleTimeline timeline,
-  ) {
-    final items = [
-      for (final cue in timeline.cues)
-        _RecordingSentenceItem(
-          index: cue.lineIndex,
-          english: cue.english,
-          chinese: cue.chinese,
-          pageIndex: math.max(0, cue.lineIndex),
-        ),
+  static List<int> sentenceIndexesForSongCuesForTest({
+    required List<String> sentences,
+    required SongSubtitleTimeline timeline,
+  }) =>
+      _sentenceIndexesForSongCues(
+        sentences: sentences,
+        cues: timeline.cues,
+      );
+
+  @visibleForTesting
+  static List<Map<String, Object?>> songPageAssignmentsForTest({
+    required List<String> sentences,
+    required List<PictureBookPage> pages,
+    required SongSubtitleTimeline timeline,
+  }) {
+    final items = _songItemsForCues(
+      sentences: sentences,
+      readyPages: pages,
+      cues: timeline.cues,
+    );
+    return [
+      for (var i = 0; i < items.length; i += 1)
+        {
+          'lineIndex': items[i].index,
+          'pageIndex': items[i].pageIndex,
+          'english': items[i].english,
+        },
     ];
+  }
+
+  @visibleForTesting
+  static List<Map<String, Object?>> songTimelineRowsForTest(
+    SongSubtitleTimeline timeline, {
+    List<String> sentences = const [],
+    List<PictureBookPage> pages = const [],
+  }) {
+    final items = pages.isEmpty
+        ? [
+            for (final cue in timeline.cues)
+              _RecordingSentenceItem(
+                index: cue.lineIndex,
+                english: cue.english,
+                chinese: cue.chinese,
+                pageIndex: math.max(0, cue.lineIndex),
+              ),
+          ]
+        : _songItemsForCues(
+            sentences: sentences,
+            readyPages: pages,
+            cues: timeline.cues,
+          );
     final built = _buildSongTimeline(_PreparedSongRecordingAssets(
       article: Article(
         id: timeline.articleId,
@@ -3781,11 +4160,9 @@ class RecordingExportService {
     required String articleTitle,
     required String exportKind,
     String subtitleKind = '',
-    String seriesTitle = '',
     DateTime? now,
   }) =>
       _outputBaseName(
-        seriesTitle: seriesTitle,
         articleTitle: articleTitle,
         exportKind: exportKind,
         subtitleKind: subtitleKind,
@@ -3841,9 +4218,14 @@ class RecordingExportService {
   static Future<List<Map<String, String?>>> scanExportedVideoFilesForTest({
     required Directory rootDirectory,
     required String prefix,
+    List<String> extraPrefixes = const [],
   }) async {
+    final prefixes = <String>[
+      prefix,
+      ...extraPrefixes.where((item) => item.trim().isNotEmpty),
+    ];
     final results = <Map<String, String?>>[];
-    for (final directory in _videoScanDirectories(rootDirectory)) {
+    for (final directory in await _videoScanDirectories(rootDirectory)) {
       if (!await directory.exists()) {
         continue;
       }
@@ -3852,8 +4234,8 @@ class RecordingExportService {
             path_lib.extension(entity.path).toLowerCase() != '.mp4') {
           continue;
         }
-        final parsed = _parseExportedVideoFileName(
-          prefix: prefix,
+        final parsed = _parseExportedVideoFileNameWithPrefixes(
+          prefixes: prefixes,
           fileName: path_lib.basename(entity.path),
         );
         if (parsed == null) {

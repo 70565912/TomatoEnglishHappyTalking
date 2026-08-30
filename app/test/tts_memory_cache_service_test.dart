@@ -205,14 +205,12 @@ void main() {
   test('recording output basename distinguishes listening and song exports',
       () {
     final listeningBaseName = RecordingExportService.outputBaseNameForTest(
-      seriesTitle: 'Space Story Series',
       articleTitle: 'Space Snacks',
       exportKind: 'listening',
       subtitleKind: 'srt',
       now: DateTime(2026, 6, 12, 9, 8, 7),
     );
     final songBaseName = RecordingExportService.outputBaseNameForTest(
-      seriesTitle: 'Space Story Series',
       articleTitle: 'Space Snacks',
       exportKind: 'song',
       subtitleKind: 'subtitled',
@@ -221,14 +219,15 @@ void main() {
 
     expect(
       listeningBaseName,
-      'Space Story Series - Space Snacks - listening - srt - 20260612-090807',
+      'Space Snacks - listening - srt - 20260612-090807',
     );
     expect(
       songBaseName,
-      'Space Story Series - Space Snacks - song - subtitled - 20260612-090807',
+      'Space Snacks - song - subtitled - 20260612-090807',
     );
     expect(listeningBaseName, isNot(contains('bilingual')));
     expect(songBaseName, isNot(contains('bilingual')));
+    expect(listeningBaseName, isNot(contains('Space Story Series')));
   });
 
   test('both subtitle video output plan shares collision suffix', () async {
@@ -243,13 +242,13 @@ void main() {
 
     final now = DateTime(2026, 6, 12, 9, 8, 7);
     final subtitledDirectory = Directory(
-      '${temp.path}${Platform.pathSeparator}subtitled',
+      '${temp.path}${Platform.pathSeparator}subtitled'
+      '${Platform.pathSeparator}Space Story Series',
     );
     await subtitledDirectory.create(recursive: true);
     final collision = File(
       '${subtitledDirectory.path}${Platform.pathSeparator}'
-      'Space Story Series - Space Snacks - listening - subtitled - '
-      '20260612-090807.mp4',
+      'Space Snacks - listening - subtitled - 20260612-090807.mp4',
     );
     await collision.writeAsBytes([1]);
 
@@ -278,16 +277,16 @@ void main() {
       plan['primaryVideoPath'],
       endsWith(
         '${Platform.pathSeparator}subtitled${Platform.pathSeparator}'
-        'Space Story Series - Space Snacks - listening - subtitled - '
-        '20260612-090807-2.mp4',
+        'Space Story Series${Platform.pathSeparator}'
+        'Space Snacks - listening - subtitled - 20260612-090807-2.mp4',
       ),
     );
     expect(
       plan['subtitlePath'],
       endsWith(
         '${Platform.pathSeparator}srt${Platform.pathSeparator}'
-        'Space Story Series - Space Snacks - listening - srt - '
-        '20260612-090807-2.srt',
+        'Space Story Series${Platform.pathSeparator}'
+        'Space Snacks - listening - srt - 20260612-090807-2.srt',
       ),
     );
     expect(variants, hasLength(2));
@@ -296,8 +295,8 @@ void main() {
       variants.first['videoPath'],
       endsWith(
         '${Platform.pathSeparator}srt${Platform.pathSeparator}'
-        'Space Story Series - Space Snacks - listening - srt - '
-        '20260612-090807-2.mp4',
+        'Space Story Series${Platform.pathSeparator}'
+        'Space Snacks - listening - srt - 20260612-090807-2.mp4',
       ),
     );
     expect(variants.last, containsPair('kind', 'subtitled'));
@@ -335,6 +334,18 @@ void main() {
         containsPair('stamp', '20260612-090807'),
       ),
     );
+    expect(
+      RecordingExportService.exportedVideoFileNameInfoForTest(
+        prefix: 'Space Snacks',
+        fileName:
+            'Space Snacks - listening - srt - 20260612-090807.mp4',
+      ),
+      allOf(
+        containsPair('exportKind', 'listening'),
+        containsPair('subtitleKind', 'srt'),
+        containsPair('stamp', '20260612-090807'),
+      ),
+    );
   });
 
   test('recording video scanner includes legacy root and categorized folders',
@@ -349,14 +360,19 @@ void main() {
     });
 
     const prefix = 'Space Story Series - Space Snacks';
+    const articlePrefix = 'Space Snacks';
     final srtDirectory = Directory(
       '${temp.path}${Platform.pathSeparator}srt',
     );
     final subtitledDirectory = Directory(
       '${temp.path}${Platform.pathSeparator}subtitled',
     );
+    final bookDirectory = Directory(
+      '${subtitledDirectory.path}${Platform.pathSeparator}Space Story Series',
+    );
     await srtDirectory.create(recursive: true);
     await subtitledDirectory.create(recursive: true);
+    await bookDirectory.create(recursive: true);
     final legacyRoot = File(
       '${temp.path}${Platform.pathSeparator}'
       '$prefix - listening - 20260612-090807.mp4',
@@ -369,19 +385,26 @@ void main() {
       '${subtitledDirectory.path}${Platform.pathSeparator}'
       '$prefix - song - subtitled - 20260612-090808.mp4',
     );
+    final bookVideo = File(
+      '${bookDirectory.path}${Platform.pathSeparator}'
+      '$articlePrefix - listening - subtitled - 20260612-090809.mp4',
+    );
     await legacyRoot.writeAsBytes([1]);
     await srtVideo.writeAsBytes([1]);
     await subtitledVideo.writeAsBytes([1]);
+    await bookVideo.writeAsBytes([1]);
 
     final scanned = await RecordingExportService.scanExportedVideoFilesForTest(
       rootDirectory: temp,
       prefix: prefix,
+      extraPrefixes: const [articlePrefix],
     );
     final scannedPaths = scanned.map((item) => item['path']).toSet();
 
     expect(scannedPaths, contains(legacyRoot.path));
     expect(scannedPaths, contains(srtVideo.path));
     expect(scannedPaths, contains(subtitledVideo.path));
+    expect(scannedPaths, contains(bookVideo.path));
     expect(
       scanned,
       contains(allOf(
@@ -416,12 +439,13 @@ void main() {
         Directory('${temp.path}${Platform.pathSeparator}recording-export');
     await outputDirectory.create(recursive: true);
     final mp3Directory = Directory(
-      '${outputDirectory.path}${Platform.pathSeparator}mp3',
+      '${outputDirectory.path}${Platform.pathSeparator}mp3'
+      '${Platform.pathSeparator}Space Story Series',
     );
     await mp3Directory.create(recursive: true);
     final collision = File(
       '${mp3Directory.path}${Platform.pathSeparator}'
-      'Space Story Series - Space Snacks - song-audio - 20260612-090807.flac',
+      'Space Snacks - song-audio - 20260612-090807.flac',
     );
     await collision.writeAsBytes([9]);
 
@@ -457,11 +481,56 @@ void main() {
       result.outputPath,
       endsWith(
         '${Platform.pathSeparator}mp3${Platform.pathSeparator}'
-        'Space Story Series - Space Snacks - song-audio - '
-        '20260612-090807-2.flac',
+        'Space Story Series${Platform.pathSeparator}'
+        'Space Snacks - song-audio - 20260612-090807-2.flac',
       ),
     );
     expect(await File(result.outputPath).readAsBytes(), sourceBytes);
+  });
+
+  test('song audio export without series uses article title as book folder',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'tomato_song_audio_no_series_test_',
+    );
+    addTearDown(() async {
+      if (await temp.exists()) {
+        await temp.delete(recursive: true);
+      }
+    });
+
+    final sourceFile = File('${temp.path}${Platform.pathSeparator}source.mp3');
+    await sourceFile.writeAsBytes(const [1, 2, 3]);
+    final outputDirectory =
+        Directory('${temp.path}${Platform.pathSeparator}recording-export');
+    await outputDirectory.create(recursive: true);
+    final now = DateTime(2026, 6, 12, 9, 8, 7);
+    final result = await RecordingExportService.exportSongAudioForTest(
+      articleId: 9,
+      article: Article(
+        id: 9,
+        title: 'Standalone Chapter',
+        content: '',
+        sentences: const [],
+        createdAt: now,
+      ),
+      version: ArticleSongVersion(
+        id: 'song-v2',
+        audioPath: sourceFile.path,
+      ),
+      outputDirectory: outputDirectory,
+      now: now,
+    );
+
+    expect(
+      result.outputPath,
+      endsWith(
+        '${Platform.pathSeparator}mp3${Platform.pathSeparator}'
+        'Standalone Chapter${Platform.pathSeparator}'
+        'Standalone Chapter - song-audio - 20260612-090807.mp3',
+      ),
+    );
+    expect(await File(result.outputPath).exists(), isTrue);
   });
 
   test('recording subtitle mode normalizes settings and output behavior', () {

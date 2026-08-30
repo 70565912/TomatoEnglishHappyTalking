@@ -3497,7 +3497,7 @@ describe('App', () => {
     fireEvent.click(exportButton);
     const dialog = await screen.findByRole('dialog', { name: '录制视频设置' });
     expect(
-      within(dialog).getByText('文件将保存到程序目录 recording-export 的分类子目录。'),
+      within(dialog).getByText('文件将保存到程序目录 recording-export 的类型和书名子目录。'),
     ).toBeInTheDocument();
     chooseRecordingOption(dialog, '转场', '卷边翻页');
     chooseRecordingOption(dialog, '字幕', '两版视频 + SRT');
@@ -6548,7 +6548,7 @@ describe('App', () => {
 
     fireEvent.click(audioButton);
     await waitFor(() => expect(audioExportPayloads[0]).toMatchObject({ articleId: 1, versionId: 'external-1' }));
-    expect(await screen.findByText('音频已导出到 recording-export/mp3')).toBeInTheDocument();
+    expect(await screen.findByText('音频已导出到 recording-export/mp3/<书名>')).toBeInTheDocument();
   });
 
   it('submits Suno song generation with manual browser guidance', async () => {
