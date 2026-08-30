@@ -192,6 +192,7 @@ class SongSubtitleTimelineService {
     required List<String> lyricLines,
     required Map<int, String> translations,
     String source = 'suno',
+    bool allowRemoteAsr = true,
   }) async {
     final audioFile = File(audioPath);
     if (!await audioFile.exists()) {
@@ -292,11 +293,17 @@ class SongSubtitleTimelineService {
 
     final asrBytes =
         useOriginalAudio ? audioBytes : await _wav16kMonoBytes(audioPath);
-    final asr = await StreamingAsrService.recognizeWithTimeline(
-      audioBytes: asrBytes,
-      audioMimeType: asrMimeType,
-      language: asrLanguage,
-    );
+    late final AsrTimelineResult asr;
+    try {
+      asr = await StreamingAsrService.recognizeWithTimeline(
+        audioBytes: asrBytes,
+        audioMimeType: asrMimeType,
+        language: asrLanguage,
+        cacheOnly: !allowRemoteAsr,
+      );
+    } on AsrException catch (error) {
+      throw SongSubtitleTimelineException(error.message, cause: error);
+    }
     final estimatedDuration = _estimateDurationMs(
       audioBytes: audioBytes,
       asr: asr,

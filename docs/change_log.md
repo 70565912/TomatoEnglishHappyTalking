@@ -19,6 +19,11 @@
   `recording-export/{srt|subtitled|mp3}/<书名>/`；书名用绘本系列名，无系列时用文章标题。
   文件名去掉系列前缀，只保留章节名与 `listening` / `song` / `song-audio` 标记。视频库仍扫描旧扁平文件。
 
+## 2026-08-18
+
+- **歌曲视频绘本页映射**：`listening.songRecordVideo` 不再把字幕 `lineIndex` 当成绘本句子下标。导出时按歌词文本对齐当前 `articles.sentences` 槽位，再落到 `picture_book_pages` 句子范围；旧歌词短于新分句时，未覆盖的尾页仍分配给最后几句画面。该映射在导出时独立完成，不依赖是否已有 ASR 缓存。
+- **歌曲字幕跟随当前分句重算**：`listening.songTimelineGenerate` 用当前可见句作为歌词行，把已缓存的 ASR 词流重新对齐；缓存未命中时才提交一次识别并写入缓存。分句升级后重新生成字幕，画面与字幕切到新句界。
+
 ## 2026-08-17
 
 - **发布 v1.7.0**：`app/pubspec.yaml` → `1.7.0+9`。英文朗读分句内部求解器定版为

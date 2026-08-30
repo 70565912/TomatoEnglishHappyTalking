@@ -4088,37 +4088,13 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     if (articleId == null) {
       throw const FormatException('文章尚未保存，不能生成歌曲字幕');
     }
-    final articleLyrics = _articleSongLyrics(article);
-    final submittedLyrics = (version.submittedLyrics ?? '').trim();
-    final timelineLyrics =
-        submittedLyrics.isNotEmpty ? submittedLyrics : articleLyrics;
-    final usesArticleLyrics = submittedLyrics.isEmpty ||
-        submittedLyrics.replaceAll('\r\n', '\n').trim() ==
-            articleLyrics.replaceAll('\r\n', '\n').trim();
-    final lyricLines = timelineLyrics
-        .split(RegExp(r'\r?\n'))
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList(growable: false);
-    final translations = <int, String>{};
-    if (usesArticleLyrics) {
-      for (var i = 0; i < lyricLines.length; i += 1) {
-        final translation = await DatabaseService.getArticleSentenceTranslation(
-          articleId,
-          i,
-          lyricLines[i],
-        );
-        if (translation != null && translation.trim().isNotEmpty) {
-          translations[i] = translation.trim();
-        }
-      }
-    }
+    final material = await _currentArticleSongTimelineLyrics(article);
     final result = await SongSubtitleTimelineService.generate(
       articleId: articleId,
       audioPath: version.audioPath,
       versionId: version.id,
-      lyricLines: lyricLines,
-      translations: translations,
+      lyricLines: material.lines,
+      translations: material.translations,
       source: version.source,
     );
     final updated = ArticleSongVersion(
@@ -4131,7 +4107,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       stylePrompt: version.stylePrompt,
       styleKey: version.styleKey,
       lyricsHash: result.lyricsHash,
-      submittedLyrics: timelineLyrics,
+      submittedLyrics: material.lyricsText,
       source: version.source,
       timelinePath: result.timelinePath,
       timelineStatus: 'ready',
@@ -4152,36 +4128,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     if (articleId == null) {
       throw const FormatException('文章尚未保存，不能生成歌曲字幕');
     }
-    final articleLyrics = _articleSongLyrics(article);
-    final submittedLyrics = (version.submittedLyrics ?? '').trim();
-    final timelineLyrics =
-        submittedLyrics.isNotEmpty ? submittedLyrics : articleLyrics;
-    final usesArticleLyrics = submittedLyrics.isEmpty ||
-        submittedLyrics.replaceAll('\r\n', '\n').trim() ==
-            articleLyrics.replaceAll('\r\n', '\n').trim();
-    final lyricLines = timelineLyrics
-        .split(RegExp(r'\r?\n'))
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList(growable: false);
-    final translations = <int, String>{};
-    if (usesArticleLyrics) {
-      for (var i = 0; i < lyricLines.length; i += 1) {
-        final translation = await DatabaseService.getArticleSentenceTranslation(
-          articleId,
-          i,
-          lyricLines[i],
-        );
-        if (translation != null && translation.trim().isNotEmpty) {
-          translations[i] = translation.trim();
-        }
-      }
-    }
+    final material = await _currentArticleSongTimelineLyrics(article);
     final result = await SongSubtitleTimelineService.generateFromAsrSnapshot(
       articleId: articleId,
       audioPath: version.audioPath,
-      lyricLines: lyricLines,
-      translations: translations,
+      lyricLines: material.lines,
+      translations: material.translations,
       asrSnapshotPath: asrSnapshotPath,
       source: version.source,
     );
@@ -4195,7 +4147,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       stylePrompt: version.stylePrompt,
       styleKey: version.styleKey,
       lyricsHash: result.lyricsHash,
-      submittedLyrics: timelineLyrics,
+      submittedLyrics: material.lyricsText,
       source: version.source,
       timelinePath: result.timelinePath,
       timelineStatus: 'ready',
@@ -4205,6 +4157,33 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     );
     await _persistUpdatedSongVersion(article, updated);
     return updated;
+  }
+
+  Future<({List<String> lines, Map<int, String> translations, String lyricsText})>
+      _currentArticleSongTimelineLyrics(Article article) async {
+    final indexes = visibleSentenceIndexes(article.sentences).toList();
+    final lines = [
+      for (final index in indexes) article.sentences[index].trim(),
+    ];
+    final translations = <int, String>{};
+    final articleId = article.id;
+    if (articleId != null) {
+      for (var lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+        final translation = await DatabaseService.getArticleSentenceTranslation(
+          articleId,
+          indexes[lineIndex],
+          lines[lineIndex],
+        );
+        if (translation != null && translation.trim().isNotEmpty) {
+          translations[lineIndex] = translation.trim();
+        }
+      }
+    }
+    return (
+      lines: lines,
+      translations: translations,
+      lyricsText: lines.join('\n'),
+    );
   }
 
   Future<void> _persistUpdatedSongVersion(

@@ -200,4 +200,26 @@ void main() {
     expect(result.raw['cacheHit'], isTrue);
     expect(await ApiCacheService.getEntry(cacheKey), isNotNull);
   });
+
+  test('cacheOnly refuses remote recognition when timeline cache is missing',
+      () async {
+    AppConfig.setRuntimeConfigForTest(
+      asrProvider: AppConfig.aiProviderVolcengine,
+      volcAsrModel: AppConfig.volcAsrModelSeedAsrV2,
+    );
+    await expectLater(
+      StreamingAsrService.recognizeWithTimeline(
+        audioBytes: const [1, 2, 3, 4],
+        language: 'en-US',
+        cacheOnly: true,
+      ),
+      throwsA(
+        isA<AsrException>().having(
+          (error) => error.message,
+          'message',
+          contains('没有可用的本地 ASR 时间轴缓存'),
+        ),
+      ),
+    );
+  });
 }

@@ -543,6 +543,7 @@ class StreamingAsrService {
     required List<int> audioBytes,
     String audioMimeType = 'audio/wav',
     String language = 'en-US',
+    bool cacheOnly = false,
   }) async {
     if (audioBytes.isEmpty) {
       throw const AsrException(AsrFailureType.emptyAudio, '音频为空，无法识别');
@@ -593,6 +594,12 @@ class StreamingAsrService {
         configuredModel: configuredModel,
         resourceId: cachedResourceId,
         cacheHit: true,
+      );
+    }
+    if (cacheOnly) {
+      throw const AsrException(
+        AsrFailureType.emptyResult,
+        '没有可用的本地 ASR 时间轴缓存，已拒绝重新识别以免产生费用',
       );
     }
 

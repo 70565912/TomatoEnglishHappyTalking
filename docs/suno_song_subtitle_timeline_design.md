@@ -13,14 +13,16 @@
 - 听力页歌曲弹窗中，每个本地歌曲版本可触发“生成歌曲字幕”；生成完成后版本 payload 会带 `timelinePath`、`timelineStatus`、`timelineConfidence`。
 - 歌曲播放时 native 通过 `listening.song.position` 推送当前 cue，Web UI 用 cue 更新绘本字幕和当前句索引。
 - 歌曲版视频通过 `listening.songRecordVideo` 导出，复用歌曲音频、字幕时间轴和绘本页，未生成 `timelinePath` 时录制按钮保持不可用。
+- **重新生成字幕**使用当前文章的可见句，而不是冻结的旧 `submittedLyrics`。ASR 词流按音频缓存：命中则只做本地对齐；未命中则提交一次识别并写入缓存。
+- 歌曲视频选图按歌词文本对齐到当前 `articles.sentences` 槽位，再查 `picture_book_pages` 的句子范围；**不要**把 `cue.lineIndex` 当成绘本 `sentenceIndex`。即使尚未重算字幕时间轴，未覆盖的尾页仍须出现在最后几句画面上。
 - 歌曲版视频的字幕模式与听力视频一致：无内置字幕视频 + SRT、内置字幕视频、两版视频 + SRT。完成结果用 `videoVariants` 区分 `srt` 和 `subtitled` 两类产物。
-- 歌曲版本可通过 `listening.songExportAudio` 单独复制音频到程序目录 `recording-export/`，不依赖 timeline。
+- 歌曲版本可通过 `listening.songExportAudio` 单独复制音频到程序目录 `recording-export/mp3/<书名>/`，不依赖 timeline。
 - 诊断命令 `diagnostics.songAsrSnapshot` 会把一次真实 ASR 词级结果保存到程序目录 `diagnostics/`；`diagnostics.songTimelineFromAsrSnapshot` 可从该快照重建 timeline，用于复现和回归对齐问题。
 - Suno 下载音频和 metadata 默认保存到程序目录 `suno-music/`；阿里云百聆和 ElevenLabs Music 也保存 provider metadata 并作为同一文章的本地歌曲版本参与播放、字幕和导出。旧 `.tmp` / 系统临时目录资产会迁移到持久目录，避免重新发布或系统清理后丢失。
 
 ## 目标
 
-- 字幕文本必须使用该歌曲版本 metadata 中的 `submittedLyrics`，不使用 ASR 改写后的文本。
+- 字幕文本在重新生成后使用**当前可见句**；ASR 只提供时间锚点，不改写句子正文。
 - 字幕时间来自实际下载歌曲，尽量贴合歌曲节奏。
 - 允许歌曲中存在哼唱、前奏、间奏或拖长音。
 - 字幕行之间可以首尾相接，不要求在哼唱处留空白。

@@ -24,7 +24,7 @@
 | 创作中心生成听力 | 不为隐藏句生成/统计 TTS |
 | 跟读 | 打开与步进跳过隐藏槽 |
 | 视频导出 | readiness 不要求隐藏句音频 |
-| 歌曲 | 仍用 metadata `submittedLyrics` / 时间轴，不自动重算；改正文后旧歌曲仍列出，由用户删或用。见 `docs/article_song_version_retention.md` |
+| 歌曲 | 列表仍用 metadata 时间轴；**重新生成字幕**时按当前可见句重对齐 ASR 词流（先本地缓存，未命中再提交一次并保存）。导出视频的绘本页映射不依赖这次重算是否成功。见 `docs/article_song_version_retention.md` |
 | 绘本分镜 | **不**因隐藏句失效 `summary_json` / `picture_book_pages`；`sentenceStartIndex` / `sentenceEndIndex` 永远使用 `articles.sentences` 原始槽位下标，生成 prompt、保存分镜和创建 `picture_book_pages` 时都不能过滤空槽后重新编号 |
 | 对话提纲 | `contentHash` 忽略空句；隐藏后 hash 可能变化，下次对话或重生成提纲 |
 
