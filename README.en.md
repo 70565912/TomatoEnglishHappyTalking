@@ -21,25 +21,29 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
-## Latest release · v1.7.0 English read-aloud chunking V3.9 (2026-08-17)
+## Latest release · v1.8.0 English read-aloud chunking V3.10 (2026-08-30)
 
-Tomato's English read-aloud chunker for TTS, subtitles, listening navigation, and shadowing keeps one
-immutable fact build and one bounded DAG solve per orthographic sentence. Its accepted internal solver is
-now `syntax_solver_v3_9`.
+`syntax_solver_v3_10` retains one immutable fact build and one bounded DAG solve while unifying straight
+and curly single/double quotes plus parentheses in one delimiter scanner. Read-only coverage from that same
+DAG proves that approved local review paths are genuinely reachable.
 
-- Full Alice (39) and Willows (62) gates report 0 DB-adjudicated unsupported cuts. Diffs versus
-  `syntax_solver_v3_8` were reviewed; narrow fixes such as misparsed phrasal `go|on` are included.
-- Same-machine alternating AOT replays versus v3.8 show no regression; full-book end-to-end median wall
-  time is about 22% faster.
-- Production splitter logic grows only modestly (~+713 net lines) while remaining a single facts/lattice/solve
-  pipeline.
+- Closing delimiters stay with the left chunk and opening delimiters with the right. Glued speaker turns such
+  as `’‘` and `''` are supported without mispairing contractions, possessives, `’Twas`, `'em`, or unclosed quotes.
+- All 55 review units and all 243 native UDPipe structural gold cases pass. Candidate limits remain 8 initial
+  and 24 expanded paths, with no book whitelist, promoted fixed path, or second DP.
+- Default choices remain unchanged across the 101 Alice and Willows chapters. Looking Glass changes are limited
+  to the 14 approved delimiter fixes. Five same-machine AOT scenarios ran for nine alternating rounds each with
+  no clear median regression.
+- Windows and Android releases continue to bundle local Nunito and icon fonts instead of relying on runtime
+  downloads for core UI typography.
 
 > Published articles keep their persisted sentence slots and are not automatically resegmented. The new
 > solver applies only to newly created articles or an explicit user rebuild.
 
 [Read the unified read-aloud chunking specification](docs/read_aloud_sentence_split_spec.md) ·
 [Read the engineering iteration rules](docs/read_aloud_sentence_split_engineering_rules.md) ·
-[Browse all tests and evaluations](docs/testing-and-evaluation.md)
+[Browse all tests and evaluations](docs/testing-and-evaluation.md) ·
+[Read the v1.8.0 release notes](docs/releases/v1.8.0.md)
 
 ## From an article to complete learning material
 

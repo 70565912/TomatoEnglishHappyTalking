@@ -21,21 +21,25 @@
 
 ![Tomato 产品总览](docs/readme/product-overview.webp)
 
-## 最新版本 · v1.7.0 英文朗读分句 V3.9（2026-08-17）
+## 最新版本 · v1.8.0 英文朗读分句 V3.10（2026-08-30）
 
-Tomato 英文朗读分句内部求解器定版为 `syntax_solver_v3_9`：在 V3.8 一次事实构建与一次有界 DAG
-求解架构上，收紧标点优先、长度区与短语动词粒子等可解释规则，相对 DB 不支持切法硬错误归零。
+`syntax_solver_v3_10` 延续一次事实构建、一次有界 DAG 求解，把直/弯单双引号和圆括号统一为
+同一个 delimiter scanner，并用同一 DAG 的只读 coverage 证明人工认可的局部切法确实可达。
 
-- Alice 39 章与 Willows 62 章全量门禁：DB 裁决硬错误 0；相对 `syntax_solver_v3_8` 的嫌疑新切点
-  已人工/规范裁决，误切 `go|on` 等已收窄修复。
-- 同机 AOT 交替回放相对 v3.8：代表章与全量均无回退，全量端到端中位约快 22%。
-- 生产分句逻辑小幅增量（约 +713 行净增），仍保持唯一事实/格点/求解链路。
+- 右引号/右括号归左块、左引号/左括号归右块；支持 `’‘`、`''` 等无空格相邻说话回合，同时排除
+  contraction、所有格、`’Twas`、`'em` 和未闭合引号误配。
+- 55 个审核单元与 243 项原生 UDPipe 结构金标全部通过；候选仍为初轮 8 条、扩展最多 24 条，
+  没有书籍白名单、路径保送或第二次 DP。
+- Alice 与 Willows 101 章默认首选没有新增变化；Looking Glass 只保留已批准的 14 组引号修正。
+  五组同机 AOT 基准均扩展至 9 轮，没有明确中位数性能回退。
+- Windows/Android Release 继续打包本地 Nunito 与图标字体，不依赖运行时在线下载核心界面字体。
 
 > 已发布文章继续使用持久化句槽，不会因算法升级自动重分；新建文章或用户显式重建后才使用新求解器。
 
 [查看英文朗读分句统一规范](docs/read_aloud_sentence_split_spec.md) ·
 [查看分句工程迭代约束](docs/read_aloud_sentence_split_engineering_rules.md) ·
-[查看全部测试与评测](docs/testing-and-evaluation.md)
+[查看全部测试与评测](docs/testing-and-evaluation.md) ·
+[查看 v1.8.0 发布说明](docs/releases/v1.8.0.md)
 
 ## 从文章到完整学习材料
 

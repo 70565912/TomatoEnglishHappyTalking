@@ -2,6 +2,9 @@
 
 ## 2026-08-30
 
+- **发布 v1.8.0**：`app/pubspec.yaml` → `1.8.0+10`。GitHub Release 提供不含本机数据库、缓存、
+  日志、媒体和密钥的 Windows ZIP，以及 Android APK 与 SHA-256 校验清单；正式构建继续包含
+  本地 Nunito 和 Cupertino 图标字体。
 - **英文朗读分句 v3.10**：内部求解器升级为 `syntax_solver_v3_10`。直/弯单双引号与圆括号共用
   单一 delimiter scanner，统一关闭符归左、打开符归右及无空格相邻说话回合边界；撇号、所有格、
   `’Twas`、`'em` 和未闭合引号保持词法/告警语义，不跨段猜配。

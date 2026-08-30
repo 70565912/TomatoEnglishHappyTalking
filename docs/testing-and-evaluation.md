@@ -1,6 +1,6 @@
 # 测试与评测报告 / Testing and Evaluation Reports
 
-更新日期：2026-08-16
+更新日期：2026-08-30
 
 本文汇总 Tomato English Happy Talking 仓库中已经形成测试过程、数据或明确结论的技术评测。
 它面向需要选择文本模型、句法器、字幕对齐器或客户端实现方案的研发人员，也为复现结果的
@@ -32,6 +32,7 @@ Volcengine SeedASR / BigASR、ASR word timestamps、Flutter、WebView2、Windows
 
 | 主题 | 主要结论 | 证据等级 |
 | --- | --- | --- |
+| 英文朗读分句 V3.10 | 55个局部审核单元和243项原生金标全部受支持；Alice＋Willows 101章默认首选无新增变化，Looking Glass仅保留14组批准的 delimiter 修正；五组同机AOT九轮未发现明确中位数回退 | 正式回归与性能门禁 |
 | 受约束 LLM 分句 | 阿里 `qwen3.7-max`（P7）与火山 `deepseek-v4-flash-ga-260731`（P8）均达到三轮 30/30；豆包 Lite/Pro 未达到生产门槛 | 正式评测 |
 | 端侧依存句法 | 项目 UDPipe EWT 模型的 approved-path 覆盖为 243/243；纯本地精确命中为 207/243，说明依存句法适合生成和约束候选，不应被当作唯一自然度裁判 | 正式评测 |
 | 绘本章节分镜 | 通用局部事实块规则将四篇跨结构样本的最终 12 次响应降至 0 个结构失败，并明显降低说明文场景数波动；语义措辞仍需人工审核 | 正式调优评测 |
@@ -55,8 +56,9 @@ Volcengine SeedASR / BigASR、ASR word timestamps、Flutter、WebView2、Windows
 ### 方法
 
 1. 端侧 UDPipe 解析和 Dart 求解器先锁定原文句界、30/20 词硬约束及标点优先级。
-2. 243 项金标检查本地精确结果与 approved-path 候选覆盖；分句质量与性能以 Alice＋Willows
-   101章全量回放为主，不再使用覆盖过窄且耗时过高的60项 EWT 分句留出集。
+2. 243 项金标检查本地精确结果与 approved-path 候选覆盖；V3.10 另以55个局部审核单元验证
+   前24条候选和同一 DAG coverage。分句质量与性能以 Alice＋Willows 101章全量回放为主，
+   不再使用覆盖过窄且耗时过高的60项 EWT 分句留出集。
 3. 只有包含无标点候选的困难句才进入远程复核。十类通用困难输入以 `temperature=0` 连续测试
    三轮；生产门槛为 path 协议合法率 100%、30/30 approved 且三轮一致。
 4. AI 只能返回 `originalIndex + candidatePathId` 或 `REJECT`。非法 ID、超时或未验收模型一律
