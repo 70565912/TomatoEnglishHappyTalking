@@ -7229,6 +7229,7 @@ function ListeningPage({
             englishActive={activePart === 'english'}
             chineseActive={activePart === 'chinese'}
             enablePageTransition={mode === 'song'}
+            pageTransition={recordingSettings?.pageTransition ?? 'none'}
             onWordClick={openWordCard}
             onRetry={retryPicturePage}
             isRetrying={picturePage ? pictureBookRetryGate.isRetrying(articleId, picturePage.pageIndex) : false}
@@ -7434,6 +7435,7 @@ function ListeningPage({
           article={article}
           items={items}
           startIndex={fullscreenStartIndex}
+          pageTransition={recordingSettings?.pageTransition ?? 'none'}
           pictureBookState={pictureBookState}
           onPictureBookLoaded={onPictureBookLoaded}
           onClose={() => setFullscreenPlayerOpen(false)}
@@ -7444,6 +7446,7 @@ function ListeningPage({
           article={article}
           version={selectedSongVersion}
           startLineIndex={songFullscreenStartIndex}
+          pageTransition={recordingSettings?.pageTransition ?? 'none'}
           pictureBookState={pictureBookState}
           onPictureBookLoaded={onPictureBookLoaded}
           onPlaybackStopped={() => {
@@ -7557,6 +7560,7 @@ function FullscreenListeningPlayer({
   article,
   items,
   startIndex = 0,
+  pageTransition = 'none',
   pictureBookState,
   onPictureBookLoaded,
   onClose,
@@ -7564,6 +7568,7 @@ function FullscreenListeningPlayer({
   article: Article;
   items: ListeningItem[];
   startIndex?: number;
+  pageTransition?: RecordingSettings['pageTransition'] | string | null;
   pictureBookState: PictureBookState | null;
   onPictureBookLoaded: PictureBookStateSetter;
   onClose: () => void;
@@ -7807,7 +7812,11 @@ function FullscreenListeningPlayer({
       <div className="fullscreen-listening-stage">
         <div className="fullscreen-listening-frame">
           {imageSrc ? (
-            <TransitioningPicture src={imageSrc} objectFit="contain" />
+            <TransitioningPicture
+              src={imageSrc}
+              objectFit="contain"
+              transition={pageTransition}
+            />
           ) : (
             <div className="fullscreen-listening-missing">
               <Icon name="spark" />
@@ -7873,6 +7882,7 @@ function FullscreenSongPlayer({
   article,
   version,
   startLineIndex,
+  pageTransition = 'none',
   pictureBookState,
   onPictureBookLoaded,
   onPlaybackStopped,
@@ -7881,6 +7891,7 @@ function FullscreenSongPlayer({
   article: Article;
   version: SongVersionPayload;
   startLineIndex: number;
+  pageTransition?: RecordingSettings['pageTransition'] | string | null;
   pictureBookState: PictureBookState | null;
   onPictureBookLoaded: PictureBookStateSetter;
   onPlaybackStopped: () => void;
@@ -8134,7 +8145,11 @@ function FullscreenSongPlayer({
       <div className="fullscreen-listening-stage">
         <div className="fullscreen-listening-frame">
           {imageSrc ? (
-            <TransitioningPicture src={imageSrc} objectFit="contain" />
+            <TransitioningPicture
+              src={imageSrc}
+              objectFit="contain"
+              transition={pageTransition}
+            />
           ) : (
             <div className="fullscreen-listening-missing">
               <Icon name="spark" />
@@ -9729,6 +9744,7 @@ function PictureBookScene({
   chineseActive = false,
   showSubtitles = true,
   enablePageTransition = false,
+  pageTransition = 'none',
   onWordClick,
   onRetry,
   isRetrying = false,
@@ -9741,6 +9757,7 @@ function PictureBookScene({
   chineseActive?: boolean;
   showSubtitles?: boolean;
   enablePageTransition?: boolean;
+  pageTransition?: RecordingSettings['pageTransition'] | string | null;
   onWordClick: (word: string, sentence: string, anchor: DOMRect) => void;
   onRetry: (page: PictureBookPage) => void;
   isRetrying?: boolean;
@@ -9783,7 +9800,11 @@ function PictureBookScene({
     <section className={`picture-book-scene ${isReady ? 'ready' : ''} ${isBusy ? 'busy' : ''} ${isRetryable ? 'failed' : ''}`}>
       {isReady ? (
         enablePageTransition ? (
-          <TransitioningPicture src={imageSrc} objectFit="cover" />
+          <TransitioningPicture
+            src={imageSrc}
+            objectFit="cover"
+            transition={pageTransition}
+          />
         ) : (
           <img src={imageSrc} alt="" />
         )

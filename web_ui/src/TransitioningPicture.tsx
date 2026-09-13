@@ -1,6 +1,19 @@
 import { useEffect, useLayoutEffect, useRef, useState, type TransitionEvent } from 'react';
+import type { RecordingPageTransition } from './types';
 
-const CROSSFADE_MS = 300;
+const TRANSITION_MS = 500;
+
+function normalizePageTransition(value?: string | null): RecordingPageTransition {
+  if (
+    value === 'crossFade' ||
+    value === 'panZoomFade' ||
+    value === 'slide' ||
+    value === 'pageCurl'
+  ) {
+    return value;
+  }
+  return 'none';
+}
 
 function usePrefersReducedMotion(): boolean {
   const [reduced, setReduced] = useState(() => {
@@ -27,15 +40,19 @@ function usePrefersReducedMotion(): boolean {
 export function TransitioningPicture({
   src,
   objectFit = 'contain',
+  transition = 'none',
   className,
   alt = '',
 }: {
   src: string;
   objectFit?: 'contain' | 'cover';
+  transition?: RecordingPageTransition | string | null;
   className?: string;
   alt?: string;
 }) {
   const reduceMotion = usePrefersReducedMotion();
+  const pageTransition = normalizePageTransition(transition);
+  const animated = !reduceMotion && pageTransition !== 'none';
   const [currentSrc, setCurrentSrc] = useState(src);
   const [nextSrc, setNextSrc] = useState<string | null>(null);
   const [fading, setFading] = useState(false);
@@ -61,7 +78,7 @@ export function TransitioningPicture({
     setFading(false);
   };
 
-  const beginFadeToIncoming = () => {
+  const beginTransitionToIncoming = () => {
     clearFadeFrame();
     fadeFrameRef.current = window.requestAnimationFrame(() => {
       fadeFrameRef.current = window.requestAnimationFrame(() => {
@@ -88,7 +105,7 @@ export function TransitioningPicture({
       return undefined;
     }
 
-    if (reduceMotion || !currentRef.current) {
+    if (!animated || !currentRef.current) {
       snapTo(target);
       return undefined;
     }
@@ -100,13 +117,13 @@ export function TransitioningPicture({
     return () => {
       clearFadeFrame();
     };
-  }, [src, reduceMotion]);
+  }, [src, animated]);
 
   useLayoutEffect(() => {
     if (!nextSrc) return;
     const image = incomingRef.current;
     if (image && image.complete && image.naturalWidth > 0) {
-      beginFadeToIncoming();
+      beginTransitionToIncoming();
     }
   }, [nextSrc]);
 
@@ -114,7 +131,7 @@ export function TransitioningPicture({
 
   const onIncomingLoad = () => {
     if (nextRef.current !== targetRef.current) return;
-    beginFadeToIncoming();
+    beginTransitionToIncoming();
   };
 
   const onIncomingError = () => {
@@ -123,7 +140,10 @@ export function TransitioningPicture({
   };
 
   const onIncomingTransitionEnd = (event: TransitionEvent<HTMLImageElement>) => {
-    if (event.propertyName !== 'opacity') return;
+    const property = event.propertyName;
+    if (property !== 'opacity' && property !== 'transform' && property !== 'clip-path') {
+      return;
+    }
     if (!fading || !nextRef.current || nextRef.current !== targetRef.current) return;
     snapTo(nextRef.current);
   };
@@ -138,8 +158,9 @@ export function TransitioningPicture({
     <div
       className={stackClassName}
       data-object-fit={objectFit}
+      data-transition={pageTransition}
       data-transitioning={fading || nextSrc ? 'true' : 'false'}
-      style={{ ['--picture-crossfade-ms' as string]: `${CROSSFADE_MS}ms` }}
+      style={{ ['--picture-transition-ms' as string]: `${TRANSITION_MS}ms` }}
     >
       {currentSrc ? (
         <img

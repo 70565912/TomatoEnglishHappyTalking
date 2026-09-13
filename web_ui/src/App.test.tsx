@@ -4029,6 +4029,16 @@ describe('App', () => {
         if (type === 'listening.pause' || type === 'listening.resume' || type === 'listening.stop') {
           return ok(message.id, type, { paused: true, resumed: true, stopped: true });
         }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'slide',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
         return ok(message.id, type, {});
       }),
     };
@@ -4075,6 +4085,10 @@ describe('App', () => {
     expect(fullscreenDialog.parentElement).toBe(document.body);
     expect(fullscreenDialog.querySelector('.fullscreen-listening-frame')).toBeInTheDocument();
     expect(fullscreenDialog.querySelector('.picture-transition-stack')).toBeInTheDocument();
+    expect(fullscreenDialog.querySelector('.picture-transition-stack')).toHaveAttribute(
+      'data-transition',
+      'slide',
+    );
     const fullscreenToolbar = fullscreenDialog.querySelector('.fullscreen-listening-toolbar') as HTMLElement;
     expect(fullscreenDialog).toHaveClass('controls-hidden');
     expect(fullscreenDialog).toHaveClass('cursor-hidden');
@@ -7571,6 +7585,16 @@ describe('App', () => {
         if (type === 'listening.songPlay') {
           return ok(message.id, type, { playbackState: 'playing' });
         }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'crossFade',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
         return ok(message.id, type, {});
       }),
     };
@@ -7579,7 +7603,10 @@ describe('App', () => {
 
     const sceneRoot = () => document.querySelector('.picture-book-scene') as HTMLElement;
     await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_0'));
-    expect(sceneRoot().querySelector('.picture-transition-stack')).toBeInTheDocument();
+    expect(sceneRoot().querySelector('.picture-transition-stack')).toHaveAttribute(
+      'data-transition',
+      'crossFade',
+    );
     fireEvent.click(await screen.findByRole('button', { name: '开始播放' }));
 
     act(() => {
@@ -7647,6 +7674,174 @@ describe('App', () => {
     });
     await flushPictureCrossfade(sceneRoot());
     await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_1'));
+    expect(sceneRoot().querySelectorAll('img')).toHaveLength(1);
+  });
+
+  it('snaps song picture pages without dual layers when pageTransition is none', async () => {
+    window.location.hash = '/books/7/player?articleId=1&mode=song';
+    const article = {
+      id: 1,
+      title: 'Space Snacks',
+      content: 'Tom finds a bright snack box. He shares it with his team.',
+      sentences: ['Tom finds a bright snack box.', 'He shares it with his team.'],
+      sentenceCount: 2,
+      createdAt: new Date().toISOString(),
+      averageScore: 86,
+      seriesId: 7,
+      seriesTitle: 'Space Story Series',
+    };
+    const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
+      id: String(id),
+      ok: true,
+      type: `${type}.result`,
+      payload,
+    });
+
+    window.flutter_inappwebview = {
+      callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
+        const type = String(message.type ?? '');
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        if (type === 'app.ready' || type === 'article.list') {
+          return ok(message.id, type, {
+            articles: [article],
+            series: [
+              {
+                id: 7,
+                title: 'Space Story Series',
+                description: '',
+                coverImagePath: null,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              },
+            ],
+          });
+        }
+        if (type === 'listening.open') {
+          return ok(message.id, type, {
+            article,
+            items: article.sentences.map((english, index) => ({ index, english, chinese: '' })),
+          });
+        }
+        if (type === 'pictureBook.state') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            enabled: true,
+            status: 'ready',
+            pages: [
+              {
+                pageIndex: 0,
+                sentenceStartIndex: 0,
+                sentenceEndIndex: 0,
+                hasImage: true,
+                imageRevision: 'song-page-0-v1',
+                imageUri: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+              {
+                pageIndex: 1,
+                sentenceStartIndex: 1,
+                sentenceEndIndex: 1,
+                hasImage: true,
+                imageRevision: 'song-page-1-v1',
+                imageUri: null,
+                status: 'ready',
+                errorMessage: null,
+              },
+            ],
+          });
+        }
+        if (type === 'pictureBook.pageImage') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            pageIndex: Number(payload.pageIndex ?? 0),
+            variant: payload.variant,
+            imageRevision: `song-page-${payload.pageIndex}-v1`,
+            imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
+          });
+        }
+        if (type === 'listening.fullscreenReady') {
+          return ok(message.id, type, {
+            ready: true,
+            reasons: [],
+            requiredEnglish: 2,
+            readyEnglish: 2,
+            requiredChinese: 0,
+            readyChinese: 0,
+            missingEnglish: [],
+            missingChinese: [],
+            failed: 0,
+          });
+        }
+        if (type === 'listening.songState') {
+          return ok(message.id, type, {
+            articleId: article.id,
+            status: 'ready',
+            source: 'suno',
+            audioPath: 'suno-v1.mp3',
+            versions: [
+              {
+                id: 'suno-v1',
+                audioPath: 'suno-v1.mp3',
+                title: 'Suno 版本 1',
+                timelineStatus: 'ready',
+                timelinePath: 'timeline-v1.json',
+                isDefault: true,
+              },
+            ],
+          });
+        }
+        if (type === 'listening.songPlay') {
+          return ok(message.id, type, { playbackState: 'playing' });
+        }
+        if (type === 'recording.settings.load') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: 'none',
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
+        return ok(message.id, type, {});
+      }),
+    };
+
+    render(<App />);
+
+    const sceneRoot = () => document.querySelector('.picture-book-scene') as HTMLElement;
+    await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_0'));
+    expect(sceneRoot().querySelector('.picture-transition-stack')).toHaveAttribute(
+      'data-transition',
+      'none',
+    );
+    fireEvent.click(await screen.findByRole('button', { name: '开始播放' }));
+
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'listening.song.position',
+        payload: {
+          articleId: article.id,
+          versionId: 'suno-v1',
+          positionMs: 2600,
+          durationMs: 5000,
+          cue: {
+            lineIndex: 1,
+            startMs: 2500,
+            endMs: 3000,
+            english: 'Song second line',
+            chinese: '',
+            confidence: 0.9,
+            method: 'matched',
+          },
+        },
+      });
+    });
+
+    await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_1'));
+    expect(sceneRoot().querySelectorAll('.picture-transition-layer.is-pending')).toHaveLength(0);
+    expect(sceneRoot().querySelectorAll('.picture-transition-layer.is-incoming')).toHaveLength(0);
     expect(sceneRoot().querySelectorAll('img')).toHaveLength(1);
   });
 
@@ -7749,7 +7944,7 @@ describe('App', () => {
           return ok(message.id, type, {
             codec: 'h264',
             resolution: '1920x1080',
-            pageTransition: 'none',
+            pageTransition: 'panZoomFade',
             subtitleMode: 'srt',
             outputDirectory: 'F:\\Tomato\\recording-export',
             fps: 25,
@@ -7800,6 +7995,10 @@ describe('App', () => {
     fireEvent.click(fullscreenButton);
     const dialog = await screen.findByRole('dialog', { name: '全屏歌曲播放' });
     expect(dialog.querySelector('.picture-transition-stack')).toBeInTheDocument();
+    expect(dialog.querySelector('.picture-transition-stack')).toHaveAttribute(
+      'data-transition',
+      'panZoomFade',
+    );
     await waitFor(() =>
       expect(calls.find((call) => call.type === 'listening.songPlay')?.payload).toMatchObject({
         articleId: 1,

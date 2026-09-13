@@ -21,7 +21,7 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
-## Latest release · v1.8.1 voice settings and playback polish (2026-09-13)
+## Latest release · v1.8.1 voice settings and playback polish (2026-09-14)
 
 Patch release focused on voice selection, Settings layout, and live page transitions. Persisted
 article sentence slots are unchanged.
@@ -30,8 +30,8 @@ article sentence slots are unchanged.
   English-only voice filter in Settings.
 - Moves Speech / voice picker to the top of Settings with Save Voice nearby; cloud and song save
   actions use the same primary button style.
-- Adds lightweight crossfade transitions for fullscreen listening and song playback, and starts
-  fullscreen listening from the selected sentence.
+- Live fullscreen listening and song picture transitions follow the recording `pageTransition`
+  setting; fullscreen listening starts from the selected sentence.
 
 > Published articles keep their persisted sentence slots and are not automatically resegmented.
 

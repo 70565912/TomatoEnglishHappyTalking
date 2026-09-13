@@ -3927,6 +3927,7 @@ select:disabled {
   height: 100%;
   overflow: hidden;
   transform: translateZ(0);
+  perspective: 1400px;
 }
 
 .picture-transition-layer {
@@ -3937,9 +3938,14 @@ select:disabled {
   height: 100%;
   margin: 0;
   border: 0;
+  transform-origin: center center;
   transform: translateZ(0);
-  transition: opacity var(--picture-crossfade-ms, 300ms) ease-out;
-  will-change: opacity;
+  opacity: 1;
+  transition:
+    opacity var(--picture-transition-ms, 500ms) ease-out,
+    transform var(--picture-transition-ms, 500ms) ease-out,
+    clip-path var(--picture-transition-ms, 500ms) ease-out;
+  will-change: opacity, transform, clip-path;
   pointer-events: none;
 }
 
@@ -3952,19 +3958,98 @@ select:disabled {
   object-fit: cover;
 }
 
-.picture-transition-layer.is-visible,
-.picture-transition-layer.is-incoming {
+.picture-transition-stack[data-transition='none'] .picture-transition-layer,
+.picture-transition-stack[data-transition='none'] .picture-transition-layer.is-pending,
+.picture-transition-stack[data-transition='none'] .picture-transition-layer.is-outgoing,
+.picture-transition-stack[data-transition='none'] .picture-transition-layer.is-incoming {
+  transition: none;
+  opacity: 1;
+  transform: none;
+  clip-path: none;
+}
+
+.picture-transition-stack[data-transition='crossFade'] .picture-transition-layer.is-visible,
+.picture-transition-stack[data-transition='crossFade'] .picture-transition-layer.is-incoming,
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-visible,
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-incoming {
   opacity: 1;
 }
 
-.picture-transition-layer.is-outgoing,
-.picture-transition-layer.is-pending {
+.picture-transition-stack[data-transition='crossFade'] .picture-transition-layer.is-outgoing,
+.picture-transition-stack[data-transition='crossFade'] .picture-transition-layer.is-pending,
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-outgoing,
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-pending {
   opacity: 0;
+}
+
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-visible {
+  transform: scale(1);
+}
+
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-outgoing {
+  transform: scale(1.03);
+}
+
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-pending {
+  transform: scale(1.04);
+}
+
+.picture-transition-stack[data-transition='panZoomFade'] .picture-transition-layer.is-incoming {
+  transform: scale(1);
+}
+
+.picture-transition-stack[data-transition='slide'] .picture-transition-layer.is-visible {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.picture-transition-stack[data-transition='slide'] .picture-transition-layer.is-outgoing {
+  opacity: 1;
+  transform: translateX(-100%);
+}
+
+.picture-transition-stack[data-transition='slide'] .picture-transition-layer.is-pending {
+  opacity: 1;
+  transform: translateX(100%);
+}
+
+.picture-transition-stack[data-transition='slide'] .picture-transition-layer.is-incoming {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.picture-transition-stack[data-transition='pageCurl'] .picture-transition-layer.is-visible {
+  opacity: 1;
+  transform: none;
+  clip-path: inset(0 0 0 0);
+  z-index: 1;
+}
+
+.picture-transition-stack[data-transition='pageCurl'] .picture-transition-layer.is-outgoing {
+  opacity: 1;
+  transform: perspective(1400px) rotateY(-18deg) translateX(-8%);
+  clip-path: inset(0 42% 0 0);
+  transform-origin: left center;
+  z-index: 2;
+}
+
+.picture-transition-stack[data-transition='pageCurl'] .picture-transition-layer.is-pending {
+  opacity: 1;
+  transform: none;
+  clip-path: inset(0 0 0 58%);
+  z-index: 1;
+}
+
+.picture-transition-stack[data-transition='pageCurl'] .picture-transition-layer.is-incoming {
+  opacity: 1;
+  transform: none;
+  clip-path: inset(0 0 0 0);
+  z-index: 1;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .picture-transition-layer {
-    transition: none;
+    transition: none !important;
   }
 }
 
