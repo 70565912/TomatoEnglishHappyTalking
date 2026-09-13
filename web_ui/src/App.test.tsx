@@ -43,6 +43,45 @@ async function confirmDialogAction(
   fireEvent.click(within(dialog).getByRole('button', { name: confirmButtonName }));
 }
 
+function pictureLayerSrcs(root: ParentNode) {
+  return Array.from(root.querySelectorAll('img')).map((img) => img.getAttribute('src'));
+}
+
+function visibleTransitionSrc(root: ParentNode) {
+  const visible = root.querySelector('.picture-transition-layer.is-visible') as HTMLImageElement | null;
+  if (visible) {
+    return visible.getAttribute('src');
+  }
+  return (root.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') ?? null;
+}
+
+async function flushPictureCrossfade(root: ParentNode) {
+  await act(async () => {
+    await Promise.resolve();
+  });
+  const pending = Array.from(
+    root.querySelectorAll('.picture-transition-layer.is-pending'),
+  ) as HTMLImageElement[];
+  for (const img of pending) {
+    Object.defineProperty(img, 'complete', { configurable: true, value: true });
+    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1280 });
+    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 720 });
+    fireEvent.load(img);
+  }
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+  });
+  const incoming = root.querySelector('.picture-transition-layer.is-incoming') as HTMLImageElement | null;
+  if (incoming) {
+    fireEvent.transitionEnd(incoming, { propertyName: 'opacity' });
+  }
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
   const scenes = [
     {
@@ -854,16 +893,42 @@ describe('App', () => {
     render(<App />);
 
     expect(await screen.findByText('选择番茄助教的发音')).toBeInTheDocument();
+    expect(screen.getByText('语音合成')).toBeInTheDocument();
     expect(await screen.findByText('发音人')).toBeInTheDocument();
-    expect(screen.getByRole('listbox', { name: '可选声音' })).toBeInTheDocument();
+    const voiceList = screen.getByRole('listbox', { name: '可选声音' });
+    expect(voiceList).toBeInTheDocument();
+    expect(
+      Boolean(
+        screen.getByRole('heading', { name: '选择番茄助教的发音' }).compareDocumentPosition(
+          screen.getByText('语音合成'),
+        ) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    expect(
+      Boolean(
+        screen.getByText('语音合成').compareDocumentPosition(voiceList) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    expect(
+      Boolean(
+        screen.getByText('语音合成').compareDocumentPosition(screen.getByText('云服务')) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+    ).toBe(true);
+    expect(screen.queryByText('CosyVoice 音色')).not.toBeInTheDocument();
+    expect(screen.queryByText('Doubao TTS Speaker')).not.toBeInTheDocument();
+    expect(screen.queryByText('ElevenLabs 声音')).not.toBeInTheDocument();
     expect(screen.queryByText('视频导出')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('编码')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('分辨率')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('转场')).not.toBeInTheDocument();
     expect(screen.queryByText('ffmpeg.exe 路径')).not.toBeInTheDocument();
     expect(screen.getAllByText('Abby').length).toBeGreaterThan(0);
+    expect(within(voiceList).getAllByText(/通用朗读/).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /预览/ }).length).toBeGreaterThan(0);
     expect(screen.getByText(/个发音人/)).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '只显示英文声音' })).toBeInTheDocument();
     expect(screen.getByText('当前声音')).toBeInTheDocument();
     expect(screen.getByText('内容安全规则')).toBeInTheDocument();
     expect(screen.getByText('heads')).toBeInTheDocument();
@@ -875,6 +940,29 @@ describe('App', () => {
     expect(screen.queryByPlaceholderText(/api key/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('checkbox', { name: /清除百炼 Key/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /清除百炼 Key/ })).toBeInTheDocument();
+  }, 10000);
+
+  it('filters settings voice list to English-capable voices', async () => {
+    window.location.hash = '/settings';
+
+    render(<App />);
+
+    expect(await screen.findByText('选择番茄助教的发音')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '火山 TTS' }));
+    expect(screen.getByRole('tab', { name: '火山 TTS' })).toHaveAttribute('aria-selected', 'true');
+
+    const voiceList = screen.getByRole('listbox', { name: '可选声音' });
+    const filter = screen.getByRole('checkbox', { name: '只显示英文声音' });
+    expect(within(voiceList).getByText('小何 2.0')).toBeInTheDocument();
+    expect(within(voiceList).getByText('Dacey')).toBeInTheDocument();
+    expect(within(voiceList).getAllByText(/多语种/).length).toBeGreaterThan(0);
+
+    fireEvent.click(filter);
+    expect(filter).toBeChecked();
+    expect(within(voiceList).queryByText('小何 2.0')).not.toBeInTheDocument();
+    expect(within(voiceList).getByText('Dacey')).toBeInTheDocument();
+    expect(within(voiceList).getAllByText(/多语种/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/\/ \d+ 个发音人/)).toBeInTheDocument();
   }, 10000);
 
   it('keeps the API key reveal control available after toggling visibility', async () => {
@@ -3980,11 +4068,13 @@ describe('App', () => {
     });
 
     await waitFor(() => expect(fullscreenButton).not.toBeDisabled());
+    fireEvent.click(screen.getByText('He shares it with his team.').closest('.listening-row') as HTMLElement);
     fireEvent.click(fullscreenButton);
     const fullscreenDialog = await screen.findByRole('dialog', { name: '全屏听力播放' });
     expect(fullscreenDialog).toBeInTheDocument();
     expect(fullscreenDialog.parentElement).toBe(document.body);
     expect(fullscreenDialog.querySelector('.fullscreen-listening-frame')).toBeInTheDocument();
+    expect(fullscreenDialog.querySelector('.picture-transition-stack')).toBeInTheDocument();
     const fullscreenToolbar = fullscreenDialog.querySelector('.fullscreen-listening-toolbar') as HTMLElement;
     expect(fullscreenDialog).toHaveClass('controls-hidden');
     expect(fullscreenDialog).toHaveClass('cursor-hidden');
@@ -3993,7 +4083,7 @@ describe('App', () => {
     await waitFor(() => {
       const playCall = calls.find((call) => call.type === 'listening.playSequence');
       expect(playCall?.payload).toMatchObject({
-        startIndex: 0,
+        startIndex: 1,
         mode: 'english',
         singleItem: false,
       });
@@ -7487,8 +7577,9 @@ describe('App', () => {
 
     render(<App />);
 
-    const sceneImage = () => document.querySelector('.picture-book-scene img') as HTMLImageElement | null;
-    await waitFor(() => expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_0'));
+    const sceneRoot = () => document.querySelector('.picture-book-scene') as HTMLElement;
+    await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_0'));
+    expect(sceneRoot().querySelector('.picture-transition-stack')).toBeInTheDocument();
     fireEvent.click(await screen.findByRole('button', { name: '开始播放' }));
 
     act(() => {
@@ -7512,7 +7603,7 @@ describe('App', () => {
       });
     });
     expect(await screen.findByRole('heading', { name: 'Song first line' })).toBeInTheDocument();
-    await waitFor(() => expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_0'));
+    await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_0'));
 
     act(() => {
       window.__tomatoNativeEvent?.({
@@ -7527,7 +7618,7 @@ describe('App', () => {
       });
     });
     expect(screen.getByRole('heading', { name: 'Song first line' })).toBeInTheDocument();
-    expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_0');
+    expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_0');
 
     act(() => {
       window.__tomatoNativeEvent?.({
@@ -7550,7 +7641,13 @@ describe('App', () => {
       });
     });
     expect(await screen.findByRole('heading', { name: 'Song second line' })).toBeInTheDocument();
-    await waitFor(() => expect(sceneImage()?.getAttribute('src')).toBe('data:image/png;base64,THUMBNAIL_1'));
+    await waitFor(() => {
+      expect(pictureLayerSrcs(sceneRoot())).toContain('data:image/png;base64,THUMBNAIL_0');
+      expect(pictureLayerSrcs(sceneRoot())).toContain('data:image/png;base64,THUMBNAIL_1');
+    });
+    await flushPictureCrossfade(sceneRoot());
+    await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_1'));
+    expect(sceneRoot().querySelectorAll('img')).toHaveLength(1);
   });
 
   it('opens fullscreen song playback with subtitle cues and pause controls', async () => {
@@ -7702,6 +7799,7 @@ describe('App', () => {
     await waitFor(() => expect(fullscreenButton).not.toBeDisabled());
     fireEvent.click(fullscreenButton);
     const dialog = await screen.findByRole('dialog', { name: '全屏歌曲播放' });
+    expect(dialog.querySelector('.picture-transition-stack')).toBeInTheDocument();
     await waitFor(() =>
       expect(calls.find((call) => call.type === 'listening.songPlay')?.payload).toMatchObject({
         articleId: 1,
@@ -7732,6 +7830,35 @@ describe('App', () => {
     expect(await within(dialog).findByRole('heading', { name: 'Song first line' })).toBeInTheDocument();
     expect(within(dialog).getByText('歌曲第一句')).toBeInTheDocument();
     expect(within(dialog).getByLabelText('播放进度 20%')).toBeInTheDocument();
+    await waitFor(() => expect(visibleTransitionSrc(dialog)).toBe('data:image/png;base64,FULL_0'));
+
+    act(() => {
+      window.__tomatoNativeEvent?.({
+        type: 'listening.song.position',
+        payload: {
+          articleId: article.id,
+          versionId: 'suno-v1',
+          positionMs: 2600,
+          durationMs: 5000,
+          cue: {
+            lineIndex: 1,
+            startMs: 2500,
+            endMs: 3000,
+            english: 'Song second line',
+            chinese: '歌曲第二句',
+            confidence: 0.9,
+            method: 'matched',
+          },
+        },
+      });
+    });
+    expect(await within(dialog).findByRole('heading', { name: 'Song second line' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(pictureLayerSrcs(dialog)).toContain('data:image/png;base64,FULL_0');
+      expect(pictureLayerSrcs(dialog)).toContain('data:image/png;base64,FULL_1');
+    });
+    await flushPictureCrossfade(dialog);
+    await waitFor(() => expect(visibleTransitionSrc(dialog)).toBe('data:image/png;base64,FULL_1'));
 
     act(() => {
       window.__tomatoNativeEvent?.({
@@ -7745,7 +7872,8 @@ describe('App', () => {
         },
       });
     });
-    expect(within(dialog).getByRole('heading', { name: 'Song first line' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('heading', { name: 'Song second line' })).toBeInTheDocument();
+    expect(visibleTransitionSrc(dialog)).toBe('data:image/png;base64,FULL_1');
 
     fireEvent.click(dialog);
     fireEvent.click(within(dialog).getByRole('button', { name: '暂停' }));

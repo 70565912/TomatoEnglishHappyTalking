@@ -284,6 +284,161 @@ class TtsService {
         lang: '美式英语',
         scene: '多语种'),
     VoiceInfo(
+        id: 'ICL_uranus_en_female_charlie_tob',
+        name: 'Charlie 2.0',
+        lang: '美式英语',
+        scene: '多语种'),
+    VoiceInfo(
+        id: 'ICL_uranus_en_male_ethan_tob',
+        name: 'Ethan 2.0',
+        lang: '澳洲英语',
+        scene: '多语种'),
+    VoiceInfo(
+        id: 'ICL_uranus_en_male_alastor_tob',
+        name: 'Alastor 2.0',
+        lang: '英式英语',
+        scene: '多语种'),
+    VoiceInfo(
+        id: 'en_male_alberto_uranus_bigtts',
+        name: 'Alberto',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_female_authoritative-british_uranus_bigtts',
+        name: 'Charlotte',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_female_female_tutor_ms-jenny_uranus_bigtts',
+        name: 'Holly',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_fernando-martinez_uranus_bigtts',
+        name: 'Felix',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_female_hayley_uranus_bigtts',
+        name: 'Hayley',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_jamie_uranus_bigtts',
+        name: 'Jamie',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_josh_coery_uranus_bigtts',
+        name: 'Josiah',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_kevin_uranus_bigtts',
+        name: 'Kevin',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_female_mel_uranus_bigtts',
+        name: 'Mel',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_michael_uranus_bigtts',
+        name: 'Hank',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_michael_kevin_uranus_bigtts',
+        name: 'Michael_Kevin',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_female_myra_uranus_bigtts',
+        name: 'Myra',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_female_myra_cmb_uranus_bigtts',
+        name: 'Sunny',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_russell_uranus_bigtts',
+        name: 'Russell',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_cowboy-bob_uranus_bigtts',
+        name: 'Bob',
+        lang: '美式英语',
+        scene: '教学场景'),
+    VoiceInfo(
+        id: 'en_male_adam-imitation_uranus_bigtts',
+        name: 'Rowan',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_female_authoritative-informative_uranus_bigtts',
+        name: 'Margaret',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_male_david_uranus_bigtts',
+        name: 'David',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_male_diyuwenrounan_uranus_bigtts',
+        name: 'Julian',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_female_joanne_uranus_bigtts',
+        name: 'Joanne',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_male_knightley_uranus_bigtts',
+        name: 'Knightley',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_male_marcus_uranus_bigtts',
+        name: 'Marcus',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_female_pleasant-female_uranus_bigtts',
+        name: 'Elaine',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_male_ronald_uranus_bigtts',
+        name: 'Ronald',
+        lang: '美式英语',
+        scene: '有声阅读'),
+    VoiceInfo(
+        id: 'en_female_brittney_pimintel_uranus_bigtts',
+        name: 'Zoe',
+        lang: '美式英语',
+        scene: '客服场景'),
+    VoiceInfo(
+        id: 'en_female_jenny_uranus_bigtts',
+        name: 'Jenny',
+        lang: '美式英语',
+        scene: '客服场景'),
+    VoiceInfo(
+        id: 'en_female_scarlet_p1_uranus_bigtts',
+        name: 'Scarlet',
+        lang: '美式英语',
+        scene: '客服场景'),
+    VoiceInfo(
+        id: 'en_female_wenrouzhishijieshuonv_uranus_bigtts',
+        name: 'Megan',
+        lang: '美式英语',
+        scene: '客服场景'),
+    VoiceInfo(
         id: 'zh_female_wenroumama_uranus_bigtts',
         name: '温柔妈妈 2.0',
         lang: '中文',

@@ -85,6 +85,7 @@ flutter test
 
 - [用户指南与截图](user-guide/)
 - [AI 调用链与提示词逻辑](ai-call-flow-and-prompt-logic.md)
+- [Grok Bot / RedClaw 书籍包交换技术验证方案](grok_bot_redclaw_book_exchange_feasibility.md)（实验性提案；2026-08-31 审核认为当前载体不可行，不得接入正式产品）
 - [变更记录](change_log.md)
 - [贡献说明](../CONTRIBUTING.md)
 - [安全政策](../SECURITY.md)

@@ -137,7 +137,7 @@ describe('bridge client', () => {
     expect(response.voiceCatalog?.elevenLabs?.length).toBeGreaterThan(0);
     expect(response.voiceCatalogErrors?.elevenLabs).toBeNull();
     expect(JSON.stringify(response)).not.toContain('eleven-music-key');
-    expect(response.voices).toHaveLength(102);
+    expect(response.voices).toHaveLength(133);
     expect(response.voices[0].scene).toBeTruthy();
   });
 

@@ -21,28 +21,22 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
-## Latest release · v1.8.0 English read-aloud chunking V3.10 (2026-08-30)
+## Latest release · v1.8.1 voice settings and playback polish (2026-09-13)
 
-`syntax_solver_v3_10` retains one immutable fact build and one bounded DAG solve while unifying straight
-and curly single/double quotes plus parentheses in one delimiter scanner. Read-only coverage from that same
-DAG proves that approved local review paths are genuinely reachable.
+Patch release focused on voice selection, Settings layout, and live page transitions. Persisted
+article sentence slots are unchanged.
 
-- Closing delimiters stay with the left chunk and opening delimiters with the right. Glued speaker turns such
-  as `’‘` and `''` are supported without mispairing contractions, possessives, `’Twas`, `'em`, or unclosed quotes.
-- All 55 review units and all 243 native UDPipe structural gold cases pass. Candidate limits remain 8 initial
-  and 24 expanded paths, with no book whitelist, promoted fixed path, or second DP.
-- Default choices remain unchanged across the 101 Alice and Willows chapters. Looking Glass changes are limited
-  to the 14 approved delimiter fixes. Five same-machine AOT scenarios ran for nine alternating rounds each with
-  no clear median regression.
-- Windows and Android releases continue to bundle local Nunito and icon fonts instead of relying on runtime
-  downloads for core UI typography.
+- Adds Volcengine `seed-tts-2.0` English teaching / audiobook / customer-service voices, plus an
+  English-only voice filter in Settings.
+- Moves Speech / voice picker to the top of Settings with Save Voice nearby; cloud and song save
+  actions use the same primary button style.
+- Adds lightweight crossfade transitions for fullscreen listening and song playback, and starts
+  fullscreen listening from the selected sentence.
 
-> Published articles keep their persisted sentence slots and are not automatically resegmented. The new
-> solver applies only to newly created articles or an explicit user rebuild.
+> Published articles keep their persisted sentence slots and are not automatically resegmented.
 
-[Read the unified read-aloud chunking specification](docs/read_aloud_sentence_split_spec.md) ·
-[Read the engineering iteration rules](docs/read_aloud_sentence_split_engineering_rules.md) ·
-[Browse all tests and evaluations](docs/testing-and-evaluation.md) ·
+[Read the v1.8.1 release notes](docs/releases/v1.8.1.md) ·
+[Browse the change log](docs/change_log.md) ·
 [Read the v1.8.0 release notes](docs/releases/v1.8.0.md)
 
 ## From an article to complete learning material

@@ -2261,6 +2261,37 @@ zh_male_ruyayichen_uranus_bigtts|儒雅逸辰 2.0|中文|视频配音
 en_male_tim_uranus_bigtts|Tim|美式英语|多语种
 en_female_dacey_uranus_bigtts|Dacey|美式英语|多语种
 en_female_stokie_uranus_bigtts|Stokie|美式英语|多语种
+ICL_uranus_en_female_charlie_tob|Charlie 2.0|美式英语|多语种
+ICL_uranus_en_male_ethan_tob|Ethan 2.0|澳洲英语|多语种
+ICL_uranus_en_male_alastor_tob|Alastor 2.0|英式英语|多语种
+en_male_alberto_uranus_bigtts|Alberto|美式英语|教学场景
+en_female_authoritative-british_uranus_bigtts|Charlotte|美式英语|教学场景
+en_female_female_tutor_ms-jenny_uranus_bigtts|Holly|美式英语|教学场景
+en_male_fernando-martinez_uranus_bigtts|Felix|美式英语|教学场景
+en_female_hayley_uranus_bigtts|Hayley|美式英语|教学场景
+en_male_jamie_uranus_bigtts|Jamie|美式英语|教学场景
+en_male_josh_coery_uranus_bigtts|Josiah|美式英语|教学场景
+en_male_kevin_uranus_bigtts|Kevin|美式英语|教学场景
+en_female_mel_uranus_bigtts|Mel|美式英语|教学场景
+en_male_michael_uranus_bigtts|Hank|美式英语|教学场景
+en_male_michael_kevin_uranus_bigtts|Michael_Kevin|美式英语|教学场景
+en_female_myra_uranus_bigtts|Myra|美式英语|教学场景
+en_female_myra_cmb_uranus_bigtts|Sunny|美式英语|教学场景
+en_male_russell_uranus_bigtts|Russell|美式英语|教学场景
+en_male_cowboy-bob_uranus_bigtts|Bob|美式英语|教学场景
+en_male_adam-imitation_uranus_bigtts|Rowan|美式英语|有声阅读
+en_female_authoritative-informative_uranus_bigtts|Margaret|美式英语|有声阅读
+en_male_david_uranus_bigtts|David|美式英语|有声阅读
+en_male_diyuwenrounan_uranus_bigtts|Julian|美式英语|有声阅读
+en_female_joanne_uranus_bigtts|Joanne|美式英语|有声阅读
+en_male_knightley_uranus_bigtts|Knightley|美式英语|有声阅读
+en_male_marcus_uranus_bigtts|Marcus|美式英语|有声阅读
+en_female_pleasant-female_uranus_bigtts|Elaine|美式英语|有声阅读
+en_male_ronald_uranus_bigtts|Ronald|美式英语|有声阅读
+en_female_brittney_pimintel_uranus_bigtts|Zoe|美式英语|客服场景
+en_female_jenny_uranus_bigtts|Jenny|美式英语|客服场景
+en_female_scarlet_p1_uranus_bigtts|Scarlet|美式英语|客服场景
+en_female_wenrouzhishijieshuonv_uranus_bigtts|Megan|美式英语|客服场景
 zh_female_wenroumama_uranus_bigtts|温柔妈妈 2.0|中文|通用场景
 zh_male_jieshuoxiaoming_uranus_bigtts|解说小明 2.0|中文|通用场景
 zh_female_tvbnv_uranus_bigtts|TVB女声 2.0|中文|通用场景

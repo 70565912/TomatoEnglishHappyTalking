@@ -17,6 +17,7 @@ class ProfileScreen extends ConsumerStatefulWidget {
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _loading = true;
   bool _saving = false;
+  bool _englishVoicesOnly = false;
   String _selectedSpeakerId = TtsService.defaultVoiceType;
   String? _message;
 
@@ -58,13 +59,55 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   }
 
   String _voiceLabel(VoiceInfo voice) =>
-      '${voice.name} · ${_displayVoiceLanguage(voice.lang)}';
+      '${voice.name} · ${_displayVoiceLanguage(voice.lang)} · ${voice.scene}';
 
-  String _displayVoiceLanguage(String lang) =>
-      lang.replaceAll('中文', '中文/英文');
+  String _displayVoiceLanguage(String lang) {
+    if (lang.contains('英语') ||
+        lang.contains('English') ||
+        lang.contains('日文') ||
+        lang.contains('印尼') ||
+        lang.contains('西班')) {
+      return lang;
+    }
+    return lang.replaceAll('中文', '中文/英文');
+  }
+
+  bool _isEnglishCapableVoice(VoiceInfo voice) {
+    final lang = voice.lang.trim();
+    if (lang.contains('英语') ||
+        lang.contains('英文') ||
+        lang.toLowerCase().contains('english')) {
+      return true;
+    }
+    final id = voice.id.trim();
+    return id.startsWith('en_') ||
+        id.startsWith('en-') ||
+        id.contains('_en_') ||
+        id.contains('ICL_uranus_en_');
+  }
+
+  VoiceInfo _voiceById(String id) {
+    for (final voice in TtsService.voices) {
+      if (voice.id == id) {
+        return voice;
+      }
+    }
+    return VoiceInfo(
+      id: id,
+      name: id,
+      lang: '未知',
+      scene: '',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final visibleVoices = _englishVoicesOnly
+        ? TtsService.voices.where(_isEnglishCapableVoice).toList(growable: false)
+        : TtsService.voices;
+    final selectedVisible =
+        visibleVoices.any((voice) => voice.id == _selectedSpeakerId);
+
     return Scaffold(
       backgroundColor: AppTheme.background,
       appBar: AppBar(
@@ -83,7 +126,23 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   title: '练习伙伴声音',
                   subtitle: '选择 Doubao TTS 2.0 发音人',
                   children: [
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('只显示英文声音'),
+                      value: _englishVoicesOnly,
+                      onChanged: _saving
+                          ? null
+                          : (value) {
+                              setState(() {
+                                _englishVoicesOnly = value ?? false;
+                              });
+                            },
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
                     DropdownButtonFormField<String>(
+                      key: ValueKey(
+                        'voice-filter-$_englishVoicesOnly-$_selectedSpeakerId',
+                      ),
                       initialValue: _selectedSpeakerId,
                       isExpanded: true,
                       menuMaxHeight: 420,
@@ -91,14 +150,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                         labelText: '选择声音',
                         border: OutlineInputBorder(),
                       ),
-                      items: TtsService.voices
-                          .map(
-                            (voice) => DropdownMenuItem(
-                              value: voice.id,
-                              child: Text(_voiceLabel(voice)),
+                      items: [
+                        if (_englishVoicesOnly && !selectedVisible)
+                          DropdownMenuItem(
+                            value: _selectedSpeakerId,
+                            child: Text(
+                              '当前声音 · ${_voiceLabel(_voiceById(_selectedSpeakerId))}',
                             ),
-                          )
-                          .toList(growable: false),
+                          ),
+                        ...visibleVoices.map(
+                          (voice) => DropdownMenuItem(
+                            value: voice.id,
+                            child: Text(_voiceLabel(voice)),
+                          ),
+                        ),
+                      ],
                       onChanged: _saving
                           ? null
                           : (value) {
@@ -165,13 +231,18 @@ class _SectionCard extends StatelessWidget {
           children: [
             Text(
               title,
-              style:
-                  GoogleFonts.nunito(fontSize: 15, fontWeight: FontWeight.bold),
+              style: GoogleFonts.nunito(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+              ),
             ),
             const SizedBox(height: 4),
             Text(
               subtitle,
-              style: GoogleFonts.nunito(fontSize: 12, color: Colors.grey[600]),
+              style: GoogleFonts.nunito(
+                color: Colors.grey[700],
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 16),
             ...children,

@@ -2,6 +2,7 @@ import { FormEvent, ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRe
 import type { TextareaHTMLAttributes } from 'react';
 import { createPortal } from 'react-dom';
 import { onNativeEvent, sendNative } from './bridge';
+import { TransitioningPicture } from './TransitioningPicture';
 import {
   firstVisibleSlotIndex,
   isHiddenListeningItem,
@@ -63,6 +64,7 @@ import type {
   TtsProvider,
   VolcAsrModel,
   StorySeries,
+  VoiceOption,
 } from './types';
 
 function AutoFitSubtitleLine({
@@ -6234,6 +6236,7 @@ function ListeningPage({
   const [fullscreenReady, setFullscreenReady] = useState<ListeningFullscreenReadyPayload | null>(null);
   const [fullscreenReadyLoading, setFullscreenReadyLoading] = useState(false);
   const [fullscreenPlayerOpen, setFullscreenPlayerOpen] = useState(false);
+  const [fullscreenStartIndex, setFullscreenStartIndex] = useState(0);
   const [songFullscreenPlayerOpen, setSongFullscreenPlayerOpen] = useState(false);
   const [songFullscreenStartIndex, setSongFullscreenStartIndex] = useState(0);
   const [recordingReady, setRecordingReady] = useState<ListeningRecordingReadyPayload | null>(null);
@@ -7225,6 +7228,7 @@ function ListeningPage({
             chinese={sceneChinese}
             englishActive={activePart === 'english'}
             chineseActive={activePart === 'chinese'}
+            enablePageTransition={mode === 'song'}
             onWordClick={openWordCard}
             onRetry={retryPicturePage}
             isRetrying={picturePage ? pictureBookRetryGate.isRetrying(articleId, picturePage.pageIndex) : false}
@@ -7330,7 +7334,10 @@ function ListeningPage({
                 </button>
                 <button
                   className="ghost-action fullscreen-start-button"
-                  onClick={() => setFullscreenPlayerOpen(true)}
+                  onClick={() => {
+                    setFullscreenStartIndex(currentIndex);
+                    setFullscreenPlayerOpen(true);
+                  }}
                   disabled={!canOpenFullscreen || recordingBusy}
                   title={fullscreenReadiness.reason}
                 >
@@ -7426,6 +7433,7 @@ function ListeningPage({
         <FullscreenListeningPlayer
           article={article}
           items={items}
+          startIndex={fullscreenStartIndex}
           pictureBookState={pictureBookState}
           onPictureBookLoaded={onPictureBookLoaded}
           onClose={() => setFullscreenPlayerOpen(false)}
@@ -7548,12 +7556,14 @@ function SentenceEditDialog({
 function FullscreenListeningPlayer({
   article,
   items,
+  startIndex = 0,
   pictureBookState,
   onPictureBookLoaded,
   onClose,
 }: {
   article: Article;
   items: ListeningItem[];
+  startIndex?: number;
   pictureBookState: PictureBookState | null;
   onPictureBookLoaded: PictureBookStateSetter;
   onClose: () => void;
@@ -7561,7 +7571,8 @@ function FullscreenListeningPlayer({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const closingRef = useRef(false);
   const enteredFullscreenRef = useRef(false);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const initialStartIndex = Math.max(0, startIndex);
+  const [currentIndex, setCurrentIndex] = useState(initialStartIndex);
   const [activePart, setActivePart] = useState<ListeningPart>(null);
   const [status, setStatus] = useState<'starting' | 'playing' | 'paused' | 'completed' | 'error'>('starting');
   const [error, setError] = useState<string | null>(null);
@@ -7659,13 +7670,21 @@ function FullscreenListeningPlayer({
 
   useEffect(() => {
     let cancelled = false;
+    let slotIndex = Math.max(0, startIndex);
+    const target = resolveListeningItemBySlotIndex(items, slotIndex);
+    if (!target || isHiddenListeningItem(target)) {
+      const fallback = firstVisibleSlotIndex(items);
+      if (fallback != null) {
+        slotIndex = fallback;
+      }
+    }
     setStatus('starting');
     setError(null);
-    setCurrentIndex(0);
+    setCurrentIndex(slotIndex);
     setActivePart(null);
 
     sendNative('listening.playSequence', {
-      startIndex: 0,
+      startIndex: slotIndex,
       mode: 'english',
       singleItem: false,
       items,
@@ -7690,7 +7709,7 @@ function FullscreenListeningPlayer({
       cancelled = true;
       void sendNative('listening.stop').catch(() => undefined);
     };
-  }, [items]);
+  }, [items, startIndex]);
 
   useEffect(() => {
     if (keepControlsVisible) {
@@ -7788,7 +7807,7 @@ function FullscreenListeningPlayer({
       <div className="fullscreen-listening-stage">
         <div className="fullscreen-listening-frame">
           {imageSrc ? (
-            <img src={imageSrc} alt="" />
+            <TransitioningPicture src={imageSrc} objectFit="contain" />
           ) : (
             <div className="fullscreen-listening-missing">
               <Icon name="spark" />
@@ -8115,7 +8134,7 @@ function FullscreenSongPlayer({
       <div className="fullscreen-listening-stage">
         <div className="fullscreen-listening-frame">
           {imageSrc ? (
-            <img src={imageSrc} alt="" />
+            <TransitioningPicture src={imageSrc} objectFit="contain" />
           ) : (
             <div className="fullscreen-listening-missing">
               <Icon name="spark" />
@@ -9709,6 +9728,7 @@ function PictureBookScene({
   englishActive = false,
   chineseActive = false,
   showSubtitles = true,
+  enablePageTransition = false,
   onWordClick,
   onRetry,
   isRetrying = false,
@@ -9720,6 +9740,7 @@ function PictureBookScene({
   englishActive?: boolean;
   chineseActive?: boolean;
   showSubtitles?: boolean;
+  enablePageTransition?: boolean;
   onWordClick: (word: string, sentence: string, anchor: DOMRect) => void;
   onRetry: (page: PictureBookPage) => void;
   isRetrying?: boolean;
@@ -9761,7 +9782,11 @@ function PictureBookScene({
   return (
     <section className={`picture-book-scene ${isReady ? 'ready' : ''} ${isBusy ? 'busy' : ''} ${isRetryable ? 'failed' : ''}`}>
       {isReady ? (
-        <img src={imageSrc} alt="" />
+        enablePageTransition ? (
+          <TransitioningPicture src={imageSrc} objectFit="cover" />
+        ) : (
+          <img src={imageSrc} alt="" />
+        )
       ) : (
         <div className={`picture-book-placeholder ${isBusy ? 'busy' : ''}`}>
           <Icon name={isBusy ? 'refresh' : isRetryable ? 'replay' : 'spark'} />
@@ -10303,6 +10328,7 @@ function SettingsPage({
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false);
   const [saving, setSaving] = useState(false);
   const [previewingVoiceId, setPreviewingVoiceId] = useState<string | null>(null);
+  const [englishVoicesOnly, setEnglishVoicesOnly] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const selectedVoiceButtonRef = useRef<HTMLDivElement | null>(null);
 
@@ -10382,9 +10408,10 @@ function SettingsPage({
     : ttsProvider === 'elevenlabs'
       ? (current.voiceCatalog?.elevenLabs ?? [])
       : (current.voiceCatalog?.volcengine ?? current.voices);
-  const aliyunVoiceOptions = current.voiceCatalog?.aliyunBailian ?? [];
-  const volcVoiceOptions = current.voiceCatalog?.volcengine ?? current.voices;
   const elevenLabsVoiceOptions = current.voiceCatalog?.elevenLabs ?? [];
+  const displayedVoices = englishVoicesOnly
+    ? activeVoices.filter(isEnglishCapableVoice)
+    : activeVoices;
   const selectedVoice = activeVoices.find((voice) => voice.id === selectedVoiceId);
   const unchanged = selectedVoiceId === current.tts.speakerId;
   const safetyRules = current.contentSafety?.rules ?? [];
@@ -10621,66 +10648,172 @@ function SettingsPage({
             <p>选择一个适合孩子跟读和对话的声音，保存后会用于朗读和聊天。</p>
           </header>
 
-          <div className="settings-grid voice-settings-grid">
-            <FieldGroup title="发音人">
-              <div className="voice-list-header">
-                <span>可选声音</span>
-                <small>{activeVoices.length} 个发音人</small>
+          <FieldGroup title="语音合成">
+            <div className="tts-settings-subsection">
+              <div className="settings-tabs compact-provider-tabs" role="tablist" aria-label="语音合成供应商">
+                <button
+                  className={ttsProvider === 'aliyun_bailian' ? 'active' : ''}
+                  type="button"
+                  role="tab"
+                  aria-label="阿里云 CosyVoice"
+                  aria-selected={ttsProvider === 'aliyun_bailian'}
+                  onClick={() => selectTtsProvider('aliyun_bailian')}
+                >
+                  百炼
+                </button>
+                <button
+                  className={ttsProvider === 'volcengine' ? 'active' : ''}
+                  type="button"
+                  role="tab"
+                  aria-label="火山 TTS"
+                  aria-selected={ttsProvider === 'volcengine'}
+                  onClick={() => selectTtsProvider('volcengine')}
+                >
+                  火山
+                </button>
+                <button
+                  className={ttsProvider === 'elevenlabs' ? 'active' : ''}
+                  type="button"
+                  role="tab"
+                  aria-selected={ttsProvider === 'elevenlabs'}
+                  onClick={() => selectTtsProvider('elevenlabs')}
+                >
+                  ElevenLabs
+                </button>
               </div>
-              <div className="voice-list-scroll" role="listbox" aria-label="可选声音">
-                <div className="voice-list">
-                  {activeVoices.map((voice) => (
-                  <div
-                    className={`voice-card ${voice.id === selectedVoiceId ? 'selected' : ''}`}
-                    key={voice.id}
-                    ref={voice.id === selectedVoiceId ? selectedVoiceButtonRef : undefined}
-                    role="option"
-                    tabIndex={0}
-                    aria-selected={voice.id === selectedVoiceId}
-                    onClick={() => {
-                      selectVoice(voice.id);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        selectVoice(voice.id);
-                      }
-                    }}
-                  >
-                    <span className="voice-avatar">{voice.name.slice(0, 1)}</span>
-                    <span>
-                      <b>{voice.name}</b>
-                      <small>{displayVoiceLanguage(voice.lang)} · {displayVoiceGender(voice.gender)}</small>
-                    </span>
-                    <button
-                      className="voice-preview-button"
-                      type="button"
-                      disabled={previewingVoiceId !== null}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        void previewVoice(voice.id);
-                      }}
-                    >
-                      <Icon name="sound" />
-                      {previewingVoiceId === voice.id ? '试听中' : '预览'}
-                    </button>
+              <div className="settings-grid model-settings-grid">
+                {ttsProvider === 'aliyun_bailian' && (
+                  <>
+                    <ModelSelectField
+                      label="CosyVoice 模型"
+                      value={aliyunBailianTtsModel}
+                      options={ALIYUN_TTS_MODEL_OPTIONS}
+                      onChange={setAliyunBailianTtsModel}
+                    />
+                    <label className="settings-label">
+                      <span>CosyVoice 采样率</span>
+                      <input
+                        value={aliyunBailianTtsSampleRate}
+                        onChange={(event) => setAliyunBailianTtsSampleRate(event.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
+                {ttsProvider === 'volcengine' && (
+                  <ModelSelectField
+                    label="Doubao TTS Resource"
+                    value={volcTtsResourceId}
+                    options={VOLC_TTS_RESOURCE_OPTIONS}
+                    onChange={setVolcTtsResourceId}
+                  />
+                )}
+                {ttsProvider === 'elevenlabs' && (
+                  <>
+                    <ModelSelectField
+                      label="ElevenLabs TTS 模型"
+                      value={elevenLabsTtsModel}
+                      options={ELEVENLABS_TTS_MODEL_OPTIONS}
+                      onChange={setElevenLabsTtsModel}
+                    />
+                    <ModelSelectField
+                      label="ElevenLabs 输出格式"
+                      value={elevenLabsTtsOutputFormat}
+                      options={ELEVENLABS_TTS_OUTPUT_OPTIONS}
+                      onChange={setElevenLabsTtsOutputFormat}
+                    />
+                  </>
+                )}
+              </div>
+
+              <div className="tts-voice-picker">
+                <div className="voice-list-header">
+                  <span>发音人</span>
+                  <div className="voice-list-header-actions">
+                    <label className="voice-filter-toggle">
+                      <input
+                        type="checkbox"
+                        checked={englishVoicesOnly}
+                        onChange={(event) => setEnglishVoicesOnly(event.target.checked)}
+                      />
+                      <span>只显示英文声音</span>
+                    </label>
+                    <small>
+                      {englishVoicesOnly
+                        ? `${displayedVoices.length} / ${activeVoices.length} 个发音人`
+                        : `${activeVoices.length} 个发音人`}
+                    </small>
                   </div>
-                ))}
+                </div>
+                <div className="tts-current-voice" aria-live="polite">
+                  <span className="selected-voice-mark" aria-hidden="true">
+                    {selectedVoice?.name.slice(0, 1) ?? 'V'}
+                  </span>
+                  <div>
+                    <span>当前声音</span>
+                    <b>{selectedVoice?.name ?? '未选择'}</b>
+                    {selectedVoice && (
+                      <small>{displayVoiceMeta(selectedVoice)}</small>
+                    )}
+                  </div>
+                </div>
+                <div className="voice-list-scroll" role="listbox" aria-label="可选声音">
+                  <div className="voice-list">
+                    {displayedVoices.map((voice) => (
+                      <div
+                        className={`voice-card ${voice.id === selectedVoiceId ? 'selected' : ''}`}
+                        key={voice.id}
+                        ref={voice.id === selectedVoiceId ? selectedVoiceButtonRef : undefined}
+                        role="option"
+                        tabIndex={0}
+                        aria-selected={voice.id === selectedVoiceId}
+                        onClick={() => {
+                          selectVoice(voice.id);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            selectVoice(voice.id);
+                          }
+                        }}
+                      >
+                        <span className="voice-avatar">{voice.name.slice(0, 1)}</span>
+                        <span>
+                          <b>{voice.name}</b>
+                          <small>{displayVoiceMeta(voice)}</small>
+                        </span>
+                        <button
+                          className="voice-preview-button"
+                          type="button"
+                          disabled={previewingVoiceId !== null}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void previewVoice(voice.id);
+                          }}
+                        >
+                          <Icon name="sound" />
+                          {previewingVoiceId === voice.id ? '试听中' : '预览'}
+                        </button>
+                      </div>
+                    ))}
+                    {englishVoicesOnly && displayedVoices.length === 0 && (
+                      <p className="settings-hint">当前供应商没有可显示的英文声音。</p>
+                    )}
+                    {ttsProvider === 'elevenlabs' && elevenLabsVoiceOptions.length === 0 && (
+                      <p className="settings-hint">
+                        {current.voiceCatalogErrors?.elevenLabs ??
+                          '未获取到在线声音列表，请先配置 ElevenLabs Key 后刷新设置页。'}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
-            </FieldGroup>
-
-            <aside className="selected-voice-panel">
-              <span className="selected-voice-mark" aria-hidden="true">
-                {selectedVoice?.name.slice(0, 1) ?? 'V'}
-              </span>
-              <span>当前声音</span>
-              <b>{selectedVoice?.name ?? '未选择'}</b>
-              {selectedVoice && (
-                <small>{displayVoiceLanguage(selectedVoice.lang)} · {displayVoiceGender(selectedVoice.gender)}</small>
-              )}
-            </aside>
-          </div>
+            </div>
+            <div className="settings-section-actions">
+              <button className="primary-action" type="submit" disabled={saving || unchanged}>
+                <Icon name="save" /> {saving ? '保存中' : '保存声音'}
+              </button>
+            </div>
+          </FieldGroup>
 
           <FieldGroup title="云服务">
             <div className="cloud-settings-panel">
@@ -10797,128 +10930,6 @@ function SettingsPage({
                     options={ELEVENLABS_MUSIC_OUTPUT_OPTIONS}
                     onChange={setElevenLabsMusicOutputFormat}
                   />
-                </div>
-              </div>
-
-              <div className="settings-subsection">
-                <h3>语音合成</h3>
-                <div className="settings-tabs compact-provider-tabs" role="tablist" aria-label="语音合成供应商">
-                  <button
-                    className={ttsProvider === 'aliyun_bailian' ? 'active' : ''}
-                    type="button"
-                    role="tab"
-                    aria-label="阿里云 CosyVoice"
-                    aria-selected={ttsProvider === 'aliyun_bailian'}
-                    onClick={() => selectTtsProvider('aliyun_bailian')}
-                  >
-                    百炼
-                  </button>
-                  <button
-                    className={ttsProvider === 'volcengine' ? 'active' : ''}
-                    type="button"
-                    role="tab"
-                    aria-label="火山 TTS"
-                    aria-selected={ttsProvider === 'volcengine'}
-                    onClick={() => selectTtsProvider('volcengine')}
-                  >
-                    火山
-                  </button>
-                  <button
-                    className={ttsProvider === 'elevenlabs' ? 'active' : ''}
-                    type="button"
-                    role="tab"
-                    aria-selected={ttsProvider === 'elevenlabs'}
-                    onClick={() => selectTtsProvider('elevenlabs')}
-                  >
-                    ElevenLabs
-                  </button>
-                </div>
-                <div className="settings-grid model-settings-grid">
-                  {ttsProvider === 'aliyun_bailian' && (
-                    <>
-                      <ModelSelectField
-                        label="CosyVoice 模型"
-                        value={aliyunBailianTtsModel}
-                        options={ALIYUN_TTS_MODEL_OPTIONS}
-                        onChange={setAliyunBailianTtsModel}
-                      />
-                      <label className="settings-label">
-                        <span>CosyVoice 音色</span>
-                        <select
-                          value={aliyunBailianTtsVoice}
-                          onChange={(event) => selectVoice(event.target.value)}
-                        >
-                          {aliyunVoiceOptions.map((voice) => (
-                            <option key={voice.id} value={voice.id}>{voice.name} · {voice.id}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="settings-label">
-                        <span>CosyVoice 采样率</span>
-                        <input
-                          value={aliyunBailianTtsSampleRate}
-                          onChange={(event) => setAliyunBailianTtsSampleRate(event.target.value)}
-                        />
-                      </label>
-                    </>
-                  )}
-                  {ttsProvider === 'volcengine' && (
-                    <>
-                      <ModelSelectField
-                        label="Doubao TTS Resource"
-                        value={volcTtsResourceId}
-                        options={VOLC_TTS_RESOURCE_OPTIONS}
-                        onChange={setVolcTtsResourceId}
-                      />
-                      <label className="settings-label">
-                        <span>Doubao TTS Speaker</span>
-                        <select
-                          value={volcTtsSpeakerId}
-                          onChange={(event) => selectVoice(event.target.value)}
-                        >
-                          {volcVoiceOptions.map((voice) => (
-                            <option key={voice.id} value={voice.id}>{voice.name} · {voice.id}</option>
-                          ))}
-                        </select>
-                      </label>
-                    </>
-                  )}
-                  {ttsProvider === 'elevenlabs' && (
-                    <>
-                      <ModelSelectField
-                        label="ElevenLabs TTS 模型"
-                        value={elevenLabsTtsModel}
-                        options={ELEVENLABS_TTS_MODEL_OPTIONS}
-                        onChange={setElevenLabsTtsModel}
-                      />
-                      <label className="settings-label">
-                        <span>ElevenLabs 声音</span>
-                        <select
-                          value={elevenLabsTtsVoiceId}
-                          onChange={(event) => selectVoice(event.target.value)}
-                        >
-                          {elevenLabsTtsVoiceId &&
-                            !elevenLabsVoiceOptions.some((voice) => voice.id === elevenLabsTtsVoiceId) && (
-                              <option value={elevenLabsTtsVoiceId}>{`当前声音 · ${elevenLabsTtsVoiceId}`}</option>
-                            )}
-                          {elevenLabsVoiceOptions.map((voice) => (
-                            <option key={voice.id} value={voice.id}>{voice.name} · {voice.id}</option>
-                          ))}
-                        </select>
-                        {elevenLabsVoiceOptions.length === 0 && (
-                          <small className="settings-hint">
-                            {current.voiceCatalogErrors?.elevenLabs ?? '未获取到在线声音列表，请先配置 ElevenLabs Key 后刷新设置页。'}
-                          </small>
-                        )}
-                      </label>
-                      <ModelSelectField
-                        label="ElevenLabs 输出格式"
-                        value={elevenLabsTtsOutputFormat}
-                        options={ELEVENLABS_TTS_OUTPUT_OPTIONS}
-                        onChange={setElevenLabsTtsOutputFormat}
-                      />
-                    </>
-                  )}
                 </div>
               </div>
 
@@ -11058,14 +11069,16 @@ function SettingsPage({
                 </div>
               </div>
             </div>
-            <button
-              className="ghost-action"
-              type="button"
-              disabled={savingCloudSettings || cloudSettingsUnchanged}
-              onClick={() => void saveCloudSettings()}
-            >
-              <Icon name="save" /> {savingCloudSettings ? '保存中' : '保存云服务设置'}
-            </button>
+            <div className="settings-section-actions">
+              <button
+                className="primary-action"
+                type="button"
+                disabled={savingCloudSettings || cloudSettingsUnchanged}
+                onClick={() => void saveCloudSettings()}
+              >
+                <Icon name="save" /> {savingCloudSettings ? '保存中' : '保存云服务设置'}
+              </button>
+            </div>
           </FieldGroup>
 
           <FieldGroup title="歌曲生成">
@@ -11144,14 +11157,16 @@ function SettingsPage({
                 Suno 生成会复制歌词到剪贴板并在系统浏览器打开 Create 页；请在浏览器完成 Create 并下载 MP3，再用「导入本地音乐」添加版本。输出目录用于保存历史 Suno 缓存与 metadata。
               </p>
             )}
-            <button
-              className="ghost-action"
-              type="button"
-              disabled={savingSongSettings || songSettingsUnchanged}
-              onClick={() => void saveSongSettings()}
-            >
-              <Icon name="save" /> {savingSongSettings ? '保存中' : '保存歌曲设置'}
-            </button>
+            <div className="settings-section-actions">
+              <button
+                className="primary-action"
+                type="button"
+                disabled={savingSongSettings || songSettingsUnchanged}
+                onClick={() => void saveSongSettings()}
+              >
+                <Icon name="save" /> {savingSongSettings ? '保存中' : '保存歌曲设置'}
+              </button>
+            </div>
           </FieldGroup>
 
           <FieldGroup title="内容安全规则">
@@ -11211,12 +11226,11 @@ function SettingsPage({
             </button>
           </FieldGroup>
 
-          <footer className="settings-footer">
-            <button className="primary-action" disabled={saving || unchanged}>
-              <Icon name="save" /> {saving ? '保存中' : '保存声音'}
-            </button>
-            {status && <span role="status">{status}</span>}
-          </footer>
+          {status && (
+            <footer className="settings-footer">
+              <span role="status">{status}</span>
+            </footer>
+          )}
         </main>
       </form>
     </section>
@@ -12193,6 +12207,24 @@ function releaseBlobImageUrl(source?: string | null): void {
 
 function displayVoiceLanguage(lang: string): string {
   return lang.replaceAll('中文', '中文/英文');
+}
+
+function displayVoiceMeta(voice: Pick<VoiceOption, 'lang' | 'gender' | 'scene'>): string {
+  const parts = [
+    displayVoiceLanguage(voice.lang),
+    voice.scene.trim() || null,
+    displayVoiceGender(voice.gender),
+  ].filter((part): part is string => Boolean(part));
+  return parts.join(' · ');
+}
+
+function isEnglishCapableVoice(voice: Pick<VoiceOption, 'id' | 'lang'>): boolean {
+  const lang = voice.lang.trim();
+  if (/英语|英文|English/i.test(lang)) {
+    return true;
+  }
+  const id = voice.id.trim();
+  return /^en[_-]/i.test(id) || /_en_/i.test(id) || /ICL_uranus_en_/i.test(id);
 }
 
 function displayVoiceGender(gender?: string | null): string {
