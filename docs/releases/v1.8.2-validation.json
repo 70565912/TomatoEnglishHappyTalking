@@ -1,0 +1,57 @@
+{
+  "release": "v1.8.2",
+  "applicationVersion": "1.8.2+12",
+  "solverVersion": "syntax_solver_v3_11",
+  "algorithmCommit": "d139e86",
+  "flutterTests": {
+    "passed": 562,
+    "skipped": 4,
+    "failed": 0,
+    "exitCode": 0
+  },
+  "webTests": {
+    "passed": 103,
+    "failed": 0,
+    "exitCode": 0
+  },
+  "analyze": {
+    "baselineDiagnostics": 13,
+    "newDiagnostics": 0,
+    "exitCode": 1
+  },
+  "windowsBuild": {
+    "status": "passed",
+    "seconds": 608.8
+  },
+  "windowsRuntime": {
+    "status": "pending",
+    "initialAttempt": "Existing application owns fixed Web UI port 48731; startup cannot reach the QA endpoint. Waiting for permission to temporarily close it."
+  },
+  "androidBuild": {
+    "status": "passed",
+    "seconds": 653.4,
+    "versionName": "1.8.2",
+    "versionCode": 12,
+    "signatureVerified": true,
+    "signing": "project debug signing config",
+    "deviceRun": false
+  },
+  "artifacts": [
+    {
+      "name": "tomato_english_happy_talking-windows-v1.8.2.zip",
+      "bytes": 68343567,
+      "sha256": "c7029526b58b63209eda8edc734a54a469d32e624477ed2732f98711fd9396f1"
+    },
+    {
+      "name": "tomato_english_happy_talking-android-v1.8.2.apk",
+      "bytes": 129548319,
+      "sha256": "c67fdf4950e9838668be68fb92d2edb7481c65b132ca3b6d382a93f171045d2e"
+    }
+  ],
+  "scope": "Existing saved articles are not migrated or resegmented.",
+  "windowsPackage": {
+    "crcVerified": true,
+    "forbiddenRuntimePaths": 0,
+    "modelSha256": "b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f"
+  }
+}

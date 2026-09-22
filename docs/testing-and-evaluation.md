@@ -18,6 +18,10 @@ AI 代理提供统一入口。
 Stanza、spaCy、sentence segmentation、picture-book scene planning、MMS CTC、forced alignment、
 Volcengine SeedASR / BigASR、ASR word timestamps、Flutter、WebView2、Windows Release QA。
 
+## 2026-09-22 分句V3.11验收
+
+新增不足4词前置归并、跨段短单元和单次DAG门禁。212项相关测试与Windows原生集成通过；154章同源全量短槽为0，硬上限与影响范围外边界变化为0。代表章AOT中位耗时下降29.7%。详细语料、方法、原始结果及已有13项analyze诊断见[分句验证记录](read_aloud_short_merge_validation_20260922.md)；发布完整回归与产物验证见[v1.8.2](releases/v1.8.2.md)。
+
 ## 如何理解这些结果
 
 - **正式评测**：有固定样本、方法、指标、过程和结论，可用于当前范围内的工程选型。

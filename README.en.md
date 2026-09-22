@@ -21,23 +21,17 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
-## Latest release · v1.8.1 voice settings and playback polish (2026-09-14)
+## Latest release · v1.8.2 short-sentence merging (2026-09-23)
 
-Patch release focused on voice selection, Settings layout, and live page transitions. Persisted
-article sentence slots are unchanged.
+- Merge units shorter than four words before splitting, including short headings and verse across paragraphs within the same article. Four-word units may remain.
+- Solve each prepared unit once, retaining the existing length tiers and absolute 30-word limit.
+- Replay of 154 chapters eliminates 308 short chunks. Median solver time on representative chapters improves by 29.7% in same-machine AOT benchmarks.
 
-- Adds Volcengine `seed-tts-2.0` English teaching / audiobook / customer-service voices, plus an
-  English-only voice filter in Settings.
-- Moves Speech / voice picker to the top of Settings with Save Voice nearby; cloud and song save
-  actions use the same primary button style.
-- Live fullscreen listening and song picture transitions follow the recording `pageTransition`
-  setting; fullscreen listening starts from the selected sentence.
+> Saved articles retain their persisted sentence slots and are not automatically resegmented.
 
-> Published articles keep their persisted sentence slots and are not automatically resegmented.
-
-[Read the v1.8.1 release notes](docs/releases/v1.8.1.md) ·
+[Read the v1.8.2 release notes](docs/releases/v1.8.2.md) ·
 [Browse the change log](docs/change_log.md) ·
-[Read the v1.8.0 release notes](docs/releases/v1.8.0.md)
+[Read the segmentation validation record](docs/read_aloud_short_merge_validation_20260922.md)
 
 ## From an article to complete learning material
 

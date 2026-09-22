@@ -2680,7 +2680,7 @@
   "limitations": [
     "Android runtime and Release packaging not executed; shared Dart core, model asset and SHA verified from source.",
     "Full-project analyze retains 13 baseline diagnostics; see final validation record.",
-    "No paid AI calls, formal database writes, commits, pushes or releases."
+    "At algorithm acceptance: no paid AI calls, formal database writes, commits, pushes or releases; subsequent release verification is recorded separately."
   ],
   "fixtureSha256": "1ba6a39201021ef1fc8f89c2e7be4def4a5ff6034b7386298c600c8e0c43ce4a",
   "staticAnalysis": {
@@ -2706,5 +2706,6 @@
     "failed": 0,
     "exitCode": 0,
     "log": "output/short-merge-20260922/native-integration-final.log"
-  }
+  },
+  "releaseFollowup": "docs/releases/v1.8.2-validation.json"
 }
