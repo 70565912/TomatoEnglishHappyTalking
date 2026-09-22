@@ -40,7 +40,7 @@
     {
       "name": "tomato_english_happy_talking-windows-v1.8.2.zip",
       "bytes": 68343567,
-      "sha256": "c7029526b58b63209eda8edc734a54a469d32e624477ed2732f98711fd9396f1"
+      "sha256": "208198f890996b8c8f6ef2f04181b56cad4bb071838d58fc7e2b20d96df791af"
     },
     {
       "name": "tomato_english_happy_talking-android-v1.8.2.apk",
@@ -53,5 +53,14 @@
     "crcVerified": true,
     "forbiddenRuntimePaths": 0,
     "modelSha256": "b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f"
+  },
+  "packagingNote": "Publisher repackages the Windows ZIP; final archive SHA below supersedes the earlier PackageOnly hash. Every packaged file matches the verified runtime program directory.",
+  "github": {
+    "status": "draft; Windows runtime acceptance pending",
+    "url": "https://github.com/70565912/TomatoEnglishHappyTalking/releases/tag/untagged-ad3f6e9602e6e0a13409",
+    "tag": "v1.8.2",
+    "tagCommit": "efa005fd762536dd4ce26f9d0ae10b21aeaf25d6",
+    "uploadedAssets": 3,
+    "remoteSizesAndSha256Verified": true
   }
 }
