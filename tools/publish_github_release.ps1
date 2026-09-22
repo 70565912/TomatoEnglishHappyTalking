@@ -551,6 +551,12 @@ function Publish-GitTagAndRelease {
         [string]$ChecksumPath
     )
 
+    $notesPath = Join-Path $workspaceRoot "docs/releases/$TagName.md"
+    if (-not (Test-Path -LiteralPath $notesPath -PathType Leaf) -or
+        [string]::IsNullOrWhiteSpace([System.IO.File]::ReadAllText($notesPath))) {
+        throw "Release notes missing or empty: $notesPath"
+    }
+
     Push-Location $workspaceRoot
     try {
         Write-Host "=== Create annotated tag $TagName ===" -ForegroundColor Cyan
@@ -561,27 +567,13 @@ function Publish-GitTagAndRelease {
         & git push origin $TagName
         Assert-LastExitCode -CommandName "git push origin tag"
 
-        $notes = @"
-## Tomato English Happy Talking $TagName
-
-### Assets
-- Windows: ``$([System.IO.Path]::GetFileName($ZipPath))`` (clean zip, no local runtime data)
-- Android: ``$([System.IO.Path]::GetFileName($ApkPath))`` (test-signed sideload build)
-- SHA-256: ``$([System.IO.Path]::GetFileName($ChecksumPath))``
-
-### Notes
-- Android APK currently uses the project debug signing config (not a store keystore).
-- Windows package is staged from the Flutter Release runner output plus FFmpeg; it does not include local databases, caches, logs, or API keys.
-- Verify both downloads against the included SHA-256 manifest before installation.
-"@
-
         $ghArgs = @(
             "release", "create", $TagName,
             $ZipPath,
             $ApkPath,
             $ChecksumPath,
             "--title", "Tomato English Happy Talking $TagName",
-            "--notes", $notes
+            "--notes-file", $notesPath
         )
         if ($Draft) {
             $ghArgs += "--draft"

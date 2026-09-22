@@ -72,3 +72,5 @@ cd f:\TomatoEnglishHappyTalking
 - Android Release 冷构建可能接近或超过 15 分钟，尤其是 R8/minify、资源压缩、mapping 和 `rive_native` Android artifact 初始化。自动化外层 timeout 至少预留 25-30 分钟；如果 `app/build/app/outputs/flutter-apk/app-release.apk` 与 `outputs/mapping/release/mapping.txt` 已更新但 `release/android/` 仍旧，先查 Gradle daemon 日志是否已 `Success`，再重新运行脚本或按脚本目标同步产物。
 
 只有在怀疑脚本本身有问题时，才退回到底层 `flutter build`、`flutter run`、`gradlew`、`adb` 或 `emulator` 命令定位。
+
+GitHub 发布说明以 `docs/releases/v<版本>.md` 为唯一正文来源。发布脚本通过 `--notes-file` 上传全文，缺失或空白时在创建标签前失败。发布前补齐功能变化、验证与下载说明；正文链接使用 GitHub 绝对地址，确保在 Release 页面可访问。

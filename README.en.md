@@ -21,7 +21,7 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
-## Release candidate · v1.8.2 short-sentence merging (2026-09-23)
+## Latest release · v1.8.2 short-sentence merging (2026-09-23)
 
 - Merge units shorter than four words before splitting, including short headings and verse across paragraphs within the same article. Four-word units may remain.
 - Solve each prepared unit once, retaining the existing length tiers and absolute 30-word limit.

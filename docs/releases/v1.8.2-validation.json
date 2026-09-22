@@ -24,8 +24,8 @@
     "seconds": 608.8
   },
   "windowsRuntime": {
-    "status": "pending",
-    "initialAttempt": "Existing application owns fixed Web UI port 48731; startup cannot reach the QA endpoint. Waiting for permission to temporarily close it."
+    "status": "skipped by explicit user instruction",
+    "reason": "User requested no startup; existing application continues running. Initial attempt was blocked by its fixed Web UI port 48731."
   },
   "androidBuild": {
     "status": "passed",
@@ -56,11 +56,13 @@
   },
   "packagingNote": "Publisher repackages the Windows ZIP; final archive SHA below supersedes the earlier PackageOnly hash. Every packaged file matches the verified runtime program directory.",
   "github": {
-    "status": "draft; Windows runtime acceptance pending",
-    "url": "https://github.com/70565912/TomatoEnglishHappyTalking/releases/tag/untagged-ad3f6e9602e6e0a13409",
+    "status": "published",
+    "url": "https://github.com/70565912/TomatoEnglishHappyTalking/releases/tag/v1.8.2",
     "tag": "v1.8.2",
     "tagCommit": "efa005fd762536dd4ce26f9d0ae10b21aeaf25d6",
     "uploadedAssets": 3,
-    "remoteSizesAndSha256Verified": true
+    "remoteSizesAndSha256Verified": true,
+    "publishedAt": "2026-09-22T16:20:53Z",
+    "latestVerified": true
   }
 }
