@@ -65,7 +65,10 @@ void main() {
     expect(view.contains('easily | in'), isFalse, reason: view);
     expect(view.contains('in | any'), isFalse, reason: view);
     expect(view.contains('find | that'), isFalse, reason: view);
-    expect(view.contains('direction, |'), isTrue, reason: view);
+    // The former comma cut would isolate the three-word 'like a serpent.'
+    expect(view.contains('direction, like a serpent.'), isTrue, reason: view);
+    expect(plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(inInclusiveRange(4, 20)));
   });
 
   test('baseline/target: E16 must not cut legs | up', () {

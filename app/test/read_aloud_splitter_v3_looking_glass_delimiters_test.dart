@@ -69,7 +69,7 @@ void main() {
       expect(
         plan.localSentences
             .map(ReadAloudSplitterV3.wordCount)
-            .where((count) => count == 1),
+            .where((count) => count < ReadAloudSplitterV3.minWords),
         isEmpty,
         reason: reviewCase['caseId'].toString(),
       );

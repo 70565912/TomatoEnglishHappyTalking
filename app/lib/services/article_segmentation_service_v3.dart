@@ -77,16 +77,15 @@ class ArticleSegmentationServiceV3 {
       selection.selectedPathIds,
     );
     final sentences = List<String>.unmodifiable(
-      ReadAloudSplitterV3.mergeOneWordChunks(sentencesBeforePostProcessing),
+      sentencesBeforePostProcessing,
     );
     ReadAloudSplitterV3.validateReviewedSentences(
       source,
       sentences,
-      rejectOneWordChunks: true,
+      enforceMinimumWords: true,
       requiredBoundaryWordOffsets:
-          ReadAloudSplitterV3.requiredBoundaryWordOffsetsAfterMerge(
+          ReadAloudSplitterV3.requiredBoundaryWordOffsets(
         plan,
-        selection.selectedPathIds,
       ),
     );
 

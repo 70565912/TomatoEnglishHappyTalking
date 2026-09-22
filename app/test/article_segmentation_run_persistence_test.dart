@@ -33,6 +33,25 @@ void main() {
     }
   });
 
+  test('reading and reopening preserves historical short sentence slots',
+      () async {
+    const sentences = ['Home!', 'Come here.', 'Mole looked up.'];
+    final id = await DatabaseService.saveArticle(Article(
+      title: 'Historical short slots',
+      content: sentences.join(' '),
+      sentences: sentences,
+      sentenceSplitVersion: 'reviewed_dp_v3',
+      createdAt: DateTime.utc(2026, 9, 22),
+    ));
+    for (var read = 0; read < 2; read += 1) {
+      final article = await DatabaseService.getArticleById(id);
+      expect(article!.sentences, sentences);
+      expect(article.content, sentences.join(' '));
+      expect(await DatabaseService.getArticleSegmentationRuns(id), isEmpty);
+      await DatabaseService.resetForTest();
+    }
+  });
+
   test('stores the article and reproducible V3.7 run in one transaction',
       () async {
     final now = DateTime.utc(2026, 8, 8, 19, 30);

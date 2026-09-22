@@ -13,7 +13,7 @@ final class _AdditiveReadAloudLatticeV3 {
     required List<_SourceWordV3> words,
     required List<_AdditiveBoundaryFactV3> boundaryFacts,
   }) {
-    if (words.isEmpty) {
+    if (words.length < ReadAloudSplitterV3.minWords) {
       return _AdditiveLatticeResultV3(
         ranked: const [],
         coverage: ReadAloudCandidateCoverageV3(
@@ -135,7 +135,9 @@ final class _AdditiveReadAloudLatticeV3 {
         words.length,
         start + ReadAloudSplitterV3.hardMaxWords,
       );
-      for (var end = start + 1; end <= maximumEnd; end += 1) {
+      for (var end = start + ReadAloudSplitterV3.minWords;
+          end <= maximumEnd;
+          end += 1) {
         final closesSource = end == words.length;
         final boundaryFact = closesSource ? null : boundaryByEnd[end];
         if (!closesSource && boundaryFact == null) continue;
@@ -227,7 +229,7 @@ ReadAloudCandidateCoverageV3 _buildAdditiveCoverageV3({
   for (final edge in edges) {
     final length = edge.endWord - edge.startWord;
     final closingBoundary = edge.closingBoundary;
-    if ((sourceWordCount > 1 && length <= 1) ||
+    if (length < ReadAloudSplitterV3.minWords ||
         length > ReadAloudSplitterV3.targetMaxUnpunctuatedWords ||
         closingBoundary?.hardBlocked == true ||
         closingBoundary?.isEmergency == true) {
@@ -529,10 +531,9 @@ List<int> _additiveSegmentScoreV3({
           closingBoundary.candidate.reasons.contains(
             'deferred_stable_right_clause',
           ));
-  // `direction, | like a serpent` is a complete 3-word adposition tail; without
-  // this exemption the fragment score prefers parking the comma after a syntax
-  // cut such as `find | that`.
-  final isCompleteShortAdpositionTail = length >= 3 &&
+  // Complete 4–5 word adposition tails retain their functional-block score.
+  final isCompleteShortAdpositionTail = length >=
+          ReadAloudSplitterV3.minWords &&
       length <= 5 &&
       end == sourceWordCount &&
       openingBoundary?.candidate.isPunctuation == true &&
@@ -552,34 +553,18 @@ List<int> _additiveSegmentScoreV3({
     openingBoundary: openingBoundary,
     attributionClosings: attributionClosings,
   );
-  // A 2–3 word unit that already closes on a source sentence terminal
-  // (`Society!`, `No?`) is a complete spoken beat. Do not pay the short-
-  // fragment tax that would push the cut past the terminal onto a later
-  // syntax edge (`Society! Now | we…`).
-  final isCompleteStrongTerminalShort = length >= 2 &&
-      length <= 3 &&
-      closingBoundary?.candidate.kind ==
-          ReadAloudBoundaryKindV3.strongPunctuation &&
-      _additiveQuotedTerminalPauseV3.hasMatch(words[end - 1].text);
-  final isCompleteShiftedParserUnit = length >= 2 &&
-      ((start == 0 &&
-              closingBoundary?.candidate.reasons.contains(
-                    'shifted_parser_delimiter_boundary',
-                  ) ==
-                  true) ||
-          (end == sourceWordCount &&
-              openingBoundary?.candidate.reasons.contains(
-                    'shifted_parser_delimiter_boundary',
-                  ) ==
-                  true));
+  final isCompleteShiftedParserUnit = ((start == 0 &&
+          closingBoundary?.candidate.reasons.contains(
+                'shifted_parser_delimiter_boundary',
+              ) ==
+              true) ||
+      (end == sourceWordCount &&
+          openingBoundary?.candidate.reasons.contains(
+                'shifted_parser_delimiter_boundary',
+              ) ==
+              true));
   return [
-    length <= 3 &&
-            !isStandaloneShortQuote &&
-            !isCompleteShortAdpositionTail &&
-            !isCompleteStrongTerminalShort &&
-            !isCompleteShiftedParserUnit
-        ? (4 - length) * (4 - length)
-        : 0,
+    0, // Edges shorter than minWords never enter the DAG.
     length > 20 ? 1 : 0,
     overload * overload,
     skippedStrong,
@@ -825,7 +810,7 @@ bool _isStandaloneShortQuoteV3(
   required Set<int> attributionClosings,
 }) {
   final length = end - start;
-  if (length < 2 ||
+  if (length < ReadAloudSplitterV3.minWords ||
       length > 5 ||
       closingBoundary?.candidate.quoteEdge != 'after_closing' ||
       closingBoundary?.candidate.quoteSpanWordCount != length ||

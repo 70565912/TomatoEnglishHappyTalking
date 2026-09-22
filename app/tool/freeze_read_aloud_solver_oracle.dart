@@ -1,13 +1,11 @@
-/// Freezes the pre-refactor V3.7 local solver result after the approved
-/// singleton post-processing step. The refactor must reproduce it exactly;
-/// the accepted parenthetical behavior is already present in this snapshot.
+/// Freezes final local solver output from a report without modifying its cuts.
+/// Historical oracles must be generated with their corresponding Git snapshot.
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:cryptography/cryptography.dart';
-import 'package:tomato_english_happy_talking/services/read_aloud_splitter_v3.dart';
 
 Future<void> main(List<String> args) async {
   final outputPath = _argValue(args, '--output');
@@ -49,7 +47,7 @@ Future<void> main(List<String> args) async {
         for (final value in rawChapter['v3LocalSentences'] as List)
           value.toString(),
       ];
-      final sentences = ReadAloudSplitterV3.mergeOneWordChunks(rawSentences);
+      final sentences = List<String>.unmodifiable(rawSentences);
       final source = sentences.map(_canonical).join();
       final digest = await Sha256().hash(utf8.encode(source));
       var offset = 0;
@@ -88,7 +86,7 @@ Future<void> main(List<String> args) async {
       'book': displayNameByBook[entry.key],
       'sourceReports': reportsByBook[entry.key],
       'sourceSolverVersion': solverVersions.single,
-      'postProcessor': 'mergeOneWordChunks',
+      'postProcessor': 'none',
       'chapterCount': chapters.length,
       'sentenceCount': chapters.fold<int>(
         0,

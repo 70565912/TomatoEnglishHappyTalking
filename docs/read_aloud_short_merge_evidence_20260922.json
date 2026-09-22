@@ -1,0 +1,1205 @@
+{
+  "schemaVersion": "short_merge_planning_evidence_2",
+  "status": "planning_only_not_production_replay",
+  "createdAt": "2026-09-22T22:05:10.2619061+08:00",
+  "baselineCommit": "70c48b08885e1a862506f6648c50cefb7d2d2998",
+  "solverVersion": "syntax_solver_v3_10",
+  "workspace": "C:\\Users\\Ryan\\.codex\\worktrees\\b404\\TomatoEnglishHappyTalking",
+  "sources": [
+    {
+      "path": "F:\\英文绘本制作\\爱丽丝镜中奇遇记\\work\\sentence-translation-v3\\user-merge-final-20260922\\plan.json",
+      "sha256": "512218c0a0a9448b0e7bea2c2dbd30675f30f2d7e8cbf2ad4f11f2fbc2d85290"
+    },
+    {
+      "path": "F:\\英文绘本制作\\爱丽丝镜中奇遇记\\work\\sentence-translation-v3\\algorithm-short-merge-assessment-20260922\\scope-inventory.json",
+      "sha256": "ff96f5e4ad6979960d1696dec538e685399ec5dc237ff9b4d91ce35e2d857694"
+    },
+    {
+      "path": "F:\\英文绘本制作\\爱丽丝镜中奇遇记\\work\\sentence-translation-v3\\user-merge-final-20260922\\after.json",
+      "sha256": "b84a061d7819e6f82e4282ffca546a0635a4612944216b2e12cc319a84ae51de"
+    },
+    {
+      "path": "F:\\英文绘本制作\\爱丽丝镜中奇遇记\\work\\sentence-translation-v3\\algorithm-short-merge-assessment-20260922\\Tomato短句合并最小改动评估.md",
+      "sha256": "bc1bd5123c75dff7fc5fb9d4c85f438b55a3cf440ab3b4c401321b317f3ffc0b"
+    },
+    {
+      "path": "F:\\英文绘本制作\\爱丽丝镜中奇遇记\\work\\sentence-translation-v3\\user-merge-final-20260922\\21组中英文用户确认稿.md",
+      "sha256": "db7b75c549b9ea14b2b930de5355044cae60585d9238f03c13a361d89f604070"
+    },
+    {
+      "path": "F:\\英文绘本制作\\爱丽丝镜中奇遇记\\tools\\inventory_short_merge_scope_20260922.py",
+      "sha256": "6a4a0a102c0ac1ef0211018f0c61d33c3bf583d80f55ad049fd309dd648ed41f"
+    },
+    {
+      "path": "F:\\英文绘本制作\\分句人工评审规则.md",
+      "sha256": "dd50279fe21179be4ba8ee82b7ac070e869ad3ed17803e1db3956a07e9bd7c30"
+    }
+  ],
+  "repositoryComparisons": [
+    {
+      "relativePath": "app\\test\\fixtures\\read_aloud_splitter_v3_solver_oracle.json",
+      "handoffSha256": "dd9fdc4dd979c9d4a996f825c329ccbf8898b17b95695ea84bc58e4a42ce4c27",
+      "isolatedSha256": "d8fcb004862ba5e3ac79c84bc72707e6b60cf9499ac405018d0d1f6d20c1d954",
+      "mainSha256": "dd9fdc4dd979c9d4a996f825c329ccbf8898b17b95695ea84bc58e4a42ce4c27",
+      "sameTextAfterCrLfNormalization": true
+    },
+    {
+      "relativePath": "app\\test\\fixtures\\read_aloud_splitter_v3_published_behavior.json",
+      "handoffSha256": "facb55c35d2b42aa02260f307e999bf784a2596a2b2c4e210df14c48c2295c3b",
+      "isolatedSha256": "facb55c35d2b42aa02260f307e999bf784a2596a2b2c4e210df14c48c2295c3b",
+      "mainSha256": "facb55c35d2b42aa02260f307e999bf784a2596a2b2c4e210df14c48c2295c3b",
+      "sameTextAfterCrLfNormalization": true
+    },
+    {
+      "relativePath": "docs\\read_aloud_sentence_split_spec.md",
+      "handoffSha256": "1cb3bcc03ebc76ccb95823d523a284d15d7f1682ccc521e03adfcd3c7f7751aa",
+      "isolatedSha256": "85d788c3875218ffe5c8e5acb3507462f585f69781202c090f5ca3b57b87e4b4",
+      "mainSha256": "1cb3bcc03ebc76ccb95823d523a284d15d7f1682ccc521e03adfcd3c7f7751aa",
+      "sameTextAfterCrLfNormalization": true
+    },
+    {
+      "relativePath": "docs\\read_aloud_sentence_split_engineering_rules.md",
+      "handoffSha256": "1cf9b86f480cf562dcad3e7e29fbde18dabc5236e6925cbb645f51bc02d0b0f5",
+      "isolatedSha256": "694ddebcb51796cc586b0925cc0db5c25d122a894ee2c046786b1f05880d2f93",
+      "mainSha256": "1cf9b86f480cf562dcad3e7e29fbde18dabc5236e6925cbb645f51bc02d0b0f5",
+      "sameTextAfterCrLfNormalization": true
+    },
+    {
+      "relativePath": "app\\lib\\services\\read_aloud_splitter_v3.dart",
+      "handoffSha256": "b96de43de0005b8940da441a40cf0147b3f34c280535b5bca8b84494a7ccb07f",
+      "isolatedSha256": "255d1d6733fe9316539106b078c171b265def32e90ba83716a5a29ea0987a4a6",
+      "mainSha256": "b96de43de0005b8940da441a40cf0147b3f34c280535b5bca8b84494a7ccb07f",
+      "sameTextAfterCrLfNormalization": true
+    },
+    {
+      "relativePath": "app\\lib\\services\\read_aloud_splitter_v3_solver.dart",
+      "handoffSha256": "fb06dfca823ec2f95e779633a8d0629110116bdacfb10ae5b3f3a39a97d592ba",
+      "isolatedSha256": "fb06dfca823ec2f95e779633a8d0629110116bdacfb10ae5b3f3a39a97d592ba",
+      "mainSha256": "fb06dfca823ec2f95e779633a8d0629110116bdacfb10ae5b3f3a39a97d592ba",
+      "sameTextAfterCrLfNormalization": true
+    },
+    {
+      "relativePath": "app\\lib\\services\\article_segmentation_service_v3.dart",
+      "handoffSha256": "58898149c9faf589ecf0437cd12ada7700547f41b6693c9d5e5390cd32da5e30",
+      "isolatedSha256": "33619858264f54ec327187b66855b004dc1f7b46cef2bc3b553dfa36d918b25e",
+      "mainSha256": "58898149c9faf589ecf0437cd12ada7700547f41b6693c9d5e5390cd32da5e30",
+      "sameTextAfterCrLfNormalization": true
+    },
+    {
+      "relativePath": "app\\lib\\services\\orthographic_sentence_boundary_v3.dart",
+      "handoffSha256": "b6b9c84c6dba36694f00eaec7fb86a13aca348a6326d4721cab90b57d781239b",
+      "isolatedSha256": "b6b9c84c6dba36694f00eaec7fb86a13aca348a6326d4721cab90b57d781239b",
+      "mainSha256": "b6b9c84c6dba36694f00eaec7fb86a13aca348a6326d4721cab90b57d781239b",
+      "sameTextAfterCrLfNormalization": true
+    }
+  ],
+  "snapshotCounts": {
+    "chapters": 53,
+    "slots": 3252,
+    "visible": 3163,
+    "hidden": 89,
+    "chaptersWithoutLineBreaks": 53,
+    "databaseReadPerformed": false
+  },
+  "countMethod": "Source inventory uses book-audit regex, not production wordCount. Recompute with ReadAloudSplitterV3.wordCount before algorithm assertions.",
+  "staticInventorySummary": [
+    {
+      "name": "read_aloud_splitter_v3_solver_oracle.json:Alice",
+      "counts": {
+        "chapterCount": 39,
+        "visibleSlotCount": 2081,
+        "short2to3WordSlots": 28,
+        "lengthOnlyEligibleSlots": 28,
+        "bothDirectionsLengthEligible": 17,
+        "noLengthEligibleNeighbor": 0,
+        "hasNeighborProducing18to30Words": 10
+      },
+      "chaptersWithoutLineBreaks": null
+    },
+    {
+      "name": "read_aloud_splitter_v3_solver_oracle.json:Willows",
+      "counts": {
+        "chapterCount": 62,
+        "visibleSlotCount": 4668,
+        "short2to3WordSlots": 31,
+        "lengthOnlyEligibleSlots": 31,
+        "bothDirectionsLengthEligible": 17,
+        "noLengthEligibleNeighbor": 0,
+        "hasNeighborProducing18to30Words": 13
+      },
+      "chaptersWithoutLineBreaks": null
+    },
+    {
+      "name": "read_aloud_splitter_v3_published_behavior.json:Alice",
+      "counts": {
+        "chapterCount": 39,
+        "visibleSlotCount": 2080,
+        "short2to3WordSlots": 29,
+        "lengthOnlyEligibleSlots": 29,
+        "bothDirectionsLengthEligible": 17,
+        "noLengthEligibleNeighbor": 0,
+        "hasNeighborProducing18to30Words": 11
+      },
+      "chaptersWithoutLineBreaks": null
+    },
+    {
+      "name": "read_aloud_splitter_v3_published_behavior.json:Willows",
+      "counts": {
+        "chapterCount": 62,
+        "visibleSlotCount": 4677,
+        "short2to3WordSlots": 30,
+        "lengthOnlyEligibleSlots": 29,
+        "bothDirectionsLengthEligible": 17,
+        "noLengthEligibleNeighbor": 1,
+        "hasNeighborProducing18to30Words": 12
+      },
+      "chaptersWithoutLineBreaks": null
+    },
+    {
+      "name": "short-alignment-20260922/before.json",
+      "counts": {
+        "chapterCount": 53,
+        "visibleSlotCount": 3242,
+        "short2to3WordSlots": 99,
+        "lengthOnlyEligibleSlots": 99,
+        "bothDirectionsLengthEligible": 85,
+        "noLengthEligibleNeighbor": 0,
+        "hasNeighborProducing18to30Words": 14
+      },
+      "chaptersWithoutLineBreaks": 53
+    },
+    {
+      "name": "user-merge-final-20260922/after.json",
+      "counts": {
+        "chapterCount": 53,
+        "visibleSlotCount": 3163,
+        "short2to3WordSlots": 5,
+        "lengthOnlyEligibleSlots": 5,
+        "bothDirectionsLengthEligible": 4,
+        "noLengthEligibleNeighbor": 0,
+        "hasNeighborProducing18to30Words": 1
+      },
+      "chaptersWithoutLineBreaks": 53
+    }
+  ],
+  "approvedMergeNumbers": [
+    1,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    11,
+    12,
+    13,
+    14,
+    17,
+    18,
+    19,
+    21
+  ],
+  "approvedStableNumbers": [
+    2,
+    10,
+    15,
+    16,
+    20
+  ],
+  "confirmedCards": [
+    {
+      "reviewNumber": 1,
+      "chapter": "C06",
+      "slotsOneBased": [
+        59,
+        60
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 59,
+          "english": "One, two!",
+          "chinese": "一、二！"
+        },
+        {
+          "slot": 60,
+          "english": "One, two!",
+          "chinese": "一、二！"
+        }
+      ],
+      "after": [
+        {
+          "slot": 59,
+          "english": "One, two! One, two!",
+          "chinese": "一、二！一、二！",
+          "hidden": false,
+          "wordCount": 4,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 60,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 58
+        }
+      ]
+    },
+    {
+      "reviewNumber": 2,
+      "chapter": "C08",
+      "slotsOneBased": [
+        29,
+        30,
+        31
+      ],
+      "decision": "保留纠正后的切分，用户已确认",
+      "before": [
+        {
+          "slot": 29,
+          "english": "‘It says “Bough-wough!” ’ cried a Daisy.",
+          "chinese": "“它叫的是‘枝汪！’”一朵雏菊喊道。"
+        },
+        {
+          "slot": 30,
+          "english": "",
+          "chinese": ""
+        },
+        {
+          "slot": 31,
+          "english": "‘ That's why its branches are called boughs!’",
+          "chinese": "“所以它的枝条才叫‘枝’呀！”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 29,
+          "english": "‘It says “Bough-wough!” ’ cried a Daisy.",
+          "chinese": "“它叫的是‘枝汪！’”一朵雏菊喊道。",
+          "hidden": false,
+          "wordCount": 6,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 30,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 28
+        },
+        {
+          "slot": 31,
+          "english": "‘ That's why its branches are called boughs!’",
+          "chinese": "“所以它的枝条才叫‘枝’呀！”",
+          "hidden": false,
+          "wordCount": 7,
+          "mergedIntoIndex": null
+        }
+      ]
+    },
+    {
+      "reviewNumber": 3,
+      "chapter": "C08",
+      "slotsOneBased": [
+        54,
+        55
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 54,
+          "english": "‘Then you'll know why.’",
+          "chinese": "“这样你就知道原因了。”"
+        },
+        {
+          "slot": 55,
+          "english": "Alice did so.",
+          "chinese": "爱丽丝照做了。"
+        }
+      ],
+      "after": [
+        {
+          "slot": 54,
+          "english": "‘Then you'll know why.’ Alice did so.",
+          "chinese": "“这样你就知道原因了。”爱丽丝照做了。",
+          "hidden": false,
+          "wordCount": 7,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 55,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 53
+        }
+      ]
+    },
+    {
+      "reviewNumber": 4,
+      "chapter": "C09",
+      "slotsOneBased": [
+        56,
+        57
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 56,
+          "english": "this time, of walking in the opposite direction.",
+          "chinese": "这一次，朝相反的方向走。"
+        },
+        {
+          "slot": 57,
+          "english": "It succeeded beautifully.",
+          "chinese": "这个办法好用极了。"
+        }
+      ],
+      "after": [
+        {
+          "slot": 56,
+          "english": "this time, of walking in the opposite direction. It succeeded beautifully.",
+          "chinese": "这一次，朝相反的方向走。这个办法好用极了。",
+          "hidden": false,
+          "wordCount": 11,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 57,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 55
+        }
+      ]
+    },
+    {
+      "reviewNumber": 5,
+      "chapter": "C11",
+      "slotsOneBased": [
+        35,
+        36
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 35,
+          "english": "‘Faster! Faster!’",
+          "chinese": "“快一点！快一点！”"
+        },
+        {
+          "slot": 36,
+          "english": "And they went so fast that at last they seemed to skim through the air,",
+          "chinese": "她们跑得如此飞快，到后来仿佛在空中滑行，"
+        }
+      ],
+      "after": [
+        {
+          "slot": 35,
+          "english": "‘Faster! Faster!’ And they went so fast that at last they seemed to skim through the air,",
+          "chinese": "“快一点！快一点！”她们跑得如此飞快，到后来仿佛在空中滑行，",
+          "hidden": false,
+          "wordCount": 17,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 36,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 34
+        }
+      ]
+    },
+    {
+      "reviewNumber": 6,
+      "chapter": "C12",
+      "slotsOneBased": [
+        2,
+        3
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 2,
+          "english": "the Queen said good-naturedly, taking a little box out of her pocket.",
+          "chinese": "王后和气地说着，从口袋里掏出一只小盒子。"
+        },
+        {
+          "slot": 3,
+          "english": "‘Have a biscuit?’",
+          "chinese": "“来块饼干好吗？”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 2,
+          "english": "the Queen said good-naturedly, taking a little box out of her pocket. ‘Have a biscuit?’",
+          "chinese": "王后和气地说着，从口袋里掏出一只小盒子。“来块饼干好吗？”",
+          "hidden": false,
+          "wordCount": 15,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 3,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 1
+        }
+      ]
+    },
+    {
+      "reviewNumber": 7,
+      "chapter": "C19",
+      "slotsOneBased": [
+        59,
+        60
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 59,
+          "english": "‘So much obliged!’ added Tweedledee.",
+          "chinese": "“实在感激不尽！”特威帝补充道。"
+        },
+        {
+          "slot": 60,
+          "english": "‘You like poetry?’",
+          "chinese": "“你喜欢诗吗？”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 59,
+          "english": "‘So much obliged!’ added Tweedledee. ‘You like poetry?’",
+          "chinese": "“实在感激不尽！”特威帝补充道。“你喜欢诗吗？”",
+          "hidden": false,
+          "wordCount": 8,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 60,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 58
+        }
+      ]
+    },
+    {
+      "reviewNumber": 8,
+      "chapter": "C23",
+      "slotsOneBased": [
+        24,
+        25
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 24,
+          "english": "Alice laughed.",
+          "chinese": "爱丽丝笑了起来。"
+        },
+        {
+          "slot": 25,
+          "english": "‘You must hit the trees pretty often, I should think,’ she said.",
+          "chinese": "“这么说，你们一定经常打中树吧。”她说。"
+        }
+      ],
+      "after": [
+        {
+          "slot": 24,
+          "english": "Alice laughed. ‘You must hit the trees pretty often, I should think,’ she said.",
+          "chinese": "爱丽丝笑了起来。“这么说，你们一定经常打中树吧。”她说。",
+          "hidden": false,
+          "wordCount": 14,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 25,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 23
+        }
+      ]
+    },
+    {
+      "reviewNumber": 9,
+      "chapter": "C24",
+      "slotsOneBased": [
+        31,
+        32
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 31,
+          "english": "‘I don't understand you,’ said Alice.",
+          "chinese": "“我听不懂您的话，”爱丽丝说。"
+        },
+        {
+          "slot": 32,
+          "english": "‘It's dreadfully confusing!’",
+          "chinese": "“这实在太让人糊涂了！”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 31,
+          "english": "‘I don't understand you,’ said Alice. ‘It's dreadfully confusing!’",
+          "chinese": "“我听不懂您的话，”爱丽丝说。“这实在太让人糊涂了！”",
+          "hidden": false,
+          "wordCount": 9,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 32,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 30
+        }
+      ]
+    },
+    {
+      "reviewNumber": 10,
+      "chapter": "C25",
+      "slotsOneBased": [
+        3,
+        4
+      ],
+      "decision": "保留纠正后的切分，用户已确认",
+      "before": [
+        {
+          "slot": 3,
+          "english": "‘Oh, oh, oh!’ shouted the Queen,",
+          "chinese": "“哎哟，哎哟，哎哟！”王后叫喊着，"
+        },
+        {
+          "slot": 4,
+          "english": "shaking her hand about as if she wanted to shake it off.",
+          "chinese": "不停地甩着手，仿佛想把那只手甩掉。"
+        }
+      ],
+      "after": [
+        {
+          "slot": 3,
+          "english": "‘Oh, oh, oh!’ shouted the Queen,",
+          "chinese": "“哎哟，哎哟，哎哟！”王后叫喊着，",
+          "hidden": false,
+          "wordCount": 6,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 4,
+          "english": "shaking her hand about as if she wanted to shake it off.",
+          "chinese": "不停地甩着手，仿佛想把那只手甩掉。",
+          "hidden": false,
+          "wordCount": 12,
+          "mergedIntoIndex": null
+        }
+      ]
+    },
+    {
+      "reviewNumber": 11,
+      "chapter": "C25",
+      "slotsOneBased": [
+        61,
+        62
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 61,
+          "english": "Alice laughed.",
+          "chinese": "爱丽丝笑了。"
+        },
+        {
+          "slot": 62,
+          "english": "‘There's no use trying,’ she said: ‘one can't believe impossible things.’",
+          "chinese": "“试也没用，”她说，“谁也不可能相信不可能的事。”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 61,
+          "english": "Alice laughed. ‘There's no use trying,’ she said: ‘one can't believe impossible things.’",
+          "chinese": "爱丽丝笑了。“试也没用，”她说，“谁也不可能相信不可能的事。”",
+          "hidden": false,
+          "wordCount": 13,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 62,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 60
+        }
+      ]
+    },
+    {
+      "reviewNumber": 12,
+      "chapter": "C27",
+      "slotsOneBased": [
+        21,
+        22
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 21,
+          "english": "as her hands were full.",
+          "chinese": "因为她的两只手都占满了。"
+        },
+        {
+          "slot": 22,
+          "english": "‘Feather, I say!’",
+          "chinese": "“我再说一遍，羽毛！”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 21,
+          "english": "as her hands were full. ‘Feather, I say!’",
+          "chinese": "因为她的两只手都占满了。“我再说一遍，羽毛！”",
+          "hidden": false,
+          "wordCount": 8,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 22,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 20
+        }
+      ]
+    },
+    {
+      "reviewNumber": 13,
+      "chapter": "C36",
+      "slotsOneBased": [
+        17,
+        18
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 17,
+          "english": "‘Dear me, no!’ said the King.",
+          "chinese": "“天哪，当然不能！”国王说。"
+        },
+        {
+          "slot": 18,
+          "english": "‘What an idea!’",
+          "chinese": "“这是什么念头！”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 17,
+          "english": "‘Dear me, no!’ said the King. ‘What an idea!’",
+          "chinese": "“天哪，当然不能！”国王说。“这是什么念头！”",
+          "hidden": false,
+          "wordCount": 9,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 18,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 16
+        }
+      ]
+    },
+    {
+      "reviewNumber": 14,
+      "chapter": "C37",
+      "slotsOneBased": [
+        27,
+        28
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 27,
+          "english": "‘I always thought they were fabulous monsters!’ said the Unicorn.",
+          "chinese": "“我一直以为它们是传说中的怪兽！”独角兽说。"
+        },
+        {
+          "slot": 28,
+          "english": "‘Is it alive?’",
+          "chinese": "“它是活的吗？”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 27,
+          "english": "‘I always thought they were fabulous monsters!’ said the Unicorn. ‘Is it alive?’",
+          "chinese": "“我一直以为它们是传说中的怪兽！”独角兽说。“它是活的吗？”",
+          "hidden": false,
+          "wordCount": 13,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 28,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 26
+        }
+      ]
+    },
+    {
+      "reviewNumber": 15,
+      "chapter": "C38",
+      "slotsOneBased": [
+        38,
+        39
+      ],
+      "decision": "保留纠正后的切分，用户已确认",
+      "before": [
+        {
+          "slot": 38,
+          "english": "‘It's very provoking!’ she said, in reply to the Lion",
+          "chinese": "“实在太气人了！”她回答狮子道"
+        },
+        {
+          "slot": 39,
+          "english": "(she was getting quite used to being called ‘the Monster’).",
+          "chinese": "（她已经渐渐习惯别人叫她“怪物”）。"
+        }
+      ],
+      "after": [
+        {
+          "slot": 38,
+          "english": "‘It's very provoking!’ she said, in reply to the Lion",
+          "chinese": "“实在太气人了！”她回答狮子道",
+          "hidden": false,
+          "wordCount": 10,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 39,
+          "english": "(she was getting quite used to being called ‘the Monster’).",
+          "chinese": "（她已经渐渐习惯别人叫她“怪物”）。",
+          "hidden": false,
+          "wordCount": 10,
+          "mergedIntoIndex": null
+        }
+      ]
+    },
+    {
+      "reviewNumber": 16,
+      "chapter": "C41",
+      "slotsOneBased": [
+        54,
+        55
+      ],
+      "decision": "保留纠正后的切分，用户已确认",
+      "before": [
+        {
+          "slot": 54,
+          "english": "‘Plenty of practice!’ he went on repeating,",
+          "chinese": "“练习得多极了！”他不停地重复着，"
+        },
+        {
+          "slot": 55,
+          "english": "all the time that Alice was getting him on his feet again.",
+          "chinese": "在爱丽丝把他重新扶起来的整个过程中都是如此。"
+        }
+      ],
+      "after": [
+        {
+          "slot": 54,
+          "english": "‘Plenty of practice!’ he went on repeating,",
+          "chinese": "“练习得多极了！”他不停地重复着，",
+          "hidden": false,
+          "wordCount": 7,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 55,
+          "english": "all the time that Alice was getting him on his feet again.",
+          "chinese": "在爱丽丝把他重新扶起来的整个过程中都是如此。",
+          "hidden": false,
+          "wordCount": 12,
+          "mergedIntoIndex": null
+        }
+      ]
+    },
+    {
+      "reviewNumber": 17,
+      "chapter": "C47",
+      "slotsOneBased": [
+        6,
+        7
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 6,
+          "english": "‘I don't know,’ said Alice.",
+          "chinese": "“我不知道，”爱丽丝说。"
+        },
+        {
+          "slot": 7,
+          "english": "‘I lost count.’",
+          "chinese": "“我数乱了。”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 6,
+          "english": "‘I don't know,’ said Alice. ‘I lost count.’",
+          "chinese": "“我不知道，”爱丽丝说。“我数乱了。”",
+          "hidden": false,
+          "wordCount": 8,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 7,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 5
+        }
+      ]
+    },
+    {
+      "reviewNumber": 18,
+      "chapter": "C47",
+      "slotsOneBased": [
+        20,
+        21
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 20,
+          "english": "Alice considered.",
+          "chinese": "爱丽丝认真想了想。"
+        },
+        {
+          "slot": 21,
+          "english": "‘The bone wouldn't remain, of course,",
+          "chinese": "“骨头当然不会留下，"
+        }
+      ],
+      "after": [
+        {
+          "slot": 20,
+          "english": "Alice considered. ‘The bone wouldn't remain, of course,",
+          "chinese": "爱丽丝认真想了想。“骨头当然不会留下，",
+          "hidden": false,
+          "wordCount": 8,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 21,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 19
+        }
+      ]
+    },
+    {
+      "reviewNumber": 19,
+      "chapter": "C48",
+      "slotsOneBased": [
+        20,
+        21
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 20,
+          "english": "Alice was puzzled.",
+          "chinese": "爱丽丝听糊涂了。"
+        },
+        {
+          "slot": 21,
+          "english": "‘In our country,’ she remarked, ‘there's only one day at a time.’",
+          "chinese": "“在我们国家，”她说，“一次只会有一天。”"
+        }
+      ],
+      "after": [
+        {
+          "slot": 20,
+          "english": "Alice was puzzled. ‘In our country,’ she remarked, ‘there's only one day at a time.’",
+          "chinese": "爱丽丝听糊涂了。“在我们国家，”她说，“一次只会有一天。”",
+          "hidden": false,
+          "wordCount": 15,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 21,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 19
+        }
+      ]
+    },
+    {
+      "reviewNumber": 20,
+      "chapter": "C51",
+      "slotsOneBased": [
+        13,
+        14
+      ],
+      "decision": "保留纠正后的切分，用户已确认",
+      "before": [
+        {
+          "slot": 13,
+          "english": "Alice: Alice! Pudding. Remove the pudding!’,",
+          "chinese": "这位是爱丽丝；爱丽丝！这位是布丁。把布丁撤下去！”"
+        },
+        {
+          "slot": 14,
+          "english": "and the waiters took it away so quickly that Alice couldn't return its bow.",
+          "chinese": "侍者们飞快地将它端走，爱丽丝连回礼都来不及。"
+        }
+      ],
+      "after": [
+        {
+          "slot": 13,
+          "english": "Alice: Alice! Pudding. Remove the pudding!’,",
+          "chinese": "这位是爱丽丝；爱丽丝！这位是布丁。把布丁撤下去！”",
+          "hidden": false,
+          "wordCount": 6,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 14,
+          "english": "and the waiters took it away so quickly that Alice couldn't return its bow.",
+          "chinese": "侍者们飞快地将它端走，爱丽丝连回礼都来不及。",
+          "hidden": false,
+          "wordCount": 14,
+          "mergedIntoIndex": null
+        }
+      ]
+    },
+    {
+      "reviewNumber": 21,
+      "chapter": "C51",
+      "slotsOneBased": [
+        48,
+        49
+      ],
+      "decision": "合并，用户已确认",
+      "before": [
+        {
+          "slot": 48,
+          "english": "The White Queen laughed with delight, and stroked Alice's cheek.",
+          "chinese": "白王后高兴地笑起来，轻轻抚摸爱丽丝的脸颊。"
+        },
+        {
+          "slot": 49,
+          "english": "Then she began:",
+          "chinese": "随后念道："
+        }
+      ],
+      "after": [
+        {
+          "slot": 48,
+          "english": "The White Queen laughed with delight, and stroked Alice's cheek. Then she began:",
+          "chinese": "白王后高兴地笑起来，轻轻抚摸爱丽丝的脸颊。随后念道：",
+          "hidden": false,
+          "wordCount": 13,
+          "mergedIntoIndex": null
+        },
+        {
+          "slot": 49,
+          "english": "",
+          "chinese": "",
+          "hidden": true,
+          "wordCount": 0,
+          "mergedIntoIndex": 47
+        }
+      ]
+    }
+  ],
+  "restrictions": [
+    "Offline evidence and tests only; production must never read these book fixtures.",
+    "Book approvals are historical saved-content decisions; latestAlgorithmRequirement governs new production output.",
+    "confirmedCards.before is the corrected pre-decision state, not the initial 99-short inventory.",
+    "historicalPreservedShortWindows.index and neighbors.index are zero-based; cards slots are one-based.",
+    "Historical count annotations use the book-audit regex; automated assertions use production wordCount.",
+    "Executable acceptance tests were added and run against unchanged V3.10; see read_aloud_short_merge_test_results_20260922.json. No full-corpus replay, AOT benchmark, production algorithm/specification or database write was performed."
+  ],
+  "historicalPreservedShortWindows": [
+    {
+      "chapter": "C21",
+      "index": 43,
+      "english": "‘Ditto,’ said Tweedledum.",
+      "wordCount": 3,
+      "neighbors": [
+        {
+          "side": "left",
+          "index": 42,
+          "english": "I should like to know?’",
+          "combinedWordCount": 8,
+          "lengthOnlyEligible": true
+        },
+        {
+          "side": "right",
+          "index": 44,
+          "english": "‘Ditto, ditto!’ cried Tweedledee.",
+          "combinedWordCount": 7,
+          "lengthOnlyEligible": true
+        }
+      ]
+    },
+    {
+      "chapter": "C31",
+      "index": 46,
+      "english": "‘Certainly,’ said Alice.",
+      "wordCount": 3,
+      "neighbors": [
+        {
+          "side": "left",
+          "index": 45,
+          "english": "and that shows that there are three hundred and sixty-four days when you might get un-birthday presents’",
+          "combinedWordCount": 20,
+          "lengthOnlyEligible": false
+        },
+        {
+          "side": "right",
+          "index": 47,
+          "english": "‘And only one for birthday presents, you know.",
+          "combinedWordCount": 11,
+          "lengthOnlyEligible": true
+        }
+      ]
+    },
+    {
+      "chapter": "C32",
+      "index": 14,
+      "english": "‘Oh!’ said Alice.",
+      "wordCount": 3,
+      "neighbors": [
+        {
+          "side": "left",
+          "index": 13,
+          "english": "‘I always pay it extra.’",
+          "combinedWordCount": 8,
+          "lengthOnlyEligible": true
+        },
+        {
+          "side": "right",
+          "index": 15,
+          "english": "She was too much puzzled to make any other remark.",
+          "combinedWordCount": 13,
+          "lengthOnlyEligible": true
+        }
+      ]
+    },
+    {
+      "chapter": "C41",
+      "index": 55,
+      "english": "‘Plenty of practice!’",
+      "wordCount": 3,
+      "neighbors": [
+        {
+          "side": "left",
+          "index": 54,
+          "english": "all the time that Alice was getting him on his feet again.",
+          "combinedWordCount": 15,
+          "lengthOnlyEligible": true
+        },
+        {
+          "side": "right",
+          "index": 56,
+          "english": "‘It's too ridiculous!’ cried Alice, losing all her patience this time.",
+          "combinedWordCount": 14,
+          "lengthOnlyEligible": true
+        }
+      ]
+    },
+    {
+      "chapter": "C53",
+      "index": 64,
+      "english": "Lingering onward dreamily",
+      "wordCount": 3,
+      "neighbors": [
+        {
+          "side": "left",
+          "index": 63,
+          "english": "A boat, beneath a sunny sky",
+          "combinedWordCount": 9,
+          "lengthOnlyEligible": true
+        },
+        {
+          "side": "right",
+          "index": 65,
+          "english": "In an evening of July.",
+          "combinedWordCount": 8,
+          "lengthOnlyEligible": true
+        }
+      ]
+    }
+  ],
+  "latestAlgorithmRequirement": {
+    "userInstruction": "把1词合并的行为扩大到4词以内必须合并，不能保留4词以下的分句，合并后的结果按原分句规则限定，30词是硬上线。",
+    "updatedAt": "2026-09-22T22:19:06.8745746+08:00",
+    "requirement": "Merge short source units BEFORE splitting; build facts and run the existing DAG once per merged unit. Enforce the final minimum and the original staged length/punctuation/syntax rules, with a 30-word final hard cap. Optimize quality, AOT performance and functional code volume together.",
+    "assumedMinimumFinalWords": 4,
+    "exactFourWordCase": "Clarification requested because the instruction uses both within-four and below-four wording. Pending answer, retain the preceding fewer-than-four interpretation; exactly four words may remain.",
+    "hardMaximumWords": 30,
+    "preserveUndersizedChunks": false,
+    "preserveUndersizedSingletonProducts": false,
+    "separateSeventeenWordMergeCap": false,
+    "historicalShortWindowsRole": "All five are mandatory-processing cases for new algorithm replay, not exemptions. Existing saved book content is not automatically changed.",
+    "oldSingletonRegressionRole": "Retain inputs; revise expectations that leave undersized chunks or violate original length/structure rules.",
+    "subsequentUserInstructions": [
+      "还要加入测试用例",
+      "上限应该是按原有的分句规则，合适范围，逐步加强的分句范围，强制分句范围到硬上限",
+      "可以先合并，再做分句，就不必做多次分句",
+      "分句算法任然要按规则兼顾速度和代码量的优化"
+    ],
+    "processingOrder": [
+      "coalesce_short_source_units",
+      "one_fact_build_per_unit",
+      "one_DAG_solve_per_unit",
+      "select_legal_path",
+      "validate_and_persist"
+    ],
+    "lengthZones": [
+      "Preferred 8-16; shorter chunks still subject to functional-fragment rules.",
+      "17 elastic; unpunctuated 17-20 may KEEP or split at a safe comfortable boundary.",
+      "18-20 with usable source punctuation or delimiter edges must split there.",
+      "21-30 must continue solving regardless of punctuation; punctuation first, then safe syntax.",
+      "No final output chunk above 30; intermediate input units may be longer."
+    ],
+    "engineeringGates": [
+      "No split-merge-resplit loop.",
+      "Reuse existing coalesce and DAG; remove replaced postprocessing paths.",
+      "One fact build and one DAG per merged unit.",
+      "Quality, same-machine alternating AOT medians, and functional code/complexity all required.",
+      "No significant performance regression; no unrequested framework, compatibility path or duplicated scoring."
+    ]
+  }
+}

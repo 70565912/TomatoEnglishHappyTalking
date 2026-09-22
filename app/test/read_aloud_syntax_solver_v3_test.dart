@@ -5,8 +5,7 @@ import 'package:tomato_english_happy_talking/services/read_aloud_splitter_v3.dar
 
 void main() {
   group('ReadAloudSplitterV3 syntax solver', () {
-    test('keeps every safe original sentence unchanged, including short ones',
-        () {
+    test('coalesces short originals before one fact build and DAG', () {
       const source = 'Mole looked up. Rat waved back. Toad laughed loudly.';
       final plan = ReadAloudSplitterV3.plan(
         source: source,
@@ -18,10 +17,9 @@ void main() {
       );
 
       expect(plan.localSentences, const [
-        'Mole looked up.',
-        'Rat waved back.',
-        'Toad laughed loudly.',
+        'Mole looked up. Rat waved back. Toad laughed loudly.',
       ]);
+      expect(plan.counters.dagSolves, 1);
       expect(
         plan.originals.map((value) => value.localPath.stage),
         everyElement(ReadAloudPathStageV3.unchanged),
@@ -922,10 +920,10 @@ void main() {
         ),
       );
 
-      expect(plan.originals, hasLength(2));
+      expect(plan.originals, hasLength(1));
       expect(
         plan.localSentences,
-        const ['First words.—"', 'Both animals nodded gravely.'],
+        const [source],
       );
       expect(
         ReadAloudSplitterV3.isRoundTripEquivalent(
@@ -1008,7 +1006,7 @@ void main() {
     });
 
     test('maps a punctuation-only UDPipe token across an em-dash pause', () {
-      const source = 'Toad"—(great applause).';
+      const source = 'Toad"—(great applause) again.';
       final dash = source.indexOf('—');
       final great = source.indexOf('great');
       final applause = source.indexOf('applause');
@@ -1063,20 +1061,28 @@ void main() {
                   id: 5,
                   text: 'applause',
                   start: applause,
-                  end: source.length - 2,
+                  end: source.indexOf(')'),
                   upos: 'NOUN',
                   head: 4,
                   deprel: 'obj',
                 ),
-                const DependencyTokenV3(
+                DependencyTokenV3(
                   id: 6,
-                  text: ').',
-                  start: source.length - 2,
-                  end: source.length,
+                  text: ')',
+                  start: source.indexOf(')'),
+                  end: source.indexOf(')') + 1,
                   upos: 'PUNCT',
                   head: 4,
                   deprel: 'punct',
                 ),
+                DependencyTokenV3(
+                    id: 7,
+                    text: 'again.',
+                    start: source.indexOf('again'),
+                    end: source.length,
+                    upos: 'ADV',
+                    head: 4,
+                    deprel: 'advmod'),
               ],
             ),
           ],
@@ -1828,7 +1834,7 @@ void main() {
       );
     });
 
-    test('keeps the complete Onion-sauce cry and cuts after its quote', () {
+    test('keeps the complete two-word cry attached under the minimum', () {
       const source =
           '"Onion-sauce! Onion-sauce!" he remarked jeeringly, and was gone before they could think of a thoroughly satisfactory reply.';
       final plan = ReadAloudSplitterV3.plan(
@@ -1843,8 +1849,7 @@ void main() {
       );
 
       expect(plan.localSentences, const [
-        '"Onion-sauce! Onion-sauce!"',
-        'he remarked jeeringly, and was gone before they could think of a thoroughly satisfactory reply.',
+        '"Onion-sauce! Onion-sauce!" he remarked jeeringly, and was gone before they could think of a thoroughly satisfactory reply.',
       ]);
       expect(plan.originals, hasLength(1));
       final blocked = plan.originals.single.boundaryCandidates
@@ -1853,9 +1858,7 @@ void main() {
       expect(blocked.quoteSpanWordCount, 2);
       expect(blocked.hardBlocked, isTrue);
       expect(blocked.hardBlockReasons, contains('inside_short_complete_quote'));
-      final selected = plan.originals.single.localPath.boundaries.single;
-      expect(selected.quoteEdge, 'after_closing');
-      expect(selected.insideQuotedSpeech, isFalse);
+      expect(plan.originals.single.localPath.boundaries, isEmpty);
     });
 
     test('keeps both Up we go cries and uses both source quote edges', () {
@@ -2303,7 +2306,7 @@ void main() {
       );
     });
 
-    test('does not merge parser sentences across adjacent matched quotes', () {
+    test('absorbs adjacent short quotes while preserving quote ownership', () {
       const source = '"Ratty! Ratty!" "Mole! Mole!" They both listened.';
       final plan = ReadAloudSplitterV3.plan(
         source: source,
@@ -2314,12 +2317,8 @@ void main() {
         ]),
       );
 
-      expect(plan.originals, hasLength(3));
-      expect(plan.localSentences, const [
-        '"Ratty! Ratty!"',
-        '"Mole! Mole!"',
-        'They both listened.',
-      ]);
+      expect(plan.originals, hasLength(1));
+      expect(plan.localSentences, const [source]);
     });
 
     test('keeps a short attribution tail attached to its quote', () {
@@ -2514,10 +2513,9 @@ void main() {
         ]),
       );
 
-      expect(plan.originals, hasLength(3));
+      expect(plan.originals, hasLength(2));
       expect(plan.localSentences, const [
-        '"Look here!',
-        'Still open.',
+        '"Look here! Still open.',
         'Next paragraph continues normally.',
       ]);
     });
@@ -2565,7 +2563,7 @@ void main() {
         ]),
       );
 
-      expect(plan.originals, hasLength(3));
+      expect(plan.originals, hasLength(2));
       expect(
         plan.localSentences,
         isNot(contains('Narration ends. "')),
@@ -2587,8 +2585,9 @@ void main() {
         ]),
       );
 
-      expect(plan.originals, hasLength(2));
-      expect(plan.localSentences.first, '"coldtonguecoldham— cresssodawater—"');
+      expect(plan.originals, hasLength(1));
+      expect(plan.localSentences.single,
+          '"coldtonguecoldham— cresssodawater—" The Mole listened.');
     });
 
     test('does not match an incomplete quote across a blank paragraph', () {
@@ -2604,10 +2603,12 @@ void main() {
         tokens: document.sentences.expand((sentence) => sentence.tokens),
       );
       final plan = ReadAloudSplitterV3.plan(source: source, document: document);
+      expect(plan.localSentences,
+          ['"coldtonguecoldham— cresssodawater—" The Mole listened.']);
+      expect(plan.counters.dagSolves, 1);
 
       expect(scan.quoteSpans, isEmpty);
       expect(scan.quoteIssues, isNotEmpty);
-      expect(plan.originals, hasLength(3));
     });
 
     test('uses the innermost complete quote when same-mark speech is nested',

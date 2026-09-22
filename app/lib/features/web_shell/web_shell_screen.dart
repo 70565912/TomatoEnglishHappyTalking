@@ -1021,7 +1021,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         ReadAloudSplitterV3.validateReviewedSentences(
           englishContent,
           sentences,
-          rejectOneWordChunks: true,
+          enforceMinimumWords: true,
         );
       }
       final preparedReviewed = preparedInput?.reviewedSentences;

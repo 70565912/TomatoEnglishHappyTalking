@@ -13,10 +13,8 @@ void main() {
         'Mole looked up. Rat waved back. Toad laughed loudly.';
     const expected = [
       'The committee released the report after investigators had reviewed every interview',
-      'and checked the records that witnesses submitted during the final week.',
-      'Mole looked up.',
-      'Rat waved back.',
-      'Toad laughed loudly.',
+      'and checked the records that witnesses submitted during the final week. Mole looked up.',
+      'Rat waved back. Toad laughed loudly.',
     ];
 
     final document = await UdpipeSyntaxParserV3().parse(source);
@@ -30,9 +28,13 @@ void main() {
       document.modelSha256,
       UdpipeSyntaxParserV3.expectedModelSha256,
     );
-    expect(ReadAloudSplitterV3.solverVersion, 'syntax_solver_v3_7');
+    expect(ReadAloudSplitterV3.solverVersion, 'syntax_solver_v3_11');
     expect(plan.localSentences, expected);
-    expect(plan.originals, hasLength(4));
+    expect(plan.originals, hasLength(2));
+    expect(plan.counters.sentenceFactBuilds, 2);
+    expect(plan.counters.dagSolves, 2);
+    expect(plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+        everyElement(inInclusiveRange(4, 20)));
     expect(
         plan.originals
             .skip(1)

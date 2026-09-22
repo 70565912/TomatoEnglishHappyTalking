@@ -389,32 +389,20 @@ Map<String, dynamic> _chapterReport(
     List<ReadAloudOriginalDecisionV3> decisions,
     List<DependencySentenceV3> parserSentences,
     {bool offsetsAreLocal = false}) {
-  final localSentences = ReadAloudSplitterV3.mergeOneWordChunks(
-    decisions
-        .expand((decision) => decision.localPath.segments)
-        .toList(growable: false),
-  );
-  // Build a minimal plan-shaped offset check via surviving originals ∩ merged.
+  final localSentences = decisions
+      .expand((decision) => decision.localPath.segments)
+      .toList(growable: false);
   final required = <int>[];
   var words = 0;
   for (final decision in decisions) {
-    words += ReadAloudSplitterV3.wordCount(decision.source);
+    words += decision.candidateCoverage.sourceWordCount;
     required.add(words);
-  }
-  final actual = <int>{};
-  var cumulative = 0;
-  for (final sentence in localSentences) {
-    cumulative += ReadAloudSplitterV3.wordCount(sentence);
-    actual.add(cumulative);
   }
   ReadAloudSplitterV3.validateReviewedSentences(
     chapter.source,
     localSentences,
-    rejectOneWordChunks: true,
-    requiredBoundaryWordOffsets: [
-      for (final offset in required)
-        if (actual.contains(offset)) offset,
-    ],
+    enforceMinimumWords: true,
+    requiredBoundaryWordOffsets: required,
   );
   var over16Unpunctuated = 0;
   var newUnder8Fragments = 0;

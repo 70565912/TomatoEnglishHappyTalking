@@ -79,6 +79,9 @@ Future<void> main(List<String> args) async {
       'episode': episode,
       'source': source,
       'v3LocalSentences': plan.localSentences,
+      'finalWordCounts': plan.localSentences
+          .map(ReadAloudSplitterV3.wordCount)
+          .toList(growable: false),
       if (includeCandidateResult) ...{
         // Historical field names are retained so existing comparison reports
         // can read the production candidate without a second solver.
@@ -91,6 +94,8 @@ Future<void> main(List<String> args) async {
           for (final decision in plan.originals)
             {
               'originalIndex': decision.originalIndex,
+              'sourceStart': decision.sourceStart,
+              'sourceEnd': decision.sourceEnd,
               'original': decision.source,
               'localPathId': decision.localPathId,
               'segments': decision.localPath.segments,
@@ -217,6 +222,19 @@ String _reconstructSource(
       raw['end'] as int,
       'parser sentence',
     );
+  }
+  // An exact source preserves paragraph whitespace that older reports omitted
+  // between spans. Verify it against every stored source code unit before use.
+  if (chapter['source'] case final String exactSource) {
+    if (exactSource.length != units.length) {
+      throw FormatException('$episode exact source length mismatch');
+    }
+    for (var index = 0; index < units.length; index += 1) {
+      if (units[index] >= 0 && units[index] != exactSource.codeUnitAt(index)) {
+        throw FormatException('$episode exact source mismatch at $index');
+      }
+    }
+    return exactSource;
   }
   return String.fromCharCodes(
     units.map((value) => value < 0 ? 0x20 : value),

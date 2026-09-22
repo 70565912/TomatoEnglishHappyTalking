@@ -1,4 +1,4 @@
-/// Production read-aloud chunk splitter (`read_aloud_dp_v3` / syntax_solver_v3_10).
+/// Production read-aloud chunk splitter (`read_aloud_dp_v3` / syntax_solver_v3_11).
 ///
 /// Each orthographic sentence builds one immutable fact set and runs one
 /// bounded DAG solve. Rules live in `docs/read_aloud_sentence_split_spec.md`.
@@ -403,9 +403,7 @@ class ReadAloudSplitPlanV3 {
       .expand((decision) => decision.localPath.segments)
       .toList(growable: false);
 
-  List<String> get localSentences => ReadAloudSplitterV3.mergeOneWordChunks(
-        localSentencesBeforePostProcessing,
-      );
+  List<String> get localSentences => localSentencesBeforePostProcessing;
 
   bool get requiresAiReview =>
       originals.any((decision) => decision.requiresAiReview);
@@ -434,7 +432,8 @@ class ReadAloudSolverCountersV3 {
 class ReadAloudSplitterV3 {
   static const version = 'read_aloud_dp_v3';
   static const reviewedVersion = 'reviewed_dp_v3';
-  static const solverVersion = 'syntax_solver_v3_10';
+  static const solverVersion = 'syntax_solver_v3_11';
+  static const minWords = 4;
   static const hardMaxWords = 30;
   static const preferredMinUnpunctuatedWords = 8;
   static const preferredMaxUnpunctuatedWords = 16;
@@ -460,9 +459,6 @@ class ReadAloudSplitterV3 {
 
   static int wordCount(String text) =>
       _ReadAloudSplitterEngineV3.wordCount(text);
-
-  static List<String> mergeOneWordChunks(List<String> segments) =>
-      _ReadAloudSplitterEngineV3.mergeOneWordChunks(segments);
 
   static int maxUnpunctuatedWordCount(String text) =>
       _ReadAloudSplitterEngineV3.maxUnpunctuatedWordCount(text);
@@ -490,14 +486,8 @@ class ReadAloudSplitterV3 {
   }) =>
       _ReadAloudSplitterEngineV3.plan(source: source, document: document);
 
-  static List<int> requiredBoundaryWordOffsetsAfterMerge(
-    ReadAloudSplitPlanV3 plan, [
-    Map<int, String> selectedPathIds = const {},
-  ]) =>
-      _ReadAloudSplitterEngineV3.requiredBoundaryWordOffsetsAfterMerge(
-        plan,
-        selectedPathIds,
-      );
+  static List<int> requiredBoundaryWordOffsets(ReadAloudSplitPlanV3 plan) =>
+      _ReadAloudSplitterEngineV3.requiredBoundaryWordOffsets(plan);
 
   static void validateSelectedPathIds(
     ReadAloudSplitPlanV3 plan,
@@ -527,12 +517,12 @@ class ReadAloudSplitterV3 {
     String englishContent,
     List<String> sentences, {
     Iterable<int> requiredBoundaryWordOffsets = const [],
-    bool rejectOneWordChunks = false,
+    bool enforceMinimumWords = false,
   }) =>
       _ReadAloudSplitterEngineV3.validateReviewedSentences(
         englishContent,
         sentences,
         requiredBoundaryWordOffsets: requiredBoundaryWordOffsets,
-        rejectOneWordChunks: rejectOneWordChunks,
+        enforceMinimumWords: enforceMinimumWords,
       );
 }

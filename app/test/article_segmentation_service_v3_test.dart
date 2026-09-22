@@ -23,7 +23,7 @@ void main() {
         ReadAloudPathStageV3.punctuation);
     expect(result.selection.remoteAttempts, 0);
     expect(result.audit.sentenceSplitVersion, 'reviewed_dp_v3');
-    expect(result.audit.solverVersion, 'syntax_solver_v3_10');
+    expect(result.audit.solverVersion, 'syntax_solver_v3_11');
     expect(result.audit.parserHealthy, isTrue);
     expect(result.audit.selectedPaths.values.single, startsWith('v3_o0_r1_'));
   });
@@ -35,7 +35,7 @@ void main() {
 
     final result = await service.split(source);
 
-    expect(result.sentences, const ['Mole looked up.', 'Rat waved back.']);
+    expect(result.sentences, const ['Mole looked up. Rat waved back.']);
     expect(result.audit.parserHealthy, isFalse);
     expect(result.audit.fallbackReason, contains('parser_failed'));
     expect(result.audit.parserIssues, contains('parser_unavailable'));
@@ -76,9 +76,8 @@ void main() {
         source,
         result.sentences,
         requiredBoundaryWordOffsets:
-            ReadAloudSplitterV3.requiredBoundaryWordOffsetsAfterMerge(
+            ReadAloudSplitterV3.requiredBoundaryWordOffsets(
           result.plan,
-          result.selection.selectedPathIds,
         ),
       ),
       returnsNormally,

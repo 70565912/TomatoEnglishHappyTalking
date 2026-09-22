@@ -190,14 +190,14 @@ void main() {
     });
   });
 
-  group('V3.7 one-word post-merge', () {
+  group('short source-unit merge before solving', () {
     test('merges Willows E21 Home! into the previous chunk', () {
       const prev =
           'A moment, and he had caught it again; and with it this time came recollection in fullest flood.';
       const home = 'Home!';
       const next =
           'That was what they meant, those caressing appeals, those soft touches wafted through the air,';
-      final merged = ReadAloudSplitterV3.mergeOneWordChunks(const [
+      final merged = _splitSourceUnits(const [
         prev,
         home,
         next,
@@ -214,7 +214,7 @@ void main() {
       const prev = 'first and best thing of all, that he was free!';
       const free = 'Free!';
       const next = 'The word and the thought alone were worth fifty blankets.';
-      final merged = ReadAloudSplitterV3.mergeOneWordChunks(const [
+      final merged = _splitSourceUnits(const [
         prev,
         free,
         next,
@@ -231,7 +231,7 @@ void main() {
       const prev = 'Or Kitchener?';
       const no = 'No.';
       const next = 'It was Mr. Toad.';
-      final merged = ReadAloudSplitterV3.mergeOneWordChunks(const [
+      final merged = _splitSourceUnits(const [
         prev,
         no,
         next,
@@ -239,14 +239,13 @@ void main() {
       expect(
           merged,
           equals(const [
-            'Or Kitchener? No.',
-            'It was Mr. Toad.',
+            'Or Kitchener? No. It was Mr. Toad.',
           ]));
     });
 
     test('leading one-word chunk merges into the next chunk', () {
       expect(
-        ReadAloudSplitterV3.mergeOneWordChunks(const [
+        _splitSourceUnits(const [
           'Home!',
           'That was the place.',
         ]),
@@ -257,23 +256,23 @@ void main() {
     test('consecutive one-word chunks are resolved in the same local window',
         () {
       expect(
-        ReadAloudSplitterV3.mergeOneWordChunks(const [
+        _splitSourceUnits(const [
           'Home!',
           'No.',
           'Stop.',
           'The story continues here.',
         ]),
         equals(const [
-          'Home! No. Stop.',
-          'The story continues here.',
+          'Home! No. Stop. The story continues here.',
         ]),
       );
     });
 
-    test('30-word previous plus Home! merges into the next neighbor', () {
+    test('30-word previous plus Home! is solved once under the length zones',
+        () {
       final long = '${List.generate(30, (i) => 'w$i').join(' ')}.';
       expect(ReadAloudSplitterV3.wordCount(long), 30);
-      final merged = ReadAloudSplitterV3.mergeOneWordChunks([
+      final merged = _splitSourceUnits([
         long,
         'Home!',
         'Next sentence continues here.',
@@ -283,18 +282,16 @@ void main() {
         isEmpty,
       );
       expect(merged, isNot(contains('Home!')));
-      expect(
-        merged.any((chunk) => chunk.startsWith('Home! Next')),
-        isTrue,
-      );
-      expect(merged.first, long);
+      expect(merged.last, 'Next sentence continues here.');
+      expect(merged.map(ReadAloudSplitterV3.wordCount),
+          everyElement(inInclusiveRange(4, 20)));
     });
 
     test('window re-split absorbs trailing Home! when there is no next chunk',
         () {
       final long = List.generate(30, (i) => 'w$i').join(' ');
       expect(ReadAloudSplitterV3.wordCount(long), 30);
-      final merged = ReadAloudSplitterV3.mergeOneWordChunks([
+      final merged = _splitSourceUnits([
         long,
         'Home!',
       ]);
@@ -313,7 +310,7 @@ void main() {
       );
       expect(
         merged.map(ReadAloudSplitterV3.wordCount),
-        const [29, 2],
+        everyElement(inInclusiveRange(4, 20)),
       );
       expect(merged.last, endsWith('Home!'));
     });
@@ -321,7 +318,7 @@ void main() {
     test('tight both-side window keeps no singleton under hard max', () {
       final left = List.generate(30, (i) => 'L$i').join(' ');
       final right = List.generate(30, (i) => 'R$i').join(' ');
-      final merged = ReadAloudSplitterV3.mergeOneWordChunks([
+      final merged = _splitSourceUnits([
         left,
         'No.',
         right,
@@ -340,7 +337,7 @@ void main() {
       );
       expect(
         merged.map(ReadAloudSplitterV3.wordCount),
-        const [29, 2, 30],
+        everyElement(inInclusiveRange(4, 20)),
       );
     });
 
@@ -349,10 +346,51 @@ void main() {
         () => ReadAloudSplitterV3.validateReviewedSentences(
           'Before this. Home!',
           const ['Before this.', 'Home!'],
-          rejectOneWordChunks: true,
+          enforceMinimumWords: true,
         ),
         throwsFormatException,
       );
     });
   });
+}
+
+// Explicit synthetic parser input; production performs all merging and solving.
+List<String> _splitSourceUnits(List<String> units) {
+  final source = units.join(' ');
+  var offset = 0;
+  final sentences = <DependencySentenceV3>[];
+  for (final unit in units) {
+    final matches = RegExp(r'\S+').allMatches(unit).toList();
+    sentences.add(DependencySentenceV3(
+      start: offset,
+      end: offset + unit.length,
+      tokens: [
+        for (final (index, match) in matches.indexed)
+          DependencyTokenV3(
+              id: index + 1,
+              text: match.group(0)!,
+              start: offset + match.start,
+              end: offset + match.end,
+              upos: 'X',
+              head: 0,
+              deprel: 'dep')
+      ],
+    ));
+    offset += unit.length + 1;
+  }
+  final plan = ReadAloudSplitterV3.plan(
+      source: source,
+      document: DependencyDocumentV3(
+          parserVersion: 'synthetic-short-source',
+          modelSha256: 'synthetic-no-model',
+          healthy: true,
+          sentences: sentences));
+  expect(plan.counters.dagSolves, plan.originals.length);
+  expect(
+      ReadAloudSplitterV3.isRoundTripEquivalent(
+          englishContent: source, sentences: plan.localSentences),
+      isTrue);
+  expect(plan.localSentences.map(ReadAloudSplitterV3.wordCount),
+      everyElement(inInclusiveRange(4, 30)));
+  return plan.localSentences;
 }

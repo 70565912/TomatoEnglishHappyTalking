@@ -1,0 +1,2710 @@
+{
+  "status": "accepted locally; implementation and verification complete",
+  "baselineCommit": "70c48b08885e1a862506f6648c50cefb7d2d2998",
+  "solverVersion": "syntax_solver_v3_11",
+  "total": 212,
+  "passed": 212,
+  "failed": 0,
+  "skipped": 0,
+  "exitCode": 0,
+  "rawResults": "output/short-merge-20260922/tests-final.jsonl",
+  "tests": [
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture willows-e01-semicolon-priority",
+      "testID": 12,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4048
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture never-merge-short-original-sentences",
+      "testID": 13,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4057
+    },
+    {
+      "name": "acceptance inventory contains all 16 + 5 + 5 reviewed cases",
+      "testID": 9,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4060
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture never-merge-two-comfortable-sentences",
+      "testID": 14,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4065
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture abbreviation-decimal-and-original-boundary",
+      "testID": 17,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4078
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture quoted-initial-does-not-hide-following-sentence-boundary",
+      "testID": 18,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4087
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture quote-attribution-stays-one-original-sentence",
+      "testID": 19,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4097
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture multiple-sentences-inside-one-quotation-keep-their-boundaries",
+      "testID": 20,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4104
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture quoted-exclamation-before-capitalized-new-sentence",
+      "testID": 21,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4114
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture capitalized-speaker-attribution-stays-attached",
+      "testID": 22,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4120
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture list-commas-are-not-cut-candidates",
+      "testID": 23,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4127
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture twenty-unpunctuated-words-remain-intact",
+      "testID": 24,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4134
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture twenty-one-unpunctuated-words-use-emergency-cut",
+      "testID": 25,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4142
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts Web fixture semantic-fallback-before-subordinator",
+      "testID": 26,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4149
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-01 merge",
+      "testID": 16,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4193
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator accepts all 243 fixed Web v3 gold expectations",
+      "testID": 27,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4248
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-02 stable",
+      "testID": 28,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4254
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator retains every retired Web splitter input in the V3 inventory",
+      "testID": 29,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4263
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-03 merge",
+      "testID": 30,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4268
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator enforces word, unpunctuated, round-trip, and original boundaries",
+      "testID": 31,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4281
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-04 merge",
+      "testID": 32,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4284
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-05 merge",
+      "testID": 34,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4344
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-06 merge",
+      "testID": 35,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4360
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-07 merge",
+      "testID": 36,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4377
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-08 merge",
+      "testID": 37,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4404
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator treats whitespace inserted only at sentence boundaries as equal",
+      "testID": 33,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4412
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator still rejects changed text and boundaries inside lexical words",
+      "testID": 39,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4420
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-09 merge",
+      "testID": 38,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4427
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator punctuation-only tokens do not consume the English word budget",
+      "testID": 40,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4434
+    },
+    {
+      "name": "ReadAloudSplitterV3 native validator glued em dashes remain punctuation boundaries, not one word",
+      "testID": 42,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4449
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-10 stable",
+      "testID": 41,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4450
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-11 merge",
+      "testID": 45,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4479
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-12 merge",
+      "testID": 46,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4491
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-13 merge",
+      "testID": 47,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4504
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-14 merge",
+      "testID": 48,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4525
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-15 stable",
+      "testID": 49,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4561
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-16 stable",
+      "testID": 50,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4583
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-17 merge",
+      "testID": 51,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4599
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-18 merge",
+      "testID": 52,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4624
+    },
+    {
+      "name": "short source-unit merge before solving merges Willows E21 Home! into the previous chunk",
+      "testID": 44,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4646
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-19 merge",
+      "testID": 53,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4649
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-20 stable",
+      "testID": 55,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4669
+    },
+    {
+      "name": "short source-unit merge before solving merges Willows E46 Free! into the previous chunk",
+      "testID": 54,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4675
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples review-21 merge",
+      "testID": 56,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4683
+    },
+    {
+      "name": "short source-unit merge before solving merges Willows E50 No. into the previous chunk",
+      "testID": 57,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4729
+    },
+    {
+      "name": "short source-unit merge before solving leading one-word chunk merges into the next chunk",
+      "testID": 62,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4738
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples historical-short-C21-044 mandatory",
+      "testID": 58,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4748
+    },
+    {
+      "name": "short source-unit merge before solving consecutive one-word chunks are resolved in the same local window",
+      "testID": 63,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4750
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples historical-short-C31-047 mandatory",
+      "testID": 64,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4802
+    },
+    {
+      "name": "short source-unit merge before solving 30-word previous plus Home! is solved once under the length zones",
+      "testID": 65,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4814
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples historical-short-C32-015 mandatory",
+      "testID": 66,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4820
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples historical-short-C41-056 mandatory",
+      "testID": 68,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4847
+    },
+    {
+      "name": "short source-unit merge before solving window re-split absorbs trailing Home! when there is no next chunk",
+      "testID": 67,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4856
+    },
+    {
+      "name": "mandatory short merge: reviewed source-unit examples historical-short-C53-065 mandatory",
+      "testID": 69,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4863
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products 1 words, leading=true",
+      "testID": 72,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4878
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products 1 words, leading=false",
+      "testID": 73,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4887
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products 2 words, leading=true",
+      "testID": 74,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4897
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products 2 words, leading=false",
+      "testID": 75,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4903
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products 3 words, leading=true",
+      "testID": 76,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4913
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products 3 words, leading=false",
+      "testID": 77,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4921
+    },
+    {
+      "name": "short source-unit merge before solving tight both-side window keeps no singleton under hard max",
+      "testID": 70,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4925
+    },
+    {
+      "name": "short source-unit merge before solving final validation rejects an unmerged singleton in release code",
+      "testID": 79,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4934
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products exactly four words remain when already compliant",
+      "testID": 78,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4935
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver coalesces short originals before one fact build and DAG",
+      "testID": 61,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4950
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: Home!",
+      "testID": 80,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4958
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: Or Kitchener?",
+      "testID": 82,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4968
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: One.",
+      "testID": 83,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4978
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: Go!",
+      "testID": 84,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 4986
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products a whole input of 1 words cannot be reported as a compliant result",
+      "testID": 87,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5019
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 merges a trailing one-word original into the previous chunk",
+      "testID": 81,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5026
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products a whole input of 2 words cannot be reported as a compliant result",
+      "testID": 90,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5029
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products a whole input of 3 words cannot be reported as a compliant result",
+      "testID": 92,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5035
+    },
+    {
+      "name": "mandatory short merge: thresholds and singleton products preserves unaffected outer chunks and the caller input",
+      "testID": 93,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5061
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 16 words with a usable source semicolon after absorption",
+      "testID": 95,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5077
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 Willows E09 keeps the reviewed 15/11 punctuation split",
+      "testID": 91,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5086
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 17 words with a usable source semicolon after absorption",
+      "testID": 96,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5102
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 18 words with a usable source semicolon after absorption",
+      "testID": 98,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5121
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 20 words with a usable source semicolon after absorption",
+      "testID": 99,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5149
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 21 words with a usable source semicolon after absorption",
+      "testID": 100,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5175
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 30 words with a usable source semicolon after absorption",
+      "testID": 101,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5263
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 31 words with a usable source semicolon after absorption",
+      "testID": 102,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5365
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 17 unpunctuated words are elastic, not a blanket 17-word cap",
+      "testID": 103,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5383
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 18 unpunctuated words are elastic, not a blanket 17-word cap",
+      "testID": 104,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5398
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 20 unpunctuated words are elastic, not a blanket 17-word cap",
+      "testID": 105,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5412
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 Alice E02 parenthetical prefers 6/12/9 and never cuts seemed|quite",
+      "testID": 97,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5430
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 hard-blocks cuts inside a short matched parenthetical",
+      "testID": 107,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5448
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 coalesces parser sentences inside a short parenthetical",
+      "testID": 108,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5464
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 allows ordinary punctuation inside a 17-word parenthetical",
+      "testID": 109,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5485
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 uses the innermost nested parenthetical span",
+      "testID": 110,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5501
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 audits unmatched parentheses without cross-paragraph pairing",
+      "testID": 111,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5513
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 30/1/30 never leaves a short repair product",
+      "testID": 106,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5549
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 marks incomplete non-punct cuts as emergency",
+      "testID": 112,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5596
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 local closure ignores an unrelated complete clause farther right",
+      "testID": 114,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5618
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 30/2/30 never leaves a short repair product",
+      "testID": 113,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5698
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.9 ranks incomplete recovery paths without a hidden post-filter",
+      "testID": 115,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5727
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 parenthetical scoring cannot split a phrasal particle",
+      "testID": 117,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5770
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver hard-blocks misparsed phrasal particle go|on before verbal complement",
+      "testID": 118,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5813
+    },
+    {
+      "name": "mandatory short merge: apply original length zones after absorption 30/3/30 never leaves a short repair product",
+      "testID": 116,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5824
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not hard-block verb|on when on is a true PP case of a noun",
+      "testID": 119,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5829
+    },
+    {
+      "name": "original length-zone solver evidence protected unpunctuated 16-word span is not forced to split",
+      "testID": 121,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5838
+    },
+    {
+      "name": "original length-zone solver evidence protected unpunctuated 17-word span is not forced to split",
+      "testID": 123,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5853
+    },
+    {
+      "name": "original length-zone solver evidence protected unpunctuated 18-word span is not forced to split",
+      "testID": 124,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5865
+    },
+    {
+      "name": "original length-zone solver evidence protected unpunctuated 20-word span is not forced to split",
+      "testID": 125,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5883
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 negative: no-paren E61 and syntax-clause snapshots stay V3.6-stable",
+      "testID": 122,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5885
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps a twenty-word sentence when no safe parser pause exists",
+      "testID": 127,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5899
+    },
+    {
+      "name": "original length-zone solver evidence unpunctuated 21 words must split at an available clause",
+      "testID": 126,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5902
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver splits more than seventeen words at a qualified clause comma",
+      "testID": 128,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5915
+    },
+    {
+      "name": "original length-zone solver evidence unpunctuated 30 words must split at an available clause",
+      "testID": 129,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5928
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver allows a four-word complete clause before a single comma cut",
+      "testID": 130,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5929
+    },
+    {
+      "name": "merge before solving: one fact build and one DAG per merged unit coalesces short input units before either unit is solved",
+      "testID": 132,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5938
+    },
+    {
+      "name": "merge before solving: one fact build and one DAG per merged unit coalesces a short chain without repeated split and merge passes",
+      "testID": 134,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5950
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver prefers an internal clause comma after an established pause",
+      "testID": 133,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 5967
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not replace a stronger pause with a later comma",
+      "testID": 136,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6003
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver splits a seventeen-word list at a source comma",
+      "testID": 137,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6015
+    },
+    {
+      "name": "merge before solving: one fact build and one DAG per merged unit dense short chains close comfortable units before a large DAG grows",
+      "testID": 135,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6043
+    },
+    {
+      "name": "merge before solving: one fact build and one DAG per merged unit local and selected-path exits expose the same final legal chunks",
+      "testID": 139,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6054
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver eliminates a near-limit 8/29 path before minimizing cuts",
+      "testID": 138,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6061
+    },
+    {
+      "name": "all exits and paragraph protection every selectable path and coverage edge meets the minimum",
+      "testID": 141,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6122
+    },
+    {
+      "name": "all exits and paragraph protection short paragraphs merge within the article across line breaks",
+      "testID": 143,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6135
+    },
+    {
+      "name": "all exits and paragraph protection compliant paragraph boundaries remain mandatory",
+      "testID": 144,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6150
+    },
+    {
+      "name": "production final validation: minimum and absolute cap rejects 1-word final chunk",
+      "testID": 146,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6166
+    },
+    {
+      "name": "production final validation: minimum and absolute cap rejects 2-word final chunk",
+      "testID": 147,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6176
+    },
+    {
+      "name": "production final validation: minimum and absolute cap rejects 3-word final chunk",
+      "testID": 148,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6183
+    },
+    {
+      "name": "production final validation: minimum and absolute cap rejects 31 words even when all words and punctuation round-trip",
+      "testID": 149,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6192
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not hard-block punctuation glued to the next parser token",
+      "testID": 142,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6196
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps punctuation-only parser sentences attached to prior text",
+      "testID": 150,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6294
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver maps a UDPipe token that keeps a leading em dash",
+      "testID": 153,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6315
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver maps a punctuation-only UDPipe token across an em-dash pause",
+      "testID": 154,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6328
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver rejects meaningless four-word fragments before crossing evidence",
+      "testID": 155,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6378
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not manufacture a one-to-three-word trailing exclamation",
+      "testID": 156,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6394
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses all qualified E61 commas to optimize reading chunks",
+      "testID": 157,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6427
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver terminal punctuation outranks a surface possessive warning",
+      "testID": 158,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6455
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses a feasible strong-punctuation path without AI",
+      "testID": 159,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6507
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver accepts a comma before a right-side subject-predicate clause",
+      "testID": 160,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6579
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses a complete dependency clause only when punctuation has no path",
+      "testID": 161,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6606
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver ignores a final punctuation arc when judging a clause boundary",
+      "testID": 162,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6627
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps a protected dependency crossing as high-risk soft evidence",
+      "testID": 163,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6646
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver flags a nominal-to-finite-predicate surface boundary as soft risk",
+      "testID": 164,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6660
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver flags lexical attachment gaps missed by a dependency tree",
+      "testID": 165,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6731
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver flags explicit subject, object, and infinitive relation gaps",
+      "testID": 166,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6766
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps a complement marker with its nested subordinate clause",
+      "testID": 167,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6783
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver exposes eight initial and at most twenty-four expanded stable paths",
+      "testID": 168,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6830
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver rejects parser offsets that do not reproduce the source",
+      "testID": 169,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6838
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver repairs UDPipe sentence breaks after title abbreviations",
+      "testID": 172,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6848
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps the complete two-word cry attached under the minimum",
+      "testID": 173,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6860
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps both Up we go cries and uses both source quote edges",
+      "testID": 174,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6879
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver classifies a source comma before a long opening quote directly",
+      "testID": 175,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6960
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver adds an opening-parenthesis pause only inside the stable long block",
+      "testID": 176,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6980
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver splits a stable long block before a complete copular time clause",
+      "testID": 177,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 6998
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver recovers bounded surface clauses when dependency attachments are bad",
+      "testID": 178,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7055
+    },
+    {
+      "name": "baseline/target: E13 keeps door comma path",
+      "testID": 171,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7099
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not promote adjective-head or adjective-complement gaps",
+      "testID": 179,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7120
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver allows a complete coordinated noun item before a relative tail",
+      "testID": 181,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7133
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver hard-blocks all internal cuts in matched quotes up to sixteen words",
+      "testID": 182,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7151
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not treat a quote-leading em dash as an external quote edge",
+      "testID": 183,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7179
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver allows ordinary punctuation splitting inside a seventeen-word quote",
+      "testID": 184,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7224
+    },
+    {
+      "name": "baseline/target: E17 must not cut bend about / about easily",
+      "testID": 180,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7238
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses quote-internal punctuation when a long quote needs it",
+      "testID": 185,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7261
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver absorbs adjacent short quotes while preserving quote ownership",
+      "testID": 187,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7268
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps a short attribution tail attached to its quote",
+      "testID": 188,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7280
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses an embedded closing quote comma as the source pause",
+      "testID": 189,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7295
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses a long quoted-speech comma before its attribution",
+      "testID": 190,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7306
+    },
+    {
+      "name": "baseline/target: E16 must not cut legs | up",
+      "testID": 186,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7322
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver releases only a stable medium terminal quote from a long attribution",
+      "testID": 191,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7337
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver splits a quote before a coordinated clause with its own subject",
+      "testID": 192,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7350
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver promotes a quote edge when a coordinated conj has its own subject",
+      "testID": 193,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7379
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not coalesce unmatched quotes across a paragraph break",
+      "testID": 196,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7389
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps visible quote punctuation when malformed quotes cannot pair",
+      "testID": 197,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7409
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver protects a nested short quote after an earlier unmatched opening",
+      "testID": 198,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7418
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver coalesces a parser line break inside a two-token quoted list",
+      "testID": 199,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7433
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver does not match an incomplete quote across a blank paragraph",
+      "testID": 200,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7440
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses the innermost complete quote when same-mark speech is nested",
+      "testID": 201,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7466
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 tight target prefers the complete coordinated noun tail",
+      "testID": 202,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7491
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.9 does not manufacture a three-word introductory fragment",
+      "testID": 203,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7505
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 permits explicit coordinated continuations",
+      "testID": 204,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7521
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver uses a source adjective comma when a long block needs splitting",
+      "testID": 205,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7568
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver allows a complete coordinated item before its conjunction",
+      "testID": 206,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7588
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver can split between complete coordinated nominal objects",
+      "testID": 207,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7603
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver allows a verified predicate after a coordinated nominal object",
+      "testID": 208,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7618
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver recovers a supplemental PP after a complete verbal phrase",
+      "testID": 209,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7633
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver keeps an embedded quoted catchphrase inside its nominal list",
+      "testID": 212,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7649
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 keeps comparative phrase internals but permits its front edge",
+      "testID": 213,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7664
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.7 permits a prepositional continuation after a complete clause",
+      "testID": 214,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7677
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver E37 keeps the relative front and splits its shared predicate tail",
+      "testID": 215,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7705
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver prefers the source comma closing a relative clause",
+      "testID": 216,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7717
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver splits before but never after a coordinated adverb continuation",
+      "testID": 217,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7733
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.9 matches the reviewed punctuation and delimiter boundaries",
+      "testID": 218,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7756
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.9 matches the reviewed safe syntax boundaries",
+      "testID": 219,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7778
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver V3.9 matches the final two reviewed safe syntax boundaries",
+      "testID": 220,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7822
+    },
+    {
+      "name": "ReadAloudSplitterV3 syntax solver bounds coverage-path probes for a very long quotation",
+      "testID": 221,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 7988
+    },
+    {
+      "name": "selects all approved Looking Glass delimiter windows",
+      "testID": 211,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 8684
+    },
+    {
+      "name": "prefers clause comma after blown out over syntax cut after candle",
+      "testID": 227,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 9066
+    },
+    {
+      "name": "canonical service chooses a punctuation path without remote AI",
+      "testID": 231,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 9934
+    },
+    {
+      "name": "parser failure is explicit and never silently uses a legacy word list",
+      "testID": 232,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 9972
+    },
+    {
+      "name": "surviving-boundary contract accepts one-word merge across originals",
+      "testID": 233,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 10014
+    },
+    {
+      "name": "keeps all 55 reviewed Alice and Willows windows supported",
+      "testID": 86,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 10588
+    },
+    {
+      "name": "AI can return only a supplied candidatePathId",
+      "testID": 238,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 10723
+    },
+    {
+      "name": "an invented path is rejected once and then retried",
+      "testID": 242,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 10888
+    },
+    {
+      "name": "reading and reopening preserves historical short sentence slots",
+      "testID": 241,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 10904
+    },
+    {
+      "name": "stores the article and reproducible V3.7 run in one transaction",
+      "testID": 244,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 10989
+    },
+    {
+      "name": "REJECT expands candidates once and accepts only an expanded path",
+      "testID": 243,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11033
+    },
+    {
+      "name": "a successful expanded decision cache skips the initial remote call",
+      "testID": 246,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11187
+    },
+    {
+      "name": "decodes UTF-16 offsets and remaps presegmented tokens exactly",
+      "testID": 249,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11285
+    },
+    {
+      "name": "rejects a presegmented parse that skips source punctuation",
+      "testID": 250,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11293
+    },
+    {
+      "name": "rejects overlapping native token offsets before boundary resolution",
+      "testID": 251,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11299
+    },
+    {
+      "name": "two illegal replies use the deterministic local path",
+      "testID": 247,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11387
+    },
+    {
+      "name": "an unvalidated provider/model never calls the paid endpoint",
+      "testID": 252,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11416
+    },
+    {
+      "name": "the production-validated Aliyun model may review candidate paths",
+      "testID": 253,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11521
+    },
+    {
+      "name": "the validated DeepSeek model starts with compact expanded candidates",
+      "testID": 254,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11601
+    },
+    {
+      "name": "budgeted tuning can apply the complete P8 protocol to another model",
+      "testID": 255,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11692
+    },
+    {
+      "name": "reviews multiple risky originals in one article-level request",
+      "testID": 256,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11809
+    },
+    {
+      "name": "one mixed REJECT expands the whole article exactly once",
+      "testID": 257,
+      "result": "success",
+      "skipped": false,
+      "hidden": false,
+      "type": "testDone",
+      "time": 11971
+    }
+  ],
+  "errors": [],
+  "testFileSha256": "63877a3dbd05c7147e51be1c82b5190bc1d85866d4525832fb971adf0f354ac4",
+  "beforeImplementation": {
+    "createdAt": "2026-09-22T22:36:05.3243463+08:00",
+    "baseline": "70c48b08885e1a862506f6648c50cefb7d2d2998",
+    "productionModified": false,
+    "entryPoint": "ReadAloudSplitterV3.plan with synthetic parser units; final local/selected paths and counters",
+    "command": "tools/run_flutter.ps1 test --no-pub test/read_aloud_splitter_v3_short_merge_test.dart --reporter json",
+    "exitCode": 1,
+    "total": 68,
+    "passed": 29,
+    "failed": 39,
+    "tests": [
+      {
+        "name": "acceptance inventory contains all 16 + 5 + 5 reviewed cases",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-01 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[2, 2]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-02 stable",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-03 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[4, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-04 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[8, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-05 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[2, 15]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-06 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[12, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-07 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[5, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-08 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[2, 12]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-09 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[6, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-10 stable",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-11 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[2, 11]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-12 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[5, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-13 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[6, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-14 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[10, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-15 stable",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-16 stable",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-17 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[5, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-18 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[2, 6]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-19 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[3, 12]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-20 stable",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples review-21 merge",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[10, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples historical-short-C21-044 mandatory",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[5, 3, 4]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples historical-short-C31-047 mandatory",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[8, 9, 3, 8]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 2\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples historical-short-C32-015 mandatory",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[5, 3, 10]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples historical-short-C41-056 mandatory",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[12, 3, 11]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: reviewed source-unit examples historical-short-C53-065 mandatory",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[6, 3, 5]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products 1 words, leading=true",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products 1 words, leading=false",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products 2 words, leading=true",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[2, 7]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products 2 words, leading=false",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[7, 2]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products 3 words, leading=true",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[3, 7]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products 3 words, leading=false",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[7, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 1\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products exactly four words remain when already compliant",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: Home!",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[3, 4]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: Or Kitchener?",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[3, 4]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: One.",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products does not freeze undersized singleton products: Go!",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[3, 4]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products a whole input of 1 words cannot be reported as a compliant result",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: throws <Instance of 'Exception'> with `diagnostic`: non-empty\n  Actual: <Closure: () => List<String>>\n   Which: returned ['Wait!']\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products a whole input of 2 words cannot be reported as a compliant result",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: throws <Instance of 'Exception'> with `diagnostic`: non-empty\n  Actual: <Closure: () => List<String>>\n   Which: returned ['Come here.']\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products a whole input of 3 words cannot be reported as a compliant result",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: throws <Instance of 'Exception'> with `diagnostic`: non-empty\n  Actual: <Closure: () => List<String>>\n   Which: returned ['Please come here.']\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: thresholds and singleton products preserves unaffected outer chunks and the caller input",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[7, 6, 2, 6, 7]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 2\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 16 words with a usable source semicolon after absorption",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 17 words with a usable source semicolon after absorption",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 18 words with a usable source semicolon after absorption",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 20 words with a usable source semicolon after absorption",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 21 words with a usable source semicolon after absorption",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 30 words with a usable source semicolon after absorption",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 31 words with a usable source semicolon after absorption",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 17 unpunctuated words are elastic, not a blanket 17-word cap",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 18 unpunctuated words are elastic, not a blanket 17-word cap",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 20 unpunctuated words are elastic, not a blanket 17-word cap",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 30/1/30 never leaves a short repair product",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 30/2/30 never leaves a short repair product",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[14, 16, 2, 14, 16]\n   Which: has value <2> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 2\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "mandatory short merge: apply original length zones after absorption 30/3/30 never leaves a short repair product",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[14, 16, 3, 14, 16]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 2\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "original length-zone solver evidence protected unpunctuated 16-word span is not forced to split",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "original length-zone solver evidence protected unpunctuated 17-word span is not forced to split",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "original length-zone solver evidence protected unpunctuated 18-word span is not forced to split",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "original length-zone solver evidence protected unpunctuated 20-word span is not forced to split",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "original length-zone solver evidence unpunctuated 21 words must split at an available clause",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "original length-zone solver evidence unpunctuated 30 words must split at an available clause",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "merge before solving: one fact build and one DAG per merged unit coalesces short input units before either unit is solved",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: an object with length of <1>\n  Actual: [\n            Instance of 'ReadAloudOriginalDecisionV3',\n            Instance of 'ReadAloudOriginalDecisionV3'\n          ]\n   Which: has length of <2>\n"
+        ]
+      },
+      {
+        "name": "merge before solving: one fact build and one DAG per merged unit coalesces a short chain without repeated split and merge passes",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: an object with length of <1>\n  Actual: [\n            Instance of 'ReadAloudOriginalDecisionV3',\n            Instance of 'ReadAloudOriginalDecisionV3',\n            Instance of 'ReadAloudOriginalDecisionV3'\n          ]\n   Which: has length of <3>\n"
+        ]
+      },
+      {
+        "name": "merge before solving: one fact build and one DAG per merged unit local and selected-path exits expose the same final legal chunks",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: every element(be in range from 4 (inclusive) to 30 (inclusive))\n  Actual: MappedListIterable<String, int>:[3, 3]\n   Which: has value <3> which doesn't match be in range from 4 (inclusive) to 30 (inclusive) at index 0\nMandatory minimum and absolute cap; length-zone checks are additional assertions, not replaced by this interval\n"
+        ]
+      },
+      {
+        "name": "production final validation: minimum and absolute cap rejects 1-word final chunk",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      },
+      {
+        "name": "production final validation: minimum and absolute cap rejects 2-word final chunk",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: throws <Instance of 'FormatException'>\n  Actual: <Closure: () => void>\n   Which: returned <null>\n"
+        ]
+      },
+      {
+        "name": "production final validation: minimum and absolute cap rejects 3-word final chunk",
+        "result": "failure",
+        "skipped": false,
+        "errors": [
+          "Expected: throws <Instance of 'FormatException'>\n  Actual: <Closure: () => void>\n   Which: returned <null>\n"
+        ]
+      },
+      {
+        "name": "production final validation: minimum and absolute cap rejects 31 words even when all words and punctuation round-trip",
+        "result": "success",
+        "skipped": false,
+        "errors": []
+      }
+    ],
+    "testFileSha256": "7b8ba4ca9c27b1ddf8cef4173fd490876b2865c4fa1a44828a9ce7921a4cae5f",
+    "fixtureSha256": "1ba6a39201021ef1fc8f89c2e7be4def4a5ff6034b7386298c600c8e0c43ce4a",
+    "staticAnalysis": {
+      "command": "tools/run_flutter.ps1 analyze --no-pub test/read_aloud_splitter_v3_short_merge_test.dart",
+      "exitCode": 0,
+      "issues": 0
+    },
+    "unchangedBaselineRegression": {
+      "command": "tools/run_flutter.ps1 test --no-pub test/read_aloud_splitter_v3_test.dart --reporter expanded",
+      "exitCode": 0,
+      "passed": 29,
+      "failed": 0
+    },
+    "limitations": [
+      "Synthetic parser-unit tests; not native parser replay.",
+      "The new contract has not been implemented. Failure results are not a release gate pass.",
+      "No full corpus, real App or AOT performance run.",
+      "Production algorithm, formal specification, dependencies and saved book data remain unchanged."
+    ]
+  },
+  "remaining": [],
+  "corpus": {
+    "alice": {
+      "counts": {
+        "base": {
+          "chapters": 39,
+          "chunks": 2719,
+          "short": 50,
+          "over20": 0,
+          "over30": 0,
+          "emergency": 0
+        },
+        "candidate": {
+          "chapters": 39,
+          "chunks": 2679,
+          "short": 0,
+          "over20": 0,
+          "over30": 0,
+          "emergency": 0
+        }
+      },
+      "changedUnits": 43,
+      "unexpectedChanges": 0,
+      "removedBoundaries": 49,
+      "addedBoundaries": 9,
+      "outsideWindowChanges": 0
+    },
+    "willows": {
+      "counts": {
+        "base": {
+          "chapters": 62,
+          "chunks": 6288,
+          "short": 146,
+          "over20": 0,
+          "over30": 0,
+          "emergency": 1
+        },
+        "candidate": {
+          "chapters": 62,
+          "chunks": 6177,
+          "short": 0,
+          "over20": 0,
+          "over30": 0,
+          "emergency": 1
+        }
+      },
+      "changedUnits": 120,
+      "unexpectedChanges": 0,
+      "removedBoundaries": 140,
+      "addedBoundaries": 29,
+      "outsideWindowChanges": 0
+    },
+    "looking-glass": {
+      "counts": {
+        "base": {
+          "chapters": 53,
+          "chunks": 3255,
+          "short": 112,
+          "over20": 0,
+          "over30": 0,
+          "emergency": 1
+        },
+        "candidate": {
+          "chapters": 53,
+          "chunks": 3161,
+          "short": 0,
+          "over20": 0,
+          "over30": 0,
+          "emergency": 1
+        }
+      },
+      "changedUnits": 126,
+      "unexpectedChanges": 0,
+      "removedBoundaries": 105,
+      "addedBoundaries": 11,
+      "outsideWindowChanges": 0
+    }
+  },
+  "performance": {
+    "base": {
+      "samples": [
+        3035253,
+        2707535,
+        2749040,
+        2791166,
+        2660986,
+        2718290,
+        2706324
+      ],
+      "medianMicroseconds": 2718290,
+      "min": 2660986,
+      "max": 3035253,
+      "aotBytes": 6778880,
+      "exeSha256": "ed2a15de9c86865d42f2f933d2bdc5b7c6b8fab6e2bac5cc60dec1099470deb2"
+    },
+    "candidate": {
+      "samples": [
+        1881180,
+        1907520,
+        2189866,
+        1915298,
+        1910207,
+        1883906,
+        2192800
+      ],
+      "medianMicroseconds": 1910207,
+      "min": 1881180,
+      "max": 2192800,
+      "aotBytes": 6758400,
+      "exeSha256": "903bcd81a08bafd4c2fb348def5cb6fd700ca6a55c9da7db04298bb3240ab974"
+    },
+    "ratio": 0.7027237711943906
+  },
+  "stressPerformance": {
+    "3 x 3": {
+      "base": {
+        "samples": [
+          736,
+          732,
+          875,
+          1962,
+          725,
+          703,
+          1346
+        ],
+        "medianMicroseconds": 736,
+        "units": 3,
+        "chunks": 3
+      },
+      "candidate": {
+        "samples": [
+          1922,
+          488,
+          532,
+          749,
+          484,
+          470,
+          476
+        ],
+        "medianMicroseconds": 488,
+        "units": 1,
+        "chunks": 1
+      },
+      "ratio": 0.6630434782608695
+    },
+    "3 x 20": {
+      "base": {
+        "samples": [
+          5332,
+          5196,
+          6429,
+          7753,
+          4703,
+          4870,
+          4543
+        ],
+        "medianMicroseconds": 5196,
+        "units": 20,
+        "chunks": 20
+      },
+      "candidate": {
+        "samples": [
+          7716,
+          4037,
+          4017,
+          4548,
+          3088,
+          3542,
+          3476
+        ],
+        "medianMicroseconds": 4017,
+        "units": 4,
+        "chunks": 4
+      },
+      "ratio": 0.773094688221709
+    },
+    "1 x 100": {
+      "base": {
+        "samples": [
+          24167,
+          23148,
+          37582,
+          28010,
+          25616,
+          23872,
+          23774
+        ],
+        "medianMicroseconds": 24167,
+        "units": 100,
+        "chunks": 4
+      },
+      "candidate": {
+        "samples": [
+          8672,
+          7210,
+          8885,
+          6072,
+          5564,
+          6992,
+          6437
+        ],
+        "medianMicroseconds": 6992,
+        "units": 7,
+        "chunks": 7
+      },
+      "ratio": 0.289320147308313
+    },
+    "3 x 100": {
+      "base": {
+        "samples": [
+          27325,
+          25869,
+          38535,
+          33849,
+          32315,
+          26019,
+          27015
+        ],
+        "medianMicroseconds": 27325,
+        "units": 100,
+        "chunks": 100
+      },
+      "candidate": {
+        "samples": [
+          21695,
+          18614,
+          21034,
+          17989,
+          17929,
+          18850,
+          18001
+        ],
+        "medianMicroseconds": 18614,
+        "units": 20,
+        "chunks": 20
+      },
+      "ratio": 0.6812076852698994
+    }
+  },
+  "limitations": [
+    "Android runtime and Release packaging not executed; shared Dart core, model asset and SHA verified from source.",
+    "Full-project analyze retains 13 baseline diagnostics; see final validation record.",
+    "No paid AI calls, formal database writes, commits, pushes or releases."
+  ],
+  "fixtureSha256": "1ba6a39201021ef1fc8f89c2e7be4def4a5ff6034b7386298c600c8e0c43ce4a",
+  "staticAnalysis": {
+    "command": "tools/run_flutter.ps1 analyze --no-pub",
+    "exitCode": 1,
+    "baselineIssues": 13,
+    "newIssues": 0,
+    "log": "output/short-merge-20260922/analyze-final.log"
+  },
+  "structure": {
+    "productionFiles": 5,
+    "addedLines": 95,
+    "removedLines": 227,
+    "netLines": -132,
+    "oldPostMergeRemoved": true,
+    "factsAndDagPerPreparedUnit": 1
+  },
+  "benchmarkVersionNote": "Measured candidate source equals final production solver except version identifier and its comment; acceptance incremented v3_10 to v3_11 afterwards.",
+  "nativeIntegration": {
+    "platform": "Windows",
+    "solverVersion": "syntax_solver_v3_11",
+    "passed": 1,
+    "failed": 0,
+    "exitCode": 0,
+    "log": "output/short-merge-20260922/native-integration-final.log"
+  }
+}

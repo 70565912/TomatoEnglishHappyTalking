@@ -1,0 +1,319 @@
+{
+  "schemaVersion": 1,
+  "source": "Read-only user-confirmed Looking-Glass snapshot, 2026-09-22; see docs/read_aloud_short_merge_evidence_20260922.json",
+  "purpose": "Source-unit acceptance strings with synthetic parser boundaries. Not native parser evidence, not production input, and not a persisted-content migration. Final results are tested via ReadAloudSplitterV3.plan; short units must be merged before one DAG solve.",
+  "cases": [
+    {
+      "id": "review-01",
+      "chapter": "C06",
+      "role": "merge",
+      "input": [
+        "One, two!",
+        "One, two!"
+      ],
+      "expected": [
+        "One, two! One, two!"
+      ]
+    },
+    {
+      "id": "review-02",
+      "chapter": "C08",
+      "role": "stable",
+      "input": [
+        "‘It says “Bough-wough!” ’ cried a Daisy.",
+        "‘ That's why its branches are called boughs!’"
+      ],
+      "expected": [
+        "‘It says “Bough-wough!” ’ cried a Daisy.",
+        "‘ That's why its branches are called boughs!’"
+      ]
+    },
+    {
+      "id": "review-03",
+      "chapter": "C08",
+      "role": "merge",
+      "input": [
+        "‘Then you'll know why.’",
+        "Alice did so."
+      ],
+      "expected": [
+        "‘Then you'll know why.’ Alice did so."
+      ]
+    },
+    {
+      "id": "review-04",
+      "chapter": "C09",
+      "role": "merge",
+      "input": [
+        "this time, of walking in the opposite direction.",
+        "It succeeded beautifully."
+      ],
+      "expected": [
+        "this time, of walking in the opposite direction. It succeeded beautifully."
+      ]
+    },
+    {
+      "id": "review-05",
+      "chapter": "C11",
+      "role": "merge",
+      "input": [
+        "‘Faster! Faster!’",
+        "And they went so fast that at last they seemed to skim through the air,"
+      ],
+      "expected": [
+        "‘Faster! Faster!’ And they went so fast that at last they seemed to skim through the air,"
+      ]
+    },
+    {
+      "id": "review-06",
+      "chapter": "C12",
+      "role": "merge",
+      "input": [
+        "the Queen said good-naturedly, taking a little box out of her pocket.",
+        "‘Have a biscuit?’"
+      ],
+      "expected": [
+        "the Queen said good-naturedly, taking a little box out of her pocket. ‘Have a biscuit?’"
+      ]
+    },
+    {
+      "id": "review-07",
+      "chapter": "C19",
+      "role": "merge",
+      "input": [
+        "‘So much obliged!’ added Tweedledee.",
+        "‘You like poetry?’"
+      ],
+      "expected": [
+        "‘So much obliged!’ added Tweedledee. ‘You like poetry?’"
+      ]
+    },
+    {
+      "id": "review-08",
+      "chapter": "C23",
+      "role": "merge",
+      "input": [
+        "Alice laughed.",
+        "‘You must hit the trees pretty often, I should think,’ she said."
+      ],
+      "expected": [
+        "Alice laughed. ‘You must hit the trees pretty often, I should think,’ she said."
+      ]
+    },
+    {
+      "id": "review-09",
+      "chapter": "C24",
+      "role": "merge",
+      "input": [
+        "‘I don't understand you,’ said Alice.",
+        "‘It's dreadfully confusing!’"
+      ],
+      "expected": [
+        "‘I don't understand you,’ said Alice. ‘It's dreadfully confusing!’"
+      ]
+    },
+    {
+      "id": "review-10",
+      "chapter": "C25",
+      "role": "stable",
+      "input": [
+        "‘Oh, oh, oh!’ shouted the Queen,",
+        "shaking her hand about as if she wanted to shake it off."
+      ],
+      "expected": [
+        "‘Oh, oh, oh!’ shouted the Queen,",
+        "shaking her hand about as if she wanted to shake it off."
+      ]
+    },
+    {
+      "id": "review-11",
+      "chapter": "C25",
+      "role": "merge",
+      "input": [
+        "Alice laughed.",
+        "‘There's no use trying,’ she said: ‘one can't believe impossible things.’"
+      ],
+      "expected": [
+        "Alice laughed. ‘There's no use trying,’ she said: ‘one can't believe impossible things.’"
+      ]
+    },
+    {
+      "id": "review-12",
+      "chapter": "C27",
+      "role": "merge",
+      "input": [
+        "as her hands were full.",
+        "‘Feather, I say!’"
+      ],
+      "expected": [
+        "as her hands were full. ‘Feather, I say!’"
+      ]
+    },
+    {
+      "id": "review-13",
+      "chapter": "C36",
+      "role": "merge",
+      "input": [
+        "‘Dear me, no!’ said the King.",
+        "‘What an idea!’"
+      ],
+      "expected": [
+        "‘Dear me, no!’ said the King. ‘What an idea!’"
+      ]
+    },
+    {
+      "id": "review-14",
+      "chapter": "C37",
+      "role": "merge",
+      "input": [
+        "‘I always thought they were fabulous monsters!’ said the Unicorn.",
+        "‘Is it alive?’"
+      ],
+      "expected": [
+        "‘I always thought they were fabulous monsters!’ said the Unicorn. ‘Is it alive?’"
+      ]
+    },
+    {
+      "id": "review-15",
+      "chapter": "C38",
+      "role": "stable",
+      "input": [
+        "‘It's very provoking!’ she said, in reply to the Lion",
+        "(she was getting quite used to being called ‘the Monster’)."
+      ],
+      "expected": [
+        "‘It's very provoking!’ she said, in reply to the Lion",
+        "(she was getting quite used to being called ‘the Monster’)."
+      ]
+    },
+    {
+      "id": "review-16",
+      "chapter": "C41",
+      "role": "stable",
+      "input": [
+        "‘Plenty of practice!’ he went on repeating,",
+        "all the time that Alice was getting him on his feet again."
+      ],
+      "expected": [
+        "‘Plenty of practice!’ he went on repeating,",
+        "all the time that Alice was getting him on his feet again."
+      ]
+    },
+    {
+      "id": "review-17",
+      "chapter": "C47",
+      "role": "merge",
+      "input": [
+        "‘I don't know,’ said Alice.",
+        "‘I lost count.’"
+      ],
+      "expected": [
+        "‘I don't know,’ said Alice. ‘I lost count.’"
+      ]
+    },
+    {
+      "id": "review-18",
+      "chapter": "C47",
+      "role": "merge",
+      "input": [
+        "Alice considered.",
+        "‘The bone wouldn't remain, of course,"
+      ],
+      "expected": [
+        "Alice considered. ‘The bone wouldn't remain, of course,"
+      ]
+    },
+    {
+      "id": "review-19",
+      "chapter": "C48",
+      "role": "merge",
+      "input": [
+        "Alice was puzzled.",
+        "‘In our country,’ she remarked, ‘there's only one day at a time.’"
+      ],
+      "expected": [
+        "Alice was puzzled. ‘In our country,’ she remarked, ‘there's only one day at a time.’"
+      ]
+    },
+    {
+      "id": "review-20",
+      "chapter": "C51",
+      "role": "stable",
+      "input": [
+        "Alice: Alice! Pudding. Remove the pudding!’,",
+        "and the waiters took it away so quickly that Alice couldn't return its bow."
+      ],
+      "expected": [
+        "Alice: Alice! Pudding. Remove the pudding!’,",
+        "and the waiters took it away so quickly that Alice couldn't return its bow."
+      ]
+    },
+    {
+      "id": "review-21",
+      "chapter": "C51",
+      "role": "merge",
+      "input": [
+        "The White Queen laughed with delight, and stroked Alice's cheek.",
+        "Then she began:"
+      ],
+      "expected": [
+        "The White Queen laughed with delight, and stroked Alice's cheek. Then she began:"
+      ]
+    },
+    {
+      "id": "historical-short-C21-044",
+      "chapter": "C21",
+      "role": "mandatory",
+      "input": [
+        "I should like to know?’",
+        "‘Ditto,’ said Tweedledum.",
+        "‘Ditto, ditto!’ cried Tweedledee."
+      ],
+      "target": "‘Ditto,’ said Tweedledum."
+    },
+    {
+      "id": "historical-short-C31-047",
+      "chapter": "C31",
+      "role": "mandatory",
+      "input": [
+        "and that shows that there are three hundred and sixty-four days when you might get un-birthday presents’",
+        "‘Certainly,’ said Alice.",
+        "‘And only one for birthday presents, you know."
+      ],
+      "target": "‘Certainly,’ said Alice."
+    },
+    {
+      "id": "historical-short-C32-015",
+      "chapter": "C32",
+      "role": "mandatory",
+      "input": [
+        "‘I always pay it extra.’",
+        "‘Oh!’ said Alice.",
+        "She was too much puzzled to make any other remark."
+      ],
+      "target": "‘Oh!’ said Alice."
+    },
+    {
+      "id": "historical-short-C41-056",
+      "chapter": "C41",
+      "role": "mandatory",
+      "input": [
+        "all the time that Alice was getting him on his feet again.",
+        "‘Plenty of practice!’",
+        "‘It's too ridiculous!’ cried Alice, losing all her patience this time."
+      ],
+      "target": "‘Plenty of practice!’"
+    },
+    {
+      "id": "historical-short-C53-065",
+      "chapter": "C53",
+      "role": "mandatory",
+      "input": [
+        "A boat, beneath a sunny sky",
+        "Lingering onward dreamily",
+        "In an evening of July."
+      ],
+      "target": "Lingering onward dreamily"
+    }
+  ]
+}

@@ -111,124 +111,49 @@ final class _ReadAloudSplitterEngineV3 {
 
   static int wordCount(String text) => _sourceWords(text).length;
 
-  /// Merges every 1-English-word read-aloud chunk into a neighbor.
-  ///
-  /// For each singleton, only the local window `[prev, one, next]` is touched:
-  /// attach a complete quoted utterance to its following attribution; otherwise
-  /// try previous (if any) when `<= 30` words, then next. If both
-  /// adjacent chunks are already at the hard maximum, move only the immediately
-  /// adjacent word so `30/1` becomes `29/2` (and `30/1/30` becomes
-  /// `29/2/30`). No later boundary is cascaded or recomputed.
-  static List<String> mergeOneWordChunks(List<String> segments) {
-    if (segments.isEmpty) {
-      return const [];
+  /// Groups source units before facts/DP; each token is copied at most once.
+  /// Short quoted utterances prefer the following unit, other shorts the left.
+  static List<DependencySentenceV3> _coalesceShortSentences(
+    String source,
+    List<DependencySentenceV3> sentences,
+  ) {
+    final groups = <(int, int, int)>[]; // first, exclusive end, lexical count
+    for (var index = 0; index < sentences.length; index += 1) {
+      final sentence = sentences[index];
+      final text = source.substring(sentence.start, sentence.end);
+      final count = wordCount(text);
+      // A short unit may cross paragraph whitespace within this article.
+      final canJoinRight = index + 1 < sentences.length;
+      // End an already merged, legal short chain at the existing comfort
+      // ceiling instead of growing one chapter-sized DAG. A lone long neighbor
+      // can still absorb a short unit and be split once under the length zones.
+      final completedGroup = groups.isNotEmpty &&
+          groups.last.$2 - groups.last.$1 > 1 &&
+          groups.last.$3 >= ReadAloudSplitterV3.minWords &&
+          groups.last.$3 + count > preferredMaxUnpunctuatedWords;
+      final prefersRight = count > 0 &&
+          canJoinRight &&
+          (completedGroup ||
+              _openingQuote.hasMatch(text.trimLeft()) &&
+                  _quotedTerminalPunctuation.hasMatch(text.trimRight()));
+      if (groups.isNotEmpty &&
+          (groups.last.$3 < ReadAloudSplitterV3.minWords ||
+              count < ReadAloudSplitterV3.minWords && !prefersRight)) {
+        final previous = groups.last;
+        groups[groups.length - 1] =
+            (previous.$1, index + 1, previous.$3 + count);
+      } else {
+        groups.add((index, index + 1, count));
+      }
     }
-    if (segments.length == 1) {
-      return List<String>.unmodifiable(segments);
-    }
-    final result = List<String>.from(segments);
-    var index = 0;
-    while (index < result.length) {
-      if (wordCount(result[index]) != 1) {
-        index += 1;
-        continue;
+    return List.unmodifiable(groups.map((group) {
+      if (group.$3 < ReadAloudSplitterV3.minWords) {
+        throw const FormatException('V3 分句源单元不足4词且没有可合并的邻接单元');
       }
-      if (result.length == 1) {
-        break;
-      }
-      final hasPrev = index > 0;
-      final hasNext = index + 1 < result.length;
-      final one = result[index];
-
-      if (hasNext &&
-          _openingQuote.hasMatch(one) &&
-          _quotedTerminalPunctuation.hasMatch(one)) {
-        final joinedNext = _joinChunks(one, result[index + 1]);
-        if (wordCount(joinedNext) <= hardMaxWords) {
-          result[index] = joinedNext;
-          result.removeAt(index + 1);
-          continue;
-        }
-      }
-      if (hasPrev) {
-        final joinedPrev = _joinChunks(result[index - 1], one);
-        if (wordCount(joinedPrev) <= hardMaxWords) {
-          result[index - 1] = joinedPrev;
-          result.removeAt(index);
-          continue;
-        }
-      }
-      if (hasNext) {
-        final joinedNext = _joinChunks(one, result[index + 1]);
-        if (wordCount(joinedNext) <= hardMaxWords) {
-          result[index] = joinedNext;
-          result.removeAt(index + 1);
-          continue;
-        }
-      }
-
-      final windowStart = hasPrev ? index - 1 : index;
-      final windowEnd = hasNext ? index + 2 : index + 1;
-      final repaired = _resolveOneWordWindow(
-        result.sublist(windowStart, windowEnd),
+      return _coalesceDependencySentenceGroup(
+        sentences.sublist(group.$1, group.$2),
       );
-      result.replaceRange(windowStart, windowEnd, repaired);
-      index = math.max(0, windowStart - 1);
-    }
-
-    if (result.length > 1 && result.any((chunk) => wordCount(chunk) == 1)) {
-      throw StateError('1-word merge failed to eliminate a singleton');
-    }
-    if (result.any((chunk) => wordCount(chunk) > hardMaxWords)) {
-      throw StateError('1-word merge exceeded the 30-word hard maximum');
-    }
-    return List<String>.unmodifiable(result);
-  }
-
-  static String _joinChunks(String left, String right) =>
-      '$left $right'.replaceAll(_whitespace, ' ').trim();
-
-  /// Repairs only the boundary immediately adjacent to a singleton. This is
-  /// reached only when a direct merge would produce 31 words.
-  static List<String> _resolveOneWordWindow(List<String> window) {
-    final joined = window
-        .map((chunk) => chunk.trim())
-        .where((chunk) => chunk.isNotEmpty)
-        .join(' ')
-        .replaceAll(_whitespace, ' ')
-        .trim();
-    final words = _sourceWords(joined);
-    final counts = window.map(wordCount).toList(growable: false);
-    final singletonIndex = counts.indexOf(1);
-    if (words.isEmpty || singletonIndex < 0) {
-      throw StateError('Invalid one-word repair window');
-    }
-    if (counts.any((count) => count > hardMaxWords)) {
-      throw StateError('One-word repair received an oversized neighbor');
-    }
-
-    final ends = <int>[];
-    if (window.length == 2 && singletonIndex == 1 && counts[0] == 30) {
-      ends.addAll([29, 31]);
-    } else if (window.length == 2 && singletonIndex == 0 && counts[1] == 30) {
-      ends.addAll([2, 31]);
-    } else if (window.length == 3 &&
-        singletonIndex == 1 &&
-        counts[0] == 30 &&
-        counts[2] == 30) {
-      // Prefer the previous chunk, matching the ordinary direct-merge rule.
-      ends.addAll([29, 31, 61]);
-    } else {
-      throw StateError('Unsupported one-word repair window: $counts');
-    }
-
-    final output = <String>[];
-    var start = 0;
-    for (final end in ends) {
-      output.add(_segmentText(joined, words, start, end));
-      start = end;
-    }
-    return output;
+    }));
   }
 
   static int maxUnpunctuatedWordCount(String text) {
@@ -379,16 +304,18 @@ final class _ReadAloudSplitterEngineV3 {
       parserSentences: document.sentences,
       activeQuoteSpans: quoteSpans,
     );
-    final parserSentences = _coalesceParserSentencesInsideMatchedDelimiters(
-      source,
-      _coalesceNonTerminalAbbreviationSentences(
+    final parserSentences = _coalesceShortSentences(
         source,
-        document.sentences,
-      ),
-      quoteSpans,
-      parenSpans,
-      unmatchedQuoteOpeningOffsets: unmatchedQuoteOpeningOffsets,
-    );
+        _coalesceParserSentencesInsideMatchedDelimiters(
+          source,
+          _coalesceNonTerminalAbbreviationSentences(
+            source,
+            document.sentences,
+          ),
+          quoteSpans,
+          parenSpans,
+          unmatchedQuoteOpeningOffsets: unmatchedQuoteOpeningOffsets,
+        ));
     final originals = <ReadAloudOriginalDecisionV3>[];
     var sentenceFactBuilds = 0;
     var dagSolves = 0;
@@ -479,8 +406,8 @@ final class _ReadAloudSplitterEngineV3 {
     validateReviewedSentences(
       source,
       mergedSentences,
-      rejectOneWordChunks: true,
-      requiredBoundaryWordOffsets: requiredBoundaryWordOffsetsAfterMerge(plan),
+      enforceMinimumWords: true,
+      requiredBoundaryWordOffsets: requiredBoundaryWordOffsets(plan),
     );
     return plan;
   }
@@ -572,22 +499,9 @@ final class _ReadAloudSplitterEngineV3 {
     );
   }
 
-  /// Orthographic original ends that survive the deterministic one-word merge.
-  /// The result is derived from selected candidate paths, not from caller-
-  /// supplied final sentences, so validation cannot silently waive an arbitrary
-  /// parser boundary.
-  static List<int> requiredBoundaryWordOffsetsAfterMerge(
-      ReadAloudSplitPlanV3 plan,
-      [Map<int, String> selectedPathIds = const {}]) {
-    final beforeMerge = selectedSentencesBeforePostProcessing(
-      plan,
-      selectedPathIds,
-    );
-    return _survivingRequiredBoundaryOffsets(
-      plan.originals,
-      mergeOneWordChunks(beforeMerge),
-    );
-  }
+  /// All prepared source-unit ends remain mandatory, independent of selection.
+  static List<int> requiredBoundaryWordOffsets(ReadAloudSplitPlanV3 plan) =>
+      _requiredBoundaryOffsets(plan.originals);
 
   static void validateSelectedPathIds(
     ReadAloudSplitPlanV3 plan,
@@ -608,9 +522,7 @@ final class _ReadAloudSplitterEngineV3 {
     ReadAloudSplitPlanV3 plan,
     Map<int, String> selectedPathIds,
   ) =>
-      mergeOneWordChunks(
-        selectedSentencesBeforePostProcessing(plan, selectedPathIds),
-      );
+      selectedSentencesBeforePostProcessing(plan, selectedPathIds);
 
   static List<String> selectedSentencesBeforePostProcessing(
     ReadAloudSplitPlanV3 plan,
@@ -2967,36 +2879,17 @@ final class _ReadAloudSplitterEngineV3 {
     final offsets = <int>[];
     var words = 0;
     for (final original in originals) {
-      words += wordCount(original.source);
+      words += original.candidateCoverage.sourceWordCount;
       offsets.add(words);
     }
     return offsets;
-  }
-
-  /// One-word post-merge may absorb an orthographic original boundary; only
-  /// require boundaries that still appear after [mergeOneWordChunks].
-  static List<int> _survivingRequiredBoundaryOffsets(
-    List<ReadAloudOriginalDecisionV3> originals,
-    List<String> mergedSentences,
-  ) {
-    final required = _requiredBoundaryOffsets(originals);
-    final actual = <int>{};
-    var cumulative = 0;
-    for (final sentence in mergedSentences) {
-      cumulative += wordCount(sentence);
-      actual.add(cumulative);
-    }
-    return [
-      for (final offset in required)
-        if (actual.contains(offset)) offset,
-    ];
   }
 
   static void validateReviewedSentences(
     String englishContent,
     List<String> sentences, {
     Iterable<int> requiredBoundaryWordOffsets = const [],
-    bool rejectOneWordChunks = false,
+    bool enforceMinimumWords = false,
   }) {
     if (sentences.isEmpty) {
       throw const FormatException('审核分句不能为空');
@@ -3012,8 +2905,8 @@ final class _ReadAloudSplitterEngineV3 {
         throw FormatException('审核分句第 ${index + 1} 块含显示换行');
       }
       final count = wordCount(sentence);
-      if (rejectOneWordChunks && sentences.length > 1 && count == 1) {
-        throw FormatException('审核分句第 ${index + 1} 块仅 1 词，必须局部合并');
+      if (enforceMinimumWords && count < ReadAloudSplitterV3.minWords) {
+        throw FormatException('审核分句第 ${index + 1} 块不足4词，必须在求解前合并源单元');
       }
       if (count > hardMaxWords) {
         throw FormatException('审核分句第 ${index + 1} 块为 $count 词，超过 30 词硬上限');
@@ -3036,7 +2929,8 @@ final class _ReadAloudSplitterEngineV3 {
     }
     for (final required in requiredBoundaryWordOffsets) {
       if (required > 0 && !actualBoundaries.contains(required)) {
-        throw const FormatException('审核分句跨越了朗读求解单元或段落硬边界');
+        throw FormatException(
+            '审核分句跨越了朗读求解单元或段落硬边界：缺少词位 $required，实际 $actualBoundaries');
       }
     }
   }
