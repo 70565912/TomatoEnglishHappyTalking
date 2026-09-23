@@ -1,0 +1,45 @@
+{
+  "release": "v1.8.3",
+  "applicationVersion": "1.8.3+13",
+  "solverVersion": "syntax_solver_v3_11",
+  "date": "2026-09-23",
+  "flutterTests": {
+    "passed": 564,
+    "skipped": 4,
+    "failed": 0,
+    "exitCode": 0
+  },
+  "webTests": {
+    "passed": 103,
+    "failed": 0,
+    "exitCode": 0
+  },
+  "analyze": {
+    "baselineDiagnostics": 13,
+    "newDiagnostics": 0,
+    "exitCode": 1
+  },
+  "windowsBuild": {
+    "status": "passed",
+    "scriptSeconds": 182.7,
+    "flutterBuildSeconds": 144.1
+  },
+  "windowsRuntime": {
+    "status": "started",
+    "listen": "127.0.0.1:48731",
+    "listenAfterSeconds": 4,
+    "closedAfterCheck": true,
+    "placementRestoreRechecked": false
+  },
+  "androidBuild": {
+    "status": "passed",
+    "scriptSeconds": 436.5,
+    "gradleSeconds": 406.9,
+    "versionName": "1.8.3",
+    "versionCode": 13,
+    "signatureVerified": true,
+    "signing": "project debug signing config",
+    "deviceRun": false
+  },
+  "scope": "Existing saved articles are not migrated or resegmented."
+}

@@ -21,17 +21,15 @@
 
 ![Tomato product overview](docs/readme/product-overview.webp)
 
-## Latest release · v1.8.2 short-sentence merging (2026-09-23)
+## Latest release · v1.8.3 window state and page transitions (2026-09-23)
 
-- Merge units shorter than four words before splitting, including short headings and verse across paragraphs within the same article. Four-word units may remain.
-- Solve each prepared unit once, retaining the existing length tiers and absolute 30-word limit.
-- Replay of 154 chapters eliminates 308 short chunks. Median solver time on representative chapters improves by 29.7% in same-machine AOT benchmarks.
+- Windows restores the last window position, size, and maximized state.
+- Listening, songs, and video export share one picture-book page transition, including `pageCurl`.
+- The sentence solver remains `syntax_solver_v3_11`. Saved articles are not automatically resegmented.
 
-> Saved articles retain their persisted sentence slots and are not automatically resegmented.
-
-[Read the v1.8.2 release notes](docs/releases/v1.8.2.md) ·
+[Read the v1.8.3 release notes](docs/releases/v1.8.3.md) ·
 [Browse the change log](docs/change_log.md) ·
-[Read the segmentation validation record](docs/read_aloud_short_merge_validation_20260922.md)
+[Read the v1.8.2 segmentation notes](docs/releases/v1.8.2.md)
 
 ## From an article to complete learning material
 
