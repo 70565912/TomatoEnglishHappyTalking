@@ -2711,6 +2711,39 @@ class PictureBookService {
     };
   }
 
+  /// Returns the bounded display bitmap used by live playback rendering.
+  ///
+  /// This intentionally does not expose the full source image. The live
+  /// transition bridge renders native frames from this local display cache so
+  /// WebView never receives an oversized original texture.
+  static Future<Uint8List?> pageImageBytes({
+    required int articleId,
+    required int pageIndex,
+    String variant = 'display',
+  }) async {
+    if (variant.trim().toLowerCase() != 'display') {
+      throw const FormatException(
+        'pictureBook.pageImageBytes only supports the display variant',
+      );
+    }
+    final pages = await DatabaseService.getPictureBookPages(articleId);
+    PictureBookPage? targetPage;
+    for (final page in pages) {
+      if (page.pageIndex == pageIndex) {
+        targetPage = page;
+        break;
+      }
+    }
+    if (targetPage == null) return null;
+
+    final displayPath = await _displayImagePathForPath(targetPage.imagePath);
+    if (displayPath == null || displayPath.trim().isEmpty) return null;
+    final file = File(displayPath);
+    if (!await file.exists()) return null;
+    final bytes = await file.readAsBytes();
+    return bytes.isEmpty ? null : bytes;
+  }
+
   static bool _existingPagesMatchStoryboardPolicy(
     List<PictureBookPage> pages,
     List<_PicturePageSegment> segments,
@@ -4172,7 +4205,15 @@ class PictureBookService {
   }
 
   static Future<String?> _displayImageUriForPath(String? rawPath) async {
-    final displayPath = await _resizedPathForImage(
+    final displayPath = await _displayImagePathForPath(rawPath);
+    if (displayPath == null || displayPath.trim().isEmpty) {
+      return null;
+    }
+    return _imageUriForPath(displayPath);
+  }
+
+  static Future<String?> _displayImagePathForPath(String? rawPath) {
+    return _resizedPathForImage(
       rawPath,
       cache: _displayPathCache,
       cacheDirectoryName: 'picture_book_display',
@@ -4180,10 +4221,6 @@ class PictureBookService {
       maxHeight: _creationDisplayMaxHeight,
       label: 'display',
     );
-    if (displayPath == null || displayPath.trim().isEmpty) {
-      return null;
-    }
-    return _imageUriForPath(displayPath);
   }
 
   static Future<String?> _resizedPathForImage(

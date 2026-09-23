@@ -429,6 +429,12 @@ class AppConfig {
     _runtimeSecrets[_recordingSubtitleMode] = subtitleMode.trim();
   }
 
+  static Future<void> saveRecordingPageTransition(String pageTransition) async {
+    final value = pageTransition.trim();
+    await _storage.write(key: _recordingPageTransition, value: value);
+    _runtimeSecrets[_recordingPageTransition] = value;
+  }
+
   static Future<Map<String, String>> get songSettings async => {
         'sunoOutputDirectory': await _readSecret(
           key: _sunoOutputDirectory,

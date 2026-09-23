@@ -49,8 +49,7 @@ void main() {
     expect(response['type'], 'bridge.error');
   });
 
-  test('bridge payload budgets are command-specific and exempt single images',
-      () {
+  test('bridge payload budgets exempt display image payloads', () {
     expect(bridgePayloadBudgetChars('article.list'), 1024 * 1024);
     expect(bridgePayloadBudgetChars('app.ready'), 1024 * 1024);
     expect(bridgePayloadBudgetChars('article.fullText'), 256 * 1024);
@@ -59,5 +58,6 @@ void main() {
     expect(bridgePayloadBudgetChars('library.patch'), 128 * 1024);
     expect(bridgePayloadBudgetChars('series.import'), 512 * 1024);
     expect(bridgePayloadBudgetChars('pictureBook.pageImage'), isNull);
+    expect(bridgePayloadBudgetChars('pictureBook.transitionFrames'), isNull);
   });
 }

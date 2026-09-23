@@ -1,7 +1,9 @@
-import { useEffect, useLayoutEffect, useRef, useState, type TransitionEvent } from 'react';
-import type { RecordingPageTransition } from './types';
-
-const TRANSITION_MS = 500;
+import { useEffect, useRef, useState } from 'react';
+import { sendNative } from './bridge';
+import type {
+  PictureBookTransitionFramesPayload,
+  RecordingPageTransition,
+} from './types';
 
 function normalizePageTransition(value?: string | null): RecordingPageTransition {
   if (
@@ -39,12 +41,16 @@ function usePrefersReducedMotion(): boolean {
 
 export function TransitioningPicture({
   src,
+  articleId,
+  pageIndex,
   objectFit = 'contain',
   transition = 'none',
   className,
   alt = '',
 }: {
   src: string;
+  articleId?: number | null;
+  pageIndex?: number | null;
   objectFit?: 'contain' | 'cover';
   transition?: RecordingPageTransition | string | null;
   className?: string;
@@ -53,135 +59,148 @@ export function TransitioningPicture({
   const reduceMotion = usePrefersReducedMotion();
   const pageTransition = normalizePageTransition(transition);
   const animated = !reduceMotion && pageTransition !== 'none';
-  const [currentSrc, setCurrentSrc] = useState(src);
-  const [nextSrc, setNextSrc] = useState<string | null>(null);
-  const [fading, setFading] = useState(false);
-  const currentRef = useRef(src);
-  const nextRef = useRef<string | null>(null);
-  const targetRef = useRef(src);
-  const incomingRef = useRef<HTMLImageElement | null>(null);
-  const fadeFrameRef = useRef<number | null>(null);
+  const [displaySrc, setDisplaySrc] = useState(src);
+  const [frameSrc, setFrameSrc] = useState<string | null>(null);
+  const [transitioning, setTransitioning] = useState(false);
+  const committedSrcRef = useRef(src);
+  const committedPageRef = useRef<number | null>(pageIndex ?? null);
+  const generationRef = useRef(0);
+  const frameRequestRef = useRef<number | null>(null);
+  const completionTimerRef = useRef<number | null>(null);
 
-  const clearFadeFrame = () => {
-    if (fadeFrameRef.current !== null) {
-      window.cancelAnimationFrame(fadeFrameRef.current);
-      fadeFrameRef.current = null;
+  const cancelFrameLoop = () => {
+    if (frameRequestRef.current !== null) {
+      window.cancelAnimationFrame(frameRequestRef.current);
+      frameRequestRef.current = null;
+    }
+    if (completionTimerRef.current !== null) {
+      window.clearTimeout(completionTimerRef.current);
+      completionTimerRef.current = null;
     }
   };
 
-  const snapTo = (target: string) => {
-    clearFadeFrame();
-    currentRef.current = target;
-    nextRef.current = null;
-    setCurrentSrc(target);
-    setNextSrc(null);
-    setFading(false);
-  };
-
-  const beginTransitionToIncoming = () => {
-    clearFadeFrame();
-    fadeFrameRef.current = window.requestAnimationFrame(() => {
-      fadeFrameRef.current = window.requestAnimationFrame(() => {
-        fadeFrameRef.current = null;
-        if (nextRef.current !== targetRef.current) return;
-        setFading(true);
-      });
-    });
+  const snapTo = (target: string, targetPageIndex: number | null) => {
+    generationRef.current += 1;
+    cancelFrameLoop();
+    committedSrcRef.current = target;
+    committedPageRef.current = targetPageIndex;
+    setDisplaySrc(target);
+    setFrameSrc(null);
+    setTransitioning(false);
   };
 
   useEffect(() => {
     const target = src.trim();
-    targetRef.current = target;
-
+    const targetPageIndex = pageIndex ?? null;
     if (!target) {
-      snapTo('');
+      snapTo('', targetPageIndex);
       return undefined;
     }
 
-    if (target === currentRef.current && !nextRef.current) {
-      return undefined;
-    }
-    if (target === nextRef.current) {
-      return undefined;
-    }
-
-    if (!animated || !currentRef.current) {
-      snapTo(target);
+    if (
+      target === committedSrcRef.current &&
+      targetPageIndex === committedPageRef.current
+    ) {
       return undefined;
     }
 
-    clearFadeFrame();
-    nextRef.current = target;
-    setFading(false);
-    setNextSrc(target);
+    if (
+      !animated ||
+      articleId == null ||
+      targetPageIndex == null ||
+      committedPageRef.current == null ||
+      targetPageIndex === committedPageRef.current
+    ) {
+      snapTo(target, targetPageIndex);
+      return undefined;
+    }
+
+    cancelFrameLoop();
+    const generation = ++generationRef.current;
+    const fromPageIndex = committedPageRef.current;
+    const fromSrc = committedSrcRef.current;
+    setFrameSrc(null);
+    setDisplaySrc(fromSrc);
+    setTransitioning(true);
+
+    void sendNative<PictureBookTransitionFramesPayload>('pictureBook.transitionFrames', {
+      articleId,
+      fromPageIndex,
+      toPageIndex: targetPageIndex,
+      pageTransition,
+      width: 1280,
+      height: 720,
+      frameCount: 8,
+    })
+      .then((payload) => {
+        if (generationRef.current !== generation) return;
+        const frames = Array.isArray(payload.frames) ? payload.frames : [];
+        if (
+          frames.length === 0 ||
+          payload.fromPageIndex !== fromPageIndex ||
+          payload.toPageIndex !== targetPageIndex
+        ) {
+          snapTo(target, targetPageIndex);
+          return;
+        }
+
+        const durationMs = Math.max(1, Number(payload.durationMs) || 500);
+        setFrameSrc(frames[0]);
+        completionTimerRef.current = window.setTimeout(() => {
+          if (generationRef.current === generation) {
+            snapTo(target, targetPageIndex);
+          }
+        }, durationMs + 50);
+        const startedAt = window.performance.now();
+        const tick = (now: number) => {
+          if (generationRef.current !== generation) return;
+          const elapsed = Math.max(0, now - startedAt);
+          const progress = Math.min(1, elapsed / durationMs);
+          const frameIndex = Math.min(
+            frames.length - 1,
+            Math.floor(progress * (frames.length - 1)),
+          );
+          setFrameSrc(frames[frameIndex]);
+          if (progress >= 1) {
+            frameRequestRef.current = null;
+            snapTo(target, targetPageIndex);
+            return;
+          }
+          frameRequestRef.current = window.requestAnimationFrame(tick);
+        };
+        frameRequestRef.current = window.requestAnimationFrame(tick);
+      })
+      .catch(() => {
+        if (generationRef.current === generation) {
+          snapTo(target, targetPageIndex);
+        }
+      });
+
     return () => {
-      clearFadeFrame();
+      cancelFrameLoop();
     };
-  }, [src, animated]);
+  }, [articleId, animated, pageIndex, pageTransition, src]);
 
-  useLayoutEffect(() => {
-    if (!nextSrc) return;
-    const image = incomingRef.current;
-    if (image && image.complete && image.naturalWidth > 0) {
-      beginTransitionToIncoming();
-    }
-  }, [nextSrc]);
+  useEffect(() => () => cancelFrameLoop(), []);
 
-  useEffect(() => () => clearFadeFrame(), []);
-
-  const onIncomingLoad = () => {
-    if (nextRef.current !== targetRef.current) return;
-    beginTransitionToIncoming();
-  };
-
-  const onIncomingError = () => {
-    if (nextRef.current !== targetRef.current) return;
-    snapTo(targetRef.current);
-  };
-
-  const onIncomingTransitionEnd = (event: TransitionEvent<HTMLImageElement>) => {
-    const property = event.propertyName;
-    if (property !== 'opacity' && property !== 'transform' && property !== 'clip-path') {
-      return;
-    }
-    if (!fading || !nextRef.current || nextRef.current !== targetRef.current) return;
-    snapTo(nextRef.current);
-  };
-
-  if (!currentSrc && !nextSrc) {
+  if (!displaySrc && !frameSrc) {
     return null;
   }
 
   const stackClassName = ['picture-transition-stack', className].filter(Boolean).join(' ');
-
   return (
     <div
       className={stackClassName}
       data-object-fit={objectFit}
       data-transition={pageTransition}
-      data-transitioning={fading || nextSrc ? 'true' : 'false'}
-      style={{ ['--picture-transition-ms' as string]: `${TRANSITION_MS}ms` }}
+      data-transitioning={transitioning ? 'true' : 'false'}
     >
-      {currentSrc ? (
-        <img
-          className={`picture-transition-layer ${fading ? 'is-outgoing' : 'is-visible'}`}
-          src={currentSrc}
-          alt={alt}
-          draggable={false}
-        />
-      ) : null}
-      {nextSrc ? (
-        <img
-          ref={incomingRef}
-          className={`picture-transition-layer ${fading ? 'is-incoming' : 'is-pending'}`}
-          src={nextSrc}
-          alt=""
-          draggable={false}
-          onLoad={onIncomingLoad}
-          onError={onIncomingError}
-          onTransitionEnd={onIncomingTransitionEnd}
-        />
-      ) : null}
+      <img
+        className="picture-transition-layer is-visible"
+        src={frameSrc ?? displaySrc}
+        alt={alt}
+        draggable={false}
+      />
     </div>
   );
 }
