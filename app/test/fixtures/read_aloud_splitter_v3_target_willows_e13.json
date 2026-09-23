@@ -3,6 +3,10 @@
   "book": "Willows",
   "episode": "E13",
   "source": "In the side of what had seemed to be a snow-bank stood a solid-looking little door, painted a dark green.",
+  "expectedSegments": [
+    "In the side of what had seemed to be a snow-bank stood a solid-looking little door,",
+    "painted a dark green."
+  ],
   "parserVersion": "udpipe-1.4.0",
   "modelSha256": "b71fb73473bedbca575bfc927fceb0f6dd53f74493bb9c58a9e77bd28d24a71f",
   "sentences": [

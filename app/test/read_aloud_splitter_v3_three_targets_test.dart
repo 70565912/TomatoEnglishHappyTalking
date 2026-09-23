@@ -46,13 +46,23 @@ ReadAloudSplitPlanV3 _planFixture(Map<String, dynamic> fixture) {
 String _cutView(List<String> segments) => segments.join(' | ');
 
 void main() {
-  test('baseline/target: E13 keeps door comma path', () {
-    final plan = _planFixture(
-      _loadFixture('read_aloud_splitter_v3_target_willows_e13.json'),
+  test('E13 retains the door comma boundary without fallback cuts', () {
+    final fixture =
+        _loadFixture('read_aloud_splitter_v3_target_willows_e13.json');
+    final expectedSegments = (fixture['expectedSegments'] as List)
+        .map((value) => value.toString())
+        .toList(growable: false);
+    final plan = _planFixture(fixture);
+    final decision = plan.originals.single;
+
+    expect(decision.localPath.segments, expectedSegments);
+    expect(
+      decision.localPath.boundaries.single.kind,
+      ReadAloudBoundaryKindV3.clauseComma,
     );
-    final view = _cutView(plan.originals.single.localPath.segments);
-    expect(view.contains('door, | painted'), isTrue, reason: view);
-    expect(view.contains('seemed | to'), isFalse, reason: view);
+    expect(decision.localPath.usesNonPunctuation, isFalse);
+    expect(plan.counters.sentenceFactBuilds, 1);
+    expect(plan.counters.dagSolves, 1);
   });
 
   test('baseline/target: E17 must not cut bend about / about easily', () {
