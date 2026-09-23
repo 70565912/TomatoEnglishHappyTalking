@@ -62,7 +62,7 @@
 
 - 视频编码：`H.264` / `H.265(HEVC)`，默认 `H.264`。
 - 导出分辨率：`2560x1440` / `1920x1080` / `1280x720`，默认 `1920x1080`。
-- 绘本页转场：默认 `none`，可选 `crossFade`、`panZoomFade`、`slide`，后续可增加 `pageCurl`。
+- 绘本页转场：默认 `none`，可选 `crossFade`、`panZoomFade`、`slide`、`pageCurl`；选择改变时即时保存到本地配置，应用启动时自动载入。
 - 字幕：`srt` 为无内置字幕视频 + SRT，`burnedIn` 为内置字幕视频，`both` 同时输出两版视频 + SRT。
 - 保存文件夹：固定为程序运行目录下的 `recording-export`，其中无内置字幕视频和 SRT 写入 `srt/<书名>/`，内置字幕视频写入 `subtitled/<书名>/`，歌曲音频写入 `mp3/<书名>/`，不提供设置项。书名使用绘本系列名；无系列时用文章标题。文件名不再重复系列名。
 - FFmpeg 路径：固定为程序运行目录下的 `ffmpeg.exe`，不提供设置项。
@@ -75,7 +75,7 @@
 interface RecordingSettings {
   codec: 'h264' | 'h265';
   resolution: '2560x1440' | '1920x1080' | '1280x720';
-  pageTransition: 'none' | 'crossFade' | 'panZoomFade' | 'slide';
+  pageTransition: 'none' | 'crossFade' | 'panZoomFade' | 'slide' | 'pageCurl';
   outputDirectory: string; // read-only, programDir/recording-export
   ffmpegPath: string; // read-only, programDir/ffmpeg.exe
   quality: 'high';
@@ -140,7 +140,7 @@ interface ListeningRecordVideoRequest {
   mode: 'english'; // 当前实现固定英文音频，中文只作为字幕
   codec: 'h264' | 'h265';
   resolution: '2560x1440' | '1920x1080' | '1280x720';
-  pageTransition: 'none' | 'crossFade' | 'panZoomFade' | 'slide';
+  pageTransition: 'none' | 'crossFade' | 'panZoomFade' | 'slide' | 'pageCurl';
   width: 2560 | 1920 | 1280;
   height: 1440 | 1080 | 720;
   fps: 25;
@@ -160,7 +160,7 @@ interface ListeningRecordVideoResult {
   encoderName: string;
   codec: 'h264' | 'h265';
   resolution: '2560x1440' | '1920x1080' | '1280x720';
-  pageTransition: 'none' | 'crossFade' | 'panZoomFade' | 'slide';
+  pageTransition: 'none' | 'crossFade' | 'panZoomFade' | 'slide' | 'pageCurl';
   videoVariants?: Array<{
     kind: 'srt' | 'subtitled' | string;
     videoPath: string;
@@ -252,7 +252,7 @@ v1 路线：
 
 ### 5. 绘本页转场
 
-转场是视频画面的渲染效果，不占用额外视频时间，也不改变音频时间轴。
+转场是视频画面的渲染效果，不占用额外视频时间，也不改变音频时间轴。播放和视频导出共用 Flutter `PageTransitionRenderer`；实时播放从 `display` 图片生成固定 `1280x720`、8 帧、`500ms` 的帧批次，不使用 Web CSS 近似。实时绘制落后时允许跳帧，但不等待音频或字幕，且必须最终显示目标页。
 
 规则：
 
@@ -269,7 +269,7 @@ v1 路线：
 - `crossFade`：上一页淡出、下一页淡入，最稳定。
 - `panZoomFade`：轻微推拉/平移 + 淡入淡出，绘本感更强。
 - `slide`：水平滑动切页，清晰但运动更明显。
-- `pageCurl`：纸张卷页效果，建议作为 v2；需要更复杂的 GPU shader 或 mesh 变形，不进入 v1。
+- `pageCurl`：单折面、单阴影、轻微弯曲的右向左翻页；进度 0 和 1 强制落到完整旧页和完整新页，避免重复绘制、错误裁剪和过强透视。
 
 ### 6. 编码与丢帧策略
 

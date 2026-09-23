@@ -2,10 +2,10 @@
 
 ## 2026-09-14
 
-- **发布 v1.8.1**：`app/pubspec.yaml` → `1.8.1+11`。补丁聚焦设置页声音选择、播放切页体验与全屏起点。
+- **发布 v1.8.1**：`app/pubspec.yaml` → `1.8.1+11`。补丁聚焦设置页声音选择、播放切页体验与全屏起点；本次后续改造补充 Windows 窗口状态和转场配置持久化。
 - **火山英文发音人扩展**：`seed-tts-2.0` 目录补齐官方教学 / 有声书 / 客服类英语声；设置页可勾选「只显示英文声音」。
 - **设置页布局**：语音合成（含发音人卡片与场景标签）提到设置页顶部；「保存声音」跟在该区块下方；云服务与歌曲保存改为同款主按钮。声音 / 云服务 / 歌曲仍是三套独立保存命令。
-- **播放切页转场**：听力全屏、歌曲全屏与歌曲内联播放读取录制设置 `pageTransition`（`none` / `crossFade` / `panZoomFade` / `slide` / `pageCurl`），由 Web UI `TransitioningPicture` 用 CSS 近似；音频路径不等待转场；`none` 或 `prefers-reduced-motion` 时瞬间切换。
+- **播放切页转场**：听力普通内联、听力全屏、歌曲全屏与歌曲内联播放统一读取录制设置 `pageTransition`。设置改变时即时保存到本地并在启动时统一载入；播放与导出共用 Flutter `PageTransitionRenderer`，通过 `pictureBook.transitionFrames` 生成 `1280x720` 的 8 帧实时 PNG，不再使用 CSS 近似 `pageCurl`。帧播放允许跳帧但不等待音频或字幕，最终准确落到目标页；`none` 或 `prefers-reduced-motion` 时瞬间切换。
 - **听力全屏起点**：全屏听力从当前选中句子开始，不再写死从第 0 句重播（与歌曲全屏一致）。
 - **文档**：补充 Grok Bot / RedClaw 书籍包交换可行性审核结论索引（当前载体不可行，不接入正式产品）。
 

@@ -4440,6 +4440,24 @@ function SongCreationPanel({
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
   const [recordingDialogVersionId, setRecordingDialogVersionId] = useState('');
+  const autosaveRecordingTransition = useRecordingPageTransitionAutosave(
+    (savedSettings) => {
+      onRecordingSettingsLoaded(savedSettings);
+      setRecordingDialogDraft((draft) =>
+        draft && draft.pageTransition === savedSettings.pageTransition
+          ? { ...draft, pageTransition: savedSettings.pageTransition }
+          : draft,
+      );
+    },
+    (previousValue, nextValue) => {
+      setRecordingDialogDraft((draft) =>
+        draft && draft.pageTransition === nextValue
+          ? { ...draft, pageTransition: previousValue }
+          : draft,
+      );
+      onNotice('转场设置保存失败，请重试');
+    },
+  );
   const [songDeleteConfirm, setSongDeleteConfirm] = useState<{
     versionId: string;
     title: string;
@@ -4588,6 +4606,12 @@ function SongCreationPanel({
   };
 
   const updateRecordingDialogDraft = (patch: Partial<RecordingSettings>) => {
+    if (patch.pageTransition && recordingDialogDraft) {
+      autosaveRecordingTransition(
+        patch.pageTransition,
+        recordingDialogDraft.pageTransition,
+      );
+    }
     setRecordingDialogDraft((draft) => (draft ? { ...draft, ...patch } : draft));
   };
 
@@ -4923,6 +4947,24 @@ function VideoCreationPanel({
   const [videoBusy, setVideoBusy] = useState(false);
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
+  const autosaveRecordingTransition = useRecordingPageTransitionAutosave(
+    (savedSettings) => {
+      onRecordingSettingsLoaded(savedSettings);
+      setRecordingDialogDraft((draft) =>
+        draft && draft.pageTransition === savedSettings.pageTransition
+          ? { ...draft, pageTransition: savedSettings.pageTransition }
+          : draft,
+      );
+    },
+    (previousValue, nextValue) => {
+      setRecordingDialogDraft((draft) =>
+        draft && draft.pageTransition === nextValue
+          ? { ...draft, pageTransition: previousValue }
+          : draft,
+      );
+      onNotice('转场设置保存失败，请重试');
+    },
+  );
   const [videoDeleteConfirm, setVideoDeleteConfirm] = useState<{
     version: RecordingVideoVersion;
     title: string;
@@ -4939,7 +4981,12 @@ function VideoCreationPanel({
   } = useRecordingExportFeedback(article.id, onNotice);
 
   const checkReady = () => {
-    const selectedSettings = recordingSettings ?? normalizeRecordingSettings({} as RecordingSettings);
+    if (!recordingSettings) {
+      setRecordingReady(null);
+      setRecordingReadyLoading(false);
+      return;
+    }
+    const selectedSettings = recordingSettings;
     setRecordingReady(null);
     setRecordingReadyLoading(true);
     sendNative<ListeningRecordingReadyPayload>('listening.recordingReady', {
@@ -5026,6 +5073,12 @@ function VideoCreationPanel({
   };
 
   const updateRecordingDialogDraft = (patch: Partial<RecordingSettings>) => {
+    if (patch.pageTransition && recordingDialogDraft) {
+      autosaveRecordingTransition(
+        patch.pageTransition,
+        recordingDialogDraft.pageTransition,
+      );
+    }
     setRecordingDialogDraft((draft) => (draft ? { ...draft, ...patch } : draft));
   };
 
@@ -6248,6 +6301,24 @@ function ListeningPage({
   const [recordingDialogDraft, setRecordingDialogDraft] = useState<RecordingSettings | null>(null);
   const [recordingDialogSaving, setRecordingDialogSaving] = useState(false);
   const [recordingDialogSongVersionId, setRecordingDialogSongVersionId] = useState('');
+  const autosaveRecordingTransition = useRecordingPageTransitionAutosave(
+    (savedSettings) => {
+      onRecordingSettingsLoaded(savedSettings);
+      setRecordingDialogDraft((draft) =>
+        draft && draft.pageTransition === savedSettings.pageTransition
+          ? { ...draft, pageTransition: savedSettings.pageTransition }
+          : draft,
+      );
+    },
+    (previousValue, nextValue) => {
+      setRecordingDialogDraft((draft) =>
+        draft && draft.pageTransition === nextValue
+          ? { ...draft, pageTransition: previousValue }
+          : draft,
+      );
+      onNotice('转场设置保存失败，请重试');
+    },
+  );
   const [songState, setSongState] = useState<ListeningSongStatePayload | null>(null);
   const [songCue, setSongCue] = useState<ListeningSongPositionPayload['cue']>(null);
   const [selectedSongVersionId, setSelectedSongVersionId] = useState('');
@@ -6378,20 +6449,6 @@ function ListeningPage({
       );
     });
   }, [articleId]);
-
-  useEffect(() => {
-    if (recordingSettings) return;
-    let isMounted = true;
-    sendNative<RecordingSettings>('recording.settings.load')
-      .then((payload) => {
-        if (!isMounted) return;
-        onRecordingSettingsLoaded(payload);
-      })
-      .catch(() => undefined);
-    return () => {
-      isMounted = false;
-    };
-  }, [onRecordingSettingsLoaded, recordingSettings]);
 
   useEffect(() => {
     const offProgress = onNativeEvent<ListeningRecordingProgressPayload>('listening.recording.progress', (payload) => {
@@ -6764,6 +6821,12 @@ function ListeningPage({
   };
 
   const updateRecordingDialogDraft = (patch: Partial<RecordingSettings>) => {
+    if (patch.pageTransition && recordingDialogDraft) {
+      autosaveRecordingTransition(
+        patch.pageTransition,
+        recordingDialogDraft.pageTransition,
+      );
+    }
     setRecordingDialogDraft((draft) => (draft ? { ...draft, ...patch } : draft));
   };
 
@@ -7228,7 +7291,7 @@ function ListeningPage({
             chinese={sceneChinese}
             englishActive={activePart === 'english'}
             chineseActive={activePart === 'chinese'}
-            enablePageTransition={mode === 'song'}
+            enablePageTransition={mode === 'listening' || mode === 'song'}
             pageTransition={recordingSettings?.pageTransition ?? 'none'}
             onWordClick={openWordCard}
             onRetry={retryPicturePage}
@@ -7814,6 +7877,8 @@ function FullscreenListeningPlayer({
           {imageSrc ? (
             <TransitioningPicture
               src={imageSrc}
+              articleId={articleId}
+              pageIndex={currentPage?.pageIndex}
               objectFit="contain"
               transition={pageTransition}
             />
@@ -8147,6 +8212,8 @@ function FullscreenSongPlayer({
           {imageSrc ? (
             <TransitioningPicture
               src={imageSrc}
+              articleId={articleId}
+              pageIndex={currentPage?.pageIndex}
               objectFit="contain"
               transition={pageTransition}
             />
@@ -9556,6 +9623,34 @@ function RecordingResultCard({
   );
 }
 
+function useRecordingPageTransitionAutosave(
+  onSaved: (settings: RecordingSettings) => void,
+  onLatestFailure: (previousValue: RecordingSettings['pageTransition'], nextValue: RecordingSettings['pageTransition']) => void,
+) {
+  const tailRef = useRef<Promise<unknown>>(Promise.resolve());
+  const sequenceRef = useRef(0);
+
+  return (nextValue: RecordingSettings['pageTransition'], previousValue: RecordingSettings['pageTransition']) => {
+    const sequence = ++sequenceRef.current;
+    const operation = tailRef.current
+      .catch(() => undefined)
+      .then(() => sendNative<RecordingSettings>('recording.settings.saveTransition', {
+        pageTransition: nextValue,
+      }));
+    tailRef.current = operation.catch(() => undefined);
+    void operation
+      .then((savedSettings) => {
+        onSaved(savedSettings);
+      })
+      .catch((error) => {
+        if (sequence === sequenceRef.current) {
+          onLatestFailure(previousValue, nextValue);
+        }
+        return error;
+      });
+  };
+}
+
 function RecordingSettingsDialog({
   settings,
   saving,
@@ -9802,6 +9897,8 @@ function PictureBookScene({
         enablePageTransition ? (
           <TransitioningPicture
             src={imageSrc}
+            articleId={state?.articleId}
+            pageIndex={page?.pageIndex}
             objectFit="cover"
             transition={pageTransition}
           />

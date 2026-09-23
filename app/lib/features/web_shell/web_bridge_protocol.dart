@@ -119,8 +119,8 @@ class BridgeRouter {
       );
       // Runtime remains available when a provider unexpectedly returns a large
       // payload; automated contract tests enforce these command budgets.
-      // pageImage is intentionally exempt because it is the one endpoint
-      // designed to carry a single requested image data URI.
+      // pageImage and transitionFrames are intentionally exempt because they
+      // are image endpoints designed to carry display-sized data URIs.
       final budgetChars = bridgePayloadBudgetChars(message.type);
       if (budgetChars != null && estimatedChars > budgetChars) {
         TomatoLogger.warn(
@@ -168,7 +168,10 @@ class BridgeRouter {
 /// tests. Runtime only warns: rejecting a response would hide diagnostics and
 /// turn a size regression into a user-facing outage.
 int? bridgePayloadBudgetChars(String type) {
-  if (type == 'pictureBook.pageImage') return null;
+  if (type == 'pictureBook.pageImage' ||
+      type == 'pictureBook.transitionFrames') {
+    return null;
+  }
   if (type == 'pictureBook.state' || type == 'article.fullText') {
     return 256 * 1024;
   }

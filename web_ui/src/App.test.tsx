@@ -43,43 +43,12 @@ async function confirmDialogAction(
   fireEvent.click(within(dialog).getByRole('button', { name: confirmButtonName }));
 }
 
-function pictureLayerSrcs(root: ParentNode) {
-  return Array.from(root.querySelectorAll('img')).map((img) => img.getAttribute('src'));
-}
-
 function visibleTransitionSrc(root: ParentNode) {
   const visible = root.querySelector('.picture-transition-layer.is-visible') as HTMLImageElement | null;
   if (visible) {
     return visible.getAttribute('src');
   }
   return (root.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') ?? null;
-}
-
-async function flushPictureCrossfade(root: ParentNode) {
-  await act(async () => {
-    await Promise.resolve();
-  });
-  const pending = Array.from(
-    root.querySelectorAll('.picture-transition-layer.is-pending'),
-  ) as HTMLImageElement[];
-  for (const img of pending) {
-    Object.defineProperty(img, 'complete', { configurable: true, value: true });
-    Object.defineProperty(img, 'naturalWidth', { configurable: true, value: 1280 });
-    Object.defineProperty(img, 'naturalHeight', { configurable: true, value: 720 });
-    fireEvent.load(img);
-  }
-  await act(async () => {
-    await new Promise<void>((resolve) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-    });
-  });
-  const incoming = root.querySelector('.picture-transition-layer.is-incoming') as HTMLImageElement | null;
-  if (incoming) {
-    fireEvent.transitionEnd(incoming, { propertyName: 'opacity' });
-  }
-  await act(async () => {
-    await Promise.resolve();
-  });
 }
 
 function promptReviewPayloadForTest(articleId = 1, regenerate = false) {
@@ -3495,6 +3464,16 @@ describe('App', () => {
             fps: 25,
           });
         }
+        if (type === 'recording.settings.saveTransition') {
+          return ok(message.id, type, {
+            codec: 'h264',
+            resolution: '1920x1080',
+            pageTransition: String(payload.pageTransition ?? 'none'),
+            subtitleMode: 'srt',
+            outputDirectory: 'F:\\Tomato\\recording-export',
+            fps: 25,
+          });
+        }
         if (type === 'recording.settings.save') {
           return ok(message.id, type, {
             codec: String(payload.codec ?? 'h264'),
@@ -3588,6 +3567,11 @@ describe('App', () => {
       within(dialog).getByText('文件将保存到程序目录 recording-export 的类型和书名子目录。'),
     ).toBeInTheDocument();
     chooseRecordingOption(dialog, '转场', '卷边翻页');
+    await waitFor(() => {
+      expect(calls.find((call) => call.type === 'recording.settings.saveTransition')?.payload).toMatchObject({
+        pageTransition: 'pageCurl',
+      });
+    });
     chooseRecordingOption(dialog, '字幕', '两版视频 + SRT');
     fireEvent.click(within(dialog).getByRole('button', { name: '开始录制' }));
 
@@ -4538,12 +4522,21 @@ describe('App', () => {
 
     await clickSelectedCreationAction('视频');
     await waitFor(() => {
+      expect(calls.some((call) => call.type === 'recording.settings.load')).toBe(true);
+    });
+    expect(calls.some((call) => call.type === 'listening.recordingReady')).toBe(false);
+    await act(async () => {
+      resolveSettings?.();
+    });
+    await waitFor(() => {
       expect(calls.some((call) => call.type === 'listening.recordingReady')).toBe(true);
     });
-    expect(calls.some((call) => call.type === 'recording.settings.load')).toBe(true);
+    await act(async () => {
+      resolveReady?.();
+    });
     const exportButton = await screen.findByRole('button', { name: /导出听力视频/ });
-    expect(exportButton).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: /检查中/ })).toBeDisabled();
+    await waitFor(() => expect(exportButton).not.toBeDisabled());
+    expect(screen.getByRole('button', { name: /检查准备状态/ })).not.toBeDisabled();
     expect(await screen.findByText('0 / 1 已生成 · 缺 1 句')).toBeInTheDocument();
 
     const videoPanel = screen.getByText('视频导出').closest('.creation-panel') as HTMLElement;
@@ -4561,6 +4554,9 @@ describe('App', () => {
       expect(calls.filter((call) => call.type === 'listening.recordingReady').length).toBeGreaterThanOrEqual(2);
     });
 
+    await act(async () => {
+      resolveReady?.();
+    });
     fireEvent.click(exportButton);
     expect(await screen.findByRole('dialog', { name: '录制视频设置' })).toBeInTheDocument();
 
@@ -7481,6 +7477,7 @@ describe('App', () => {
       seriesId: 7,
       seriesTitle: 'Space Story Series',
     };
+    const calls: Array<{ type: string; payload: Record<string, unknown> }> = [];
     const ok = (id: unknown, type: string, payload: unknown): BridgeResponse => ({
       id: String(id),
       ok: true,
@@ -7492,6 +7489,7 @@ describe('App', () => {
       callHandler: vi.fn(async (_handlerName: string, message: Record<string, unknown>): Promise<BridgeResponse> => {
         const type = String(message.type ?? '');
         const payload = (message.payload ?? {}) as Record<string, unknown>;
+        calls.push({ type, payload });
         if (type === 'app.ready' || type === 'article.list') {
           return ok(message.id, type, {
             articles: [article],
@@ -7549,6 +7547,23 @@ describe('App', () => {
             variant: payload.variant,
             imageRevision: `song-page-${payload.pageIndex}-v1`,
             imageUri: `data:image/png;base64,THUMBNAIL_${payload.pageIndex}`,
+          });
+        }
+        if (type === 'pictureBook.transitionFrames') {
+          const fromPageIndex = Number(payload.fromPageIndex ?? 0);
+          const toPageIndex = Number(payload.toPageIndex ?? 1);
+          return ok(message.id, type, {
+            articleId: article.id,
+            fromPageIndex,
+            toPageIndex,
+            pageTransition: payload.pageTransition,
+            durationMs: 500,
+            width: 1280,
+            height: 720,
+            frames: Array.from(
+              { length: 8 },
+              (_, index) => `data:image/png;base64,FRAME_${fromPageIndex}_${toPageIndex}_${index}`,
+            ),
           });
         }
         if (type === 'listening.fullscreenReady') {
@@ -7669,10 +7684,9 @@ describe('App', () => {
     });
     expect(await screen.findByRole('heading', { name: 'Song second line' })).toBeInTheDocument();
     await waitFor(() => {
-      expect(pictureLayerSrcs(sceneRoot())).toContain('data:image/png;base64,THUMBNAIL_0');
-      expect(pictureLayerSrcs(sceneRoot())).toContain('data:image/png;base64,THUMBNAIL_1');
+      expect(calls.some((call) => call.type === 'pictureBook.transitionFrames')).toBe(true);
+      expect(sceneRoot().querySelectorAll('img')).toHaveLength(1);
     });
-    await flushPictureCrossfade(sceneRoot());
     await waitFor(() => expect(visibleTransitionSrc(sceneRoot())).toBe('data:image/png;base64,THUMBNAIL_1'));
     expect(sceneRoot().querySelectorAll('img')).toHaveLength(1);
   });
@@ -7950,6 +7964,23 @@ describe('App', () => {
             fps: 25,
           });
         }
+        if (type === 'pictureBook.transitionFrames') {
+          const fromPageIndex = Number(payload.fromPageIndex ?? 0);
+          const toPageIndex = Number(payload.toPageIndex ?? 1);
+          return ok(message.id, type, {
+            articleId: article.id,
+            fromPageIndex,
+            toPageIndex,
+            pageTransition: payload.pageTransition,
+            durationMs: 500,
+            width: 1280,
+            height: 720,
+            frames: Array.from(
+              { length: 8 },
+              (_, index) => `data:image/png;base64,FRAME_${fromPageIndex}_${toPageIndex}_${index}`,
+            ),
+          });
+        }
         if (type === 'listening.recordingReady') {
           return ok(message.id, type, { ready: true, reasons: [] });
         }
@@ -8053,10 +8084,9 @@ describe('App', () => {
     });
     expect(await within(dialog).findByRole('heading', { name: 'Song second line' })).toBeInTheDocument();
     await waitFor(() => {
-      expect(pictureLayerSrcs(dialog)).toContain('data:image/png;base64,FULL_0');
-      expect(pictureLayerSrcs(dialog)).toContain('data:image/png;base64,FULL_1');
+      expect(calls.some((call) => call.type === 'pictureBook.transitionFrames')).toBe(true);
+      expect(dialog.querySelectorAll('img')).toHaveLength(1);
     });
-    await flushPictureCrossfade(dialog);
     await waitFor(() => expect(visibleTransitionSrc(dialog)).toBe('data:image/png;base64,FULL_1'));
 
     act(() => {

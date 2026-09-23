@@ -96,9 +96,12 @@ class Win32Window {
 
   void HideChildProcessWebViewWindows();
   void RestoreChildProcessWebViewWindows();
+  void RestoreWindowPlacement();
+  void SaveWindowPlacement();
 
   bool quit_on_close_ = false;
   bool has_been_shown_ = false;
+  int show_command_ = SW_SHOWNORMAL;
 
   // window handle for top level window.
   HWND window_handle_ = nullptr;

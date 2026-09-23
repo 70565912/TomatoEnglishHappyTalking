@@ -362,6 +362,27 @@ export interface RecordingSettings {
   hardwareBackend: 'auto' | string;
 }
 
+export interface PictureBookTransitionFramesRequest {
+  articleId: number;
+  fromPageIndex: number;
+  toPageIndex: number;
+  pageTransition: RecordingPageTransition;
+  width: 1280;
+  height: 720;
+  frameCount: 8;
+}
+
+export interface PictureBookTransitionFramesPayload {
+  articleId: number;
+  fromPageIndex: number;
+  toPageIndex: number;
+  pageTransition: RecordingPageTransition | string;
+  durationMs: number;
+  width: number;
+  height: number;
+  frames: string[];
+}
+
 export interface ListeningRecordingReadyPayload {
   ready: boolean;
   reasons: string[];

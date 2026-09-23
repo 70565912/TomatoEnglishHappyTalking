@@ -29,6 +29,14 @@ constexpr const wchar_t kGetPreferredBrightnessRegKey[] =
   L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 constexpr const wchar_t kGetPreferredBrightnessRegValue[] = L"AppsUseLightTheme";
 
+constexpr const wchar_t kWindowStateRegKey[] =
+    L"Software\\TomatoEnglishHappyTalking\\WindowState";
+constexpr const wchar_t kWindowLeftRegValue[] = L"left";
+constexpr const wchar_t kWindowTopRegValue[] = L"top";
+constexpr const wchar_t kWindowRightRegValue[] = L"right";
+constexpr const wchar_t kWindowBottomRegValue[] = L"bottom";
+constexpr const wchar_t kWindowMaximizedRegValue[] = L"maximized";
+
 // The number of Win32Window objects that currently exist.
 static int g_active_window_count = 0;
 
@@ -262,13 +270,14 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+  RestoreWindowPlacement();
 
   return OnCreate();
 }
 
 bool Win32Window::Show() {
   has_been_shown_ = true;
-  return ShowWindow(window_handle_, SW_SHOWNORMAL);
+  return ShowWindow(window_handle_, show_command_);
 }
 
 // static
@@ -297,6 +306,10 @@ Win32Window::MessageHandler(HWND hwnd,
                             WPARAM const wparam,
                             LPARAM const lparam) noexcept {
   switch (message) {
+    case WM_CLOSE:
+      SaveWindowPlacement();
+      break;
+
     case WM_DESTROY:
       window_handle_ = nullptr;
       Destroy();
@@ -429,6 +442,124 @@ void Win32Window::RestoreChildProcessWebViewWindows() {
     }
   }
   hidden_child_process_windows_.clear();
+}
+
+void Win32Window::RestoreWindowPlacement() {
+  if (window_handle_ == nullptr) {
+    return;
+  }
+
+  HKEY key = nullptr;
+  if (RegOpenKeyEx(HKEY_CURRENT_USER, kWindowStateRegKey, 0, KEY_READ, &key) !=
+      ERROR_SUCCESS) {
+    return;
+  }
+
+  auto read_long = [&](const wchar_t* name, LONG* value) {
+    DWORD raw = 0;
+    DWORD size = sizeof(raw);
+    const LSTATUS status = RegGetValue(
+        key, nullptr, name, RRF_RT_REG_DWORD, nullptr, &raw, &size);
+    if (status != ERROR_SUCCESS) {
+      return false;
+    }
+    *value = static_cast<LONG>(raw);
+    return true;
+  };
+  auto read_bool = [&](const wchar_t* name, bool* value) {
+    DWORD raw = 0;
+    DWORD size = sizeof(raw);
+    const LSTATUS status = RegGetValue(
+        key, nullptr, name, RRF_RT_REG_DWORD, nullptr, &raw, &size);
+    if (status != ERROR_SUCCESS) {
+      return false;
+    }
+    *value = raw != 0;
+    return true;
+  };
+
+  RECT saved = {};
+  bool maximized = false;
+  const bool has_rect = read_long(kWindowLeftRegValue, &saved.left) &&
+                        read_long(kWindowTopRegValue, &saved.top) &&
+                        read_long(kWindowRightRegValue, &saved.right) &&
+                        read_long(kWindowBottomRegValue, &saved.bottom);
+  const bool has_maximized =
+      read_bool(kWindowMaximizedRegValue, &maximized);
+  RegCloseKey(key);
+
+  const LONG width = saved.right - saved.left;
+  const LONG height = saved.bottom - saved.top;
+  if (!has_rect || !has_maximized || width < 320 || height < 240) {
+    return;
+  }
+
+  // A rectangle with no intersection with any current monitor is treated as
+  // stale rather than being pulled back from an arbitrary nearest monitor.
+  HMONITOR monitor = MonitorFromRect(&saved, MONITOR_DEFAULTTONULL);
+  MONITORINFO monitor_info = {sizeof(monitor_info)};
+  if (monitor == nullptr ||
+      !GetMonitorInfo(monitor, &monitor_info)) {
+    return;
+  }
+
+  RECT work = monitor_info.rcWork;
+  LONG safe_width = std::min(width, work.right - work.left);
+  LONG safe_height = std::min(height, work.bottom - work.top);
+  LONG left = saved.left;
+  LONG top = saved.top;
+  if (left < work.left) left = work.left;
+  if (top < work.top) top = work.top;
+  if (left + safe_width > work.right) left = work.right - safe_width;
+  if (top + safe_height > work.bottom) top = work.bottom - safe_height;
+
+  SetWindowPos(window_handle_, nullptr, left, top, safe_width, safe_height,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+  show_command_ = maximized ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+}
+
+void Win32Window::SaveWindowPlacement() {
+  if (window_handle_ == nullptr || !IsWindow(window_handle_)) {
+    return;
+  }
+
+  WINDOWPLACEMENT placement = {sizeof(placement)};
+  if (!GetWindowPlacement(window_handle_, &placement)) {
+    return;
+  }
+  const RECT rect = placement.rcNormalPosition;
+  const LONG width = rect.right - rect.left;
+  const LONG height = rect.bottom - rect.top;
+  if (width < 320 || height < 240) {
+    return;
+  }
+
+  HKEY key = nullptr;
+  DWORD disposition = 0;
+  if (RegCreateKeyEx(HKEY_CURRENT_USER, kWindowStateRegKey, 0, nullptr, 0,
+                     KEY_WRITE, nullptr, &key, &disposition) !=
+      ERROR_SUCCESS) {
+    return;
+  }
+
+  auto write_long = [&](const wchar_t* name, LONG value) {
+    const DWORD raw = static_cast<DWORD>(value);
+    RegSetValueEx(key, name, 0, REG_DWORD,
+                  reinterpret_cast<const BYTE*>(&raw), sizeof(raw));
+  };
+  auto write_bool = [&](const wchar_t* name, bool value) {
+    const DWORD raw = value ? 1 : 0;
+    RegSetValueEx(key, name, 0, REG_DWORD,
+                  reinterpret_cast<const BYTE*>(&raw), sizeof(raw));
+  };
+
+  write_long(kWindowLeftRegValue, rect.left);
+  write_long(kWindowTopRegValue, rect.top);
+  write_long(kWindowRightRegValue, rect.right);
+  write_long(kWindowBottomRegValue, rect.bottom);
+  write_bool(kWindowMaximizedRegValue,
+             placement.showCmd == SW_SHOWMAXIMIZED);
+  RegCloseKey(key);
 }
 
 bool Win32Window::OnCreate() {

@@ -800,6 +800,24 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       imageUri: assetUrl('card-space-snacks.png'),
     };
   }
+  if (type === 'pictureBook.transitionFrames') {
+    const articleId = Number(payload.articleId ?? 1);
+    const fromPageIndex = Number(payload.fromPageIndex ?? 0);
+    const toPageIndex = Number(payload.toPageIndex ?? 1);
+    const pageTransition = String(payload.pageTransition ?? 'crossFade');
+    const mockFrame =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    return {
+      articleId,
+      fromPageIndex,
+      toPageIndex,
+      pageTransition,
+      durationMs: 500,
+      width: 1280,
+      height: 720,
+      frames: Array.from({ length: 8 }, () => mockFrame),
+    };
+  }
   if (type === 'pictureBook.promptReview') {
     return mockPictureBookPromptReview(
       Number(payload.articleId ?? 1),
@@ -1767,6 +1785,13 @@ function mockPayload(type: string, payload: Record<string, unknown>): unknown {
       resolution: String(payload.resolution ?? mockRecordingSettings.resolution) as RecordingSettings['resolution'],
       pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition) as RecordingSettings['pageTransition'],
       subtitleMode: String(payload.subtitleMode ?? mockRecordingSettings.subtitleMode) as RecordingSettings['subtitleMode'],
+    };
+    return mockRecordingSettings;
+  }
+  if (type === 'recording.settings.saveTransition') {
+    mockRecordingSettings = {
+      ...mockRecordingSettings,
+      pageTransition: String(payload.pageTransition ?? mockRecordingSettings.pageTransition) as RecordingSettings['pageTransition'],
     };
     return mockRecordingSettings;
   }

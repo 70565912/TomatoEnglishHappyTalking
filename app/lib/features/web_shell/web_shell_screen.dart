@@ -35,6 +35,7 @@ import '../../services/eleven_labs_music_service.dart';
 import '../../services/external_song_import_service.dart';
 import '../../services/listening_audio_material_service.dart';
 import '../../services/picture_book_service.dart';
+import '../../services/picture_book_transition_service.dart';
 import '../../services/practice_input_parser.dart';
 import '../../services/practice_text_service.dart';
 import '../../services/read_aloud_splitter_v2.dart';
@@ -311,6 +312,7 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         'series.import': _handleSeriesImport,
         'pictureBook.state': _handlePictureBookState,
         'pictureBook.pageImage': _handlePictureBookPageImage,
+        'pictureBook.transitionFrames': _handlePictureBookTransitionFrames,
         'pictureBook.promptReview': _handlePictureBookPromptReview,
         'pictureBook.pagePromptReview': _handlePictureBookPagePromptReview,
         'pictureBook.refreshPromptReview':
@@ -395,6 +397,8 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
             _handleDiagnosticsSongTimelineFromAsrSnapshot,
         'recording.settings.load': _handleRecordingSettingsLoad,
         'recording.settings.save': _handleRecordingSettingsSave,
+        'recording.settings.saveTransition':
+            _handleRecordingSettingsSaveTransition,
         'settings.previewVoice': _handleSettingsPreviewVoice,
         'contentSafety.setRuleEnabled': _handleContentSafetySetRuleEnabled,
         'contentSafety.deleteRule': _handleContentSafetyDeleteRule,
@@ -1885,6 +1889,23 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
       articleId: articleId,
       pageIndex: pageIndex,
       variant: variant,
+    );
+  }
+
+  Future<Map<String, dynamic>> _handlePictureBookTransitionFrames(
+    BridgeMessage message,
+  ) async {
+    final articleId = _payloadInt(message.payload, 'articleId');
+    final fromPageIndex = _payloadInt(message.payload, 'fromPageIndex');
+    final toPageIndex = _payloadInt(message.payload, 'toPageIndex');
+    final transition = RecordingPageTransition.parse(
+      _payloadString(message.payload, 'pageTransition', fallback: 'none'),
+    );
+    return PictureBookTransitionService.renderFrames(
+      articleId: articleId,
+      fromPageIndex: fromPageIndex,
+      toPageIndex: toPageIndex,
+      pageTransition: transition,
     );
   }
 
@@ -4159,8 +4180,12 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
     return updated;
   }
 
-  Future<({List<String> lines, Map<int, String> translations, String lyricsText})>
-      _currentArticleSongTimelineLyrics(Article article) async {
+  Future<
+      ({
+        List<String> lines,
+        Map<int, String> translations,
+        String lyricsText
+      })> _currentArticleSongTimelineLyrics(Article article) async {
     final indexes = visibleSentenceIndexes(article.sentences).toList();
     final lines = [
       for (final index in indexes) article.sentences[index].trim(),
@@ -5444,6 +5469,20 @@ class _WebShellScreenState extends ConsumerState<WebShellScreen>
         message.payload,
         'subtitleMode',
         fallback: 'srt',
+      ),
+    );
+    unawaited(_pushEvent('recording.settings.state', payload));
+    return payload;
+  }
+
+  Future<Map<String, dynamic>> _handleRecordingSettingsSaveTransition(
+    BridgeMessage message,
+  ) async {
+    final payload = await RecordingExportService.savePageTransition(
+      _payloadString(
+        message.payload,
+        'pageTransition',
+        fallback: 'none',
       ),
     );
     unawaited(_pushEvent('recording.settings.state', payload));
